@@ -1,4 +1,4 @@
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpResponse};
 use chrono::Utc;
 use serde_json::json;
 
@@ -147,4 +147,53 @@ pub async fn decay_check(
     }
 
     HttpResponse::Ok().json(json!({"decay_status": new_status, "hours_inactive": hours_inactive}))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RankUpRequest {
+    pub new_rank: String,
+}
+
+pub async fn rank_up_reward(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<RankUpRequest>,
+) -> HttpResponse {
+    let wallet = path.into_inner();
+    let new_rank = &body.new_rank;
+
+    let rewards = crate::services::rewards::RewardService::from_env();
+
+    let reward_amounts: std::collections::HashMap<&str, u64> = [
+        ("Bronze", 10), ("Silver", 20), ("Gold", 40), ("Platinum", 80), ("Diamond", 150),
+    ].iter().cloned().collect();
+
+    let Some(&amount) = reward_amounts.get(new_rank.as_str()) else {
+        return HttpResponse::BadRequest().json(json!({"error": "Unknown rank"}));
+    };
+
+    // Update g_earned_lifetime in DB
+    let _ = sqlx::query(
+        "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
+    )
+    .bind(amount as f64)
+    .bind(&wallet)
+    .execute(&state.db)
+    .await;
+
+    // Trigger on-chain G$ distribution
+    match rewards.distribute_rank_up(&wallet, new_rank, amount).await {
+        Ok(tx_hash) => HttpResponse::Ok().json(json!({
+            "success": true,
+            "g_awarded": amount,
+            "tx_hash": tx_hash,
+        })),
+        Err(e) => {
+            tracing::error!("Reward distribution failed for {}: {}", wallet, e);
+            HttpResponse::InternalServerError().json(json!({
+                "error": "Reward distribution failed",
+                "g_awarded": amount,
+            }))
+        }
+    }
 }

@@ -16,7 +16,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/players")
                 .route("/{wallet}", web::get().to(players::get_player))
                 .route("/{wallet}/daily-claim", web::post().to(players::daily_claim))
-                .route("/{wallet}/decay-check", web::post().to(players::decay_check)),
+                .route("/{wallet}/decay-check", web::post().to(players::decay_check))
+                .route("/{wallet}/rank-up", web::post().to(players::rank_up_reward)),
         )
         .service(
             web::scope("/battles")
