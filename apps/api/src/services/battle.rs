@@ -110,8 +110,8 @@ pub fn simulate_bot_fight(player: &Player) -> BotFightResult {
 }
 
 pub fn simulate_async_fight(challenger: &Player, opponent: &Player) -> AsyncFightResult {
-    // Seeded fight using wallet addresses for determinism
-    let seed: u64 = challenger.wallet_address.bytes().map(|b| b as u64).sum::<u64>()
+    // Seed unused for now — rand::rng() provides sufficient variance for async fights
+    let _seed: u64 = challenger.wallet_address.bytes().map(|b| b as u64).sum::<u64>()
         ^ opponent.wallet_address.bytes().map(|b| b as u64).sum::<u64>()
         ^ chrono::Utc::now().timestamp() as u64;
 
