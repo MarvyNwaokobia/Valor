@@ -1,0 +1,106 @@
+use actix_web::{web, HttpRequest, HttpResponse};
+use chrono::Utc;
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::AppState;
+use crate::models::mission::CollectResult;
+
+pub async fn collect_mission(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let mission_id = path.into_inner();
+    let wallet = match req.headers().get("x-wallet").and_then(|v| v.to_str().ok()) {
+        Some(w) => w.to_string(),
+        None => return HttpResponse::BadRequest().json(json!({"error": "Missing x-wallet header"})),
+    };
+
+    let mission = sqlx::query_as::<_, crate::models::mission::Mission>(
+        "SELECT * FROM missions WHERE id = $1 AND wallet_address = $2",
+    )
+    .bind(mission_id)
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(mission) = mission else {
+        return HttpResponse::NotFound().json(json!({"error": "Mission not found"}));
+    };
+
+    if mission.collected {
+        return HttpResponse::Conflict().json(json!({"error": "Mission already collected"}));
+    }
+
+    let ready_at = mission.deployed_at + chrono::Duration::minutes(30);
+    if Utc::now() < ready_at {
+        return HttpResponse::BadRequest().json(json!({"error": "Mission not complete yet"}));
+    }
+
+    // Roll loot table: 60% common weapon, 25% common shield, 10% rare weapon, 5% rare shield
+    let item_dropped = roll_loot_drop(&state.db).await;
+    let xp = crate::models::mission::CollectResult { item_dropped: item_dropped.clone(), xp: 50 };
+
+    // Mark mission as collected
+    let _ = sqlx::query(
+        "UPDATE missions SET collected = true, item_dropped = $1, xp_awarded = 50 WHERE id = $2",
+    )
+    .bind(item_dropped.as_ref().map(|id| Uuid::parse_str(id).ok()).flatten())
+    .bind(mission_id)
+    .execute(&state.db)
+    .await;
+
+    // Add XP to player and update last_active
+    let now = Utc::now();
+    let _ = sqlx::query(
+        "UPDATE players SET xp = LEAST(xp + 50, 999), last_active = $1, decay_status = 'none' WHERE wallet_address = $2",
+    )
+    .bind(now)
+    .bind(&wallet)
+    .execute(&state.db)
+    .await;
+
+    // Add item to inventory if dropped
+    if let Some(ref item_id) = item_dropped {
+        if let Ok(iid) = Uuid::parse_str(item_id) {
+            let _ = sqlx::query(
+                "INSERT INTO inventory (wallet_address, item_id, equipped, acquired_at) VALUES ($1, $2, false, $3) ON CONFLICT DO NOTHING",
+            )
+            .bind(&wallet)
+            .bind(iid)
+            .bind(now)
+            .execute(&state.db)
+            .await;
+        }
+    }
+
+    HttpResponse::Ok().json(xp)
+}
+
+async fn roll_loot_drop(db: &sqlx::PgPool) -> Option<String> {
+    let roll: f64 = rand::random();
+    let (category, rarity) = if roll < 0.60 {
+        ("weapon", "common")
+    } else if roll < 0.85 {
+        ("shield", "common")
+    } else if roll < 0.95 {
+        ("weapon", "rare")
+    } else {
+        ("shield", "rare")
+    };
+
+    let result: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM items WHERE category = $1 AND rarity = $2 ORDER BY RANDOM() LIMIT 1",
+    )
+    .bind(category)
+    .bind(rarity)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    result.map(|(id,)| id.to_string())
+}

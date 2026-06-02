@@ -1,0 +1,17 @@
+{
+  "name": "valor",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=apps/web",
+    "lint": "npm run lint --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=packages/shared"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
