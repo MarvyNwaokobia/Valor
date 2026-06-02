@@ -1,39 +1,72 @@
+import { motion } from 'framer-motion'
 import type { DecayStatus } from '@/utils/decay'
 
-export default function DecayOverlay({ status }: { status: DecayStatus }) {
+interface Props {
+  status: DecayStatus
+}
+
+export default function DecayOverlay({ status }: Props) {
   if (status === 'none') return null
 
+  if (status === 'warning') {
+    return (
+      <motion.div
+        className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-orange-500/15 border border-orange-500/40 text-orange-400 text-xs font-bold px-2.5 py-1 rounded-lg"
+        initial={{ opacity: 0, x: 10 }}
+        animate={{ opacity: 1, x: 0 }}
+      >
+        <motion.span
+          animate={{ opacity: [1, 0.4, 1] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
+        >
+          ⚠
+        </motion.span>
+        Decay Warning
+      </motion.div>
+    )
+  }
+
+  // Active decay — cracked frame effect
   return (
     <>
-      {status === 'warning' && (
-        <div className="absolute top-3 right-3 z-10 bg-orange-500/20 border border-orange-500/50 text-orange-400 text-xs font-bold px-2 py-1 rounded">
-          ⚠ Decay Warning
-        </div>
-      )}
-      {status === 'active' && (
-        <>
-          <div className="absolute top-3 right-3 z-10 bg-red-500/20 border border-red-500/50 text-red-400 text-xs font-bold px-2 py-1 rounded">
-            💀 Decaying
-          </div>
-          <div className="absolute inset-0 pointer-events-none z-10">
-            {/* Crack effect via SVG */}
-            <svg className="w-full h-full opacity-20" viewBox="0 0 100 100" preserveAspectRatio="none">
-              <polyline
-                points="20,0 25,15 18,18 30,40 22,45 35,70 28,80 40,100"
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth="0.5"
-              />
-              <polyline
-                points="80,0 75,12 82,16 70,38 78,42 65,68 72,78 60,100"
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth="0.5"
-              />
-            </svg>
-          </div>
-        </>
-      )}
+      <motion.div
+        className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-bold px-2.5 py-1 rounded-lg"
+        initial={{ opacity: 0, x: 10 }}
+        animate={{ opacity: 1, x: 0 }}
+      >
+        <motion.span
+          animate={{ opacity: [1, 0.3, 1] }}
+          transition={{ duration: 0.8, repeat: Infinity }}
+        >
+          💀
+        </motion.span>
+        Decaying
+      </motion.div>
+
+      {/* Crack overlay */}
+      <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden rounded-2xl">
+        <svg
+          className="w-full h-full opacity-25"
+          viewBox="0 0 100 200"
+          preserveAspectRatio="none"
+        >
+          <polyline
+            points="15,0 22,20 13,24 28,55 18,62 32,95 22,108 36,140 24,160 38,200"
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth="0.8"
+          />
+          <polyline
+            points="82,0 76,18 85,22 70,54 80,58 66,92 76,98 62,132 74,152 60,200"
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth="0.8"
+          />
+          <line x1="22" y1="24" x2="10" y2="30" stroke="#ef4444" strokeWidth="0.5" />
+          <line x1="28" y1="55" x2="40" y2="50" stroke="#ef4444" strokeWidth="0.5" />
+          <line x1="76" y1="22" x2="90" y2="28" stroke="#ef4444" strokeWidth="0.5" />
+        </svg>
+      </div>
     </>
   )
 }

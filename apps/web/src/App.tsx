@@ -3,6 +3,8 @@ import { Suspense, lazy } from 'react'
 import Layout from '@/components/layout/Layout'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { usePlayerSync } from '@/hooks/usePlayerSync'
+import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
+import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useConnection } from 'wagmi'
 
 const HomePage = lazy(() => import('@/pages/HomePage'))
@@ -15,7 +17,13 @@ const PlayerCardPage = lazy(() => import('@/pages/PlayerCardPage'))
 
 export default function App() {
   const { address } = useConnection()
+
+  // Initial sync from DB on wallet connect
   usePlayerSync(address)
+  // Live updates pushed from Supabase realtime
+  useRealtimePlayer(address)
+  // Client-side decay timer
+  useDecayMonitor()
 
   return (
     <Suspense fallback={<LoadingScreen />}>
