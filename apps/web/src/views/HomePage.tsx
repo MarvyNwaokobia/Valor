@@ -1,20 +1,21 @@
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { useLogin } from '@privy-io/react-auth'
 import { useConnection } from 'wagmi'
-import { Swords, ShoppingBag, Trophy, Leaf, Shield, TrendingUp, ChevronRight } from 'lucide-react'
+import { Swords, ShoppingBag, Trophy, Leaf, ChevronRight } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import PlayerCard from '@/components/player-card/PlayerCard'
 import XpMeter from '@/components/player-card/XpMeter'
+import LandingPage from '@/components/landing/LandingPage'
 import { RANK_G_REWARD, XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
+import { useLogin } from '@privy-io/react-auth'
 
 export default function HomePage() {
   const { address } = useConnection()
   const player = usePlayerStore((s) => s.player)
 
-  if (!address) return <HeroSection />
+  if (!address) return <LandingPage />
   if (!player) return <OnboardingPrompt />
 
   const nextRankReward = RANK_G_REWARD[player.rank]
@@ -94,68 +95,9 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string }[] =
   { to: '/leaderboard', Icon: Trophy,      label: 'Leaderboard', desc: 'Top 50 warriors by rank'           },
 ]
 
-const FEATURE_PILLS: { Icon: LucideIcon; label: string }[] = [
-  { Icon: Swords,      label: 'Battle & Win'         },
-  { Icon: Shield,      label: 'Collect Gear'         },
-  { Icon: TrendingUp,  label: 'Rise Through Ranks'   },
-  { Icon: Leaf,        label: 'Idle Missions'        },
-]
-
-function HeroSection() {
+function OnboardingPrompt() {
   const { login } = useLogin()
 
-  return (
-    <section className="flex flex-col items-center text-center gap-8 py-20">
-      <motion.h1
-        className="text-5xl md:text-7xl font-display font-bold text-valor-gold tracking-wider"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-      >
-        VALOR
-      </motion.h1>
-      <motion.p
-        className="text-xl md:text-2xl text-slate-300 max-w-2xl leading-relaxed"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.15 }}
-      >
-        Battle. Level up. Earn real rewards.
-      </motion.p>
-
-      <motion.div
-        className="flex flex-wrap gap-2 justify-center"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.3 }}
-      >
-        {FEATURE_PILLS.map(({ Icon, label }) => (
-          <span
-            key={label}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-valor-surface border border-valor-border rounded-full text-sm text-slate-300"
-          >
-            <Icon size={13} strokeWidth={2} />
-            {label}
-          </span>
-        ))}
-      </motion.div>
-
-      <motion.button
-        onClick={() => login()}
-        className="px-10 py-3.5 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-base font-display tracking-wide"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.45 }}
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
-      >
-        Enter Valor
-      </motion.button>
-    </section>
-  )
-}
-
-function OnboardingPrompt() {
   return (
     <section className="flex flex-col items-center text-center gap-6 py-16">
       <motion.div
@@ -176,6 +118,12 @@ function OnboardingPrompt() {
       >
         Create Character
       </Link>
+      <button
+        onClick={() => login()}
+        className="text-sm text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
+      >
+        Switch account
+      </button>
     </section>
   )
 }
