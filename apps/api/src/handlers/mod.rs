@@ -5,6 +5,7 @@ pub mod identity;
 pub mod battles;
 pub mod missions;
 pub mod items;
+pub mod decay;
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
@@ -31,5 +32,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/items")
                 .route("", web::get().to(items::list_items)),
+        )
+        .service(
+            web::scope("/decay")
+                .route("/run", web::post().to(decay::run_decay_sweep)),
         );
 }

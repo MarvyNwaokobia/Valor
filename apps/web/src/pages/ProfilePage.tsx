@@ -4,6 +4,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import PlayerCard from '@/components/player-card/PlayerCard'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
+import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
 
 export default function ProfilePage() {
@@ -21,6 +22,7 @@ export default function ProfilePage() {
     <div className="flex flex-col lg:flex-row gap-8 items-start">
       <div className="lg:sticky lg:top-24 w-full lg:w-80 shrink-0 flex flex-col gap-4">
         <PlayerCard player={player} showShareLink />
+        <DecayPanel walletAddress={address} />
         <DailyClaimButton walletAddress={address} />
       </div>
 
