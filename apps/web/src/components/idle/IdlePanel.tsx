@@ -1,15 +1,22 @@
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Player, Mission } from '@/types'
+import type { Player, Mission, Item } from '@/types'
 import { MISSION_DURATION_MS, XP_IDLE_COLLECT } from '@/lib/constants'
 import { formatCountdown } from '@/utils/format'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { ITEM_RARITY_COLORS } from '@/lib/constants'
 
 interface Props {
   walletAddress: string
   player: Player
+}
+
+interface CollectResult {
+  item_dropped: string | null
+  xp: number
+  item?: Item | null
 }
 
 export default function IdlePanel({ walletAddress, player }: Props) {
@@ -17,6 +24,7 @@ export default function IdlePanel({ walletAddress, player }: Props) {
   const updatePlayer = usePlayerStore((s) => s.updatePlayer)
   const addInventoryItem = usePlayerStore((s) => s.addInventoryItem)
   const [timeLeft, setTimeLeft] = useState(0)
+  const [lastReward, setLastReward] = useState<CollectResult | null>(null)
 
   const { data: mission } = useQuery({
     queryKey: ['active-mission', walletAddress],
@@ -28,27 +36,28 @@ export default function IdlePanel({ walletAddress, player }: Props) {
         .eq('collected', false)
         .order('deployed_at', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
       return data as Mission | null
     },
+    refetchInterval: 10_000,
   })
 
   useEffect(() => {
-    if (!mission) return
-    const collectAt = new Date(mission.deployed_at).getTime() + MISSION_DURATION_MS
-    const update = () => setTimeLeft(Math.max(0, collectAt - Date.now()))
-    update()
-    const id = setInterval(update, 1000)
+    if (!mission) { setTimeLeft(0); return }
+    const readyAt = new Date(mission.deployed_at).getTime() + MISSION_DURATION_MS
+    const tick = () => setTimeLeft(Math.max(0, readyAt - Date.now()))
+    tick()
+    const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [mission])
 
   const isReady = mission ? timeLeft <= 0 : false
 
-  const { mutate: deployMission, isPending: isDeploying } = useMutation({
+  const { mutate: deploy, isPending: isDeploying } = useMutation({
     mutationFn: async () => {
       const now = new Date()
       const collectBy = new Date(now.getTime() + 48 * 60 * 60 * 1000)
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('missions')
         .insert({
           wallet_address: walletAddress,
@@ -60,72 +69,169 @@ export default function IdlePanel({ walletAddress, player }: Props) {
         })
         .select()
         .single()
+      if (error) throw error
       return data
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['active-mission', walletAddress] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['active-mission', walletAddress] })
+    },
   })
 
-  const { mutate: collectMission, isPending: isCollecting } = useMutation({
-    mutationFn: async () => {
-      if (!mission) return null
+  const { mutate: collect, isPending: isCollecting } = useMutation({
+    mutationFn: async (): Promise<CollectResult> => {
+      if (!mission) throw new Error('No active mission')
       const res = await fetch(
         `${import.meta.env.VITE_API_URL}/missions/${mission.id}/collect`,
         { method: 'POST', headers: { 'x-wallet': walletAddress } },
       )
-      return res.json() as Promise<{ item_dropped: string | null; xp: number }>
+      if (!res.ok) throw new Error('Collection failed')
+      return res.json() as Promise<CollectResult>
     },
-    onSuccess: (data) => {
-      if (!data) return
-      updatePlayer({ xp: Math.min(999, player.xp + data.xp), last_active: new Date().toISOString() })
+    onSuccess: async (data) => {
+      setLastReward(data)
+
+      // Fetch dropped item details if any
+      if (data.item_dropped) {
+        const { data: item } = await supabase
+          .from('items')
+          .select('*')
+          .eq('id', data.item_dropped)
+          .single()
+
+        if (item) {
+          addInventoryItem({
+            wallet_address: walletAddress,
+            item_id: item.id,
+            equipped: false,
+            acquired_at: new Date().toISOString(),
+          })
+          setLastReward({ ...data, item })
+        }
+      }
+
+      updatePlayer({
+        xp: Math.min(999, player.xp + data.xp),
+        last_active: new Date().toISOString(),
+        decay_status: 'none',
+      })
+
       queryClient.invalidateQueries({ queryKey: ['active-mission', walletAddress] })
+
+      // Auto-dismiss reward after 5s
+      setTimeout(() => setLastReward(null), 5000)
     },
   })
 
   return (
     <div className="bg-valor-surface border border-valor-border rounded-xl p-5">
-      <h3 className="font-display font-bold text-white mb-4">Idle Mission</h3>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="font-display font-bold text-white">Idle Mission</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Deploy · Wait 30 min · Collect XP + item
+          </p>
+        </div>
+        <span className="text-2xl">🌿</span>
+      </div>
+
+      {/* Reward notification */}
+      <AnimatePresence>
+        {lastReward && (
+          <motion.div
+            className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-xl"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+          >
+            <p className="text-green-400 font-bold text-sm">Mission complete!</p>
+            <p className="text-xs text-slate-400 mt-1">
+              +{lastReward.xp} XP
+              {lastReward.item && (
+                <>
+                  {' '}·{' '}
+                  <span
+                    style={{ color: ITEM_RARITY_COLORS[lastReward.item.rarity] }}
+                    className="font-bold"
+                  >
+                    {lastReward.item.name}
+                  </span>
+                  {' '}dropped!
+                </>
+              )}
+              {!lastReward.item_dropped && !lastReward.item && ' · No item drop this time.'}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {!mission ? (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-slate-400">
-            Deploy your character on a 30-minute mission. Returns with XP and a random item.
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Send your character on a 30-minute idle mission. Returns with{' '}
+            <span className="text-white font-bold">+{XP_IDLE_COLLECT} XP</span> and a random item
+            drop from the loot table.
           </p>
+          <div className="grid grid-cols-4 gap-2 text-center text-xs text-slate-500">
+            {[['60%', 'Common Wep'], ['25%', 'Common Shield'], ['10%', 'Rare Wep'], ['5%', 'Rare Shield']].map(([pct, label]) => (
+              <div key={label} className="bg-valor-surface-2 rounded-lg py-2 px-1">
+                <p className="text-white font-bold">{pct}</p>
+                <p className="mt-0.5">{label}</p>
+              </div>
+            ))}
+          </div>
           <motion.button
-            onClick={() => deployMission()}
+            onClick={() => deploy()}
             disabled={isDeploying}
-            className="px-6 py-2.5 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            className="w-full py-3 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
           >
-            {isDeploying ? 'Deploying...' : 'Deploy on Mission'}
+            {isDeploying ? 'Deploying...' : '🌿 Deploy on Mission'}
           </motion.button>
         </div>
       ) : isReady ? (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-green-400 font-bold">Mission complete! Collect your rewards.</p>
-          <p className="text-xs text-slate-400">+{XP_IDLE_COLLECT} XP + random item drop</p>
+          <motion.div
+            className="flex items-center gap-2 text-green-400 font-bold"
+            animate={{ opacity: [1, 0.6, 1] }}
+            transition={{ duration: 1.5, repeat: Infinity }}
+          >
+            <span>✦</span>
+            <span className="text-sm">Mission complete — collect your rewards!</span>
+          </motion.div>
           <motion.button
-            onClick={() => collectMission()}
+            onClick={() => collect()}
             disabled={isCollecting}
-            className="px-6 py-2.5 bg-green-500 text-white font-bold rounded-lg hover:bg-green-400 disabled:opacity-50 transition-colors text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            className="w-full py-3 bg-green-500 text-white font-bold rounded-lg hover:bg-green-400 disabled:opacity-50 transition-colors text-sm"
           >
-            {isCollecting ? 'Collecting...' : 'Collect Rewards'}
+            {isCollecting ? 'Collecting...' : `Collect (+${XP_IDLE_COLLECT} XP)`}
           </motion.button>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-slate-400">Character on mission...</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">Character on mission...</p>
+            <div className="flex items-center gap-1.5">
+              <motion.div
+                className="w-2 h-2 rounded-full bg-valor-gold"
+                animate={{ scale: [1, 1.5, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity }}
+              />
+              <span className="font-mono font-bold text-valor-gold">
+                {formatCountdown(timeLeft)}
+              </span>
+            </div>
+          </div>
+          <div className="h-2 bg-valor-surface-2 rounded-full overflow-hidden border border-valor-border/50">
             <motion.div
-              className="w-2 h-2 rounded-full bg-valor-gold"
-              animate={{ scale: [1, 1.4, 1] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
+              className="h-full bg-valor-gold rounded-full"
+              style={{
+                width: `${100 - (timeLeft / MISSION_DURATION_MS) * 100}%`,
+              }}
+              transition={{ duration: 0.5 }}
             />
-            <span className="font-mono text-valor-gold font-bold text-lg">
-              {formatCountdown(timeLeft)}
-            </span>
           </div>
         </div>
       )}
