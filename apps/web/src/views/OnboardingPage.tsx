@@ -12,7 +12,8 @@ export default function OnboardingPage() {
   const { address } = useConnection()
   const router = useRouter()
   const player = usePlayerStore((s) => s.player)
-  const [step, setStep] = useState<Step>('verify')
+  // DEV BYPASS: skip GoodDollar verify for testing — restore to 'verify' before launch
+  const [step, setStep] = useState<Step>('create')
 
   // Already has a character — skip onboarding
   useEffect(() => {
