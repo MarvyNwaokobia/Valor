@@ -34,25 +34,11 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-display font-bold text-white">Prove You're Human</h2>
+        <h2 className="text-2xl font-display font-bold text-white">Verify Your Account</h2>
         <p className="text-slate-400 text-sm mt-2 leading-relaxed">
-          Valor requires GoodDollar identity verification. One real human, one character —
-          no bots, no farming.
+          One quick verification step to keep Valor fair. Free, takes under a minute,
+          and your personal info stays private.
         </p>
-      </div>
-
-      <div className="bg-valor-surface-2 rounded-xl p-4 border border-valor-border">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-valor-gold/20 flex items-center justify-center text-valor-gold font-bold text-sm">
-            ?
-          </div>
-          <div>
-            <p className="text-sm font-bold text-white">What is GoodDollar?</p>
-            <p className="text-xs text-slate-400 mt-0.5">
-              A free UBI protocol that verifies real humans. Your identity stays private.
-            </p>
-          </div>
-        </div>
       </div>
 
       {status === 'idle' && (
@@ -62,8 +48,19 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >
-          Verify with GoodDollar
+          Verify Account
         </motion.button>
+      )}
+
+      {status === 'switching_chain' && (
+        <div className="flex items-center gap-3 text-slate-400 py-2">
+          <motion.div
+            className="w-5 h-5 rounded-full border-2 border-blue-400 border-t-transparent"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+          />
+          <span className="text-sm">Connecting...</span>
+        </div>
       )}
 
       {status === 'checking' && (
@@ -73,17 +70,17 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             animate={{ rotate: 360 }}
             transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
           />
-          <span className="text-sm">Checking GoodDollar whitelist...</span>
+          <span className="text-sm">Checking your account...</span>
         </div>
       )}
 
       {status === 'not_whitelisted' && (
         <div className="flex flex-col gap-4">
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
-            <p className="text-blue-300 text-sm font-bold mb-1">Verification Required</p>
+            <p className="text-blue-300 text-sm font-bold mb-1">One More Step</p>
             <p className="text-slate-400 text-sm leading-relaxed">
-              Your wallet isn't verified yet. Complete face verification on GoodDollar — it takes
-              under a minute and keeps your identity private.
+              Complete a quick face scan to confirm you're a real player — no bots allowed.
+              It takes under a minute and keeps your info private.
             </p>
           </div>
 
@@ -94,7 +91,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 px-8 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-500 transition-colors"
             >
-              <span>Open GoodDollar Verification</span>
+              <span>Start Verification</span>
               <span className="text-sm opacity-80">↗</span>
             </a>
           ) : (
@@ -110,7 +107,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             onClick={handleRecheckAfterFV}
             className="text-sm text-slate-400 hover:text-white transition-colors underline"
           >
-            I've completed verification — check again
+            I've verified — continue
           </button>
         </div>
       )}
@@ -124,7 +121,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center">
             <span className="text-xs">✓</span>
           </div>
-          <p className="font-bold">Identity verified — creating your character...</p>
+          <p className="font-bold">Verified! Creating your character...</p>
         </motion.div>
       )}
 

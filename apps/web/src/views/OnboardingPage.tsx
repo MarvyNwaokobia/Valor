@@ -23,9 +23,9 @@ export default function OnboardingPage() {
     return (
       <div className="max-w-xl mx-auto py-16 text-center">
         <p className="text-2xl mb-4">👋</p>
-        <p className="text-white font-display text-xl font-bold">Connect Your Wallet</p>
+        <p className="text-white font-display text-xl font-bold">Sign In to Play</p>
         <p className="text-slate-400 text-sm mt-2">
-          Use the button in the top right to connect and begin.
+          Use the button in the top right to sign in and begin.
         </p>
       </div>
     )

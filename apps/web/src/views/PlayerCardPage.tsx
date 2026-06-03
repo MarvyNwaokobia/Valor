@@ -92,7 +92,7 @@ export default function PlayerCardPage() {
           <p className="text-slate-500 text-sm">
             <span className="text-valor-gold font-bold">{player.character_name}</span> has earned{' '}
             <span className="text-valor-gold font-bold">
-              {formatGDollarNumber(player.g_earned_lifetime)}
+              {formatGDollarNumber(player.g_earned_lifetime)} Gold
             </span>{' '}
             playing Valor.
           </p>

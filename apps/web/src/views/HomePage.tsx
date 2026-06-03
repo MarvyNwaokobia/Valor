@@ -95,10 +95,10 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string }[] =
 ]
 
 const FEATURE_PILLS: { Icon: LucideIcon; label: string }[] = [
-  { Icon: Swords,      label: 'Battle & Earn'       },
-  { Icon: Shield,      label: 'Own Your Items'       },
+  { Icon: Swords,      label: 'Battle & Win'         },
+  { Icon: Shield,      label: 'Collect Gear'         },
   { Icon: TrendingUp,  label: 'Rise Through Ranks'   },
-  { Icon: Leaf,        label: 'Idle Rewards'         },
+  { Icon: Leaf,        label: 'Idle Missions'        },
 ]
 
 function HeroSection() {
@@ -120,7 +120,7 @@ function HeroSection() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.15 }}
       >
-        Battle. Earn real G$. Own everything.
+        Battle. Level up. Earn real rewards.
       </motion.p>
 
       <motion.div
@@ -167,14 +167,14 @@ function OnboardingPrompt() {
       </motion.div>
       <h2 className="text-3xl font-display font-bold text-white">Create Your Character</h2>
       <p className="text-slate-400 max-w-md leading-relaxed">
-        Verify your identity with GoodDollar to enter Valor. One real human, one character.
-        No bots. No fake accounts.
+        Build your hero, climb the ranks, and earn real rewards — one character per player,
+        no duplicates.
       </p>
       <Link
         href="/onboarding"
         className="px-10 py-3.5 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-base"
       >
-        Begin Verification
+        Create Character
       </Link>
     </section>
   )

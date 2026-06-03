@@ -77,36 +77,24 @@ export default function DailyClaimButton({ walletAddress }: Props) {
     <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="font-bold text-white text-sm">Daily Bonus</p>
-        <span className="text-valor-gold font-bold">{DAILY_CLAIM_G} G$</span>
+        <span className="text-valor-gold font-bold">+{DAILY_CLAIM_G} Gold</span>
       </div>
 
       {claimed ? (
-        <div>
-          <motion.p
-            className="text-green-400 text-sm font-bold text-center"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-          >
-            Claimed! ✓
-          </motion.p>
-          {rewardTxHash && (
-            <a
-              href={`https://celoscan.io/tx/${rewardTxHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-xs text-slate-500 underline text-center mt-1"
-            >
-              G$ sent · View on Celoscan
-            </a>
-          )}
-        </div>
+        <motion.p
+          className="text-green-400 text-sm font-bold text-center"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+        >
+          Reward claimed! ✓
+        </motion.p>
       ) : canClaimDaily ? (
         <button
           onClick={() => mutate()}
           disabled={isPending}
           className="w-full py-2 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
         >
-          {isPending ? 'Claiming...' : 'Claim Daily G$'}
+          {isPending ? 'Claiming...' : 'Claim Daily Reward'}
         </button>
       ) : (
         <p className="text-xs text-slate-500 text-center">
