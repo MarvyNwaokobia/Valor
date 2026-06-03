@@ -4,7 +4,7 @@ export type Rank = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond'
 export type PlayStyle = 'Wanderer' | 'Fighter' | 'Champion'
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 export type ItemCategory = 'weapon' | 'shield' | 'booster' | 'cosmetic'
-export type CharacterClass = 'Warrior' | 'Mage' | 'Archer' | 'Rogue' | 'Paladin'
+export type CharacterClass = 'Berserker' | 'Sentinel' | 'Phantom'
 export type BattleMove = 'attack' | 'defend' | 'special'
 
 export interface Database {
