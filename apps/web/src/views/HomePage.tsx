@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { motion } from 'framer-motion'
+import { useLogin } from '@privy-io/react-auth'
 import { useConnection } from 'wagmi'
 import { Swords, ShoppingBag, Trophy, Leaf, Shield, TrendingUp, ChevronRight } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -101,6 +102,8 @@ const FEATURE_PILLS: { Icon: LucideIcon; label: string }[] = [
 ]
 
 function HeroSection() {
+  const { login } = useLogin()
+
   return (
     <section className="flex flex-col items-center text-center gap-8 py-20">
       <motion.h1
@@ -117,23 +120,14 @@ function HeroSection() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.15 }}
       >
-        Play. Earn real G$. Own everything.
-      </motion.p>
-      <motion.p
-        className="text-slate-500 max-w-lg leading-relaxed"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.6, delay: 0.3 }}
-      >
-        One verified human. One character. Every battle earns real GoodDollar tokens on Celo.
-        Stop playing and your character decays. Stay active and rise to Diamond rank.
+        Battle. Earn real G$. Own everything.
       </motion.p>
 
       <motion.div
         className="flex flex-wrap gap-2 justify-center"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.45 }}
+        transition={{ duration: 0.6, delay: 0.3 }}
       >
         {FEATURE_PILLS.map(({ Icon, label }) => (
           <span
@@ -146,14 +140,17 @@ function HeroSection() {
         ))}
       </motion.div>
 
-      <motion.p
-        className="text-sm text-slate-500"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.6, delay: 0.6 }}
+      <motion.button
+        onClick={() => login()}
+        className="px-10 py-3.5 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-base font-display tracking-wide"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 0.45 }}
+        whileHover={{ scale: 1.03 }}
+        whileTap={{ scale: 0.97 }}
       >
-        Connect your wallet above to begin
-      </motion.p>
+        Enter Valor
+      </motion.button>
     </section>
   )
 }
