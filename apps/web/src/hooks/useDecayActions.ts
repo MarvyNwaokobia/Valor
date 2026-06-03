@@ -1,7 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { DECAY_FREEZE_DAYS } from '@/lib/constants'
+import type { Rank } from '@/types/database'
 
 // Protection Shield: freeze decay for 7 days
 export function useFreezeDecay(walletAddress: string) {
@@ -46,7 +47,7 @@ export function useResurrect(walletAddress: string) {
     },
     onSuccess: (restoredRank) => {
       updatePlayer({
-        rank: restoredRank as typeof player!.rank,
+        rank: restoredRank as Rank,
         decay_status: 'none',
         last_active: new Date().toISOString(),
       })
