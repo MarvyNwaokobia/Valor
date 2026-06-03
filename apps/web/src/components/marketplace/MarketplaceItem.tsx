@@ -1,25 +1,22 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { useWriteContract } from 'wagmi'
-import { parseUnits } from 'viem'
 import type { Item } from '@/types'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
-import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
+import { usePurchaseItem } from '@/hooks/useMarketplace'
+import { usePlayerStore } from '@/stores/usePlayerStore'
 
-const G_TOKEN_ABI = [
-  {
-    name: 'transferAndCall',
-    type: 'function',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'value', type: 'uint256' },
-      { name: 'data', type: 'bytes' },
-    ],
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
+const CATEGORY_ICONS: Record<string, string> = {
+  weapon: '⚔️',
+  shield: '🛡️',
+  booster: '⚡',
+}
+
+const STAT_LABELS: Record<string, string> = {
+  weapon: 'ATK',
+  shield: 'DEF',
+  booster: 'XP×2',
+}
 
 interface Props {
   item: Item
@@ -27,40 +24,35 @@ interface Props {
 }
 
 export default function MarketplaceItem({ item, walletAddress }: Props) {
-  const [purchased, setPurchased] = useState(false)
+  const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
+  const inventory = usePlayerStore((s) => s.inventory)
+  const [error, setError] = useState<string | null>(null)
+
   const rarityColor = ITEM_RARITY_COLORS[item.rarity]
   const isLimited = item.total_supply !== null
-  const isSoldOut = isLimited && item.remaining_supply === 0
+  const isSoldOut = isLimited && (item.remaining_supply ?? 0) <= 0
+  const isPending = pendingItemId === item.id
+  const alreadyOwned = inventory.some((i) => i.item_id === item.id)
 
-  const { writeContract, isPending } = useWriteContract()
-
-  function handlePurchase() {
-    if (!walletAddress || isSoldOut) return
-
-    const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_CONTRACT as `0x${string}`
-    const itemIdBytes = `0x${item.id.replace(/-/g, '').padEnd(64, '0')}` as `0x${string}`
-    const amount = parseUnits(item.price_g.toString(), 18)
-
-    writeContract(
-      {
-        address: G_TOKEN_ADDRESS,
-        abi: G_TOKEN_ABI,
-        functionName: 'transferAndCall',
-        args: [marketplaceAddress, amount, itemIdBytes],
-      },
-      {
-        onSuccess: () => setPurchased(true),
-      },
-    )
+  async function handleBuy() {
+    setError(null)
+    try {
+      await purchase(item)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Purchase failed'
+      setError(msg.length > 60 ? 'Transaction rejected or failed.' : msg)
+    }
   }
 
   return (
     <motion.div
-      className="flex flex-col gap-3 p-4 bg-valor-surface border rounded-xl transition-colors"
-      style={{ borderColor: `${rarityColor}44` }}
-      whileHover={{ scale: 1.02 }}
+      className="flex flex-col gap-3 p-4 bg-valor-surface rounded-xl border transition-all"
+      style={{ borderColor: `${rarityColor}33` }}
+      whileHover={!isSoldOut && !alreadyOwned ? { scale: 1.02, y: -2 } : {}}
+      layout
     >
-      <div className="flex items-start justify-between">
+      {/* Rarity + supply */}
+      <div className="flex items-center justify-between">
         <span
           className="text-xs font-bold px-2 py-0.5 rounded-full"
           style={{ color: rarityColor, background: `${rarityColor}22` }}
@@ -68,40 +60,76 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           {item.rarity.toUpperCase()}
         </span>
         {isLimited && (
-          <span className="text-xs text-orange-400 font-bold">
+          <span className={`text-xs font-bold ${isSoldOut ? 'text-red-400' : 'text-orange-400'}`}>
             {isSoldOut ? 'SOLD OUT' : `${item.remaining_supply} left`}
           </span>
         )}
       </div>
 
-      <div className="w-full aspect-square bg-valor-surface-2 rounded-lg flex items-center justify-center text-4xl">
-        {item.category === 'weapon' ? '⚔️' : item.category === 'shield' ? '🛡️' : '⚡'}
+      {/* Icon */}
+      <div
+        className="w-full aspect-square rounded-xl flex items-center justify-center text-4xl border"
+        style={{
+          background: `${rarityColor}0d`,
+          borderColor: `${rarityColor}22`,
+        }}
+      >
+        {CATEGORY_ICONS[item.category]}
       </div>
 
+      {/* Name + desc */}
       <div>
-        <p className="font-bold text-white text-sm">{item.name}</p>
-        <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{item.description}</p>
+        <p className="font-bold text-white text-sm leading-tight">{item.name}</p>
+        <p className="text-xs text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">
+          {item.description}
+        </p>
       </div>
 
+      {/* Price + stat */}
       <div className="flex items-center justify-between mt-auto">
-        <span className="font-bold text-valor-gold text-sm">{formatGDollarNumber(item.price_g)}</span>
-        <span className="text-xs text-slate-400">+{item.stat_boost} {item.category === 'weapon' ? 'ATK' : item.category === 'shield' ? 'DEF' : 'XP'}</span>
+        <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)}</span>
+        {item.stat_boost > 0 && (
+          <span className="text-xs text-slate-400 font-bold">
+            +{item.stat_boost} {STAT_LABELS[item.category]}
+          </span>
+        )}
       </div>
 
-      {purchased ? (
-        <p className="text-center text-green-400 text-sm font-bold">Purchased ✓</p>
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+
+      {/* Action button */}
+      {alreadyOwned ? (
+        <div className="w-full py-2 text-center text-xs font-bold text-green-400 bg-green-500/10 rounded-lg border border-green-500/20">
+          ✓ Owned
+        </div>
       ) : (
-        <button
-          onClick={handlePurchase}
+        <motion.button
+          onClick={handleBuy}
           disabled={!walletAddress || isSoldOut || isPending}
-          className="w-full py-2 text-sm font-bold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          whileTap={!isSoldOut ? { scale: 0.97 } : {}}
+          className="w-full py-2.5 text-sm font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
             background: isSoldOut ? '#374151' : rarityColor,
             color: isSoldOut ? '#6b7280' : '#000',
           }}
         >
-          {isPending ? 'Confirming...' : isSoldOut ? 'Sold Out' : 'Buy'}
-        </button>
+          {isPending ? (
+            <span className="flex items-center justify-center gap-2">
+              <motion.span
+                className="w-3.5 h-3.5 rounded-full border-2 border-black border-t-transparent inline-block"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 0.7, repeat: Infinity, ease: 'linear' }}
+              />
+              Confirming...
+            </span>
+          ) : isSoldOut ? (
+            'Sold Out'
+          ) : !walletAddress ? (
+            'Connect Wallet'
+          ) : (
+            'Buy with G$'
+          )}
+        </motion.button>
       )}
     </motion.div>
   )
