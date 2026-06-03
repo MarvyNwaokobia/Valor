@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@goodsdks/citizen-sdk": "^1.2.5",
+    "@goodsdks/engagement-sdk": "^1.0.4",
+    "@privy-io/react-auth": "^3.28.0",
+    "@privy-io/wagmi": "^4.0.10",
     "@rainbow-me/rainbowkit": "^2.2.11",
     "@supabase/supabase-js": "^2.106.2",
     "@tanstack/react-query": "^5.100.14",
