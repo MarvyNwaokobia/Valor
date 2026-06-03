@@ -3,7 +3,8 @@ export type Json = string | number | boolean | null | { [key: string]: Json } | 
 export type Rank = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond'
 export type PlayStyle = 'Wanderer' | 'Fighter' | 'Champion'
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
-export type ItemCategory = 'weapon' | 'shield' | 'booster'
+export type ItemCategory = 'weapon' | 'shield' | 'booster' | 'cosmetic'
+export type CharacterClass = 'Warrior' | 'Mage' | 'Archer' | 'Rogue' | 'Paladin'
 export type BattleMove = 'attack' | 'defend' | 'special'
 
 export interface Database {
@@ -13,69 +14,110 @@ export interface Database {
         Row: Player
         Insert: Omit<Player, 'created_at'>
         Update: Partial<Omit<Player, 'wallet_address' | 'created_at'>>
+        Relationships: []
       }
       items: {
         Row: Item
         Insert: Omit<Item, 'id'>
         Update: Partial<Omit<Item, 'id'>>
+        Relationships: []
       }
       inventory: {
         Row: InventoryItem
         Insert: InventoryItem
         Update: Partial<Pick<InventoryItem, 'equipped'>>
+        Relationships: []
       }
       battles: {
         Row: Battle
         Insert: Omit<Battle, 'id' | 'created_at'>
-        Update: never
+        Update: Partial<Omit<Battle, 'id' | 'created_at'>>
+        Relationships: []
       }
       missions: {
         Row: Mission
         Insert: Omit<Mission, 'id'>
         Update: Partial<Pick<Mission, 'collected' | 'item_dropped' | 'xp_awarded'>>
+        Relationships: []
       }
       achievements: {
         Row: Achievement
         Insert: Achievement
-        Update: never
+        Update: Partial<Achievement>
+        Relationships: []
       }
       player_achievements: {
         Row: PlayerAchievement
         Insert: PlayerAchievement
-        Update: never
+        Update: Partial<PlayerAchievement>
+        Relationships: []
       }
       daily_claims: {
         Row: DailyClaim
         Insert: DailyClaim
         Update: Pick<DailyClaim, 'last_claimed_at'>
+        Relationships: []
       }
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: {
+      check_and_unlock_achievements: {
+        Args: { p_wallet: string }
+        Returns: Json[]
+      }
+      [fnName: string]: {
+        Args: Record<string, unknown>
+        Returns: unknown
+      }
+    }
+    Enums: Record<string, never>
+    CompositeTypes: Record<string, never>
   }
+}
+
+export interface CharacterCustomization {
+  skin?: string       // hex color or preset key
+  hair?: string
+  outfit?: string     // item id or preset key
+  weapon?: string
+  accessories?: string[]
 }
 
 export interface Player {
   wallet_address: string
-  play_style: PlayStyle
-  avatar: string
+
+  // Identity
+  username: string | null
+  display_name: string | null
+
+  // Character
+  character_class: CharacterClass | null
+  character_customization: CharacterCustomization
+  avatar: string                               // legacy emoji, kept for compat
   character_name: string
+  play_style: PlayStyle
+
+  // Progression
   rank: Rank
   xp: number
   attack_stat: number
   defense_stat: number
   speed_stat: number
   g_earned_lifetime: number
+  wins: number
+  losses: number
+
+  // Decay
   last_active: string
   decay_status: 'none' | 'warning' | 'active'
   decay_frozen_until: string | null
-  wins: number
-  losses: number
+
   created_at: string
 }
 
 export interface Item {
   id: string
+  on_chain_id: number | null   // uint256 ID in the smart contract — null until item is registered on-chain
   name: string
   description: string
   rarity: Rarity
@@ -83,6 +125,8 @@ export interface Item {
   stat_boost: number
   price_g: number
   image_url: string
+  layer_type: 'outfit' | 'weapon' | 'accessory' | 'hair' | null
+  layer_asset_url: string | null
   total_supply: number | null
   remaining_supply: number | null
 }

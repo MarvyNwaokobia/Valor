@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useRouter } from 'next/navigation'
 import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import PlayerCard from '@/components/player-card/PlayerCard'
@@ -9,12 +9,12 @@ import IdlePanel from '@/components/idle/IdlePanel'
 
 export default function ProfilePage() {
   const { address } = useConnection()
-  const navigate = useNavigate()
+  const router = useRouter()
   const player = usePlayerStore((s) => s.player)
   const inventory = usePlayerStore((s) => s.inventory)
 
   if (!address || !player) {
-    navigate('/')
+    router.replace('/')
     return null
   }
 

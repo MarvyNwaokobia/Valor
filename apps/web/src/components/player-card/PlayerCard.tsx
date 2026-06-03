@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { useConnection } from 'wagmi'
 import type { Player } from '@/types'
 import { RANK_COLORS, XP_PER_RANK } from '@/lib/constants'
 import { getDecayStatus } from '@/utils/decay'
 import { formatGDollarNumber, formatTimeAgo } from '@/utils/format'
+import { useGBalance } from '@/hooks/useGBalance'
 import XpMeter from './XpMeter'
 import RankBadge from './RankBadge'
 import DecayOverlay from './DecayOverlay'
@@ -21,6 +22,11 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
   const rankColor = RANK_COLORS[player.rank]
   const isDecaying = decayStatus === 'active'
   const isWarning = decayStatus === 'warning'
+
+  // Only fetch live balance on the owner's own card (not public view)
+  const { address } = useConnection()
+  const isOwner = !isPublic && address?.toLowerCase() === player.wallet_address.toLowerCase()
+  const { formatted: liveBalance } = useGBalance(isOwner ? (player.wallet_address as `0x${string}`) : undefined)
 
   const shareUrl =
     typeof window !== 'undefined'
@@ -110,7 +116,7 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
           <StatBox label="SPD" value={player.speed_stat} color="#22c55e" />
         </div>
 
-        {/* W/L + Lifetime earnings */}
+        {/* W/L + G$ balance / lifetime earnings */}
         <div className="flex items-center justify-between text-sm border-t border-valor-border pt-3">
           <div className="flex items-center gap-3">
             <span className="text-slate-400 text-xs">
@@ -121,10 +127,12 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
               <span className="text-red-400 font-bold">{player.losses}L</span>
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500">earned</span>
-            <span className="font-bold text-valor-gold text-sm">
-              {formatGDollarNumber(player.g_earned_lifetime)}
+          <div className="flex flex-col items-end gap-0.5">
+            {liveBalance && (
+              <span className="font-bold text-valor-gold text-sm">{liveBalance}</span>
+            )}
+            <span className="text-xs text-slate-500">
+              {formatGDollarNumber(player.g_earned_lifetime)} earned
             </span>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -10,14 +10,14 @@ type Step = 'verify' | 'create'
 
 export default function OnboardingPage() {
   const { address } = useConnection()
-  const navigate = useNavigate()
+  const router = useRouter()
   const player = usePlayerStore((s) => s.player)
   const [step, setStep] = useState<Step>('verify')
 
   // Already has a character — skip onboarding
   useEffect(() => {
-    if (player) navigate('/')
-  }, [player, navigate])
+    if (player) router.replace('/')
+  }, [player, router])
 
   if (!address) {
     return (
@@ -63,7 +63,7 @@ export default function OnboardingPage() {
             exit={{ opacity: 0, x: -24 }}
             transition={{ duration: 0.25 }}
           >
-            <CharacterCreation walletAddress={address} onCreated={() => navigate('/')} />
+            <CharacterCreation walletAddress={address} onCreated={() => router.replace('/')} />
           </motion.div>
         )}
       </AnimatePresence>

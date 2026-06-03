@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '@/lib/supabase'
 import type { Player } from '@/types'
@@ -108,7 +108,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
               transition={{ duration: 0.2 }}
             >
               <Link
-                to={`/card/${player.wallet_address}`}
+                href={`/card/${player.wallet_address}`}
                 className={`flex items-center gap-4 p-3.5 rounded-xl border transition-all hover:bg-valor-surface-2 ${
                   isMe
                     ? 'border-valor-gold/50 bg-valor-gold/5'

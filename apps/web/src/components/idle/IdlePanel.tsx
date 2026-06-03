@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Leaf, Send } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { Player, Mission, Item } from '@/types'
 import { MISSION_DURATION_MS, XP_IDLE_COLLECT } from '@/lib/constants'
 import { formatCountdown } from '@/utils/format'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useAchievements } from '@/hooks/useAchievements'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 
 interface Props {
@@ -23,6 +25,7 @@ export default function IdlePanel({ walletAddress, player }: Props) {
   const queryClient = useQueryClient()
   const updatePlayer = usePlayerStore((s) => s.updatePlayer)
   const addInventoryItem = usePlayerStore((s) => s.addInventoryItem)
+  const { checkAchievements } = useAchievements()
   const [timeLeft, setTimeLeft] = useState(0)
   const [lastReward, setLastReward] = useState<CollectResult | null>(null)
 
@@ -56,7 +59,7 @@ export default function IdlePanel({ walletAddress, player }: Props) {
   const { mutate: deploy, isPending: isDeploying } = useMutation({
     mutationFn: async () => {
       const now = new Date()
-      const collectBy = new Date(now.getTime() + 48 * 60 * 60 * 1000)
+      const collectBy = new Date(now.getTime() + MISSION_DURATION_MS)
       const { data, error } = await supabase
         .from('missions')
         .insert({
@@ -81,7 +84,7 @@ export default function IdlePanel({ walletAddress, player }: Props) {
     mutationFn: async (): Promise<CollectResult> => {
       if (!mission) throw new Error('No active mission')
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/missions/${mission.id}/collect`,
+        `${process.env.NEXT_PUBLIC_API_URL}/missions/${mission.id}/collect`,
         { method: 'POST', headers: { 'x-wallet': walletAddress } },
       )
       if (!res.ok) throw new Error('Collection failed')
@@ -117,6 +120,9 @@ export default function IdlePanel({ walletAddress, player }: Props) {
 
       queryClient.invalidateQueries({ queryKey: ['active-mission', walletAddress] })
 
+      // Check achievements — missions >= 10, inventory >= 5, etc.
+      checkAchievements(walletAddress).catch(console.error)
+
       // Auto-dismiss reward after 5s
       setTimeout(() => setLastReward(null), 5000)
     },
@@ -131,7 +137,7 @@ export default function IdlePanel({ walletAddress, player }: Props) {
             Deploy · Wait 30 min · Collect XP + item
           </p>
         </div>
-        <span className="text-2xl">🌿</span>
+        <Leaf size={22} className="text-green-500" strokeWidth={1.5} />
       </div>
 
       {/* Reward notification */}
@@ -186,7 +192,11 @@ export default function IdlePanel({ walletAddress, player }: Props) {
             whileTap={{ scale: 0.98 }}
             className="w-full py-3 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
           >
-            {isDeploying ? 'Deploying...' : '🌿 Deploy on Mission'}
+            {isDeploying ? 'Deploying...' : (
+              <span className="flex items-center justify-center gap-1.5">
+                <Send size={13} /> Deploy on Mission
+              </span>
+            )}
           </motion.button>
         </div>
       ) : isReady ? (

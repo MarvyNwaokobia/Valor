@@ -1,20 +1,13 @@
-import { http, createConfig } from 'wagmi'
+import { http } from 'wagmi'
 import { celo, celoAlfajores } from 'wagmi/chains'
-import { getDefaultConfig } from '@rainbow-me/rainbowkit'
+import { createConfig } from '@privy-io/wagmi'
 
-const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID
-
-if (!walletConnectProjectId) {
-  throw new Error('Missing VITE_WALLETCONNECT_PROJECT_ID')
-}
-
-export const wagmiConfig = getDefaultConfig({
-  appName: 'Valor',
-  projectId: walletConnectProjectId,
+// Privy handles WalletConnect and injected wallet connectors internally —
+// no separate WalletConnect project ID required here.
+export const wagmiConfig = createConfig({
   chains: [celo, celoAlfajores],
   transports: {
-    [celo.id]: http(),
-    [celoAlfajores.id]: http(),
+    [celo.id]: http('https://forno.celo.org'),
+    [celoAlfajores.id]: http('https://alfajores-forno.celo-testnet.org'),
   },
-  ssr: false,
 })

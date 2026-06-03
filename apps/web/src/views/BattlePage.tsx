@@ -1,15 +1,15 @@
-import { useNavigate } from 'react-router-dom'
+import { useRouter } from 'next/navigation'
 import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import BattleArena from '@/components/battle/BattleArena'
 
 export default function BattlePage() {
   const { address } = useConnection()
-  const navigate = useNavigate()
+  const router = useRouter()
   const player = usePlayerStore((s) => s.player)
 
   if (!address || !player) {
-    navigate('/')
+    router.replace('/')
     return null
   }
 

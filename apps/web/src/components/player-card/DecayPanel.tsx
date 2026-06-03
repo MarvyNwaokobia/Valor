@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { ShieldCheck, AlertTriangle, Skull, Scroll } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useFreezeDecay, useResurrect } from '@/hooks/useDecayActions'
 import { getDecayTimeRemaining } from '@/utils/decay'
@@ -33,7 +34,7 @@ export default function DecayPanel({ walletAddress }: Props) {
     return (
       <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-1">
-          <span>🛡️</span>
+          <ShieldCheck size={16} className="text-blue-300" />
           <p className="font-bold text-blue-300 text-sm">Decay Frozen</p>
         </div>
         <p className="text-xs text-slate-400">
@@ -76,7 +77,7 @@ export default function DecayPanel({ walletAddress }: Props) {
       >
         <div className="flex items-center gap-2 mb-2">
           <motion.span animate={{ rotate: [0, 10, -10, 0] }} transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 2 }}>
-            ⚠️
+            <AlertTriangle size={16} className="text-orange-400" />
           </motion.span>
           <p className="font-bold text-orange-400 text-sm">Decay Warning</p>
         </div>
@@ -106,7 +107,7 @@ export default function DecayPanel({ walletAddress }: Props) {
           animate={{ opacity: [1, 0.3, 1] }}
           transition={{ duration: 0.8, repeat: Infinity }}
         >
-          💀
+          <Skull size={16} className="text-red-400" />
         </motion.span>
         <p className="font-bold text-red-400 text-sm">Active Decay</p>
       </div>
@@ -120,14 +121,22 @@ export default function DecayPanel({ walletAddress }: Props) {
           disabled={isFreezing}
           className="w-full py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 transition-colors"
         >
-          {isFreezing ? 'Activating...' : '🛡️ Activate Protection Shield'}
+          {isFreezing ? 'Activating...' : (
+            <span className="flex items-center justify-center gap-1.5">
+              <ShieldCheck size={13} /> Activate Protection Shield
+            </span>
+          )}
         </button>
         <button
           onClick={() => resurrect()}
           disabled={isResurrecting}
           className="w-full py-2 text-xs font-bold bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 transition-colors"
         >
-          {isResurrecting ? 'Resurrecting...' : '📜 Use Resurrection Scroll'}
+          {isResurrecting ? 'Resurrecting...' : (
+            <span className="flex items-center justify-center gap-1.5">
+              <Scroll size={13} /> Use Resurrection Scroll
+            </span>
+          )}
         </button>
       </div>
     </motion.div>

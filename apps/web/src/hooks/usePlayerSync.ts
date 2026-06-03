@@ -11,13 +11,14 @@ export function usePlayerSync(address: string | undefined) {
       return
     }
 
+    const addr = address
     let playerSub: ReturnType<typeof supabase.channel> | null = null
 
     async function sync() {
       const { data: player } = await supabase
         .from('players')
         .select('*')
-        .eq('wallet_address', address)
+        .eq('wallet_address', addr)
         .single()
 
       if (player) {
@@ -26,16 +27,15 @@ export function usePlayerSync(address: string | undefined) {
         const { data: inventory } = await supabase
           .from('inventory')
           .select('*')
-          .eq('wallet_address', address)
+          .eq('wallet_address', addr)
 
         setInventory(inventory ?? [])
 
-        // Subscribe to real-time player updates
         playerSub = supabase
-          .channel(`player:${address}`)
+          .channel(`player:${addr}`)
           .on(
             'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'players', filter: `wallet_address=eq.${address}` },
+            { event: 'UPDATE', schema: 'public', table: 'players', filter: `wallet_address=eq.${addr}` },
             (payload) => setPlayer(payload.new as typeof player),
           )
           .subscribe()

@@ -13,6 +13,8 @@ export type {
   PlayStyle,
   Rarity,
   ItemCategory,
+  CharacterClass,
+  CharacterCustomization,
   BattleMove,
   Json,
 } from './database'

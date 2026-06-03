@@ -1,11 +1,12 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useWriteContract } from 'wagmi'
 import { parseUnits, encodeAbiParameters, parseAbiParameters } from 'viem'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useAchievements } from '@/hooks/useAchievements'
 
 const TRANSFER_AND_CALL_ABI = [
   {
@@ -39,6 +40,7 @@ export function useMarketplaceItems() {
 export function usePurchaseItem(walletAddress: string | undefined) {
   const queryClient = useQueryClient()
   const addInventoryItem = usePlayerStore((s) => s.addInventoryItem)
+  const { checkAchievements } = useAchievements()
   const [pendingItemId, setPendingItemId] = useState<string | null>(null)
 
   const { writeContractAsync } = useWriteContract()
@@ -46,15 +48,17 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const purchase = async (item: Item) => {
     if (!walletAddress) throw new Error('Wallet not connected')
 
-    const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_CONTRACT as `0x${string}`
+    const marketplaceAddress = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
     if (!marketplaceAddress) throw new Error('Marketplace contract not configured')
+
+    if (item.on_chain_id === null) throw new Error('Item not yet registered on-chain')
 
     setPendingItemId(item.id)
 
-    // Encode the item UUID as bytes32 for the contract
+    // Encode on_chain_id as uint256 — matches the contract's abi.decode(data, (uint256))
     const itemIdBytes = encodeAbiParameters(
-      parseAbiParameters('bytes32'),
-      [`0x${item.id.replace(/-/g, '').padEnd(64, '0')}` as `0x${string}`],
+      parseAbiParameters('uint256'),
+      [BigInt(item.on_chain_id)],
     )
     const amount = parseUnits(item.price_g.toString(), 18)
 
@@ -88,6 +92,10 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       }
 
       queryClient.invalidateQueries({ queryKey: ['marketplace-items'] })
+
+      // Check inventory >= 5 achievement after purchase
+      checkAchievements(walletAddress).catch(console.error)
+
       return txHash
     } finally {
       setPendingItemId(null)

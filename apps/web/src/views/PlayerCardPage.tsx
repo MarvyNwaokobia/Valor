@@ -1,6 +1,8 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { Swords } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
@@ -9,7 +11,8 @@ import { RANK_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
 export default function PlayerCardPage() {
-  const { walletAddress } = useParams<{ walletAddress: string }>()
+  const params = useParams()
+  const walletAddress = params?.walletAddress as string | undefined
   const [player, setPlayer] = useState<Player | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -43,11 +46,11 @@ export default function PlayerCardPage() {
   if (notFound || !player) {
     return (
       <div className="min-h-screen bg-valor-dark flex flex-col items-center justify-center gap-4 p-6">
-        <p className="text-5xl">⚔️</p>
+        <Swords size={52} className="text-slate-600" strokeWidth={1.2} />
         <p className="text-white font-display text-2xl font-bold">Warrior Not Found</p>
         <p className="text-slate-400 text-sm">This address hasn't created a character yet.</p>
         <Link
-          to="/"
+          href="/"
           className="mt-2 px-6 py-2.5 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light transition-colors text-sm"
         >
           Enter Valor
@@ -94,7 +97,7 @@ export default function PlayerCardPage() {
             playing Valor.
           </p>
           <Link
-            to="/"
+            href="/"
             className="inline-block px-8 py-3 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-sm"
           >
             Create Your Character →

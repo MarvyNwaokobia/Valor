@@ -1,6 +1,8 @@
-import { Link } from 'react-router-dom'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { useConnection } from 'wagmi'
+import { Swords, ShoppingBag, Trophy, Leaf, Shield, TrendingUp, ChevronRight } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import PlayerCard from '@/components/player-card/PlayerCard'
 import XpMeter from '@/components/player-card/XpMeter'
@@ -41,13 +43,17 @@ export default function HomePage() {
       {/* Dashboard */}
       <div className="flex-1 flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {ACTIONS.map(({ to, icon, label, desc }) => (
+          {ACTIONS.map(({ to, Icon, label, desc }) => (
             <Link
               key={to}
-              to={to}
+              href={to}
               className="flex flex-col gap-3 p-5 bg-valor-surface border border-valor-border rounded-xl hover:border-valor-gold/50 hover:bg-valor-surface-2 transition-all group"
             >
-              <span className="text-3xl">{icon}</span>
+              <Icon
+                size={28}
+                className="text-slate-400 group-hover:text-valor-gold transition-colors"
+                strokeWidth={1.5}
+              />
               <div>
                 <p className="font-bold text-white group-hover:text-valor-gold transition-colors">
                   {label}
@@ -61,10 +67,10 @@ export default function HomePage() {
         {/* Idle prompt for Wanderers/Champions */}
         {(player.play_style === 'Wanderer' || player.play_style === 'Champion') && (
           <Link
-            to="/profile"
+            href="/profile"
             className="flex items-center gap-4 p-5 bg-valor-surface border border-green-800/40 rounded-xl hover:border-green-600/60 transition-all group"
           >
-            <span className="text-3xl">🌿</span>
+            <Leaf size={28} className="text-green-600 group-hover:text-green-400 transition-colors shrink-0" strokeWidth={1.5} />
             <div className="flex-1">
               <p className="font-bold text-white group-hover:text-green-400 transition-colors">
                 Idle Mission
@@ -73,7 +79,7 @@ export default function HomePage() {
                 Deploy your character for 30 min and collect XP + item drops.
               </p>
             </div>
-            <span className="text-slate-500 group-hover:text-white">→</span>
+            <ChevronRight size={16} className="text-slate-500 group-hover:text-white transition-colors" />
           </Link>
         )}
       </div>
@@ -81,10 +87,17 @@ export default function HomePage() {
   )
 }
 
-const ACTIONS = [
-  { to: '/battle', icon: '⚔️', label: 'Battle', desc: 'Fight bots and challengers for XP' },
-  { to: '/marketplace', icon: '🛒', label: 'Marketplace', desc: 'Buy weapons, shields, boosters' },
-  { to: '/leaderboard', icon: '🏆', label: 'Leaderboard', desc: 'Top 50 warriors by rank' },
+const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string }[] = [
+  { to: '/battle',      Icon: Swords,      label: 'Battle',      desc: 'Fight bots and challengers for XP' },
+  { to: '/marketplace', Icon: ShoppingBag, label: 'Marketplace', desc: 'Buy weapons, shields, boosters'    },
+  { to: '/leaderboard', Icon: Trophy,      label: 'Leaderboard', desc: 'Top 50 warriors by rank'           },
+]
+
+const FEATURE_PILLS: { Icon: LucideIcon; label: string }[] = [
+  { Icon: Swords,      label: 'Battle & Earn'       },
+  { Icon: Shield,      label: 'Own Your Items'       },
+  { Icon: TrendingUp,  label: 'Rise Through Ranks'   },
+  { Icon: Leaf,        label: 'Idle Rewards'         },
 ]
 
 function HeroSection() {
@@ -116,23 +129,21 @@ function HeroSection() {
         Stop playing and your character decays. Stay active and rise to Diamond rank.
       </motion.p>
 
-      {/* Feature pills */}
       <motion.div
         className="flex flex-wrap gap-2 justify-center"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.45 }}
       >
-        {['⚔️ Battle & Earn', '🛡️ Own Your Items', '📈 Rise Through Ranks', '🌿 Idle Rewards'].map(
-          (pill) => (
-            <span
-              key={pill}
-              className="px-3 py-1 bg-valor-surface border border-valor-border rounded-full text-sm text-slate-300"
-            >
-              {pill}
-            </span>
-          ),
-        )}
+        {FEATURE_PILLS.map(({ Icon, label }) => (
+          <span
+            key={label}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-valor-surface border border-valor-border rounded-full text-sm text-slate-300"
+          >
+            <Icon size={13} strokeWidth={2} />
+            {label}
+          </span>
+        ))}
       </motion.div>
 
       <motion.p
@@ -151,11 +162,11 @@ function OnboardingPrompt() {
   return (
     <section className="flex flex-col items-center text-center gap-6 py-16">
       <motion.div
-        className="w-20 h-20 rounded-full bg-valor-gold/20 flex items-center justify-center text-4xl border-2 border-valor-gold/50"
+        className="w-20 h-20 rounded-full bg-valor-gold/20 flex items-center justify-center border-2 border-valor-gold/50"
         animate={{ scale: [1, 1.05, 1] }}
         transition={{ duration: 2, repeat: Infinity }}
       >
-        ⚔️
+        <Swords size={36} className="text-valor-gold" strokeWidth={1.5} />
       </motion.div>
       <h2 className="text-3xl font-display font-bold text-white">Create Your Character</h2>
       <p className="text-slate-400 max-w-md leading-relaxed">
@@ -163,7 +174,7 @@ function OnboardingPrompt() {
         No bots. No fake accounts.
       </p>
       <Link
-        to="/onboarding"
+        href="/onboarding"
         className="px-10 py-3.5 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-base"
       >
         Begin Verification
