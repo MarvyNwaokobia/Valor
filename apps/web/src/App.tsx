@@ -1,11 +1,12 @@
 import { Routes, Route } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
+import { useAccount } from 'wagmi'
 import Layout from '@/components/layout/Layout'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
-import { useConnection } from 'wagmi'
+import { useValorAuth } from '@/hooks/useValorAuth'
 
 const HomePage = lazy(() => import('@/pages/HomePage'))
 const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
@@ -16,7 +17,10 @@ const LeaderboardPage = lazy(() => import('@/pages/LeaderboardPage'))
 const PlayerCardPage = lazy(() => import('@/pages/PlayerCardPage'))
 
 export default function App() {
-  const { address } = useConnection()
+  const { address } = useAccount()
+
+  // Authenticate with Supabase after Privy login — enables RLS enforcement
+  useValorAuth()
 
   // Initial sync from DB on wallet connect
   usePlayerSync(address)
