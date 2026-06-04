@@ -1,127 +1,272 @@
+'use client'
+
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { useConnection } from 'wagmi'
-import { Swords, ShoppingBag, Trophy, Leaf, ChevronRight } from 'lucide-react'
+import { Swords, ShoppingBag, Trophy, ChevronRight, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import PlayerCard from '@/components/player-card/PlayerCard'
-import XpMeter from '@/components/player-card/XpMeter'
 import LandingPage from '@/components/landing/LandingPage'
-import { RANK_G_REWARD, XP_PER_RANK } from '@/lib/constants'
-import { formatGDollarNumber } from '@/utils/format'
 import { useLogin } from '@privy-io/react-auth'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
+import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
+import { formatGDollarNumber } from '@/utils/format'
+
+const CLASS_SOLO: Record<string, string> = {
+  Berserker: '/characters/Berserkers.png',
+  Sentinel:  '/characters/Sentinel.png',
+  Phantom:   '/characters/Phanthom.png',
+}
+
+const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [
+  { to: '/battle',      Icon: Swords,      label: 'Battle',      desc: 'Fight bots · Earn XP · Claim G$',          color: '#ef4444' },
+  { to: '/marketplace', Icon: ShoppingBag, label: 'Armoury',     desc: 'Weapons · Shields · Boosters',             color: '#eab308' },
+  { to: '/leaderboard', Icon: Trophy,      label: 'War Board',   desc: 'Top 50 warriors ranked by tier',           color: '#3b82f6' },
+]
 
 export default function HomePage() {
   const { address } = useConnection()
-  const player = usePlayerStore((s) => s.player)
+  const player = usePlayerStore(s => s.player)
 
   if (!address) return <LandingPage />
-  if (!player) return <OnboardingPrompt />
+  if (!player)  return <OnboardingPrompt />
 
-  const nextRankReward = RANK_G_REWARD[player.rank]
-  const xpToNextRank = XP_PER_RANK - player.xp
+  const def          = CLASS_DEFINITIONS[player.character_class]
+  const heroImg      = CLASS_SOLO[player.character_class]
+  const xpProgress   = (player.xp / XP_PER_RANK) * 100
+  const nextReward   = RANK_G_REWARD[player.rank]
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8 items-start">
-      {/* Sticky player card */}
-      <div className="lg:sticky lg:top-24 w-full lg:w-80 shrink-0 flex flex-col gap-4">
-        <PlayerCard player={player} showShareLink />
+    <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-stretch min-h-[calc(100vh-7rem)]">
 
-        {/* Next rank reward teaser */}
-        <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-bold mb-2">
-            Next Rank Reward
-          </p>
-          <div className="flex items-center justify-between">
-            <span className="text-valor-gold font-bold text-lg">
-              {formatGDollarNumber(nextRankReward)}
-            </span>
-            <span className="text-xs text-slate-500">{xpToNextRank.toLocaleString()} XP away</span>
+      {/* ── CHARACTER PORTRAIT ─────────────────────────────────────── */}
+      <motion.div
+        className="relative lg:w-[340px] shrink-0 rounded-2xl overflow-hidden"
+        style={{ minHeight: 420, background: '#06050f' }}
+        initial={{ opacity: 0, x: -30 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.6, ease: [0.16,1,0.3,1] }}
+      >
+        {/* Class atmosphere behind portrait */}
+        <div className="absolute inset-0" style={{
+          background: `radial-gradient(ellipse 70% 80% at 50% 70%, ${def.accentColor}20 0%, transparent 70%)`,
+        }}/>
+
+        {/* Character image fills the card */}
+        <img
+          src={heroImg}
+          alt={player.character_class}
+          className="absolute inset-0 w-full h-full object-cover object-top select-none"
+          style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
+        />
+
+        {/* Bottom fade into dark */}
+        <div className="absolute inset-x-0 bottom-0 h-40 pointer-events-none" style={{
+          background: 'linear-gradient(0deg, rgba(4,3,12,0.98) 0%, rgba(4,3,12,0.6) 55%, transparent 100%)',
+        }}/>
+        {/* Top fade */}
+        <div className="absolute inset-x-0 top-0 h-16 pointer-events-none" style={{
+          background: 'linear-gradient(180deg, rgba(4,3,12,0.7) 0%, transparent 100%)',
+        }}/>
+
+        {/* Corner scanlines */}
+        <div className="absolute inset-0 pointer-events-none" style={{
+          backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)',
+        }}/>
+
+        {/* Overlay: name + class + stats at bottom */}
+        <div className="absolute inset-x-0 bottom-0 p-5 flex flex-col gap-2">
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="font-display font-black text-white text-xl tracking-wider leading-none">
+                {player.character_name}
+              </p>
+              <span
+                className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-sm mt-1.5 inline-block"
+                style={{ background: def.accentColorDim, color: def.accentColor, border: `1px solid ${def.accentColor}40` }}
+              >
+                {player.character_class}
+              </span>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Rank</p>
+              <p className="font-display font-black text-lg" style={{ color: def.accentColor }}>{player.rank}</p>
+            </div>
           </div>
-          <XpMeter xp={player.xp} max={XP_PER_RANK} rank={player.rank} />
-        </div>
-      </div>
 
-      {/* Dashboard */}
-      <div className="flex-1 flex flex-col gap-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {ACTIONS.map(({ to, Icon, label, desc }) => (
-            <Link
-              key={to}
-              href={to}
-              className="flex flex-col gap-3 p-5 bg-valor-surface border border-valor-border rounded-xl hover:border-valor-gold/50 hover:bg-valor-surface-2 transition-all group"
-            >
-              <Icon
-                size={28}
-                className="text-slate-400 group-hover:text-valor-gold transition-colors"
-                strokeWidth={1.5}
+          {/* XP bar */}
+          <div className="flex flex-col gap-1">
+            <div className="flex justify-between text-[9px] text-slate-600 uppercase tracking-wider">
+              <span>{player.xp.toLocaleString()} XP</span>
+              <span>{XP_PER_RANK.toLocaleString()} XP</span>
+            </div>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.8)' }}>
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: `linear-gradient(90deg, ${def.accentColor}aa, ${def.accentColor})` }}
+                initial={{ width: 0 }}
+                animate={{ width: `${xpProgress}%` }}
+                transition={{ duration: 0.8, delay: 0.3 }}
               />
-              <div>
-                <p className="font-bold text-white group-hover:text-valor-gold transition-colors">
-                  {label}
-                </p>
-                <p className="text-sm text-slate-500 mt-0.5">{desc}</p>
+            </div>
+          </div>
+
+          {/* Mini stat row */}
+          <div className="flex gap-3 pt-0.5">
+            {[
+              { l: 'ATK', v: player.attack_stat,  c: '#ef4444' },
+              { l: 'DEF', v: player.defense_stat, c: '#3b82f6' },
+              { l: 'SPD', v: player.speed_stat,   c: '#22c55e' },
+            ].map(({ l, v, c }) => (
+              <div key={l} className="flex items-center gap-1.5">
+                <span className="text-[8px] font-bold uppercase" style={{ color: 'rgba(100,116,139,0.7)' }}>{l}</span>
+                <span className="text-xs font-black text-white">{v}</span>
               </div>
-            </Link>
+            ))}
+            <div className="ml-auto flex items-center gap-1">
+              <span className="text-[8px] text-slate-600 uppercase">G$</span>
+              <span className="text-xs font-black text-amber-400">{formatGDollarNumber(player.g_earned_lifetime)}</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── RIGHT PANEL ────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col gap-4">
+
+        {/* Welcome banner */}
+        <motion.div
+          className="relative overflow-hidden rounded-xl px-5 py-4"
+          style={{
+            background: `linear-gradient(135deg, ${def.accentColor}14 0%, rgba(4,3,12,0.95) 60%)`,
+            border: `1px solid ${def.accentColor}25`,
+          }}
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+        >
+          <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ background: def.accentColor }}/>
+          <p className="text-[10px] uppercase tracking-[0.25em] font-bold mb-0.5" style={{ color: def.accentColor }}>
+            Arena Status
+          </p>
+          <p className="text-white font-bold text-sm">
+            {player.wins}W <span className="text-slate-600 font-normal mx-1">/</span> {player.losses}L
+            <span className="text-slate-500 text-xs font-normal ml-3">
+              Next rank reward: <span className="text-amber-400 font-bold">{formatGDollarNumber(nextReward)}</span>
+            </span>
+          </p>
+        </motion.div>
+
+        {/* Action cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+          {ACTIONS.map(({ to, Icon, label, desc, color }, i) => (
+            <motion.div
+              key={to}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.45, delay: 0.15 + i * 0.08 }}
+            >
+              <Link
+                href={to}
+                className="group flex flex-col gap-4 p-5 h-full rounded-xl border transition-all relative overflow-hidden"
+                style={{
+                  background: 'rgba(10,10,18,0.9)',
+                  borderColor: 'rgba(42,42,58,0.8)',
+                }}
+              >
+                {/* Hover fill */}
+                <div
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                  style={{ background: `radial-gradient(ellipse 80% 80% at 30% 30%, ${color}10, transparent)` }}
+                />
+                {/* Left accent bar */}
+                <div
+                  className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: color }}
+                />
+
+                <div
+                  className="w-11 h-11 rounded-xl flex items-center justify-center transition-all"
+                  style={{
+                    background: `${color}14`,
+                    border: `1px solid ${color}30`,
+                  }}
+                >
+                  <Icon size={22} style={{ color }} strokeWidth={1.8} />
+                </div>
+
+                <div className="relative z-10">
+                  <p className="font-display font-black text-white text-base tracking-wide group-hover:text-[#eab308] transition-colors">
+                    {label}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1 leading-snug">{desc}</p>
+                </div>
+
+                <ChevronRight
+                  size={14}
+                  className="absolute bottom-4 right-4 text-slate-700 group-hover:text-white group-hover:translate-x-0.5 transition-all"
+                />
+              </Link>
+            </motion.div>
           ))}
         </div>
 
-        {/* Idle prompt for Wanderers/Champions */}
-        {(player.play_style === 'Wanderer' || player.play_style === 'Champion') && (
-          <Link
-            href="/profile"
-            className="flex items-center gap-4 p-5 bg-valor-surface border border-green-800/40 rounded-xl hover:border-green-600/60 transition-all group"
-          >
-            <Leaf size={28} className="text-green-600 group-hover:text-green-400 transition-colors shrink-0" strokeWidth={1.5} />
-            <div className="flex-1">
-              <p className="font-bold text-white group-hover:text-green-400 transition-colors">
-                Idle Mission
-              </p>
-              <p className="text-sm text-slate-500">
-                Deploy your character for 30 min and collect XP + item drops.
-              </p>
+        {/* Special ability card */}
+        <motion.div
+          className="relative overflow-hidden rounded-xl p-4"
+          style={{
+            background: `linear-gradient(135deg, ${def.accentColor}10, rgba(4,3,12,0.9))`,
+            border: `1px solid ${def.accentColor}20`,
+          }}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.45 }}
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: def.accentColorDim, border: `1px solid ${def.accentColor}40` }}>
+              <Zap size={18} style={{ color: def.accentColor }} strokeWidth={2} />
             </div>
-            <ChevronRight size={16} className="text-slate-500 group-hover:text-white transition-colors" />
-          </Link>
-        )}
+            <div>
+              <p className="text-[10px] uppercase tracking-widest font-bold mb-0.5" style={{ color: def.accentColor }}>
+                {player.character_class} Special
+              </p>
+              <p className="text-white font-bold text-sm">{CLASS_DEFINITIONS[player.character_class].special}</p>
+              <p className="text-slate-500 text-xs mt-0.5">{CLASS_DEFINITIONS[player.character_class].specialDesc}</p>
+            </div>
+          </div>
+        </motion.div>
+
       </div>
     </div>
   )
 }
 
-const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string }[] = [
-  { to: '/battle',      Icon: Swords,      label: 'Battle',      desc: 'Fight bots and challengers for XP' },
-  { to: '/marketplace', Icon: ShoppingBag, label: 'Marketplace', desc: 'Buy weapons, shields, boosters'    },
-  { to: '/leaderboard', Icon: Trophy,      label: 'Leaderboard', desc: 'Top 50 warriors by rank'           },
-]
-
 function OnboardingPrompt() {
   const { login } = useLogin()
-
   return (
-    <section className="flex flex-col items-center text-center gap-6 py-16">
+    <section className="flex flex-col items-center text-center gap-6 py-20">
       <motion.div
-        className="w-20 h-20 rounded-full bg-valor-gold/20 flex items-center justify-center border-2 border-valor-gold/50"
-        animate={{ scale: [1, 1.05, 1] }}
+        className="w-24 h-24 rounded-full flex items-center justify-center"
+        style={{ background: 'rgba(234,179,8,0.1)', border: '2px solid rgba(234,179,8,0.3)' }}
+        animate={{ scale: [1,1.05,1] }}
         transition={{ duration: 2, repeat: Infinity }}
       >
-        <Swords size={36} className="text-valor-gold" strokeWidth={1.5} />
+        <Swords size={40} className="text-amber-400" strokeWidth={1.4} />
       </motion.div>
-      <h2 className="text-3xl font-display font-bold text-white">Create Your Character</h2>
-      <p className="text-slate-400 max-w-md leading-relaxed">
-        Build your hero, climb the ranks, and earn real rewards — one character per player,
-        no duplicates.
-      </p>
+      <div>
+        <h2 className="font-display font-black text-white text-3xl tracking-wider">Forge Your Fighter</h2>
+        <p className="text-slate-400 mt-3 max-w-md leading-relaxed text-sm">
+          One character per wallet. Choose your class, customize your warrior, earn your legend.
+        </p>
+      </div>
       <Link
         href="/onboarding"
-        className="px-10 py-3.5 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-base"
+        className="clip-angled px-10 py-4 font-display font-black text-black uppercase tracking-[0.18em]"
+        style={{ background: 'linear-gradient(135deg, #fde047, #eab308)', boxShadow: '0 0 30px rgba(234,179,8,0.4)' }}
       >
         Create Character
       </Link>
-      <button
-        onClick={() => login()}
-        className="text-sm text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
-      >
+      <button onClick={() => login()} className="text-sm text-slate-600 hover:text-slate-300 transition-colors">
         Switch account
       </button>
     </section>

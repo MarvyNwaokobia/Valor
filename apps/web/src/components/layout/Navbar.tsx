@@ -6,65 +6,117 @@ import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
 
 const NAV_LINKS = [
-  { to: '/', label: 'Home' },
-  { to: '/battle', label: 'Battle' },
-  { to: '/marketplace', label: 'Market' },
-  { to: '/leaderboard', label: 'Ranks' },
+  { to: '/',            label: 'Home',   exact: true  },
+  { to: '/battle',      label: 'Battle', exact: false },
+  { to: '/marketplace', label: 'Market', exact: false },
+  { to: '/leaderboard', label: 'Ranks',  exact: false },
 ]
 
 export default function Navbar() {
-  const pathname = usePathname()
-  const player = usePlayerStore((s) => s.player)
+  const pathname  = usePathname()
+  const player    = usePlayerStore(s => s.player)
   const { address } = useConnection()
   const { formatted: gBalance } = useGBalance(address)
 
+  const classDef = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null
+
   return (
-    <nav className="border-b border-valor-border bg-valor-surface/80 backdrop-blur-sm sticky top-0 z-50">
-      <div className="container mx-auto px-4 max-w-6xl h-16 flex items-center justify-between">
-        <div className="flex items-center gap-8">
-          <Link href="/" className="font-display font-bold text-xl text-valor-gold tracking-wider">
+    <nav
+      className="sticky top-0 z-50 glass border-b-0"
+      style={{
+        background: 'rgba(4,3,12,0.88)',
+        backdropFilter: 'blur(16px)',
+        borderBottom: `1px solid ${classDef ? `${classDef.accentColor}30` : 'rgba(42,42,58,0.8)'}`,
+        boxShadow: classDef ? `0 1px 0 0 ${classDef.accentColor}20, 0 4px 24px rgba(0,0,0,0.6)` : '0 4px 24px rgba(0,0,0,0.6)',
+      }}
+    >
+      {/* Gold accent line at very top */}
+      <div className="h-px w-full" style={{
+        background: classDef
+          ? `linear-gradient(90deg, transparent 0%, ${classDef.accentColor}80 30%, ${classDef.accentColor} 50%, ${classDef.accentColor}80 70%, transparent 100%)`
+          : 'linear-gradient(90deg, transparent 0%, rgba(234,179,8,0.5) 30%, rgba(234,179,8,0.8) 50%, rgba(234,179,8,0.5) 70%, transparent 100%)',
+      }}/>
+
+      <div className="container mx-auto px-4 max-w-6xl h-14 flex items-center justify-between">
+
+        {/* LEFT — Logo + nav links */}
+        <div className="flex items-center gap-6">
+          <Link
+            href="/"
+            className="font-display font-black text-lg tracking-[0.12em] relative"
+            style={{
+              color: '#eab308',
+              textShadow: '0 0 20px rgba(234,179,8,0.6)',
+            }}
+          >
             VALOR
           </Link>
-          <div className="hidden md:flex items-center gap-1">
-            {NAV_LINKS.map(({ to, label }) => (
-              <Link
-                key={to}
-                href={to}
-                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                  pathname === to
-                    ? 'text-valor-gold bg-valor-surface-2'
-                    : 'text-slate-400 hover:text-white hover:bg-valor-surface-2'
-                }`}
-              >
-                {label}
-              </Link>
-            ))}
+
+          <div className="hidden md:flex items-center gap-0.5">
+            {NAV_LINKS.map(({ to, label, exact }) => {
+              const isActive = exact ? pathname === to : pathname?.startsWith(to)
+              return (
+                <Link
+                  key={to}
+                  href={to}
+                  className="relative px-3.5 py-2 text-xs font-black uppercase tracking-[0.14em] transition-colors"
+                  style={{ color: isActive ? '#fff' : 'rgba(148,163,184,0.7)' }}
+                >
+                  {label}
+                  {isActive && (
+                    <span
+                      className="absolute bottom-0 inset-x-2 h-0.5 rounded-full"
+                      style={{ background: classDef?.accentColor ?? '#eab308' }}
+                    />
+                  )}
+                </Link>
+              )
+            })}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* G$ live balance */}
+        {/* RIGHT — Balance + character + connect */}
+        <div className="flex items-center gap-2.5">
           {gBalance && (
-            <span className="hidden sm:block text-xs font-bold text-valor-gold bg-valor-gold/10 px-2.5 py-1.5 rounded-lg border border-valor-gold/20">
-              {gBalance}
-            </span>
+            <div
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded"
+              style={{
+                background: 'rgba(234,179,8,0.08)',
+                border: '1px solid rgba(234,179,8,0.2)',
+              }}
+            >
+              <span className="text-[9px] font-bold text-amber-500/60 uppercase tracking-wider">G$</span>
+              <span className="text-xs font-black text-amber-400">{gBalance}</span>
+            </div>
           )}
 
           {player && (
             <Link
               href="/profile"
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded bg-valor-surface-2 border border-valor-border hover:border-valor-gold/50 transition-colors"
+              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded transition-all"
+              style={{
+                background: classDef ? `${classDef.accentColor}10` : 'rgba(26,26,40,0.8)',
+                border: `1px solid ${classDef ? `${classDef.accentColor}30` : 'rgba(42,42,58,0.8)'}`,
+              }}
             >
-              <span className="text-xs text-slate-400">
+              <span className="text-xs font-black text-white tracking-wide">
                 {player.character_name}
               </span>
-              <span className="text-xs font-bold text-valor-gold">
+              <span
+                className="text-[9px] font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider"
+                style={{
+                  background: classDef?.accentColorDim,
+                  color: classDef?.accentColor ?? '#eab308',
+                }}
+              >
                 {player.rank}
               </span>
             </Link>
           )}
+
           <PrivyConnectButton />
         </div>
       </div>

@@ -44,3 +44,104 @@ body {
 ::-webkit-scrollbar-track { background: var(--color-valor-dark); }
 ::-webkit-scrollbar-thumb { background: var(--color-valor-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-valor-gold); }
+
+/* ── Game keyframe animations ───────────────────────────────────── */
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-9px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1; }
+}
+
+@keyframes shimmer-x {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes ember-rise {
+  0%   { transform: translateY(0)   translateX(0)   scale(1);   opacity: 0; }
+  15%  { opacity: 0.9; }
+  85%  { opacity: 0.4; }
+  100% { transform: translateY(-90px) translateX(14px) scale(0.3); opacity: 0; }
+}
+
+@keyframes flicker {
+  0%, 95%, 100% { opacity: 1; }
+  96%            { opacity: 0.7; }
+  98%            { opacity: 0.85; }
+}
+
+@keyframes scan-down {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(234,179,8,0.25); }
+  50%       { border-color: rgba(234,179,8,0.7); }
+}
+
+@keyframes hp-shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-4px); }
+  75%       { transform: translateX(4px); }
+}
+
+@keyframes rank-up {
+  0%   { transform: scale(0.5) rotate(-10deg); opacity: 0; }
+  60%  { transform: scale(1.2) rotate(3deg);   opacity: 1; }
+  100% { transform: scale(1)   rotate(0deg);   opacity: 1; }
+}
+
+/* ── Utility classes ────────────────────────────────────────────── */
+
+.animate-float        { animation: float 3.5s ease-in-out infinite; }
+.animate-pulse-glow   { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-flicker      { animation: flicker 6s ease-in-out infinite; }
+.animate-rank-up      { animation: rank-up 0.6s cubic-bezier(0.16,1,0.3,1) forwards; }
+
+/* Angled clip for game-style buttons/cards */
+.clip-angled-sm  { clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%); }
+.clip-angled     { clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%); }
+.clip-angled-lg  { clip-path: polygon(18px 0%, 100% 0%, calc(100% - 18px) 100%, 0% 100%); }
+
+/* Shimmering gold text */
+.text-shimmer {
+  background: linear-gradient(90deg, #b45309 0%, #fde047 40%, #eab308 60%, #b45309 100%);
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: shimmer-x 3s linear infinite;
+}
+
+/* Glass panel — dark translucent surface */
+.glass {
+  background: rgba(18,18,26,0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(42,42,58,0.8);
+}
+
+/* Game panel with gold left accent */
+.panel-gold {
+  border-left: 3px solid #eab308;
+  background: rgba(18,18,26,0.9);
+}
+
+/* Scanline overlay — add as child of a relative container */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}

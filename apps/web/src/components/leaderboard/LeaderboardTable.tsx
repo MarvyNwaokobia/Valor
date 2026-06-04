@@ -1,75 +1,60 @@
+'use client'
+
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '@/lib/supabase'
 import type { Player } from '@/types'
-import RankBadge from '@/components/player-card/RankBadge'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_COLORS } from '@/lib/constants'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
 
-interface Props {
-  currentWallet: string | undefined
-}
+interface Props { currentWallet: string | undefined }
 
-const RANK_ORDER = ['Diamond', 'Platinum', 'Gold', 'Silver', 'Bronze']
-
-function sortLeaderboard(players: Player[]): Player[] {
+const RANK_ORDER = ['Diamond','Platinum','Gold','Silver','Bronze']
+function sortLeaderboard(players: Player[]) {
   return [...players].sort((a, b) => {
-    const rankDiff = RANK_ORDER.indexOf(a.rank) - RANK_ORDER.indexOf(b.rank)
-    return rankDiff !== 0 ? rankDiff : b.xp - a.xp
+    const d = RANK_ORDER.indexOf(a.rank) - RANK_ORDER.indexOf(b.rank)
+    return d !== 0 ? d : b.xp - a.xp
   })
 }
 
+const MEDAL = ['🥇','🥈','🥉']
+
+const CLASS_ACCENT: Record<string, string> = {
+  Berserker: '#ef4444',
+  Sentinel:  '#3b82f6',
+  Phantom:   '#8b5cf6',
+}
+
 export default function LeaderboardTable({ currentWallet }: Props) {
-  const [players, setPlayers] = useState<Player[]>([])
-  const [myPosition, setMyPosition] = useState<number | null>(null)
-  const [myPlayer, setMyPlayer] = useState<Player | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [players,       setPlayers]       = useState<Player[]>([])
+  const [myPosition,    setMyPosition]    = useState<number | null>(null)
+  const [loading,       setLoading]       = useState(true)
   const [updatedWallet, setUpdatedWallet] = useState<string | null>(null)
 
   const loadLeaderboard = useCallback(async () => {
-    const { data } = await supabase
-      .from('players')
-      .select('*')
-
+    const { data } = await supabase.from('players').select('*')
     if (!data) return
-
     const sorted = sortLeaderboard(data)
     setPlayers(sorted.slice(0, 50))
-
     if (currentWallet) {
-      const pos = sorted.findIndex(
-        (p) => p.wallet_address.toLowerCase() === currentWallet.toLowerCase(),
-      )
+      const pos = sorted.findIndex(p => p.wallet_address.toLowerCase() === currentWallet.toLowerCase())
       setMyPosition(pos >= 0 ? pos + 1 : null)
-      setMyPlayer(sorted.find((p) => p.wallet_address.toLowerCase() === currentWallet.toLowerCase()) ?? null)
     }
-
     setLoading(false)
   }, [currentWallet])
 
   useEffect(() => {
     loadLeaderboard()
-
-    const sub = supabase
-      .channel('leaderboard-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'players' },
-        (payload) => {
-          const updated = payload.new as Player
-          setUpdatedWallet(updated.wallet_address)
-          setTimeout(() => setUpdatedWallet(null), 1500)
-          setPlayers((prev) => {
-            const next = prev.map((p) =>
-              p.wallet_address === updated.wallet_address ? updated : p,
-            )
-            return sortLeaderboard(next)
-          })
-        },
-      )
+    const sub = supabase.channel('leaderboard-realtime')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'players' }, payload => {
+        const updated = payload.new as Player
+        setUpdatedWallet(updated.wallet_address)
+        setTimeout(() => setUpdatedWallet(null), 1500)
+        setPlayers(prev => sortLeaderboard(prev.map(p => p.wallet_address === updated.wallet_address ? updated : p)))
+      })
       .subscribe()
-
     return () => { supabase.removeChannel(sub) }
   }, [loadLeaderboard])
 
@@ -77,7 +62,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
     return (
       <div className="flex flex-col gap-2">
         {Array.from({ length: 10 }).map((_, i) => (
-          <div key={i} className="h-16 bg-valor-surface rounded-xl animate-pulse" />
+          <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: 'rgba(18,18,26,0.6)' }} />
         ))}
       </div>
     )
@@ -85,96 +70,109 @@ export default function LeaderboardTable({ currentWallet }: Props) {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* My position banner if outside top 50 */}
-      {myPosition && myPosition > 50 && myPlayer && (
-        <div className="p-3 bg-valor-gold/10 border border-valor-gold/30 rounded-xl text-sm font-bold text-valor-gold text-center">
+      {myPosition && myPosition > 50 && (
+        <div className="p-3 rounded-xl text-sm font-black text-amber-400 text-center"
+          style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)' }}>
           Your position: #{myPosition}
         </div>
       )}
 
+      {/* Top 3 podium */}
+      {players.slice(0, 3).length > 0 && (
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          {[players[1], players[0], players[2]].map((p, podiumIdx) => {
+            if (!p) return <div key={podiumIdx} />
+            const rank = podiumIdx === 0 ? 2 : podiumIdx === 1 ? 1 : 3
+            const accent = CLASS_ACCENT[p.character_class] ?? '#eab308'
+            const isMe = p.wallet_address.toLowerCase() === currentWallet?.toLowerCase()
+            const heights = ['h-24', 'h-28', 'h-20']
+            return (
+              <motion.div key={p.wallet_address}
+                className={`relative flex flex-col items-center justify-end p-3 rounded-xl overflow-hidden ${heights[podiumIdx]}`}
+                style={{ background: `linear-gradient(180deg, ${accent}12, rgba(4,3,12,0.95))`, border: `1px solid ${accent}30` }}
+                initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: rank * 0.08 }}>
+                <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: accent }}/>
+                <span className="text-lg mb-0.5">{MEDAL[rank - 1]}</span>
+                <p className="font-black text-white text-xs text-center truncate w-full">{p.character_name}</p>
+                <span className="text-[8px] uppercase tracking-wider font-bold" style={{ color: accent }}>{p.rank}</span>
+                {isMe && <span className="absolute top-1.5 right-1.5 text-[7px] font-black bg-amber-400 text-black px-1 rounded-sm">YOU</span>}
+              </motion.div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Rest of the list */}
       <AnimatePresence initial={false}>
         {players.map((player, i) => {
-          const isMe = player.wallet_address.toLowerCase() === currentWallet?.toLowerCase()
-          const pos = i + 1
-          const rankColor = RANK_COLORS[player.rank]
-          const isUpdating = updatedWallet === player.wallet_address
+          const isMe        = player.wallet_address.toLowerCase() === currentWallet?.toLowerCase()
+          const pos         = i + 1
+          const rankColor   = RANK_COLORS[player.rank]
+          const classAccent = CLASS_ACCENT[player.character_class] ?? rankColor
+          const isUpdating  = updatedWallet === player.wallet_address
 
           return (
-            <motion.div
-              key={player.wallet_address}
-              layout
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-            >
+            <motion.div key={player.wallet_address} layout
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}>
               <Link
                 href={`/card/${player.wallet_address}`}
-                className={`flex items-center gap-4 p-3.5 rounded-xl border transition-all hover:bg-valor-surface-2 ${
-                  isMe
-                    ? 'border-valor-gold/50 bg-valor-gold/5'
-                    : isUpdating
-                      ? 'border-green-500/40 bg-green-500/5'
-                      : 'border-valor-border bg-valor-surface'
-                }`}
+                className="group flex items-center gap-3 px-4 py-3 rounded-xl border transition-all"
+                style={{
+                  background:   isMe ? `${classAccent}08` : isUpdating ? 'rgba(34,197,94,0.05)' : 'rgba(8,8,14,0.85)',
+                  borderColor:  isMe ? `${classAccent}40` : isUpdating ? 'rgba(34,197,94,0.3)' : 'rgba(42,42,58,0.7)',
+                }}
               >
                 {/* Position */}
-                <div className="w-9 text-center shrink-0">
-                  {pos === 1 ? (
-                    <span className="text-xl">🥇</span>
-                  ) : pos === 2 ? (
-                    <span className="text-xl">🥈</span>
-                  ) : pos === 3 ? (
-                    <span className="text-xl">🥉</span>
-                  ) : (
-                    <span className="font-bold text-slate-500 text-sm">#{pos}</span>
-                  )}
+                <div className="w-8 text-center shrink-0">
+                  {pos <= 3
+                    ? <span className="text-base">{MEDAL[pos - 1]}</span>
+                    : <span className="font-black text-slate-600 text-xs">#{pos}</span>
+                  }
                 </div>
 
-                {/* Avatar */}
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-xl border-2 shrink-0"
-                  style={{ borderColor: `${rankColor}66` }}
-                >
-                  {player.avatar}
-                </div>
+                {/* Class color bar */}
+                <div className="w-0.5 h-8 rounded-full shrink-0" style={{ background: classAccent, opacity: 0.6 }}/>
 
                 {/* Name + rank */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="font-bold text-white text-sm truncate">
+                    <p className="font-black text-white text-sm truncate group-hover:text-amber-400 transition-colors">
                       {player.character_name}
                     </p>
-                    {isMe && (
-                      <span className="text-xs bg-valor-gold text-black px-1.5 py-0.5 rounded font-bold shrink-0">
-                        YOU
-                      </span>
-                    )}
+                    {isMe && <span className="text-[7px] bg-amber-400 text-black font-black px-1.5 py-0.5 rounded-sm uppercase shrink-0">You</span>}
+                    {isUpdating && <span className="text-[7px] bg-green-500 text-black font-black px-1.5 py-0.5 rounded-sm uppercase shrink-0 animate-pulse">Live</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <RankBadge rank={player.rank} />
-                    <span className="text-xs text-slate-500">{player.xp.toLocaleString()} XP</span>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-sm"
+                      style={{ background: `${classAccent}15`, color: classAccent }}>
+                      {player.character_class}
+                    </span>
+                    <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rankColor }}>
+                      {player.rank}
+                    </span>
+                    <span className="text-[9px] text-slate-600">{player.xp.toLocaleString()} XP</span>
                   </div>
                 </div>
 
                 {/* Stats */}
-                <div className="text-right hidden sm:block shrink-0">
-                  <p className="text-xs font-bold text-valor-gold">
-                    {formatGDollarNumber(player.g_earned_lifetime)}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {player.wins}W / {player.losses}L
+                <div className="text-right hidden sm:flex flex-col gap-0.5 shrink-0">
+                  <p className="text-xs font-black text-amber-400">{formatGDollarNumber(player.g_earned_lifetime)}</p>
+                  <p className="text-[9px] text-slate-600">
+                    <span className="text-green-500 font-bold">{player.wins}W</span>
+                    <span className="mx-0.5 text-slate-700">/</span>
+                    <span className="text-red-500 font-bold">{player.losses}L</span>
                   </p>
                 </div>
 
                 {/* XP bar strip */}
-                <div className="w-12 shrink-0 hidden md:block">
-                  <div className="h-1.5 bg-valor-surface-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${(player.xp / 1000) * 100}%`,
-                        background: rankColor,
-                      }}
+                <div className="w-10 shrink-0 hidden md:block">
+                  <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.8)' }}>
+                    <motion.div className="h-full rounded-full"
+                      style={{ background: rankColor }}
+                      animate={{ width: `${Math.min((player.xp / 1000) * 100, 100)}%` }}
+                      transition={{ duration: 0.5 }}
                     />
                   </div>
                 </div>

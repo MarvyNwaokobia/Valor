@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation'
 import { Home, Swords, User, ShoppingBag, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useConnection } from 'wagmi'
+import { usePlayerStore } from '@/stores/usePlayerStore'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
 
 const NAV_ITEMS: { to: string; Icon: LucideIcon; label: string; exact: boolean }[] = [
   { to: '/',            Icon: Home,        label: 'Home',    exact: true  },
@@ -16,29 +18,54 @@ const NAV_ITEMS: { to: string; Icon: LucideIcon; label: string; exact: boolean }
 
 export default function MobileNav() {
   const { address } = useConnection()
-  const pathname = usePathname()
+  const pathname    = usePathname()
+  const player      = usePlayerStore(s => s.player)
+  const classDef    = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null
+  const accent      = classDef?.accentColor ?? '#eab308'
 
   if (!address) return null
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-valor-surface/95 backdrop-blur-sm border-t border-valor-border safe-area-pb">
-      <div className="flex items-center justify-around h-14">
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-50 md:hidden"
+      style={{
+        background: 'rgba(4,3,12,0.96)',
+        backdropFilter: 'blur(16px)',
+        borderTop: `1px solid ${accent}25`,
+        boxShadow: `0 -4px 24px rgba(0,0,0,0.8), 0 -1px 0 ${accent}15`,
+      }}
+    >
+      {/* Top accent line */}
+      <div className="h-px w-full" style={{
+        background: `linear-gradient(90deg, transparent, ${accent}60 30%, ${accent} 50%, ${accent}60 70%, transparent)`,
+      }}/>
+
+      <div className="flex items-center justify-around h-14 px-1">
         {NAV_ITEMS.map(({ to, Icon, label, exact }) => {
           const isActive = exact ? pathname === to : !!pathname?.startsWith(to)
           return (
             <Link
               key={to}
               href={to}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-                isActive ? 'text-valor-gold' : 'text-slate-500'
-              }`}
+              className="flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all relative"
             >
+              {isActive && (
+                <span
+                  className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-4 h-0.5 rounded-full"
+                  style={{ background: accent }}
+                />
+              )}
               <Icon
-                size={20}
-                className={`transition-transform ${isActive ? 'scale-110' : ''}`}
-                strokeWidth={isActive ? 2.5 : 1.8}
+                size={18}
+                strokeWidth={isActive ? 2.5 : 1.6}
+                style={{ color: isActive ? accent : 'rgba(100,116,139,0.7)' }}
               />
-              <span className="text-xs font-bold leading-none">{label}</span>
+              <span
+                className="text-[9px] font-black uppercase tracking-wider leading-none"
+                style={{ color: isActive ? accent : 'rgba(71,85,105,0.8)' }}
+              >
+                {label}
+              </span>
             </Link>
           )
         })}
