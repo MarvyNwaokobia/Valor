@@ -95,10 +95,14 @@ export default function LandingPage() {
           />
         </div>
 
-        {/* ── SENTINEL — center, dominant ───────────────────────── */}
+        {/* ── SENTINEL — true center, dominant ─────────────────────
+            Container is shifted 3% left because the knight's body
+            in the source image sits right of the image midpoint.
+            object-position also pulls the crop window left so the
+            character spine aligns with the viewport centre.        */}
         <div
-          className="absolute bottom-0 left-1/2 -translate-x-1/2"
-          style={{ width: '56%', height: '100%', zIndex: 2 }}
+          className="absolute bottom-0 -translate-x-1/2"
+          style={{ left: '47%', width: '56%', height: '100%', zIndex: 2 }}
         >
           <img
             src="/characters/Sentinel.png"
@@ -107,7 +111,7 @@ export default function LandingPage() {
             className="w-full h-full"
             style={{
               objectFit: 'cover',
-              objectPosition: 'center 8%',
+              objectPosition: '42% 8%',
               mixBlendMode: 'screen',
               filter: 'brightness(1.38) contrast(1.1) saturate(1.0)',
               maskImage:
