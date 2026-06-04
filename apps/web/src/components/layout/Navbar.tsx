@@ -23,6 +23,9 @@ export default function Navbar() {
 
   const classDef = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null
 
+  // Landing page is fullscreen — navbar competes with it
+  if (!address) return null
+
   return (
     <nav
       className="sticky top-0 z-50 glass border-b-0"
