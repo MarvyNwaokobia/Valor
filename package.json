@@ -1,5 +1,6 @@
 {
   "name": "valor",
+  "type": "module",
   "private": true,
   "workspaces": [
     "apps/web",
