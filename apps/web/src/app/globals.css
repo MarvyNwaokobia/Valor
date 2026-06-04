@@ -119,47 +119,90 @@ body {
 .animate-flicker      { animation: flicker 6s ease-in-out infinite; }
 .animate-rank-up      { animation: rank-up 0.6s cubic-bezier(0.16,1,0.3,1) forwards; }
 
-/* ── Landing page — responsive character positioning ────────────────────── */
-/* Mobile: characters are lifted off the bottom and capped in height so they
-   don't bleed into the title zone (top) or CTA zone (bottom).
-   Desktop: characters fill the screen for the full cinematic effect.         */
+/* ── Landing page — responsive layout system ────────────────────────────── */
+/*
+   Mobile strategy: Sentinel fills the viewport as the singular hero.
+   Berserker fire + Phantom void bleed in from the edges as pure atmosphere
+   (no visible character form — only color and light).
 
-.lp-char-sentinel {
-  bottom: 22%;
-  height: 60%;
+   Desktop strategy: all three characters at full height, composited with
+   screen blend. The cinematic three-faction scene.
+*/
+
+/* Sentinel: full-bleed hero on mobile → positioned center on desktop */
+.lp-sentinel {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
 }
-.lp-char-flank {
-  bottom: 22%;
-  height: 46%;
-}
-.lp-ground {
-  height: 30%;
-  background: linear-gradient(
-    0deg,
-    rgba(4,3,12,1) 0%,
-    rgba(4,3,12,0.96) 28%,
-    rgba(4,3,12,0.78) 55%,
-    transparent 100%
+.lp-sentinel-img {
+  object-position: center 8%;
+  /* Mobile mask: only top/bottom soft fade, full width */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%, black 5%, black 88%, transparent 100%
   );
-}
-.lp-sky {
-  height: 30%;
-  background: linear-gradient(
-    180deg,
-    rgba(4,3,12,0.98) 0%,
-    rgba(4,3,12,0.72) 50%,
-    transparent 100%
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%, black 5%, black 88%, transparent 100%
   );
 }
 
 @media (min-width: 768px) {
-  .lp-char-sentinel {
+  .lp-sentinel {
+    inset: auto;
     bottom: 0;
+    left: 47%;
+    width: 56%;
     height: 100%;
+    transform: translateX(-50%);
   }
-  .lp-char-flank {
-    bottom: 0;
-    height: 88%;
+  .lp-sentinel-img {
+    object-position: 42% 8%;
+    /* Desktop mask: side fades so it blends with flankers */
+    -webkit-mask-image:
+      linear-gradient(to bottom, transparent 0%, black 6%, black 84%, transparent 100%),
+      linear-gradient(to right,  transparent 0%, black 14%, black 86%, transparent 100%);
+    mask-image:
+      linear-gradient(to bottom, transparent 0%, black 6%, black 84%, transparent 100%),
+      linear-gradient(to right,  transparent 0%, black 14%, black 86%, transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+  }
+}
+
+/* Sky overlay — stronger on mobile to keep title legible over full-bleed hero */
+.lp-sky {
+  height: 40%;
+  background: linear-gradient(
+    180deg,
+    rgba(4,3,12,0.98) 0%,
+    rgba(4,3,12,0.86) 32%,
+    rgba(4,3,12,0.48) 62%,
+    transparent 100%
+  );
+}
+/* Ground overlay — solid enough for CTA legibility on mobile */
+.lp-ground {
+  height: 36%;
+  background: linear-gradient(
+    0deg,
+    rgba(4,3,12,1)    0%,
+    rgba(4,3,12,0.97) 22%,
+    rgba(4,3,12,0.78) 50%,
+    transparent       100%
+  );
+}
+
+@media (min-width: 768px) {
+  .lp-sky {
+    height: 38%;
+    background: linear-gradient(
+      180deg,
+      rgba(4,3,12,0.96) 0%,
+      rgba(4,3,12,0.68) 50%,
+      transparent 100%
+    );
   }
   .lp-ground {
     height: 22%;
@@ -167,15 +210,6 @@ body {
       0deg,
       rgba(4,3,12,0.99) 0%,
       rgba(4,3,12,0.75) 45%,
-      transparent 100%
-    );
-  }
-  .lp-sky {
-    height: 38%;
-    background: linear-gradient(
-      180deg,
-      rgba(4,3,12,0.96) 0%,
-      rgba(4,3,12,0.68) 50%,
       transparent 100%
     );
   }

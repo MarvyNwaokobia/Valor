@@ -57,21 +57,86 @@ export default function LandingPage() {
       }}/>
 
       {/* ═══════════════════════════════════════════════════════════
-          CHARACTERS — mix-blend-mode: screen
-          Screen blend against near-black (#04030c) base means
-          dark background pixels in each PNG become transparent.
-          No seams. No rectangles. Only light survives.
+          CHARACTERS
 
-          Each image is also brightness-boosted so dark character
-          details remain visible through the screen blend.
+          Mobile: Sentinel fills the full viewport as the singular
+          hero. Berserker and Phantom are pure atmosphere — their
+          fire and void smoke bleed in from the edges as color and
+          light only. No character forms compete with the hero.
+
+          Desktop: all three characters at proper scale, composited
+          with screen blend. Full cinematic three-faction scene.
       ═══════════════════════════════════════════════════════════ */}
       <div className="absolute inset-0 pointer-events-none">
 
-        {/* ── BERSERKER — left ──────────────────────────────────── */}
-        {/* object-position crops to the male character (left half of the duo image) */}
+        {/* ── MOBILE ONLY: Berserker fire bleeds from left edge ─── */}
+        {/* objectPosition focuses on the fire/fortress left zone.
+            Heavy rightward mask means only atmosphere is visible —
+            no character form competes with the Sentinel hero.      */}
         <div
-          className="lp-char-flank absolute left-0"
-          style={{ width: '52%' }}
+          className="md:hidden absolute inset-y-0 left-0"
+          style={{ width: '45%' }}
+        >
+          <img
+            src="/characters/Berserkers.png"
+            alt=""
+            aria-hidden
+            className="w-full h-full"
+            style={{
+              objectFit: 'cover',
+              objectPosition: '2% 22%',
+              mixBlendMode: 'screen',
+              filter: 'brightness(1.6) contrast(1.1) saturate(1.12)',
+              WebkitMaskImage:
+                'linear-gradient(to right, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 18%, rgba(0,0,0,0.45) 50%, transparent 82%)',
+              maskImage:
+                'linear-gradient(to right, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 18%, rgba(0,0,0,0.45) 50%, transparent 82%)',
+            }}
+          />
+        </div>
+
+        {/* ── MOBILE ONLY: Phantom void bleeds from right edge ──── */}
+        <div
+          className="md:hidden absolute inset-y-0 right-0"
+          style={{ width: '45%' }}
+        >
+          <img
+            src="/characters/Phanthom.png"
+            alt=""
+            aria-hidden
+            className="w-full h-full"
+            style={{
+              objectFit: 'cover',
+              objectPosition: '98% 22%',
+              mixBlendMode: 'screen',
+              filter: 'brightness(1.8) contrast(1.18) saturate(1.22)',
+              WebkitMaskImage:
+                'linear-gradient(to left, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 18%, rgba(0,0,0,0.45) 50%, transparent 82%)',
+              maskImage:
+                'linear-gradient(to left, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.85) 18%, rgba(0,0,0,0.45) 50%, transparent 82%)',
+            }}
+          />
+        </div>
+
+        {/* ── SENTINEL — full-bleed hero (mobile) · center (desktop) */}
+        <div className="lp-sentinel">
+          <img
+            src="/characters/Sentinel.png"
+            alt=""
+            aria-hidden
+            className="lp-sentinel-img w-full h-full"
+            style={{
+              objectFit: 'cover',
+              mixBlendMode: 'screen',
+              filter: 'brightness(1.4) contrast(1.1) saturate(1.0)',
+            }}
+          />
+        </div>
+
+        {/* ── DESKTOP ONLY: Berserker character ────────────────────*/}
+        <div
+          className="hidden md:block absolute bottom-0 left-0"
+          style={{ width: '52%', height: '88%' }}
         >
           <img
             src="/characters/Berserkers.png"
@@ -83,54 +148,22 @@ export default function LandingPage() {
               objectPosition: '20% 12%',
               mixBlendMode: 'screen',
               filter: 'brightness(1.3) contrast(1.12) saturate(1.08)',
-              maskImage:
-                'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
-                'linear-gradient(to right, black 0%, black 72%, transparent 100%)',
-              maskComposite: 'intersect',
               WebkitMaskImage:
                 'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
                 'linear-gradient(to right, black 0%, black 72%, transparent 100%)',
+              maskImage:
+                'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
+                'linear-gradient(to right, black 0%, black 72%, transparent 100%)',
               WebkitMaskComposite: 'source-in',
+              maskComposite: 'intersect',
             }}
           />
         </div>
 
-        {/* ── SENTINEL — true center, dominant ─────────────────────
-            Container is shifted 3% left because the knight's body
-            in the source image sits right of the image midpoint.
-            object-position also pulls the crop window left so the
-            character spine aligns with the viewport centre.        */}
+        {/* ── DESKTOP ONLY: Phantom character ──────────────────────*/}
         <div
-          className="lp-char-sentinel absolute -translate-x-1/2"
-          style={{ left: '47%', width: '56%', zIndex: 2 }}
-        >
-          <img
-            src="/characters/Sentinel.png"
-            alt=""
-            aria-hidden
-            className="w-full h-full"
-            style={{
-              objectFit: 'cover',
-              objectPosition: '42% 8%',
-              mixBlendMode: 'screen',
-              filter: 'brightness(1.38) contrast(1.1) saturate(1.0)',
-              maskImage:
-                'linear-gradient(to bottom, transparent 0%, black 6%, black 84%, transparent 100%), ' +
-                'linear-gradient(to right, transparent 0%, black 14%, black 86%, transparent 100%)',
-              maskComposite: 'intersect',
-              WebkitMaskImage:
-                'linear-gradient(to bottom, transparent 0%, black 6%, black 84%, transparent 100%), ' +
-                'linear-gradient(to right, transparent 0%, black 14%, black 86%, transparent 100%)',
-              WebkitMaskComposite: 'source-in',
-            }}
-          />
-        </div>
-
-        {/* ── PHANTOM — right ───────────────────────────────────── */}
-        {/* Phantom is dark tactical gear — needs most brightness boost */}
-        <div
-          className="lp-char-flank absolute right-0"
-          style={{ width: '52%' }}
+          className="hidden md:block absolute bottom-0 right-0"
+          style={{ width: '52%', height: '88%' }}
         >
           <img
             src="/characters/Phanthom.png"
@@ -142,14 +175,14 @@ export default function LandingPage() {
               objectPosition: '80% 12%',
               mixBlendMode: 'screen',
               filter: 'brightness(1.55) contrast(1.18) saturate(1.15)',
-              maskImage:
-                'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
-                'linear-gradient(to left, black 0%, black 72%, transparent 100%)',
-              maskComposite: 'intersect',
               WebkitMaskImage:
                 'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
                 'linear-gradient(to left, black 0%, black 72%, transparent 100%)',
+              maskImage:
+                'linear-gradient(to bottom, transparent 0%, black 8%, black 82%, transparent 100%), ' +
+                'linear-gradient(to left, black 0%, black 72%, transparent 100%)',
               WebkitMaskComposite: 'source-in',
+              maskComposite: 'intersect',
             }}
           />
         </div>
