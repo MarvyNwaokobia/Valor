@@ -7,15 +7,19 @@ import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterCreation from '@/components/onboarding/CharacterCreation'
+import CharacterSelectScreen, { type Gender } from '@/components/onboarding/CharacterSelectScreen'
+import type { CharacterClass } from '@/lib/classes'
 
-type Step = 'verify' | 'create'
+type Step = 'verify' | 'select' | 'create'
 
 export default function OnboardingPage() {
   const { address } = useConnection()
   const router = useRouter()
   const player = usePlayerStore((s) => s.player)
   // DEV BYPASS: skip GoodDollar verify for testing — restore to 'verify' before launch
-  const [step, setStep] = useState<Step>('create')
+  const [step, setStep] = useState<Step>('select')
+  const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
+  const [selectedGender, setSelectedGender] = useState<Gender>('male')
 
   useEffect(() => {
     if (player) router.replace('/')
@@ -30,9 +34,27 @@ export default function OnboardingPage() {
     )
   }
 
-  // Character creation takes over the full viewport — render outside the layout container
+  if (step === 'select') {
+    return (
+      <CharacterSelectScreen
+        onSelect={(cls, gen) => {
+          setSelectedClass(cls)
+          setSelectedGender(gen)
+          setStep('create')
+        }}
+      />
+    )
+  }
+
   if (step === 'create') {
-    return <CharacterCreation walletAddress={address} onCreated={() => router.replace('/')} />
+    return (
+      <CharacterCreation
+        walletAddress={address}
+        initialClass={selectedClass}
+        initialGender={selectedGender}
+        onCreated={() => router.replace('/')}
+      />
+    )
   }
 
   // Verify step still uses the contained layout

@@ -31,6 +31,8 @@ type Tab = 'look' | 'details'
 
 interface Props {
   walletAddress: `0x${string}`
+  initialClass?: CharacterClass
+  initialGender?: 'male' | 'female'
   onCreated: () => void
 }
 
@@ -160,12 +162,13 @@ function SmokeWisps({ color }: { color: string }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CharacterCreation({ walletAddress, onCreated }: Props) {
+export default function CharacterCreation({ walletAddress, initialClass = 'Berserker', initialGender = 'male', onCreated }: Props) {
   const setPlayer = usePlayerStore(s => s.setPlayer)
   const characterName = useMemo(() => deterministicName(walletAddress),[walletAddress])
   const variance = useMemo(() => statVarianceFromWallet(walletAddress),[walletAddress])
 
-  const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
+  const [selectedClass, setSelectedClass] = useState<CharacterClass>(initialClass)
+  const [gender] = useState<'male' | 'female'>(initialGender)
   const [skinTone, setSkinTone] = useState(SKIN_TONES[1])
   const [hairStyle, setHairStyle] = useState(0)
   const [hairColor, setHairColor] = useState(HAIR_COLORS[0])
@@ -192,7 +195,7 @@ export default function CharacterCreation({ walletAddress, onCreated }: Props) {
       username: null,
       display_name: null,
       character_class: selectedClass,
-      character_customization: { skin:skinTone, hair:`${hairStyle}:${hairColor}` },
+      character_customization: { skin: skinTone, hair: `${hairStyle}:${hairColor}`, gender },
       rank: 'Bronze' as const,
       xp: 0,
       attack_stat: stats.attack,
@@ -291,6 +294,7 @@ export default function CharacterCreation({ walletAddress, onCreated }: Props) {
               skinTone={skinTone}
               hairStyle={hairStyle}
               hairColor={hairColor}
+              gender={gender}
               height="100%"
             />
           </motion.div>

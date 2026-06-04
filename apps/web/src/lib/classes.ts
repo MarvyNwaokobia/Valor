@@ -1,4 +1,4 @@
-export const CHARACTER_CLASSES = ['Berserker', 'Sentinel', 'Phantom'] as const
+export const CHARACTER_CLASSES = ['Berserker', 'Sentinel', 'Phantom', 'Warden', 'Specter', 'Vanguard'] as const
 export type CharacterClass = (typeof CHARACTER_CLASSES)[number]
 
 export interface ClassDefinition {
@@ -6,11 +6,8 @@ export interface ClassDefinition {
   name: string
   tagline: string
   description: string
-  /** Primary accent color (hex) */
   accentColor: string
-  /** Dimmed accent for backgrounds (rgba) */
   accentColorDim: string
-  /** Glow shadow color (rgba) */
   glowColor: string
   stats: {
     attack: number
@@ -21,6 +18,34 @@ export interface ClassDefinition {
   special: string
   specialDesc: string
   playStyle: string
+}
+
+/** Character portrait image paths keyed by class + gender */
+export const CHARACTER_IMAGES: Record<CharacterClass, { male: string; female: string }> = {
+  Berserker: {
+    male:   '/characters/classes/berserker-male.jpg',
+    female: '/characters/classes/berserker-female.jpg',
+  },
+  Sentinel: {
+    male:   '/characters/classes/sentinel-male.jpg',
+    female: '/characters/classes/sentinel-female.jpg',
+  },
+  Phantom: {
+    male:   '/characters/classes/phantom-male.jpg',
+    female: '/characters/classes/phantom-female.jpg',
+  },
+  Warden: {
+    male:   '/characters/classes/warden-male.jpg',
+    female: '/characters/classes/warden-female.jpg',
+  },
+  Specter: {
+    male:   '/characters/classes/specter-male.jpg',
+    female: '/characters/classes/specter-female.jpg',
+  },
+  Vanguard: {
+    male:   '/characters/classes/vanguard-male.jpg',
+    female: '/characters/classes/vanguard-female.jpg',
+  },
 }
 
 export const CLASS_DEFINITIONS: Record<CharacterClass, ClassDefinition> = {
@@ -34,7 +59,7 @@ export const CLASS_DEFINITIONS: Record<CharacterClass, ClassDefinition> = {
     accentColorDim: 'rgba(239,68,68,0.12)',
     glowColor: 'rgba(239,68,68,0.5)',
     stats: { attack: 16, defense: 7, speed: 9 },
-    weapon: 'Great Axe',
+    weapon: 'Dual Battle Axes',
     special: 'Berserker Rage',
     specialDesc: 'Deals 3× base damage. No holding back.',
     playStyle: 'Aggressive — win fast or fall hard.',
@@ -66,10 +91,58 @@ export const CLASS_DEFINITIONS: Record<CharacterClass, ClassDefinition> = {
     accentColorDim: 'rgba(139,92,246,0.12)',
     glowColor: 'rgba(139,92,246,0.5)',
     stats: { attack: 12, defense: 7, speed: 15 },
-    weapon: 'Twin Daggers',
+    weapon: 'Twin Void Blades',
     special: 'Shadow Strike',
     specialDesc: 'Always strikes first. Bypasses enemy defense.',
     playStyle: 'Evasive — speed is your armor.',
+  },
+
+  Warden: {
+    id: 'Warden',
+    name: 'Warden',
+    tagline: 'Ancient. Immovable. Eternal.',
+    description:
+      'Bound to the earth itself. Wardens channel nature\'s raw force into devastating blows that shatter armor. The older the fight, the stronger they get.',
+    accentColor: '#22c55e',
+    accentColorDim: 'rgba(34,197,94,0.12)',
+    glowColor: 'rgba(34,197,94,0.5)',
+    stats: { attack: 11, defense: 18, speed: 5 },
+    weapon: 'Stone War Hammer',
+    special: 'Earth Crush',
+    specialDesc: 'Ignores 40% of enemy defense. The ground itself answers.',
+    playStyle: 'Endurance — absorb everything, crush the rest.',
+  },
+
+  Specter: {
+    id: 'Specter',
+    name: 'Specter',
+    tagline: 'You cannot fight what you cannot see.',
+    description:
+      'Masters of arcane energy and misdirection. Specters bend the rules of combat — attacking from impossible angles, nullifying abilities, and vanishing between strikes.',
+    accentColor: '#e2e8f0',
+    accentColorDim: 'rgba(226,232,240,0.08)',
+    glowColor: 'rgba(226,232,240,0.45)',
+    stats: { attack: 13, defense: 9, speed: 12 },
+    weapon: 'Arcane Pistols',
+    special: 'Void Shift',
+    specialDesc: 'Teleports behind the enemy. Next attack is guaranteed critical.',
+    playStyle: 'Tactical — control the fight, never be where expected.',
+  },
+
+  Vanguard: {
+    id: 'Vanguard',
+    name: 'Vanguard',
+    tagline: 'First in. Last standing.',
+    description:
+      'Built like a weapon, fights like a war. Vanguards crash into every battle with overwhelming force — their molten armor converts incoming damage into fuel for the next strike.',
+    accentColor: '#f97316',
+    accentColorDim: 'rgba(249,115,22,0.12)',
+    glowColor: 'rgba(249,115,22,0.5)',
+    stats: { attack: 18, defense: 12, speed: 5 },
+    weapon: 'Assault Cannon',
+    special: 'Molten Charge',
+    specialDesc: 'Converts 30% of damage taken into bonus attack on next hit.',
+    playStyle: 'Relentless — the more you take, the harder you hit.',
   },
 }
 

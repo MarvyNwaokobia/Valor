@@ -2,28 +2,19 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CLASS_DEFINITIONS } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_IMAGES } from '@/lib/classes'
 import CharacterPreview, { type CharacterConfig } from './CharacterPreview'
 
 interface Props extends CharacterConfig {
+  gender?: 'male' | 'female'
   animated?: boolean
   height?: number | string
   className?: string
 }
 
-/**
- * Renders a character portrait image (/characters/berserker.png etc.) when the
- * file exists, otherwise falls back to the SVG CharacterPreview. Drop a PNG into
- * /public/characters/{class-lowercase}.png to activate the real art.
- */
-export default function CharacterPortrait({ characterClass, skinTone, hairStyle, hairColor, animated = true, height = '100%', className }: Props) {
+export default function CharacterPortrait({ characterClass, skinTone, hairStyle, hairColor, gender = 'male', animated = true, height = '100%', className }: Props) {
   const def = CLASS_DEFINITIONS[characterClass]
-  const PORTRAIT_MAP: Record<string, string> = {
-    Berserker: '/characters/Berserkers.png',
-    Sentinel:  '/characters/Sentinel male and female.png',
-    Phantom:   '/characters/Phanthom male and female.png',
-  }
-  const src = PORTRAIT_MAP[characterClass] ?? `/characters/${characterClass.toLowerCase()}.png`
+  const src = CHARACTER_IMAGES[characterClass]?.[gender] ?? CHARACTER_IMAGES[characterClass]?.male
   const [imgFailed, setImgFailed] = useState(false)
 
   if (!imgFailed) {
