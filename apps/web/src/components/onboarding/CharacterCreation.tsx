@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { CHARACTER_CLASSES, CLASS_DEFINITIONS, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import type { PlayStyle } from '@/types'
-import CharacterPreview from '@/components/warrior/CharacterPreview'
+import CharacterPortrait from '@/components/warrior/CharacterPortrait'
 
 const SKIN_TONES = ['#fde8d5','#f5c9a0','#d4935a','#a0612a','#7b4012','#3d1f0a']
 const HAIR_COLORS = ['#0a0805','#3d2210','#6b2a12','#c8901a','#c8c0a8','#e8e4f0']
@@ -286,7 +286,7 @@ export default function CharacterCreation({ walletAddress, onCreated }: Props) {
             exit={{ opacity:0, scale:0.88, y:12 }}
             transition={{ duration:0.4, ease:[0.16,1,0.3,1] }}
           >
-            <CharacterPreview
+            <CharacterPortrait
               characterClass={selectedClass}
               skinTone={skinTone}
               hairStyle={hairStyle}
