@@ -39,7 +39,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.2 }}
           >
-            {/* Character ghost — right side, very faint */}
+            {/* Character ghost — right side */}
             <img
               src={theme.img}
               alt=""
@@ -48,20 +48,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               style={{
                 objectFit: 'contain',
                 objectPosition: 'right bottom',
-                opacity: 0.055,
-                filter: 'blur(1.5px)',
-                maskImage: 'linear-gradient(to left, rgba(0,0,0,0.6) 0%, transparent 55%)',
-                WebkitMaskImage: 'linear-gradient(to left, rgba(0,0,0,0.6) 0%, transparent 55%)',
+                opacity: 0.08,
+                filter: 'blur(0.8px) saturate(0.85)',
+                maskImage:
+                  'linear-gradient(to left, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.3) 35%, transparent 62%)',
+                WebkitMaskImage:
+                  'linear-gradient(to left, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.3) 35%, transparent 62%)',
               }}
             />
-            {/* Class color glow behind the ghost */}
+            {/* Faction color glow — ties the ghost to the screen's color grammar */}
             <div className="absolute right-0 inset-y-0 w-1/2 pointer-events-none" style={{
-              background: `radial-gradient(ellipse 70% 100% at 85% 55%, ${theme.glow}, transparent)`,
-            }}/>
-            {/* Left edge always dark */}
-            <div className="absolute inset-y-0 left-0 w-2/5 pointer-events-none" style={{
-              background: 'linear-gradient(to right, rgba(4,3,12,0.95), transparent)',
-            }}/>
+              background: `radial-gradient(ellipse 68% 95% at 88% 58%, ${theme.glow}, transparent)`,
+            }} />
+            {/* Subtle faction accent at the very bottom — ground light */}
+            <div className="absolute inset-x-0 bottom-0 pointer-events-none" style={{
+              height: '28%',
+              background: `radial-gradient(ellipse 60% 100% at 80% 100%, ${theme.glow.replace('0.12', '0.09')}, transparent)`,
+            }} />
+            {/* Left edge dark — content zone stays readable */}
+            <div className="absolute inset-y-0 left-0 w-1/2 pointer-events-none" style={{
+              background: 'linear-gradient(to right, rgba(4,3,12,0.96) 0%, rgba(4,3,12,0.4) 60%, transparent 100%)',
+            }} />
             {/* Scanlines */}
             <div className="absolute inset-0 pointer-events-none" style={{
               backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',

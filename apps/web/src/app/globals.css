@@ -62,6 +62,21 @@ body {
   100% { background-position:  200% center; }
 }
 
+@keyframes rain-fall {
+  from { background-position: 0 0; }
+  to   { background-position: -8px 120px; }
+}
+
+@keyframes rain-fall-2 {
+  from { background-position: 0 0; }
+  to   { background-position: 4px 80px; }
+}
+
+@keyframes lightning-flash {
+  0%, 89%, 93%, 96%, 100% { opacity: 0; }
+  90%, 94%                  { opacity: 1; }
+}
+
 @keyframes ember-rise {
   0%   { transform: translateY(0)   translateX(0)   scale(1);   opacity: 0; }
   15%  { opacity: 0.9; }
