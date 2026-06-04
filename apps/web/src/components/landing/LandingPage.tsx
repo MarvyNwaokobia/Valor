@@ -70,8 +70,8 @@ export default function LandingPage() {
         {/* ── BERSERKER — left ──────────────────────────────────── */}
         {/* object-position crops to the male character (left half of the duo image) */}
         <div
-          className="absolute bottom-0 left-0"
-          style={{ width: '52%', height: '88%' }}
+          className="lp-char-flank absolute left-0"
+          style={{ width: '52%' }}
         >
           <img
             src="/characters/Berserkers.png"
@@ -101,8 +101,8 @@ export default function LandingPage() {
             object-position also pulls the crop window left so the
             character spine aligns with the viewport centre.        */}
         <div
-          className="absolute bottom-0 -translate-x-1/2"
-          style={{ left: '47%', width: '56%', height: '100%', zIndex: 2 }}
+          className="lp-char-sentinel absolute -translate-x-1/2"
+          style={{ left: '47%', width: '56%', zIndex: 2 }}
         >
           <img
             src="/characters/Sentinel.png"
@@ -129,8 +129,8 @@ export default function LandingPage() {
         {/* ── PHANTOM — right ───────────────────────────────────── */}
         {/* Phantom is dark tactical gear — needs most brightness boost */}
         <div
-          className="absolute bottom-0 right-0"
-          style={{ width: '52%', height: '88%' }}
+          className="lp-char-flank absolute right-0"
+          style={{ width: '52%' }}
         >
           <img
             src="/characters/Phanthom.png"
@@ -160,16 +160,10 @@ export default function LandingPage() {
           These go ON TOP of characters without hiding them.
       ═══════════════════════════════════════════════════════════ */}
 
-      {/* Sky — title zone */}
-      <div className="absolute inset-x-0 top-0 pointer-events-none" style={{
-        height: '38%',
-        background: 'linear-gradient(180deg, rgba(4,3,12,0.96) 0%, rgba(4,3,12,0.68) 50%, transparent 100%)',
-      }}/>
-      {/* Ground — CTA zone */}
-      <div className="absolute inset-x-0 bottom-0 pointer-events-none" style={{
-        height: '22%',
-        background: 'linear-gradient(0deg, rgba(4,3,12,0.99) 0%, rgba(4,3,12,0.75) 45%, transparent 100%)',
-      }}/>
+      {/* Sky — title zone (responsive height + opacity via .lp-sky) */}
+      <div className="lp-sky absolute inset-x-0 top-0 pointer-events-none" />
+      {/* Ground — CTA zone (responsive height + opacity via .lp-ground) */}
+      <div className="lp-ground absolute inset-x-0 bottom-0 pointer-events-none" />
       {/* Corner vignette */}
       <div className="absolute inset-0 pointer-events-none" style={{
         background: 'radial-gradient(ellipse 94% 90% at 50% 50%, transparent 38%, rgba(4,3,12,0.78) 100%)',

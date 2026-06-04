@@ -119,6 +119,68 @@ body {
 .animate-flicker      { animation: flicker 6s ease-in-out infinite; }
 .animate-rank-up      { animation: rank-up 0.6s cubic-bezier(0.16,1,0.3,1) forwards; }
 
+/* ── Landing page — responsive character positioning ────────────────────── */
+/* Mobile: characters are lifted off the bottom and capped in height so they
+   don't bleed into the title zone (top) or CTA zone (bottom).
+   Desktop: characters fill the screen for the full cinematic effect.         */
+
+.lp-char-sentinel {
+  bottom: 22%;
+  height: 60%;
+}
+.lp-char-flank {
+  bottom: 22%;
+  height: 46%;
+}
+.lp-ground {
+  height: 30%;
+  background: linear-gradient(
+    0deg,
+    rgba(4,3,12,1) 0%,
+    rgba(4,3,12,0.96) 28%,
+    rgba(4,3,12,0.78) 55%,
+    transparent 100%
+  );
+}
+.lp-sky {
+  height: 30%;
+  background: linear-gradient(
+    180deg,
+    rgba(4,3,12,0.98) 0%,
+    rgba(4,3,12,0.72) 50%,
+    transparent 100%
+  );
+}
+
+@media (min-width: 768px) {
+  .lp-char-sentinel {
+    bottom: 0;
+    height: 100%;
+  }
+  .lp-char-flank {
+    bottom: 0;
+    height: 88%;
+  }
+  .lp-ground {
+    height: 22%;
+    background: linear-gradient(
+      0deg,
+      rgba(4,3,12,0.99) 0%,
+      rgba(4,3,12,0.75) 45%,
+      transparent 100%
+    );
+  }
+  .lp-sky {
+    height: 38%;
+    background: linear-gradient(
+      180deg,
+      rgba(4,3,12,0.96) 0%,
+      rgba(4,3,12,0.68) 50%,
+      transparent 100%
+    );
+  }
+}
+
 /* Angled clip for game-style buttons/cards */
 .clip-angled-sm  { clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%); }
 .clip-angled     { clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%); }
