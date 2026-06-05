@@ -10,9 +10,6 @@ const CLASS_PROMPT: Record<CharacterClass, string> = {
   Berserker: 'berserker warrior, massive battle axe, rage-fueled, scarred face, heavy fur pauldrons',
   Sentinel:  'sentinel knight in heavy plate armor, crackling blue lightning, shield raised, guardian pose',
   Phantom:   'phantom assassin, sleek dark leather armor, glowing violet eyes, shadows swirling around them',
-  Warden:    'warden druid warrior, stone war hammer, ancient runes glowing green, earth and root magic',
-  Specter:   'specter revenant, ethereal white armor, ghostly aura, half translucent, haunting presence',
-  Vanguard:  'vanguard assault trooper, molten orange armored suit, assault cannon shoulder mount, front-line breaker',
 }
 
 const SKIN_LABEL: Record<string, string> = {

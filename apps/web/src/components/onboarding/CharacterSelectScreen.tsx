@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CHARACTER_CLASSES, CLASS_DEFINITIONS, CHARACTER_IMAGES } from '@/lib/classes'
+import { CHARACTER_CLASSES, CLASS_DEFINITIONS, CHARACTER_IMAGES, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
+import CharacterViewer from '@/components/warrior/CharacterViewer'
 
 export type Gender = 'male' | 'female'
 
@@ -32,6 +33,14 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
     setDir(direction)
     setIndex(i => (i + direction + TOTAL_CLASSES) % TOTAL_CLASSES)
   }, [])
+
+  // Preload adjacent characters for smooth transitions
+  useEffect(() => {
+    const next = CHARACTER_CLASSES[(index + 1) % TOTAL_CLASSES]
+    const prev = CHARACTER_CLASSES[(index - 1 + TOTAL_CLASSES) % TOTAL_CLASSES]
+    CharacterViewer.preload(CHARACTER_GLB[next])
+    CharacterViewer.preload(CHARACTER_GLB[prev])
+  }, [index])
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: '#04030c' }}>
@@ -108,32 +117,41 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
         </div>
       </div>
 
-      {/* ── CHARACTER IMAGE ── */}
-      <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '38vh' }}>
-        <AnimatePresence mode="wait" custom={dir}>
-          <motion.img
-            key={`${selectedClass}-${gender}`}
-            src={imgSrc}
-            alt={selectedClass}
-            custom={dir}
-            variants={slideVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
-            style={{
-              height: 'clamp(340px, 62vh, 620px)',
-              width: 'auto',
-              objectFit: 'contain',
-              objectPosition: 'center',
-              filter: `drop-shadow(0 0 40px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
-              userSelect: 'none',
-              pointerEvents: 'none',
-            }}
-            draggable={false}
-          />
-        </AnimatePresence>
-      </div>
+      {/* ── CHARACTER — 3D viewer (falls back to portrait image if GLB not ready) ── */}
+      <CharacterViewer
+        glbPath={CHARACTER_GLB[selectedClass]}
+        accentColor={def.accentColor}
+        animationName="idle"
+        modelKey={`${selectedClass}-${gender}`}
+        fallback={
+          /* Portrait image fallback — active until GLBs are converted */
+          <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '38vh' }}>
+            <AnimatePresence mode="wait" custom={dir}>
+              <motion.img
+                key={`${selectedClass}-${gender}`}
+                src={imgSrc}
+                alt={selectedClass}
+                custom={dir}
+                variants={slideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
+                style={{
+                  height: 'clamp(340px, 62vh, 620px)',
+                  width: 'auto',
+                  objectFit: 'contain',
+                  objectPosition: 'center',
+                  filter: `drop-shadow(0 0 40px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
+                  userSelect: 'none',
+                  pointerEvents: 'none',
+                }}
+                draggable={false}
+              />
+            </AnimatePresence>
+          </div>
+        }
+      />
 
       {/* ── LEFT / RIGHT NAVIGATION ── */}
       <button

@@ -1,4 +1,4 @@
-export const CHARACTER_CLASSES = ['Berserker', 'Sentinel', 'Phantom', 'Warden', 'Specter', 'Vanguard'] as const
+export const CHARACTER_CLASSES = ['Berserker', 'Sentinel', 'Phantom'] as const
 export type CharacterClass = (typeof CHARACTER_CLASSES)[number]
 
 export interface ClassDefinition {
@@ -20,7 +20,14 @@ export interface ClassDefinition {
   playStyle: string
 }
 
-/** Character portrait image paths keyed by class + gender */
+/** GLB paths for 3D character models (output of scripts/fbx_to_glb.py) */
+export const CHARACTER_GLB: Record<CharacterClass, string> = {
+  Berserker: '/characters/glb/berserker.glb',
+  Sentinel:  '/characters/glb/sentinel.glb',
+  Phantom:   '/characters/glb/phantom.glb',
+}
+
+/** Fallback portrait images (used until GLBs are ready) */
 export const CHARACTER_IMAGES: Record<CharacterClass, { male: string; female: string }> = {
   Berserker: {
     male:   '/characters/classes/berserker-male.jpg',
@@ -33,18 +40,6 @@ export const CHARACTER_IMAGES: Record<CharacterClass, { male: string; female: st
   Phantom: {
     male:   '/characters/classes/phantom-male.jpg',
     female: '/characters/classes/phantom-female.jpg',
-  },
-  Warden: {
-    male:   '/characters/classes/warden-male.jpg',
-    female: '/characters/classes/warden-female.jpg',
-  },
-  Specter: {
-    male:   '/characters/classes/specter-male.jpg',
-    female: '/characters/classes/specter-female.jpg',
-  },
-  Vanguard: {
-    male:   '/characters/classes/vanguard-male.jpg',
-    female: '/characters/classes/vanguard-female.jpg',
   },
 }
 
@@ -95,54 +90,6 @@ export const CLASS_DEFINITIONS: Record<CharacterClass, ClassDefinition> = {
     special: 'Shadow Strike',
     specialDesc: 'Always strikes first. Bypasses enemy defense.',
     playStyle: 'Evasive — speed is your armor.',
-  },
-
-  Warden: {
-    id: 'Warden',
-    name: 'Warden',
-    tagline: 'Ancient. Immovable. Eternal.',
-    description:
-      'Bound to the earth itself. Wardens channel nature\'s raw force into devastating blows that shatter armor. The older the fight, the stronger they get.',
-    accentColor: '#22c55e',
-    accentColorDim: 'rgba(34,197,94,0.12)',
-    glowColor: 'rgba(34,197,94,0.5)',
-    stats: { attack: 11, defense: 18, speed: 5 },
-    weapon: 'Stone War Hammer',
-    special: 'Earth Crush',
-    specialDesc: 'Ignores 40% of enemy defense. The ground itself answers.',
-    playStyle: 'Endurance — absorb everything, crush the rest.',
-  },
-
-  Specter: {
-    id: 'Specter',
-    name: 'Specter',
-    tagline: 'You cannot fight what you cannot see.',
-    description:
-      'Masters of arcane energy and misdirection. Specters bend the rules of combat — attacking from impossible angles, nullifying abilities, and vanishing between strikes.',
-    accentColor: '#e2e8f0',
-    accentColorDim: 'rgba(226,232,240,0.08)',
-    glowColor: 'rgba(226,232,240,0.45)',
-    stats: { attack: 13, defense: 9, speed: 12 },
-    weapon: 'Arcane Pistols',
-    special: 'Void Shift',
-    specialDesc: 'Teleports behind the enemy. Next attack is guaranteed critical.',
-    playStyle: 'Tactical — control the fight, never be where expected.',
-  },
-
-  Vanguard: {
-    id: 'Vanguard',
-    name: 'Vanguard',
-    tagline: 'First in. Last standing.',
-    description:
-      'Built like a weapon, fights like a war. Vanguards crash into every battle with overwhelming force — their molten armor converts incoming damage into fuel for the next strike.',
-    accentColor: '#f97316',
-    accentColorDim: 'rgba(249,115,22,0.12)',
-    glowColor: 'rgba(249,115,22,0.5)',
-    stats: { attack: 18, defense: 12, speed: 5 },
-    weapon: 'Assault Cannon',
-    special: 'Molten Charge',
-    specialDesc: 'Converts 30% of damage taken into bonus attack on next hit.',
-    playStyle: 'Relentless — the more you take, the harder you hit.',
   },
 }
 
