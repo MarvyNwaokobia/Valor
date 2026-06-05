@@ -11,7 +11,6 @@ import { useLogin } from '@privy-io/react-auth'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
-import { rpmPortraitUrl } from '@/components/onboarding/RPMAvatarCreator'
 
 const CLASS_SOLO: Record<string, string> = {
   Berserker: '/characters/Berserkers.png',
@@ -34,8 +33,7 @@ export default function HomePage() {
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
-  const rpmGlb       = (player.character_customization as { avatar_url?: string } | null)?.avatar_url
-  const heroImg      = rpmGlb ? rpmPortraitUrl(rpmGlb) : CLASS_SOLO[charClass]
+  const heroImg      = (player.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
   const xpProgress   = (player.xp / XP_PER_RANK) * 100
   const nextReward   = RANK_G_REWARD[player.rank]
 

@@ -8,7 +8,7 @@ import { CHARACTER_CLASSES, CLASS_DEFINITIONS, statVarianceFromWallet } from '@/
 import type { CharacterClass } from '@/lib/classes'
 import type { PlayStyle } from '@/types'
 import CharacterPortrait from '@/components/warrior/CharacterPortrait'
-import RPMAvatarCreator, { rpmPortraitUrl } from '@/components/onboarding/RPMAvatarCreator'
+import AvatarGenerator, { type ArmorStyle } from '@/components/onboarding/AvatarGenerator'
 import { AnimatePresence as APWrapper } from 'framer-motion'
 
 const SKIN_TONES = ['#fde8d5','#f5c9a0','#d4935a','#a0612a','#7b4012','#3d1f0a']
@@ -178,10 +178,8 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
   const [tab, setTab] = useState<Tab>('look')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string|null>(null)
-  const [avatarGlbUrl, setAvatarGlbUrl] = useState<string | null>(null)
-  const [showRPM, setShowRPM] = useState(false)
-
-  const portraitUrl = avatarGlbUrl ? rpmPortraitUrl(avatarGlbUrl) : null
+  const [portraitUrl,  setPortraitUrl]  = useState<string | null>(null)
+  const [armorStyle,   setArmorStyle]   = useState<ArmorStyle>('battle-worn')
 
   const def = CLASS_DEFINITIONS[selectedClass]
   const stats = {
@@ -201,7 +199,7 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
       username: null,
       display_name: null,
       character_class: selectedClass,
-      character_customization: { skin: skinTone, hair: `${hairStyle}:${hairColor}`, gender, avatar_url: avatarGlbUrl ?? undefined },
+      character_customization: { skin: skinTone, hair: `${hairStyle}:${hairColor}`, gender, avatar_url: portraitUrl ?? undefined, armor_style: armorStyle },
       rank: 'Bronze' as const,
       xp: 0,
       attack_stat: stats.attack,
@@ -388,44 +386,17 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
         {/* TAB CONTENT */}
         <AnimatePresence mode="wait">
           {tab === 'look' && (
-            <motion.div key="look" {...tabAnim} className="px-4 flex flex-col gap-3">
-              {portraitUrl ? (
-                /* Avatar created — show confirmation + option to redo */
-                <div className="flex items-center gap-3 rounded-xl p-3 border" style={{ background: `${def.accentColor}10`, borderColor: `${def.accentColor}30` }}>
-                  <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 border-2" style={{ borderColor: def.accentColor }}>
-                    <img src={portraitUrl} alt="avatar" className="w-full h-full object-cover object-top" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-bold text-xs">Avatar ready</p>
-                    <p className="text-slate-500 text-[10px] truncate">{avatarGlbUrl}</p>
-                  </div>
-                  <button
-                    onClick={() => setShowRPM(true)}
-                    className="text-[10px] uppercase tracking-wider font-bold shrink-0 px-2 py-1 rounded-lg border transition-colors"
-                    style={{ borderColor: `${def.accentColor}40`, color: def.accentColor }}
-                  >
-                    Change
-                  </button>
-                </div>
-              ) : (
-                /* No avatar yet */
-                <motion.button
-                  onClick={() => setShowRPM(true)}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
-                  className="w-full flex flex-col items-center gap-2 rounded-xl py-6 border-2 border-dashed transition-all"
-                  style={{ borderColor: `${def.accentColor}40`, background: `${def.accentColor}08` }}
-                >
-                  <span className="text-2xl">🎨</span>
-                  <p className="font-display font-black text-sm tracking-wide" style={{ color: def.accentColor }}>
-                    Create Your Avatar
-                  </p>
-                  <p className="text-slate-500 text-[10px]">Customize your fighter with Ready Player Me</p>
-                </motion.button>
-              )}
-              <p className="text-slate-700 text-[9px] text-center tracking-wider">
-                Powered by Ready Player Me — your avatar works across web3 games
-              </p>
+            <motion.div key="look" {...tabAnim} className="px-4">
+              <AvatarGenerator
+                characterClass={selectedClass}
+                gender={gender}
+                accentColor={def.accentColor}
+                walletAddress={walletAddress}
+                onGenerated={(url, _skin, armor) => {
+                  setPortraitUrl(url)
+                  setArmorStyle(armor)
+                }}
+              />
             </motion.div>
           )}
 
@@ -502,15 +473,6 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
         </div>
       </div>
 
-      {/* RPM Avatar Creator — full-screen overlay */}
-      <APWrapper>
-        {showRPM && (
-          <RPMAvatarCreator
-            onAvatarCreated={(url) => { setAvatarGlbUrl(url); setShowRPM(false) }}
-            onClose={() => setShowRPM(false)}
-          />
-        )}
-      </APWrapper>
     </div>
   )
 }
