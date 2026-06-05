@@ -31,8 +31,9 @@ export default function HomePage() {
   if (!address) return <LandingPage />
   if (!player)  return <OnboardingPrompt />
 
-  const def          = CLASS_DEFINITIONS[player.character_class]
-  const heroImg      = CLASS_SOLO[player.character_class]
+  const charClass    = player.character_class ?? 'Sentinel'
+  const def          = CLASS_DEFINITIONS[charClass]
+  const heroImg      = CLASS_SOLO[charClass]
   const xpProgress   = (player.xp / XP_PER_RANK) * 100
   const nextReward   = RANK_G_REWARD[player.rank]
 
@@ -55,7 +56,7 @@ export default function HomePage() {
         {/* Character image fills the card */}
         <img
           src={heroImg}
-          alt={player.character_class}
+          alt={charClass}
           className="absolute inset-0 w-full h-full object-cover object-top select-none"
           style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
         />
@@ -230,8 +231,8 @@ export default function HomePage() {
               <p className="text-[10px] uppercase tracking-widest font-bold mb-0.5" style={{ color: def.accentColor }}>
                 {player.character_class} Special
               </p>
-              <p className="text-white font-bold text-sm">{CLASS_DEFINITIONS[player.character_class].special}</p>
-              <p className="text-slate-500 text-xs mt-0.5">{CLASS_DEFINITIONS[player.character_class].specialDesc}</p>
+              <p className="text-white font-bold text-sm">{def.special}</p>
+              <p className="text-slate-500 text-xs mt-0.5">{def.specialDesc}</p>
             </div>
           </div>
         </motion.div>
