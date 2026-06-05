@@ -2,7 +2,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::models::player::Player;
-use crate::models::player::Rank;
 
 const BATTLE_ROUNDS: u32 = 5;
 const MAX_HP: i32 = 100;
@@ -24,6 +23,25 @@ pub struct BotFightResult {
     pub challenger_won: bool,
     pub xp_awarded: i32,
     pub rounds: Vec<RoundData>,
+}
+
+/// Round shape returned to the client — field names match the frontend BattleRoundResult interface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BattleRoundResponse {
+    pub round:      u32,
+    pub player_move: String,
+    pub bot_move:   String,
+    pub player_dmg: i32,
+    pub bot_dmg:    i32,
+    pub player_hp:  i32,
+    pub bot_hp:     i32,
+}
+
+pub struct BotFightWithMovesResult {
+    pub challenger_won:  bool,
+    pub xp_awarded:      i32,
+    pub rounds:          Vec<RoundData>,          // for DB storage
+    pub rounds_response: Vec<BattleRoundResponse>, // for API response
 }
 
 pub struct AsyncFightResult {
@@ -106,6 +124,66 @@ pub fn simulate_bot_fight(player: &Player) -> BotFightResult {
         challenger_won,
         xp_awarded: if challenger_won { XP_WIN } else { XP_LOSS },
         rounds,
+    }
+}
+
+/// Simulate a bot fight using the player's submitted moves.
+/// The bot's moves are generated server-side — the player cannot influence them.
+/// Accepted move values: "attack" | "defend" | "special"
+pub fn simulate_bot_fight_with_moves(player: &Player, player_moves: &[String]) -> BotFightWithMovesResult {
+    let mut rng = rand::rng();
+    let (bot_atk, bot_def) = bot_stats_for_rank(&player.rank);
+    let mut player_hp = MAX_HP;
+    let mut bot_hp = MAX_HP;
+    let mut bot_special_used = false;
+    let mut rounds = Vec::new();
+    let mut rounds_response = Vec::new();
+
+    for (idx, p_move) in player_moves.iter().enumerate() {
+        let round = (idx + 1) as u32;
+
+        let (b_move, b_special, b_defend) = pick_move(&mut rng, bot_special_used);
+        bot_special_used = bot_special_used || b_special;
+
+        let p_is_special  = p_move == "special";
+        let p_is_defending = p_move == "defend";
+
+        let p_dmg = calc_damage(player.attack_stat, bot_def,          p_is_special,  b_defend);
+        let b_dmg = calc_damage(bot_atk,            player.defense_stat, b_special,  p_is_defending);
+
+        bot_hp    = (bot_hp    - p_dmg).max(0);
+        player_hp = (player_hp - b_dmg).max(0);
+
+        rounds.push(RoundData {
+            round,
+            challenger_move: p_move.clone(),
+            opponent_move:   b_move.clone(),
+            challenger_damage: p_dmg,
+            opponent_damage:   b_dmg,
+            challenger_hp:     player_hp,
+            opponent_hp:       bot_hp,
+        });
+        rounds_response.push(BattleRoundResponse {
+            round,
+            player_move: p_move.clone(),
+            bot_move:    b_move,
+            player_dmg:  p_dmg,
+            bot_dmg:     b_dmg,
+            player_hp,
+            bot_hp,
+        });
+
+        if player_hp <= 0 || bot_hp <= 0 {
+            break;
+        }
+    }
+
+    let challenger_won = player_hp >= bot_hp;
+    BotFightWithMovesResult {
+        challenger_won,
+        xp_awarded: if challenger_won { XP_WIN } else { XP_LOSS },
+        rounds,
+        rounds_response,
     }
 }
 

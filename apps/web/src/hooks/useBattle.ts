@@ -1,83 +1,67 @@
-import { useState, useMemo } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { useMarketplaceItems } from '@/hooks/useMarketplace'
 import { useAchievements } from '@/hooks/useAchievements'
-import { XP_PER_RANK, RANK_G_REWARD, XP_WIN, XP_LOSS } from '@/lib/constants'
-import { getRankUpgrade } from '@/utils/decay'
-import type { Player, BattleMove, RoundData } from '@/types'
-import { supabase } from '@/lib/supabase'
-import { selectBotMove, calcDamage, generateBotStats } from '@/utils/battle'
+import type { Player, BattleMove } from '@/types'
 
 export type BattlePhase = 'idle' | 'fighting' | 'saving' | 'result'
 
 export interface BattleRoundResult {
-  round: number
+  round:      number
   playerMove: BattleMove
-  botMove: BattleMove
-  playerDmg: number
-  botDmg: number
-  playerHp: number
-  botHp: number
+  botMove:    BattleMove
+  playerDmg:  number
+  botDmg:     number
+  playerHp:   number
+  botHp:      number
 }
 
 export interface BattleResultState {
-  won: boolean
-  xpAwarded: number
-  newXp: number
-  rankedUp: boolean
-  newRank: Player['rank'] | null
-  gAwarded: number
-  rounds: BattleRoundResult[]
+  won:        boolean
+  xpAwarded:  number
+  newXp:      number
+  rankedUp:   boolean
+  newRank:    Player['rank'] | null
+  gAwarded:   number
+  rounds:     BattleRoundResult[]
 }
 
-// Convert client-side round log to the DB RoundData shape
-function toRoundData(rounds: BattleRoundResult[]): RoundData[] {
-  return rounds.map((r) => ({
-    round:                    r.round,
-    challenger_move:          r.playerMove,
-    opponent_move:            r.botMove,
-    challenger_damage:        r.playerDmg,
-    opponent_damage:          r.botDmg,
-    challenger_hp_remaining:  r.playerHp,
-    opponent_hp_remaining:    r.botHp,
-  }))
+// Client-side damage preview for live HP bar animation during play.
+// The server re-runs the full simulation with its own bot moves — this is cosmetic only.
+function previewDamage(
+  attack: number,
+  defense: number,
+  isSpecial: boolean,
+  opponentDefending: boolean,
+): number {
+  const base     = isSpecial ? 40 : 20
+  const variance = base * 0.2 * (Math.random() * 2 - 1)
+  const statMod  = 1 + (attack - defense) * 0.01
+  const defMult  = opponentDefending ? 0.5 : 1
+  return Math.max(1, Math.round((base + variance) * statMod * defMult))
+}
+
+function generateBotPreviewStats(playerRank: Player['rank']): { attack: number; defense: number } {
+  const base: Record<Player['rank'], number> = {
+    Bronze: 10, Silver: 15, Gold: 20, Platinum: 25, Diamond: 30,
+  }
+  const variance = Math.floor(Math.random() * 5) - 2
+  return { attack: base[playerRank] + variance, defense: base[playerRank] + variance }
 }
 
 export function useBattle(player: Player, walletAddress: string) {
-  const updatePlayer = usePlayerStore((s) => s.updatePlayer)
-  const inventory = usePlayerStore((s) => s.inventory)
-  const { data: allItems = [] } = useMarketplaceItems()
+  const updatePlayer              = usePlayerStore((s) => s.updatePlayer)
   const { checkAchievements, checkDecayRecovery } = useAchievements()
 
-  // Compute equipped weapon (+ATK) and shield (+DEF) boosts from inventory
-  const { attackBoost, defenseBoost } = useMemo(() => {
-    return inventory.reduce(
-      (acc, invItem) => {
-        if (!invItem.equipped) return acc
-        const item = allItems.find((i) => i.id === invItem.item_id)
-        if (!item) return acc
-        if (item.category === 'weapon') acc.attackBoost += item.stat_boost
-        if (item.category === 'shield') acc.defenseBoost += item.stat_boost
-        return acc
-      },
-      { attackBoost: 0, defenseBoost: 0 },
-    )
-  }, [inventory, allItems])
-
-  const effectiveAttack = player.attack_stat + attackBoost
-  const effectiveDefense = player.defense_stat + defenseBoost
-
-  const [phase, setPhase] = useState<BattlePhase>('idle')
-  const [playerHp, setPlayerHp] = useState(100)
-  const [botHp, setBotHp] = useState(100)
-  const [round, setRound] = useState(1)
-  const [log, setLog] = useState<BattleRoundResult[]>([])
-  const [specialUsed, setSpecialUsed] = useState(false)
-  const [botSpecialUsed, setBotSpecialUsed] = useState(false)
-  const [result, setResult] = useState<BattleResultState | null>(null)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [botStats] = useState(() => generateBotStats(player.rank))
+  const [phase,         setPhase]         = useState<BattlePhase>('idle')
+  const [playerHp,      setPlayerHp]      = useState(100)
+  const [botHp,         setBotHp]         = useState(100)
+  const [round,         setRound]         = useState(1)
+  const [log,           setLog]           = useState<BattleRoundResult[]>([])
+  const [specialUsed,   setSpecialUsed]   = useState(false)
+  const [result,        setResult]        = useState<BattleResultState | null>(null)
+  const [saveError,     setSaveError]     = useState<string | null>(null)
+  const [allMoves,      setAllMoves]      = useState<BattleMove[]>([])
+  const [botStats]                        = useState(() => generateBotPreviewStats(player.rank))
 
   function startBattle() {
     setPhase('fighting')
@@ -86,143 +70,118 @@ export function useBattle(player: Player, walletAddress: string) {
     setRound(1)
     setLog([])
     setSpecialUsed(false)
-    setBotSpecialUsed(false)
     setResult(null)
     setSaveError(null)
+    setAllMoves([])
   }
-
-  const { mutateAsync: finalizeBattle } = useMutation({
-    mutationFn: async ({
-      won,
-      rounds,
-    }: {
-      won: boolean
-      rounds: BattleRoundResult[]
-      finalPlayerHp: number
-      finalBotHp: number
-    }) => {
-      const xp = won ? XP_WIN : XP_LOSS
-      const prevXp = player.xp
-      const rawNewXp = prevXp + xp
-      const rankedUp = rawNewXp >= XP_PER_RANK
-      const newXp = rankedUp ? rawNewXp - XP_PER_RANK : rawNewXp
-      const newRank = rankedUp ? getRankUpgrade(player.rank) : null
-      const gAwarded = rankedUp && newRank ? RANK_G_REWARD[newRank] : 0
-
-      const wins = won ? player.wins + 1 : player.wins
-      const losses = !won ? player.losses + 1 : player.losses
-      const now = new Date().toISOString()
-
-      // ── Persist battle record ────────────────────────────────────
-      const { error: battleError } = await supabase.from('battles').insert({
-        challenger_wallet:    walletAddress,
-        opponent_wallet:      'bot',
-        winner_wallet:        won ? walletAddress : 'bot',
-        rounds_data:          toRoundData(rounds),
-        xp_awarded_challenger: xp,
-        xp_awarded_opponent:  0,
-        is_bot:               true,
-      })
-      if (battleError) throw new Error(`Battle save failed: ${battleError.message}`)
-
-      // ── Update player stats ──────────────────────────────────────
-      const playerUpdates: Partial<Player> = {
-        xp:           newXp,
-        wins,
-        losses,
-        last_active:  now,
-        decay_status: 'none',
-      }
-      if (newRank) {
-        playerUpdates.rank = newRank
-        playerUpdates.g_earned_lifetime = player.g_earned_lifetime + gAwarded
-      }
-
-      const { error: playerError } = await supabase
-        .from('players')
-        .update(playerUpdates)
-        .eq('wallet_address', walletAddress)
-      if (playerError) throw new Error(`Player update failed: ${playerError.message}`)
-
-      updatePlayer(playerUpdates)
-
-      // ── Notify backend of rank-up (fire-and-forget) ───────────────
-      if (rankedUp && newRank) {
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/players/${walletAddress}/rank-up`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ new_rank: newRank }),
-        }).catch(console.error)
-      }
-
-      // ── Decay recovery: if player was at active decay, award Survivor ─
-      if (player.decay_status === 'active') {
-        checkDecayRecovery(walletAddress).catch(console.error)
-      }
-
-      // ── Achievement check (fire-and-forget — non-blocking) ────────────
-      checkAchievements(walletAddress).catch(console.error)
-
-      return { won, xpAwarded: xp, newXp, rankedUp, newRank, gAwarded, rounds }
-    },
-  })
 
   async function handleMove(move: BattleMove) {
     if (phase !== 'fighting') return
     if (move === 'special' && specialUsed) return
 
-    const botMove = selectBotMove(botSpecialUsed)
-    if (botMove === 'special') setBotSpecialUsed(true)
     if (move === 'special') setSpecialUsed(true)
 
-    const playerDmg = calcDamage(effectiveAttack, botStats.defense, move, botMove)
-    const botDmg = calcDamage(botStats.attack, effectiveDefense, botMove, move)
+    // ── Client-side preview for live HP animation ────────────────────
+    // Bot move is a local preview — the real bot moves are generated server-side.
+    const botPreviewMove: BattleMove =
+      Math.random() < 0.5 ? 'attack' : Math.random() < 0.5 ? 'defend' : 'special'
 
-    const newBotHp = Math.max(0, botHp - playerDmg)
+    const playerDmg = previewDamage(player.attack_stat, botStats.defense,  move === 'special',         botPreviewMove === 'defend')
+    const botDmg    = previewDamage(botStats.attack,    player.defense_stat, botPreviewMove === 'special', move === 'defend')
+
+    const newBotHp    = Math.max(0, botHp    - playerDmg)
     const newPlayerHp = Math.max(0, playerHp - botDmg)
 
     const roundEntry: BattleRoundResult = {
-      round,
-      playerMove: move,
-      botMove,
-      playerDmg,
-      botDmg,
-      playerHp: newPlayerHp,
-      botHp: newBotHp,
+      round, playerMove: move, botMove: botPreviewMove,
+      playerDmg, botDmg, playerHp: newPlayerHp, botHp: newBotHp,
     }
 
-    const newLog = [...log, roundEntry]
+    const newLog   = [...log, roundEntry]
+    const newMoves = [...allMoves, move]
+
     setLog(newLog)
+    setAllMoves(newMoves)
     setPlayerHp(newPlayerHp)
     setBotHp(newBotHp)
 
     const isLastRound = round >= 5 || newBotHp <= 0 || newPlayerHp <= 0
 
     if (isLastRound) {
-      const won = newPlayerHp >= newBotHp
-      setPhase('saving') // prevent further moves while DB writes complete
+      setPhase('saving')
       try {
-        const finalResult = await finalizeBattle({
-          won,
-          rounds: newLog,
-          finalPlayerHp: newPlayerHp,
-          finalBotHp: newBotHp,
+        // ── Server resolves the battle authoritatively ───────────────
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/battles/bot`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ wallet: walletAddress, player_moves: newMoves }),
         })
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          throw new Error((err as { error?: string }).error ?? `API error ${res.status}`)
+        }
+
+        const data = await res.json()
+
+        // Map snake_case API response → camelCase BattleResultState
+        const finalResult: BattleResultState = {
+          won:       data.won,
+          xpAwarded: data.xp_awarded,
+          newXp:     data.new_xp,
+          rankedUp:  data.ranked_up,
+          newRank:   data.new_rank ?? null,
+          gAwarded:  data.g_awarded,
+          // Use server's authoritative round data, falling back to client preview log
+          rounds: (data.rounds as Array<{
+            round: number; player_move: string; bot_move: string
+            player_dmg: number; bot_dmg: number; player_hp: number; bot_hp: number
+          }>)?.map((r) => ({
+            round:      r.round,
+            playerMove: r.player_move as BattleMove,
+            botMove:    r.bot_move    as BattleMove,
+            playerDmg:  r.player_dmg,
+            botDmg:     r.bot_dmg,
+            playerHp:   r.player_hp,
+            botHp:      r.bot_hp,
+          })) ?? newLog,
+        }
+
+        // ── Sync player store from server response ───────────────────
+        const storeUpdates: Partial<Player> = {
+          xp:           data.new_xp,
+          wins:         data.won ? player.wins + 1 : player.wins,
+          losses:       data.won ? player.losses : player.losses + 1,
+          decay_status: 'none',
+        }
+        if (data.ranked_up && data.new_rank) {
+          storeUpdates.rank             = data.new_rank
+          storeUpdates.g_earned_lifetime = player.g_earned_lifetime + data.g_awarded
+        }
+        updatePlayer(storeUpdates)
+
+        // ── Fire-and-forget side effects ─────────────────────────────
+        if (player.decay_status === 'active') {
+          checkDecayRecovery(walletAddress).catch(console.error)
+        }
+        checkAchievements(walletAddress).catch(console.error)
+
         setResult(finalResult)
         setPhase('result')
       } catch (err) {
-        setSaveError(err instanceof Error ? err.message : 'Failed to save battle results')
-        setPhase('result')
-        // Still show result screen with local data even if save failed
+        const msg = err instanceof Error ? err.message : 'Failed to save battle'
+        setSaveError(msg)
+        // Show a local result so the player isn't left on a blank screen
         setResult({
-          won,
-          xpAwarded: won ? XP_WIN : XP_LOSS,
-          newXp: Math.min(player.xp + (won ? XP_WIN : XP_LOSS), 999),
+          won:      newPlayerHp >= newBotHp,
+          xpAwarded: 0,
+          newXp:    player.xp,
           rankedUp: false,
-          newRank: null,
+          newRank:  null,
           gAwarded: 0,
-          rounds: newLog,
+          rounds:   newLog,
         })
+        setPhase('result')
       }
     } else {
       setRound((r) => r + 1)
@@ -245,10 +204,11 @@ export function useBattle(player: Player, walletAddress: string) {
     result,
     saveError,
     botStats,
-    attackBoost,
-    defenseBoost,
-    effectiveAttack,
-    effectiveDefense,
+    // Item boost computation removed — server uses base stats; re-add when server reads inventory
+    attackBoost:     0,
+    defenseBoost:    0,
+    effectiveAttack: player.attack_stat,
+    effectiveDefense: player.defense_stat,
     startBattle,
     handleMove,
     reset,

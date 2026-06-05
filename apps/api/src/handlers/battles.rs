@@ -5,11 +5,36 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::services::battle::{BotFightResult, simulate_bot_fight, simulate_async_fight};
+use crate::services::battle::{simulate_bot_fight_with_moves, simulate_async_fight};
+use crate::utils::{is_valid_wallet, normalize_wallet};
+
+const XP_PER_RANK: i32 = 1000;
+const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
+
+fn next_rank(rank: &str) -> Option<&'static str> {
+    match rank {
+        "Bronze"   => Some("Silver"),
+        "Silver"   => Some("Gold"),
+        "Gold"     => Some("Platinum"),
+        "Platinum" => Some("Diamond"),
+        _          => None,
+    }
+}
+
+fn rank_g_reward(rank: &str) -> i64 {
+    match rank {
+        "Silver"   => 20,
+        "Gold"     => 40,
+        "Platinum" => 80,
+        "Diamond"  => 150,
+        _          => 0,
+    }
+}
 
 #[derive(Deserialize)]
 pub struct BotFightRequest {
-    pub wallet: String,
+    pub wallet:       String,
+    pub player_moves: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -20,14 +45,40 @@ pub struct ChallengeRequest {
 
 pub async fn fight_bot(
     state: web::Data<AppState>,
+    req: HttpRequest,
     body: web::Json<BotFightRequest>,
 ) -> HttpResponse {
-    let wallet = &body.wallet;
+    // Rate limit: 10 bot fights per 60 seconds per IP
+    let ip = req.connection_info().realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    if !state.battle_limiter.check(&ip) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many battles. Slow down, warrior."}));
+    }
+
+    // Validate wallet
+    if !is_valid_wallet(&body.wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+
+    // Validate moves: 1–5, all must be legal move names
+    if body.player_moves.is_empty() || body.player_moves.len() > 5 {
+        return HttpResponse::BadRequest().json(json!({"error": "Must submit 1–5 moves"}));
+    }
+    for m in &body.player_moves {
+        if !VALID_MOVES.contains(&m.as_str()) {
+            return HttpResponse::BadRequest()
+                .json(json!({"error": format!("Invalid move: {}", m)}));
+        }
+    }
+
+    let wallet = normalize_wallet(&body.wallet);
 
     let player = sqlx::query_as::<_, crate::models::player::Player>(
         "SELECT * FROM players WHERE wallet_address = $1",
     )
-    .bind(wallet)
+    .bind(&wallet)
     .fetch_optional(&state.db)
     .await
     .ok()
@@ -37,17 +88,30 @@ pub async fn fight_bot(
         return HttpResponse::NotFound().json(json!({"error": "Player not found"}));
     };
 
-    let result = simulate_bot_fight(&player);
+    // Server-authoritative simulation — bot moves are generated here, not by the client
+    let result = simulate_bot_fight_with_moves(&player, &body.player_moves);
     let now = Utc::now();
 
-    // Persist battle
+    // ── XP + rank-up logic ───────────────────────────────────────────
+    let raw_new_xp = player.xp + result.xp_awarded;
+    let ranked_up  = raw_new_xp >= XP_PER_RANK;
+    let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
+    let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
+    let g_awarded  = new_rank.map(rank_g_reward).unwrap_or(0);
+
+    let wins   = if result.challenger_won { player.wins + 1 } else { player.wins };
+    let losses = if !result.challenger_won { player.losses + 1 } else { player.losses };
+
+    // ── Persist battle record ────────────────────────────────────────
     let battle_id = Uuid::new_v4();
     let _ = sqlx::query(
-        "INSERT INTO battles (id, challenger_wallet, opponent_wallet, winner_wallet, rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
+        "INSERT INTO battles
+           (id, challenger_wallet, opponent_wallet, winner_wallet,
+            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
          VALUES ($1, $2, 'bot', $3, $4, $5, 0, true, $6)",
     )
     .bind(battle_id)
-    .bind(wallet)
+    .bind(&wallet)
     .bind(if result.challenger_won { wallet.as_str() } else { "bot" })
     .bind(serde_json::to_value(&result.rounds).unwrap_or_default())
     .bind(result.xp_awarded)
@@ -55,41 +119,73 @@ pub async fn fight_bot(
     .execute(&state.db)
     .await;
 
-    // Update player XP, wins/losses, last_active
-    let new_xp = (player.xp + result.xp_awarded).min(999);
-    let wins = if result.challenger_won { player.wins + 1 } else { player.wins };
-    let losses = if !result.challenger_won { player.losses + 1 } else { player.losses };
-
-    let _ = sqlx::query(
-        "UPDATE players SET xp = $1, wins = $2, losses = $3, last_active = $4, decay_status = 'none' WHERE wallet_address = $5",
-    )
-    .bind(new_xp)
-    .bind(wins)
-    .bind(losses)
-    .bind(now)
-    .bind(wallet)
-    .execute(&state.db)
-    .await;
-
-    // Check for rank-up
-    if new_xp >= 999 && player.xp < 999 {
-        // Trigger reward distribution via GoodCollective
-        // TODO: call services::rewards::distribute_rank_up_reward
+    // ── Update player — include rank if ranked up ────────────────────
+    if let Some(rank) = new_rank {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3, rank = $4,
+                 g_earned_lifetime = g_earned_lifetime + $5,
+                 last_active = $6, decay_status = 'none'
+             WHERE wallet_address = $7",
+        )
+        .bind(new_xp)
+        .bind(wins)
+        .bind(losses)
+        .bind(rank)
+        .bind(g_awarded as f64)
+        .bind(now)
+        .bind(&wallet)
+        .execute(&state.db)
+        .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3,
+                 last_active = $4, decay_status = 'none'
+             WHERE wallet_address = $5",
+        )
+        .bind(new_xp)
+        .bind(wins)
+        .bind(losses)
+        .bind(now)
+        .bind(&wallet)
+        .execute(&state.db)
+        .await;
     }
 
     HttpResponse::Ok().json(json!({
-        "won": result.challenger_won,
+        "won":       result.challenger_won,
         "xp_awarded": result.xp_awarded,
-        "rounds": result.rounds,
-        "new_xp": new_xp,
+        "new_xp":    new_xp,
+        "ranked_up": ranked_up,
+        "new_rank":  new_rank,
+        "g_awarded": g_awarded,
+        "rounds":    result.rounds_response,
         "battle_id": battle_id,
     }))
 }
 
 pub async fn challenge_player(
     state: web::Data<AppState>,
+    req: HttpRequest,
     body: web::Json<ChallengeRequest>,
 ) -> HttpResponse {
+    // Rate limit: 5 challenges per 60 seconds per IP
+    let ip = req.connection_info().realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    if !state.battle_limiter.check(&format!("challenge:{}", ip)) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many challenges. Slow down."}));
+    }
+
+    if !is_valid_wallet(&body.challenger_wallet) || !is_valid_wallet(&body.opponent_wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    if body.challenger_wallet.to_lowercase() == body.opponent_wallet.to_lowercase() {
+        return HttpResponse::BadRequest().json(json!({"error": "Cannot challenge yourself"}));
+    }
+
     // Async multiplayer: resolve fight immediately based on stats + random seed
     let challenger = sqlx::query_as::<_, crate::models::player::Player>(
         "SELECT * FROM players WHERE wallet_address = $1",
