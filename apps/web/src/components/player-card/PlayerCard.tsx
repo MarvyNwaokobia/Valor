@@ -1,13 +1,15 @@
 import { motion } from 'framer-motion'
 import { useConnection } from 'wagmi'
 import type { Player } from '@/types'
-import { RANK_COLORS, XP_PER_RANK } from '@/lib/constants'
+import { XP_PER_RANK } from '@/lib/constants'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
+import { RANK_DEFINITIONS } from '@/lib/ranks'
 import { getDecayStatus } from '@/utils/decay'
 import { formatGDollarNumber, formatTimeAgo } from '@/utils/format'
 import { useGBalance } from '@/hooks/useGBalance'
 import XpMeter from './XpMeter'
 import RankBadge from './RankBadge'
+import RankAura from '@/components/ui/RankAura'
 import DecayOverlay from './DecayOverlay'
 import AchievementSlots from './AchievementSlots'
 
@@ -19,7 +21,8 @@ interface Props {
 
 export default function PlayerCard({ player, isPublic = false, showShareLink = false }: Props) {
   const decayStatus = getDecayStatus(player.last_active, player.decay_frozen_until)
-  const rankColor = RANK_COLORS[player.rank]
+  const rankDef = RANK_DEFINITIONS[player.rank]
+  const rankColor = rankDef.color
   const classDef = player.character_class ? CLASS_DEFINITIONS[player.character_class as keyof typeof CLASS_DEFINITIONS] : null
   const classColor = classDef?.accentColor
   const isDecaying = decayStatus === 'active'
@@ -49,8 +52,8 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
           ? { filter: 'saturate(0.35) brightness(0.75)' }
           : {
               boxShadow: classColor
-                ? `0 0 24px ${rankColor}1a, 0 0 48px ${rankColor}0a, 0 0 40px ${classColor}10`
-                : `0 0 24px ${rankColor}1a, 0 0 48px ${rankColor}0a`,
+                ? `${rankDef.glow}, 0 0 40px ${classColor}10`
+                : rankDef.glow,
             }
       }
       layout
@@ -78,18 +81,19 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
       <div className="p-5 flex flex-col gap-4 relative z-10">
         {/* Avatar + identity row */}
         <div className="flex items-center gap-3">
-          <motion.div
-            className="relative w-16 h-16 rounded-full flex items-center justify-center text-3xl border-2 shrink-0"
-            style={{ borderColor: rankColor, boxShadow: `0 0 12px ${rankColor}44` }}
-            whileHover={{ scale: 1.05 }}
-          >
-            {player.avatar}
-            {/* Rank indicator pip */}
-            <div
-              className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-valor-surface"
-              style={{ background: rankColor }}
-            />
-          </motion.div>
+          <RankAura rank={player.rank} classColor={classColor} mode="badge">
+            <motion.div
+              className="relative w-16 h-16 rounded-full flex items-center justify-center text-3xl border-2 shrink-0"
+              style={{ borderColor: rankColor, boxShadow: `0 0 12px ${rankColor}44` }}
+              whileHover={{ scale: 1.05 }}
+            >
+              {player.avatar}
+              <div
+                className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-valor-surface"
+                style={{ background: rankColor }}
+              />
+            </motion.div>
+          </RankAura>
 
           <div className="flex-1 min-w-0">
             <p className="font-display font-bold text-white text-base truncate">

@@ -14,6 +14,8 @@ import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
+import { RANK_DEFINITIONS } from '@/lib/ranks'
+import RankAura from '@/components/ui/RankAura'
 import { XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
@@ -168,6 +170,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
         >
+          <RankAura rank={player.rank} classColor={def.accentColor} mode="character">
           <div className="absolute inset-0" style={{
             background: `radial-gradient(ellipse 70% 90% at 50% 60%, ${def.accentColor}18, transparent)`,
           }} />
@@ -186,6 +189,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
               />
             }
           />
+          </RankAura>
           <div className="absolute inset-x-0 bottom-0 h-28" style={{
             background: 'linear-gradient(0deg, rgba(4,3,12,0.98) 0%, transparent 100%)',
           }} />
@@ -322,10 +326,19 @@ export default function BattleArena({ player, walletAddress }: Props) {
 
         {result.rankedUp && result.newRank && (
           <motion.div className="w-full rounded-2xl p-5 text-center"
-            style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.35)' }}
+            style={{
+              background: `${RANK_DEFINITIONS[result.newRank]?.badgeBg ?? 'rgba(234,179,8,0.08)'}`,
+              border: `1px solid ${RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308'}44`,
+              boxShadow: RANK_DEFINITIONS[result.newRank]?.glow,
+            }}
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
           >
-            <p className="font-display font-black text-amber-400 text-xl">✦ RANK UP → {result.newRank}</p>
+            <RankAura rank={result.newRank} mode="badge">
+              <p className="font-display font-black text-xl"
+                style={{ color: RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308' }}>
+                ✦ RANK UP → {result.newRank}
+              </p>
+            </RankAura>
             <p className="text-slate-300 text-sm mt-1">{formatGDollarNumber(result.gAwarded)} dispatched to your wallet</p>
           </motion.div>
         )}
@@ -423,6 +436,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
 
           {/* Player — left half */}
           <div className="absolute left-0 top-0 w-1/2 h-full">
+            <RankAura rank={player.rank} classColor={def.accentColor} mode="character">
             <CharacterViewer
               glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
               accentColor={def.accentColor}
@@ -440,6 +454,8 @@ export default function BattleArena({ player, walletAddress }: Props) {
                 </div>
               }
             />
+
+            </RankAura>
 
             {/* Player impact flash */}
             <AnimatePresence>

@@ -1,14 +1,19 @@
 import type { Rank } from '@/types'
-import { RANK_COLORS } from '@/lib/constants'
+import { RANK_DEFINITIONS } from '@/lib/ranks'
 
 export default function RankBadge({ rank }: { rank: Rank }) {
-  const color = RANK_COLORS[rank]
+  const def = RANK_DEFINITIONS[rank]
   return (
     <span
-      className="text-xs font-bold px-2 py-0.5 rounded-full"
-      style={{ color, background: `${color}22`, border: `1px solid ${color}55` }}
+      className="text-[10px] font-black px-2 py-0.5 rounded-sm uppercase tracking-[0.14em]"
+      style={{
+        color:     def.badgeText,
+        background: def.badgeBg,
+        border:    `1px solid ${def.color}44`,
+        filter:    def.tier >= 3 ? `drop-shadow(0 0 4px ${def.color}88)` : undefined,
+      }}
     >
-      {rank}
+      {def.label}
     </span>
   )
 }
