@@ -41,14 +41,28 @@ export default function BattleArena({ player, walletAddress }: Props) {
     useBattle(player, walletAddress)
 
   // ── Animation state ─────────────────────────────────────────────────────
-  const [playerAnim, setPlayerAnim] = useState('idle')
-  const [botAnim,    setBotAnim]    = useState('idle')
+  const [playerAnim,       setPlayerAnim]       = useState('idle')
+  const [botAnim,          setBotAnim]          = useState('idle')
+  const [isEntering,       setIsEntering]       = useState(false)
+  const [showFightCall,    setShowFightCall]    = useState(false)
+  const [isRoundAnimating, setIsRoundAnimating] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   function clearTimers() {
     timers.current.forEach(clearTimeout)
     timers.current = []
   }
+
+  // ── Battle entrance ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (phase !== 'fighting' || round !== 1) return
+    setIsEntering(true)
+    setIsRoundAnimating(true)
+    const t1 = setTimeout(() => setShowFightCall(true), 800)
+    const t2 = setTimeout(() => { setIsEntering(false); setShowFightCall(false) }, 1450)
+    const t3 = setTimeout(() => setIsRoundAnimating(false), 1450)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [phase])
 
   // ── Combat feel ─────────────────────────────────────────────────────────
   const combatFeel = useCombatFeel()
@@ -67,9 +81,11 @@ export default function BattleArena({ player, walletAddress }: Props) {
     const playerAction = entry.playerMove === 'attack' || entry.playerMove === 'special' ? 'attack' : 'idle'
     setPlayerAnim(playerAction)
 
+    setIsRoundAnimating(true)
+
     const t1 = setTimeout(() => {
       setBotAnim(entry.playerDmg > 0 ? 'hit' : 'idle')
-      if (entry.botDmg > 0) combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
+      if (entry.playerDmg > 0) combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
     }, 320)
 
     const t2 = setTimeout(() => {
@@ -78,10 +94,14 @@ export default function BattleArena({ player, walletAddress }: Props) {
 
     const t3 = setTimeout(() => {
       setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle')
-      if (entry.playerDmg > 0) combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
+      if (entry.botDmg > 0) combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
     }, 980)
 
-    const t4 = setTimeout(() => { setPlayerAnim('idle'); setBotAnim('idle') }, 1500)
+    const t4 = setTimeout(() => {
+      setPlayerAnim('idle')
+      setBotAnim('idle')
+      setIsRoundAnimating(false)
+    }, 1500)
     timers.current = [t1, t2, t3, t4]
   }, [log])
 
@@ -91,6 +111,9 @@ export default function BattleArena({ player, walletAddress }: Props) {
       prevLogLen.current = 0
       setPlayerAnim('idle')
       setBotAnim('idle')
+      setIsEntering(false)
+      setShowFightCall(false)
+      setIsRoundAnimating(false)
       combatFeel.reset()
     }
   }, [phase])
@@ -263,6 +286,15 @@ export default function BattleArena({ player, walletAddress }: Props) {
           <h2 className="font-display font-black text-white text-4xl tracking-wider">
             {result.won ? 'VICTORY' : 'DEFEATED'}
           </h2>
+          {!result.won && (
+            <motion.p
+              className="font-display font-bold uppercase"
+              style={{ fontSize: '10px', letterSpacing: '0.3em', color: 'rgba(255,255,255,0.3)' }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }}
+            >
+              Your warrior endures
+            </motion.p>
+          )}
           <p className="font-black text-2xl" style={{ color: result.won ? '#eab308' : '#ef4444' }}>
             +{result.xpAwarded} XP
           </p>
@@ -492,14 +524,90 @@ export default function BattleArena({ player, walletAddress }: Props) {
             <ArenaHpBar label={player.character_name} hp={playerHp} classColor={def.accentColor} side="player" />
             <ArenaHpBar label="Bot" hp={botHp} classColor={botDef.accentColor} side="bot" />
           </div>
+
+          {/* ── Battle entrance overlay ── */}
+          <AnimatePresence>
+            {isEntering && !showFightCall && (
+              <motion.div
+                key="arena-title"
+                className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none gap-2"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <motion.p
+                  className="font-display font-bold uppercase"
+                  style={{ fontSize: '9px', letterSpacing: '0.5em', color: 'rgba(234,179,8,0.55)' }}
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15, duration: 0.35 }}
+                >
+                  Valor Arena
+                </motion.p>
+                <motion.div
+                  className="flex gap-3"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3, duration: 0.3 }}
+                >
+                  <motion.span
+                    className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)', letterSpacing: '0.06em', color: def.accentColor }}
+                    initial={{ x: -30, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                  >
+                    {player.character_name}
+                  </motion.span>
+                  <span className="font-display font-black text-slate-600"
+                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)' }}>VS</span>
+                  <motion.span
+                    className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)', letterSpacing: '0.06em', color: botDef.accentColor }}
+                    initial={{ x: 30, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                  >
+                    Bot Warrior
+                  </motion.span>
+                </motion.div>
+              </motion.div>
+            )}
+
+            {showFightCall && (
+              <motion.div
+                key="fight-call"
+                className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
+                initial={{ scale: 1.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.7, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <h2
+                  className="font-display font-black tracking-widest"
+                  style={{
+                    fontSize: 'clamp(2.5rem, 8vw, 4.5rem)',
+                    color: def.accentColor,
+                    textShadow: `0 0 48px ${def.accentColor}, 0 0 80px ${def.accentColor}60`,
+                  }}
+                >
+                  FIGHT
+                </h2>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       </motion.div>
 
       {/* ── Round tracker ── */}
       <div className="flex items-center justify-between px-1">
-        <h2 className="font-display font-black text-white text-lg">
-          Round {round} <span className="text-slate-600 font-normal text-sm">/ 5</span>
-        </h2>
+        <div className="flex items-center gap-2">
+          <span className="font-display font-bold text-slate-500 text-xs uppercase tracking-[0.18em]">Round</span>
+          <motion.span
+            key={round}
+            className="font-display font-black text-white text-lg leading-none"
+            initial={{ scale: 1.6, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {round}
+          </motion.span>
+          <span className="text-slate-600 font-normal text-sm">/ 5</span>
+        </div>
         <div className="flex gap-1.5">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="w-2.5 h-2.5 rounded-full transition-all" style={{
@@ -536,7 +644,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
       {/* ── Move buttons ── */}
       <div className="grid grid-cols-3 gap-3">
         {MOVES.map(({ id, label, desc, Icon, color }) => {
-          const disabled = id === 'special' && specialUsed
+          const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating
           return (
             <motion.button key={id} onClick={() => handleMove(id)} disabled={disabled}
               whileHover={disabled ? {} : { scale: 1.03, y: -2 }}
