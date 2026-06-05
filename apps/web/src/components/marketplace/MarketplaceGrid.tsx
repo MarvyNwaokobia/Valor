@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { Sword, Shield, Zap } from 'lucide-react'
 import { useMarketplaceItems } from '@/hooks/useMarketplace'
-import type { Item } from '@/types'
 import MarketplaceItem from './MarketplaceItem'
 import LimitedItemBanner from './LimitedItemBanner'
 
@@ -9,11 +9,11 @@ interface Props {
 }
 
 const CATEGORIES = ['weapon', 'shield', 'booster'] as const
-const CATEGORY_LABELS: Record<string, string> = {
-  weapon: '⚔️ Weapons',
-  shield: '🛡️ Shields',
-  booster: '⚡ Boosters',
-}
+const CATEGORY_META = {
+  weapon:  { label: 'Weapons',  Icon: Sword  },
+  shield:  { label: 'Shields',  Icon: Shield },
+  booster: { label: 'Boosters', Icon: Zap    },
+} as const
 
 export default function MarketplaceGrid({ walletAddress }: Props) {
   const { data: items = [], isLoading } = useMarketplaceItems()
@@ -44,23 +44,31 @@ export default function MarketplaceGrid({ walletAddress }: Props) {
       {/* Category filter */}
       <div className="flex gap-2 flex-wrap">
         <FilterBtn active={filter === 'all'} onClick={() => setFilter('all')} label="All" />
-        {CATEGORIES.map((cat) => (
-          <FilterBtn
-            key={cat}
-            active={filter === cat}
-            onClick={() => setFilter(cat)}
-            label={CATEGORY_LABELS[cat]}
-          />
-        ))}
+        {CATEGORIES.map((cat) => {
+          const { label, Icon } = CATEGORY_META[cat]
+          return (
+            <FilterBtn
+              key={cat}
+              active={filter === cat}
+              onClick={() => setFilter(cat)}
+              label={label}
+              Icon={Icon}
+            />
+          )
+        })}
       </div>
 
       {/* Item grid */}
       {CATEGORIES.filter((cat) => filter === 'all' || filter === cat).map((cat) => {
         const catItems = filteredItems.filter((i) => i.category === cat)
         if (catItems.length === 0) return null
+        const { label, Icon } = CATEGORY_META[cat]
         return (
           <section key={cat}>
-            <h2 className="font-display font-bold text-white mb-3">{CATEGORY_LABELS[cat]}</h2>
+            <h2 className="font-display font-bold text-white mb-3 flex items-center gap-2">
+              <Icon size={16} strokeWidth={2} />
+              {label}
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {catItems.map((item) => (
                 <MarketplaceItem key={item.id} item={item} walletAddress={walletAddress} />
@@ -73,24 +81,29 @@ export default function MarketplaceGrid({ walletAddress }: Props) {
   )
 }
 
+import type { LucideIcon } from 'lucide-react'
+
 function FilterBtn({
   active,
   onClick,
   label,
+  Icon,
 }: {
   active: boolean
   onClick: () => void
   label: string
+  Icon?: LucideIcon
 }) {
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
+      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
         active
           ? 'bg-valor-gold text-black'
           : 'bg-valor-surface border border-valor-border text-slate-400 hover:border-slate-500 hover:text-white'
       }`}
     >
+      {Icon && <Icon size={13} strokeWidth={2} />}
       {label}
     </button>
   )

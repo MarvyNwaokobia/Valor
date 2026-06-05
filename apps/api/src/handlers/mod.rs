@@ -6,6 +6,8 @@ pub mod battles;
 pub mod missions;
 pub mod items;
 pub mod decay;
+pub mod rewards;
+pub mod auth;
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
@@ -36,5 +38,13 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/decay")
                 .route("/run", web::post().to(decay::run_decay_sweep)),
+        )
+        .service(
+            web::scope("/rewards")
+                .route("/sign-claim", web::post().to(rewards::sign_engagement_claim)),
+        )
+        .service(
+            web::scope("/auth")
+                .route("/token", web::post().to(auth::issue_token)),
         );
 }

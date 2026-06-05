@@ -1,6 +1,8 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
 use serde_json::json;
+
+use crate::utils::{is_valid_wallet, normalize_wallet};
 
 use crate::AppState;
 
@@ -156,13 +158,24 @@ pub struct RankUpRequest {
 
 pub async fn rank_up_reward(
     state: web::Data<AppState>,
+    req: HttpRequest,
     path: web::Path<String>,
     body: web::Json<RankUpRequest>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let raw = path.into_inner();
+    if !is_valid_wallet(&raw) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    // Rate limit: 2 rank-ups per minute per IP (prevents spam)
+    let ip = req.connection_info().realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    if !state.rank_limiter.check(&ip) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Rate limit exceeded"}));
+    }
+    let wallet = normalize_wallet(&raw);
     let new_rank = &body.new_rank;
-
-    let rewards = crate::services::rewards::RewardService::from_env();
 
     let reward_amounts: std::collections::HashMap<&str, u64> = [
         ("Bronze", 10), ("Silver", 20), ("Gold", 40), ("Platinum", 80), ("Diamond", 150),
@@ -181,19 +194,12 @@ pub async fn rank_up_reward(
     .execute(&state.db)
     .await;
 
-    // Trigger on-chain G$ distribution
-    match rewards.distribute_rank_up(&wallet, new_rank, amount).await {
-        Ok(tx_hash) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "g_awarded": amount,
-            "tx_hash": tx_hash,
-        })),
-        Err(e) => {
-            tracing::error!("Reward distribution failed for {}: {}", wallet, e);
-            HttpResponse::InternalServerError().json(json!({
-                "error": "Reward distribution failed",
-                "g_awarded": amount,
-            }))
-        }
-    }
+    // On-chain G$ is distributed via the Engagement Rewards claim flow on the frontend.
+    // This endpoint records the rank-up and returns the amount for the UI to display.
+    tracing::info!("Rank-up recorded: {} -> {} (+{} G$)", wallet, new_rank, amount);
+
+    HttpResponse::Ok().json(json!({
+        "success": true,
+        "g_awarded": amount,
+    }))
 }

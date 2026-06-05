@@ -1,3 +1,9 @@
+# Design spec — never commit
+valor-design.html
+
+# Raw Mixamo FBX downloads — large binaries, convert to GLB before committing
+apps/web/public/characters/raw/
+
 # Dependencies
 node_modules/
 .pnp

@@ -1,15 +1,18 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { Sword, Shield, Zap, Sparkles } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { Item } from '@/types'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
-const CATEGORY_ICONS: Record<string, string> = {
-  weapon: '⚔️',
-  shield: '🛡️',
-  booster: '⚡',
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  weapon:   Sword,
+  shield:   Shield,
+  booster:  Zap,
+  cosmetic: Sparkles,
 }
 
 const STAT_LABELS: Record<string, string> = {
@@ -68,13 +71,16 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
 
       {/* Icon */}
       <div
-        className="w-full aspect-square rounded-xl flex items-center justify-center text-4xl border"
+        className="w-full aspect-square rounded-xl flex items-center justify-center border"
         style={{
           background: `${rarityColor}0d`,
           borderColor: `${rarityColor}22`,
         }}
       >
-        {CATEGORY_ICONS[item.category]}
+        {(() => {
+          const Icon = CATEGORY_ICONS[item.category] ?? Sword
+          return <Icon size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
+        })()}
       </div>
 
       {/* Name + desc */}

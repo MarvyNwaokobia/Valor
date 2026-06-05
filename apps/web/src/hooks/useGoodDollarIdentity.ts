@@ -1,10 +1,17 @@
 import { useState, useCallback } from 'react'
-import { usePublicClient, useWalletClient } from 'wagmi'
-import { checkWhitelistStatus, generateFaceVerifyLink } from '@/lib/gooddollar'
+import { usePublicClient, useWalletClient, useChainId, useSwitchChain } from 'wagmi'
+import { celo } from 'wagmi/chains'
+import {
+  checkWhitelistStatus,
+  generateFaceVerifyLink,
+  getIdentityExpiry,
+  type IdentityExpiry,
+} from '@/lib/gooddollar'
 
 export type IdentityStatus =
   | 'idle'
   | 'checking'
+  | 'switching_chain'
   | 'whitelisted'
   | 'not_whitelisted'
   | 'error'
@@ -13,6 +20,7 @@ interface UseGoodDollarIdentityReturn {
   status: IdentityStatus
   faceVerifyUrl: string | null
   error: string | null
+  identityExpiry: IdentityExpiry | null
   check: (address: `0x${string}`) => Promise<boolean>
   getFaceVerifyUrl: () => Promise<string | null>
   reset: () => void
@@ -21,10 +29,13 @@ interface UseGoodDollarIdentityReturn {
 export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
+  const chainId = useChainId()
+  const { switchChainAsync } = useSwitchChain()
 
   const [status, setStatus] = useState<IdentityStatus>('idle')
   const [faceVerifyUrl, setFaceVerifyUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [identityExpiry, setIdentityExpiry] = useState<IdentityExpiry | null>(null)
 
   const check = useCallback(
     async (address: `0x${string}`): Promise<boolean> => {
@@ -34,18 +45,30 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         return false
       }
 
+      // GoodDollar identity contracts live on Celo — switch if on another network
+      if (chainId !== celo.id) {
+        setStatus('switching_chain')
+        try {
+          await switchChainAsync({ chainId: celo.id })
+        } catch {
+          setError('Please switch your wallet to the Celo network and try again.')
+          setStatus('error')
+          return false
+        }
+      }
+
       setStatus('checking')
       setError(null)
 
       try {
-        const { isWhitelisted } = await checkWhitelistStatus(
-          publicClient,
-          walletClient,
-          address,
-        )
+        const { isWhitelisted } = await checkWhitelistStatus(publicClient, walletClient, address)
 
         if (isWhitelisted) {
           setStatus('whitelisted')
+          // Fetch expiry in background — non-blocking, non-fatal
+          getIdentityExpiry(publicClient, walletClient, address)
+            .then(setIdentityExpiry)
+            .catch(() => {})
           return true
         } else {
           setStatus('not_whitelisted')
@@ -58,12 +81,11 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         return false
       }
     },
-    [publicClient, walletClient],
+    [publicClient, walletClient, chainId, switchChainAsync],
   )
 
   const getFaceVerifyUrl = useCallback(async (): Promise<string | null> => {
     if (!publicClient || !walletClient) return null
-
     try {
       const url = await generateFaceVerifyLink(publicClient, walletClient)
       setFaceVerifyUrl(url)
@@ -79,7 +101,8 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
     setStatus('idle')
     setFaceVerifyUrl(null)
     setError(null)
+    setIdentityExpiry(null)
   }, [])
 
-  return { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset }
+  return { status, faceVerifyUrl, error, identityExpiry, check, getFaceVerifyUrl, reset }
 }

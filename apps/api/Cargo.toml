@@ -20,6 +20,9 @@ thiserror = "2"
 ethers = { version = "2", features = ["rustls"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 rand = "0.9"
+hex = "0.4"
+jsonwebtoken = "9"
+dashmap = "6"
 
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }

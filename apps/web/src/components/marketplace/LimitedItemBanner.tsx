@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { Sword } from 'lucide-react'
 import type { Item } from '@/types'
 import { formatCountdown, formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
@@ -66,8 +67,8 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
 
       <div className="relative z-10 p-6 flex flex-col sm:flex-row gap-6 items-center">
         {/* Icon */}
-        <div className="w-24 h-24 rounded-2xl border-2 border-valor-gold/40 bg-valor-gold/10 flex items-center justify-center text-5xl shrink-0">
-          ⚔️
+        <div className="w-24 h-24 rounded-2xl border-2 border-valor-gold/40 bg-valor-gold/10 flex items-center justify-center shrink-0">
+          <Sword size={48} className="text-valor-gold" strokeWidth={1.2} />
         </div>
 
         {/* Info */}
