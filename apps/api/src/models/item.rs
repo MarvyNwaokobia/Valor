@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -11,7 +12,8 @@ pub struct Item {
     pub rarity: String,
     pub category: String,
     pub stat_boost: i32,
-    pub price_g: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub price_g: Decimal,
     pub image_url: String,
     pub layer_type: Option<String>,
     pub layer_asset_url: Option<String>,

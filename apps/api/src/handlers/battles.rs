@@ -132,7 +132,7 @@ pub async fn fight_bot(
         .bind(wins)
         .bind(losses)
         .bind(rank)
-        .bind(g_awarded as f64)
+        .bind(g_awarded)
         .bind(now)
         .bind(&wallet)
         .execute(&state.db)

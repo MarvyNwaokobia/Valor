@@ -285,7 +285,7 @@ pub async fn rank_up_reward(
     let _ = sqlx::query(
         "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
     )
-    .bind(amount as f64)
+    .bind(amount as i64)
     .bind(&wallet)
     .execute(&state.db)
     .await;

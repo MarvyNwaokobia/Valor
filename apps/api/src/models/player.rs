@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -76,7 +77,8 @@ pub struct Player {
     pub attack_stat: i32,
     pub defense_stat: i32,
     pub speed_stat: i32,
-    pub g_earned_lifetime: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub g_earned_lifetime: Decimal,
     pub last_active: DateTime<Utc>,
     pub decay_status: String,
     pub decay_frozen_until: Option<DateTime<Utc>>,

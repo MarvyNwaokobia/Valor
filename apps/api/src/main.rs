@@ -1,6 +1,7 @@
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::str::FromStr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod handlers;
@@ -28,9 +29,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let connect_opts = PgConnectOptions::from_str(&database_url)
+        .expect("Invalid DATABASE_URL")
+        .statement_cache_capacity(0); // required for PgBouncer transaction-mode pooler
     let db = PgPoolOptions::new()
         .max_connections(20)
-        .connect(&database_url)
+        .connect_with(connect_opts)
         .await?;
 
     let rewards = services::rewards::RewardService::from_env()
