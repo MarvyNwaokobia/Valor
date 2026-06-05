@@ -1,25 +1,48 @@
 """
 Valor — FBX to GLB batch converter
-Run with:
+
+Run with Intel (x86_64) Blender on Intel Macs:
   /Applications/Blender.app/Contents/MacOS/Blender --background --python scripts/fbx_to_glb.py -- apps/web/public/characters/raw apps/web/public/characters/glb
 
-Folder structure expected:
-  raw/
-    berserker/
-      character.fbx   ← downloaded WITH skin from Mixamo (T-pose or idle)
-      idle.fbx        ← downloaded WITHOUT skin
-      attack.fbx      ← downloaded WITHOUT skin
-      hit.fbx         ← downloaded WITHOUT skin
-      death.fbx       ← downloaded WITHOUT skin
-    sentinel/
-      ...
-
-Output: one GLB per class with all animations embedded as named tracks.
+Download Intel Blender: https://www.blender.org/download/  → macOS Intel 64 bit
 """
 
 import bpy
 import os
 import sys
+
+# Explicit mapping of actual Mixamo download filenames to our animation names.
+# character: the FBX with mesh + skeleton ("With Skin" download from Mixamo)
+# animations: {our_animation_name: actual_filename}
+CLASS_FILES = {
+    'berserker': {
+        'character': 'T-Pose with skin male.fbx',
+        'animations': {
+            'idle':   'Barbarian.fbx',         # contains embedded animation (character default)
+            'attack': 'male attack.fbx',
+            'hit':    'male hit.fbx',
+            'death':  'Male death.fbx',
+        },
+    },
+    'sentinel': {
+        'character': 'T-Pose male.fbx',
+        'animations': {
+            'idle':   'Idle male.fbx',
+            'attack': 'attack male.fbx',
+            'hit':    'Hit Reaction male.fbx',
+            'death':  'death male.fbx',
+        },
+    },
+    'phantom': {
+        'character': 'T-Pose.fbx',
+        'animations': {
+            'idle':   'Idle.fbx',
+            'attack': 'attack.fbx',
+            'hit':    'Hit To Body.fbx',
+            'death':  'death.fbx',
+        },
+    },
+}
 
 
 def clear_scene():
@@ -44,13 +67,11 @@ def get_armatures():
 
 
 def remove_except(keep_object):
-    """Remove all armatures and meshes except keep_object and its children."""
-    to_remove = []
-    for obj in bpy.context.scene.objects:
-        if obj == keep_object:
-            continue
-        if obj.type in ('ARMATURE', 'MESH'):
-            to_remove.append(obj)
+    """Remove all scene armatures and meshes except keep_object and its children."""
+    to_remove = [
+        obj for obj in bpy.context.scene.objects
+        if obj != keep_object and obj.type in ('ARMATURE', 'MESH')
+    ]
     for obj in to_remove:
         try:
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -59,13 +80,36 @@ def remove_except(keep_object):
 
 
 def push_action_to_nla(armature, action, name):
-    """Add an action as a named NLA strip on the armature."""
+    """Register an action as a named NLA strip on the armature."""
+    action.name = name
+    action.use_fake_user = True   # prevent garbage collection
     if not armature.animation_data:
         armature.animation_data_create()
     track = armature.animation_data.nla_tracks.new()
     track.name = name
-    strip = track.strips.new(name, int(action.frame_range[0]), action)
-    return strip
+    track.strips.new(name, int(action.frame_range[0]), action)
+    armature.animation_data.action = None   # detach active so NLA takes over
+
+
+def create_rest_pose_idle(armature):
+    """Generate a 60-frame idle by keying the armature's current rest pose."""
+    bpy.context.view_layer.objects.active = armature
+    if not armature.animation_data:
+        armature.animation_data_create()
+
+    action = bpy.data.actions.new('idle')
+    armature.animation_data.action = action
+
+    bpy.ops.object.mode_set(mode='POSE')
+    bpy.ops.pose.select_all(action='SELECT')
+
+    for frame in (1, 60):
+        bpy.context.scene.frame_set(frame)
+        bpy.ops.anim.keyframe_insert_menu(type='WholeCharacterSelected')
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print("  Created 60-frame rest-pose idle")
+    return action
 
 
 def process_class(class_dir, output_path, class_name):
@@ -73,70 +117,79 @@ def process_class(class_dir, output_path, class_name):
     print(f"  {class_name.upper()}")
     print(f"{'=' * 52}")
 
-    char_fbx = os.path.join(class_dir, 'character.fbx')
+    cls_lower = class_name.lower()
+    if cls_lower not in CLASS_FILES:
+        print(f"  SKIP — no file mapping for '{class_name}'")
+        return False
+
+    cfg = CLASS_FILES[cls_lower]
+    char_fbx = os.path.join(class_dir, cfg['character'])
     if not os.path.exists(char_fbx):
-        print(f"  SKIP — character.fbx not found in {class_dir}")
+        print(f"  ERROR — character file not found: {cfg['character']}")
         return False
 
     clear_scene()
 
-    # ── Import base character (mesh + skeleton) ────────────────────────
-    print(f"  Importing character mesh...")
+    # ── Base character (mesh + skeleton) ──────────────────────────────
+    print(f"  Importing base: {cfg['character']} ...")
     import_fbx(char_fbx)
 
     arms = get_armatures()
     if not arms:
-        print(f"  ERROR — no armature found in character.fbx")
+        print("  ERROR — no armature in character file")
         return False
 
     main_arm = arms[0]
     print(f"  Armature: {main_arm.name}")
-
     if not main_arm.animation_data:
         main_arm.animation_data_create()
+    # Clear any animation baked into the T-Pose file — we want clean NLA only
+    main_arm.animation_data.action = None
 
-    # If character.fbx had an embedded animation, register it as 'idle'
-    if main_arm.animation_data.action:
-        action = main_arm.animation_data.action
-        action.name = 'idle'
-        push_action_to_nla(main_arm, action, 'idle')
-        main_arm.animation_data.action = None
-        print(f"  Registered embedded animation as: idle")
+    # ── Animations ────────────────────────────────────────────────────
+    idle_added = False
+    for anim_name, anim_file in cfg['animations'].items():
+        anim_path = os.path.join(class_dir, anim_file)
+        if not os.path.exists(anim_path):
+            print(f"  WARNING — '{anim_file}' not found, skipping '{anim_name}'")
+            continue
 
-    # ── Import each animation file ─────────────────────────────────────
-    anim_files = sorted([
-        f for f in os.listdir(class_dir)
-        if f.lower().endswith('.fbx') and f.lower() != 'character.fbx'
-    ])
-
-    for fname in anim_files:
-        anim_name = os.path.splitext(fname)[0].lower()
-        anim_path = os.path.join(class_dir, fname)
-        print(f"  Importing animation: {anim_name}...")
-
+        print(f"  Importing: {anim_file} → '{anim_name}' ...")
         import_fbx(anim_path)
 
-        # The new armature is everything except main_arm
         new_arms = [a for a in get_armatures() if a != main_arm]
         if not new_arms:
-            print(f"    WARNING — no armature found in {fname}, skipping")
+            print(f"    WARNING — no armature in {anim_file}")
+            remove_except(main_arm)
             continue
 
         tmp_arm = new_arms[0]
-        if tmp_arm.animation_data and tmp_arm.animation_data.action:
+        action = None
+        if tmp_arm.animation_data:
             action = tmp_arm.animation_data.action
-            action.name = anim_name
+
+        if action:
             push_action_to_nla(main_arm, action, anim_name)
             frames = int(action.frame_range[1] - action.frame_range[0])
-            print(f"    Added '{anim_name}' ({frames} frames)")
+            print(f"    ✓ '{anim_name}' — {frames} frames")
+            if anim_name == 'idle':
+                idle_added = True
         else:
-            print(f"    WARNING — no action found in {fname}")
+            print(f"    WARNING — no action found in {anim_file}")
 
-        # Clean up the temporary import
         remove_except(main_arm)
 
-    # ── Export as GLB ──────────────────────────────────────────────────
-    print(f"  Exporting GLB...")
+    # Fallback: generate rest-pose idle if none was found
+    if not idle_added:
+        print("  No idle animation — generating rest-pose idle ...")
+        try:
+            action = create_rest_pose_idle(main_arm)
+            push_action_to_nla(main_arm, action, 'idle')
+        except Exception as e:
+            print(f"  WARNING — could not generate idle: {e}")
+
+    # ── Export GLB ─────────────────────────────────────────────────────
+    print("  Exporting GLB ...")
     bpy.ops.export_scene.gltf(
         filepath=output_path,
         export_format='GLB',
@@ -149,25 +202,23 @@ def process_class(class_dir, output_path, class_name):
 
     if os.path.exists(output_path):
         size_kb = os.path.getsize(output_path) / 1024
-        print(f"  ✓ {output_path} ({size_kb:.0f} KB)")
+        print(f"  ✓ {output_path}  ({size_kb:.0f} KB)")
         return True
-    else:
-        print(f"  ERROR — output file not created")
-        return False
+
+    print("  ERROR — output file not created")
+    return False
 
 
 if __name__ == "__main__":
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-
     if len(argv) < 2:
         print(__doc__)
         sys.exit(1)
 
     raw_dir = os.path.abspath(argv[0])
     glb_dir = os.path.abspath(argv[1])
-
-    print(f"Raw dir : {raw_dir}")
-    print(f"GLB dir : {glb_dir}")
+    print(f"Raw dir: {raw_dir}")
+    print(f"GLB dir: {glb_dir}")
     os.makedirs(glb_dir, exist_ok=True)
 
     ok = fail = 0
@@ -176,12 +227,11 @@ if __name__ == "__main__":
         if not os.path.isdir(cls_path):
             continue
         out_path = os.path.join(glb_dir, f"{cls}.glb")
-        result = process_class(cls_path, out_path, cls)
-        if result:
+        if process_class(cls_path, out_path, cls):
             ok += 1
         else:
             fail += 1
 
     print(f"\n{'=' * 52}")
     print(f"  Done — {ok} converted, {fail} failed")
-    print(f"{'=' * 52}\n")
+    print(f"{'=' * 52}")
