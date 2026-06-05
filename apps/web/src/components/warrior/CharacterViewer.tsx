@@ -77,17 +77,14 @@ export default function CharacterViewer({
     <div className={className ?? 'absolute inset-0'}>
 
       {/*
-        Portrait fallback — visible immediately and fades out once the 3D
-        model is ready. Stays visible permanently if the GLB fails to load.
-        pointer-events:none so OrbitControls still works when 3D is active.
+        Portrait — always visible as background. The 3D canvas renders on top
+        with a transparent background, so if the GLB loads correctly the 3D
+        model naturally obscures the portrait. If WebGL fails or the model is
+        invisible the portrait stays visible.
       */}
       <div
         className="absolute inset-0"
-        style={{
-          opacity:       loaded && !failed ? 0 : 1,
-          transition:    'opacity 0.5s ease',
-          pointerEvents: loaded && !failed ? 'none' : undefined,
-        }}
+        style={{ pointerEvents: loaded && !failed ? 'none' : undefined }}
       >
         {fallback}
       </div>

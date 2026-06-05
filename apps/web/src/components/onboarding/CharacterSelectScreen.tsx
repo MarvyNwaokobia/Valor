@@ -125,7 +125,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
         modelKey={`${selectedClass}-${gender}`}
         fallback={
           /* Portrait image fallback — active until GLBs are converted */
-          <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '38vh' }}>
+          <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: '20vh' }}>
             <AnimatePresence mode="wait" custom={dir}>
               <motion.img
                 key={`${selectedClass}-${gender}`}

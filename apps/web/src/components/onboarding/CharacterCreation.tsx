@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { supabase } from '@/lib/supabase'
+
 import { CHARACTER_CLASSES, CLASS_DEFINITIONS, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import type { PlayStyle } from '@/types'
@@ -212,15 +212,16 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
       wins: 0,
       losses: 0,
     }
-    const { error: dbError } = await supabase.from('players').insert(newPlayer as never)
-    if (dbError) {
-      if (dbError.code === '23505') {
-        const { data } = await supabase.from('players').select('*').eq('wallet_address',walletAddress).single()
-        if (data) { setPlayer(data); onCreated(); return }
-      }
-      setError(dbError.message); setPending(false); return
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/players`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newPlayer),
+    })
+    if (!res.ok) {
+      setError('Failed to save character. Please try again.'); setPending(false); return
     }
-    setPlayer({ ...newPlayer, created_at:now })
+    const created = await res.json()
+    setPlayer(created)
     onCreated()
   }
 

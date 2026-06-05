@@ -1,6 +1,8 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use serde::Deserialize;
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::utils::{is_valid_wallet, normalize_wallet};
 
@@ -202,4 +204,187 @@ pub async fn rank_up_reward(
         "success": true,
         "g_awarded": amount,
     }))
+}
+
+// ── POST /players ─────────────────────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct CreatePlayerRequest {
+    pub wallet_address:          String,
+    pub play_style:              String,
+    pub avatar:                  Option<String>,
+    pub character_name:          String,
+    pub username:                Option<String>,
+    pub display_name:            Option<String>,
+    pub character_class:         Option<String>,
+    pub character_customization: Option<serde_json::Value>,
+    pub attack_stat:             Option<i32>,
+    pub defense_stat:            Option<i32>,
+    pub speed_stat:              Option<i32>,
+}
+
+pub async fn create_player(
+    state: web::Data<AppState>,
+    body: web::Json<CreatePlayerRequest>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&body.wallet_address);
+    let customization = body.character_customization.clone()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+
+    let result = sqlx::query_as::<_, crate::models::player::Player>(
+        "INSERT INTO players (
+            wallet_address, username, display_name, character_class,
+            character_customization, play_style, avatar, character_name,
+            rank, xp, attack_stat, defense_stat, speed_stat,
+            g_earned_lifetime, last_active, decay_status, wins, losses
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Bronze', 0, $9, $10, $11, 0, now(), 'none', 0, 0)
+         ON CONFLICT (wallet_address) DO UPDATE
+           SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
+               character_customization = CASE
+                 WHEN EXCLUDED.character_customization::text = '{}' THEN players.character_customization
+                 ELSE EXCLUDED.character_customization
+               END,
+               username     = COALESCE(EXCLUDED.username, players.username),
+               display_name = COALESCE(EXCLUDED.display_name, players.display_name)
+         RETURNING *",
+    )
+    .bind(&wallet)
+    .bind(&body.username)
+    .bind(&body.display_name)
+    .bind(&body.character_class)
+    .bind(sqlx::types::Json(&customization))
+    .bind(&body.play_style)
+    .bind(body.avatar.as_deref().unwrap_or(""))
+    .bind(&body.character_name)
+    .bind(body.attack_stat.unwrap_or(10))
+    .bind(body.defense_stat.unwrap_or(10))
+    .bind(body.speed_stat.unwrap_or(10))
+    .fetch_one(&state.db)
+    .await;
+
+    match result {
+        Ok(player) => HttpResponse::Ok().json(player),
+        Err(e) => {
+            tracing::error!("Failed to create player: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to create player"}))
+        }
+    }
+}
+
+// ── GET /players ──────────────────────────────────────────────────────────────
+pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
+    let result = sqlx::query_as::<_, crate::models::player::Player>(
+        "SELECT * FROM players
+         ORDER BY
+           CASE rank
+             WHEN 'Diamond'  THEN 1
+             WHEN 'Platinum' THEN 2
+             WHEN 'Gold'     THEN 3
+             WHEN 'Silver'   THEN 4
+             ELSE 5
+           END ASC, xp DESC
+         LIMIT 50",
+    )
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(players) => HttpResponse::Ok().json(players),
+        Err(e) => {
+            tracing::error!("Failed to fetch leaderboard: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── GET /players/:wallet/inventory ────────────────────────────────────────────
+pub async fn get_inventory(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = path.into_inner();
+
+    #[derive(serde::Serialize, sqlx::FromRow)]
+    struct InventoryRow {
+        wallet_address: String,
+        item_id: Uuid,
+        equipped: bool,
+        acquired_at: chrono::DateTime<Utc>,
+    }
+
+    let result = sqlx::query_as::<_, InventoryRow>(
+        "SELECT wallet_address, item_id, equipped, acquired_at
+         FROM inventory WHERE wallet_address = $1 ORDER BY acquired_at DESC",
+    )
+    .bind(&wallet)
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(rows) => HttpResponse::Ok().json(rows),
+        Err(e) => {
+            tracing::error!("Failed to fetch inventory: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── POST /players/:wallet/inventory ───────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct AddInventoryRequest {
+    pub item_id: Uuid,
+}
+
+pub async fn add_inventory_item(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<AddInventoryRequest>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+
+    let result = sqlx::query(
+        "INSERT INTO inventory (wallet_address, item_id, equipped, acquired_at)
+         VALUES ($1, $2, false, now())
+         ON CONFLICT (wallet_address, item_id) DO NOTHING",
+    )
+    .bind(&wallet)
+    .bind(body.item_id)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Err(e) => {
+            tracing::error!("Failed to add inventory item: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── GET /players/:wallet/daily-claim-status ───────────────────────────────────
+pub async fn daily_claim_status(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = path.into_inner();
+
+    let result: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+        "SELECT last_claimed_at FROM daily_claims WHERE wallet_address = $1",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    match result {
+        Some((last_claimed_at,)) => {
+            let next_claim_at = last_claimed_at + chrono::Duration::hours(24);
+            let can_claim = Utc::now() >= next_claim_at;
+            HttpResponse::Ok().json(json!({
+                "last_claimed_at": last_claimed_at,
+                "next_claim_at": next_claim_at,
+                "can_claim": can_claim,
+            }))
+        }
+        None => HttpResponse::Ok().json(json!({ "can_claim": true })),
+    }
 }

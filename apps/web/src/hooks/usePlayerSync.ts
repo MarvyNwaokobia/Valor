@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export function usePlayerSync(address: string | undefined) {
   const { setPlayer, setInventory, clearPlayer } = usePlayerStore()
@@ -11,41 +12,23 @@ export function usePlayerSync(address: string | undefined) {
       return
     }
 
-    const addr = address
-    let playerSub: ReturnType<typeof supabase.channel> | null = null
-
     async function sync() {
-      const { data: player } = await supabase
-        .from('players')
-        .select('*')
-        .eq('wallet_address', addr)
-        .single()
+      const [playerRes, inventoryRes] = await Promise.all([
+        fetch(`${API}/players/${address}`),
+        fetch(`${API}/players/${address}/inventory`),
+      ])
 
-      if (player) {
+      if (playerRes.ok) {
+        const player = await playerRes.json()
         setPlayer(player)
+      }
 
-        const { data: inventory } = await supabase
-          .from('inventory')
-          .select('*')
-          .eq('wallet_address', addr)
-
+      if (inventoryRes.ok) {
+        const inventory = await inventoryRes.json()
         setInventory(inventory ?? [])
-
-        playerSub = supabase
-          .channel(`player:${addr}`)
-          .on(
-            'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'players', filter: `wallet_address=eq.${addr}` },
-            (payload) => setPlayer(payload.new as typeof player),
-          )
-          .subscribe()
       }
     }
 
     sync()
-
-    return () => {
-      playerSub?.unsubscribe()
-    }
   }, [address, setPlayer, setInventory, clearPlayer])
 }

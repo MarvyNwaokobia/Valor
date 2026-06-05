@@ -63,6 +63,11 @@ pub enum PlayStyle {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Player {
     pub wallet_address: String,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub character_class: Option<String>,
+    #[sqlx(json)]
+    pub character_customization: serde_json::Value,
     pub play_style: String,
     pub avatar: String,
     pub character_name: String,

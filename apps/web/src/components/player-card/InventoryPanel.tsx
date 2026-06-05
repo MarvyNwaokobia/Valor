@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
 import type { InventoryItem, Item } from '@/types'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -17,8 +18,10 @@ export default function InventoryPanel({ inventory }: Props) {
     queryKey: ['items', itemIds],
     queryFn: async () => {
       if (itemIds.length === 0) return []
-      const { data } = await supabase.from('items').select('*').in('id', itemIds)
-      return (data ?? []) as Item[]
+      const res = await fetch(`${API}/items`)
+      if (!res.ok) return []
+      const all: Item[] = await res.json()
+      return all.filter(i => itemIds.includes(i.id))
     },
     enabled: itemIds.length > 0,
   })

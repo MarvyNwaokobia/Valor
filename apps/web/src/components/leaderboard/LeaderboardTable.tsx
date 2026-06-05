@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
-import { supabase } from '@/lib/supabase'
+
 import type { Player } from '@/types'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_COLORS } from '@/lib/constants'
@@ -28,18 +28,17 @@ const CLASS_ACCENT: Record<string, string> = {
 }
 
 export default function LeaderboardTable({ currentWallet }: Props) {
-  const [players,       setPlayers]       = useState<Player[]>([])
-  const [myPosition,    setMyPosition]    = useState<number | null>(null)
-  const [loading,       setLoading]       = useState(true)
-  const [updatedWallet, setUpdatedWallet] = useState<string | null>(null)
+  const [players,    setPlayers]    = useState<Player[]>([])
+  const [myPosition, setMyPosition] = useState<number | null>(null)
+  const [loading,    setLoading]    = useState(true)
 
   const loadLeaderboard = useCallback(async () => {
-    const { data } = await supabase.from('players').select('*')
-    if (!data) return
-    const sorted = sortLeaderboard(data)
-    setPlayers(sorted.slice(0, 50))
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/players`)
+    if (!res.ok) return
+    const data: Player[] = await res.json()
+    setPlayers(data.slice(0, 50))
     if (currentWallet) {
-      const pos = sorted.findIndex(p => p.wallet_address.toLowerCase() === currentWallet.toLowerCase())
+      const pos = data.findIndex(p => p.wallet_address.toLowerCase() === currentWallet.toLowerCase())
       setMyPosition(pos >= 0 ? pos + 1 : null)
     }
     setLoading(false)
@@ -47,15 +46,6 @@ export default function LeaderboardTable({ currentWallet }: Props) {
 
   useEffect(() => {
     loadLeaderboard()
-    const sub = supabase.channel('leaderboard-realtime')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'players' }, payload => {
-        const updated = payload.new as Player
-        setUpdatedWallet(updated.wallet_address)
-        setTimeout(() => setUpdatedWallet(null), 1500)
-        setPlayers(prev => sortLeaderboard(prev.map(p => p.wallet_address === updated.wallet_address ? updated : p)))
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(sub) }
   }, [loadLeaderboard])
 
   if (loading) {
@@ -110,7 +100,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
           const pos         = i + 1
           const rankColor   = RANK_COLORS[player.rank]
           const classAccent = CLASS_ACCENT[player.character_class] ?? rankColor
-          const isUpdating  = updatedWallet === player.wallet_address
+          const isUpdating  = false
 
           return (
             <motion.div key={player.wallet_address} layout

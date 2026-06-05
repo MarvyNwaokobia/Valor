@@ -2,8 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useWriteContract } from 'wagmi'
 import { parseUnits, encodeAbiParameters, parseAbiParameters } from 'viem'
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
@@ -26,12 +27,9 @@ export function useMarketplaceItems() {
   return useQuery({
     queryKey: ['marketplace-items'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('items')
-        .select('*')
-        .order('price_g', { ascending: true })
-      if (error) throw error
-      return (data ?? []) as Item[]
+      const res = await fetch(`${API}/items`)
+      if (!res.ok) throw new Error('Failed to fetch items')
+      return res.json() as Promise<Item[]>
     },
     staleTime: 30_000,
   })
@@ -79,17 +77,12 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       }
       addInventoryItem(newInventoryItem)
 
-      // Also persist to Supabase (the contract webhook will do this in production;
-      // this is an optimistic insert for immediate UI feedback)
-      await supabase.from('inventory').upsert(newInventoryItem, { onConflict: 'wallet_address,item_id' })
-
-      // Update remaining_supply optimistically
-      if (item.remaining_supply !== null) {
-        await supabase
-          .from('items')
-          .update({ remaining_supply: item.remaining_supply - 1 })
-          .eq('id', item.id)
-      }
+      // Persist to Railway API
+      await fetch(`${API}/players/${walletAddress}/inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: item.id }),
+      })
 
       queryClient.invalidateQueries({ queryKey: ['marketplace-items'] })
 

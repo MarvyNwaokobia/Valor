@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { supabase } from '@/lib/supabase'
 import { DAILY_CLAIM_G } from '@/lib/constants'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 interface Props {
   walletAddress: string
@@ -18,34 +19,20 @@ export default function DailyClaimButton({ walletAddress }: Props) {
 
   const { canClaim, claimEngagementReward, isReady: rewardsReady } = useValorEngagementRewards()
 
-  const { data: claim } = useQuery({
+  const { data: claimStatus } = useQuery({
     queryKey: ['daily-claim', walletAddress],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('daily_claims')
-        .select('*')
-        .eq('wallet_address', walletAddress)
-        .single()
-      return data
+      const res = await fetch(`${API}/players/${walletAddress}/daily-claim-status`)
+      if (!res.ok) return null
+      return res.json() as Promise<{ can_claim: boolean; last_claimed_at?: string; next_claim_at?: string }>
     },
   })
 
-  const canClaimDaily =
-    !claim ||
-    Date.now() - new Date(claim.last_claimed_at).getTime() >= CLAIM_COOLDOWN_MS
+  const canClaimDaily = claimStatus?.can_claim ?? true
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
-      const now = new Date().toISOString()
-
-      // 1. Record in Supabase
-      await supabase.from('daily_claims').upsert({
-        wallet_address: walletAddress,
-        last_claimed_at: now,
-      })
-
-      // 2. Notify backend (updates last_active, records XP)
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/players/${walletAddress}/daily-claim`, {
+      await fetch(`${API}/players/${walletAddress}/daily-claim`, {
         method: 'POST',
       })
 
@@ -68,9 +55,8 @@ export default function DailyClaimButton({ walletAddress }: Props) {
     },
   })
 
-  const hoursRemaining = claim
-    ? Math.max(0, CLAIM_COOLDOWN_MS - (Date.now() - new Date(claim.last_claimed_at).getTime())) /
-      (1000 * 60 * 60)
+  const hoursRemaining = claimStatus?.next_claim_at
+    ? Math.max(0, new Date(claimStatus.next_claim_at).getTime() - Date.now()) / (1000 * 60 * 60)
     : 0
 
   return (
