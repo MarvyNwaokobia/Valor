@@ -1,21 +1,20 @@
 'use client'
 
-import { Suspense, useEffect, useRef, Component, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, Component, type ReactNode } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { useGLTF, useAnimations, OrbitControls } from '@react-three/drei'
 import type * as THREE from 'three'
 
-// ── Error boundary — falls back gracefully if GLB doesn't exist yet ───────────
+// ── Error boundary — catches errors thrown inside the R3F Canvas tree ─────────
 
-interface BoundaryProps { fallback: ReactNode; children: ReactNode }
-interface BoundaryState { error: boolean }
-
-class GLBBoundary extends Component<BoundaryProps, BoundaryState> {
-  state: BoundaryState = { error: false }
-  static getDerivedStateFromError() { return { error: true } }
-  render() {
-    return this.state.error ? this.props.fallback : this.props.children
-  }
+class GLBErrorBoundary extends Component<
+  { children: ReactNode; onError: () => void },
+  { errored: boolean }
+> {
+  state = { errored: false }
+  static getDerivedStateFromError() { return { errored: true } }
+  componentDidCatch() { this.props.onError() }
+  render() { return this.state.errored ? null : this.props.children }
 }
 
 // ── 3D model (runs inside Canvas context) ────────────────────────────────────
@@ -24,12 +23,16 @@ interface ModelProps {
   glbPath: string
   accentColor: string
   animationName: string
+  onLoaded: () => void
 }
 
-function CharacterModel({ glbPath, accentColor, animationName }: ModelProps) {
+function CharacterModel({ glbPath, accentColor, animationName, onLoaded }: ModelProps) {
   const group = useRef<THREE.Group>(null!)
   const { scene, animations } = useGLTF(glbPath)
   const { actions } = useAnimations(animations, group)
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onLoaded() }, [])   // mount = successful load
 
   useEffect(() => {
     Object.values(actions).forEach(a => a?.stop())
@@ -41,7 +44,7 @@ function CharacterModel({ glbPath, accentColor, animationName }: ModelProps) {
   return (
     <group ref={group}>
       <primitive object={scene} dispose={null} />
-      {/* Rim light in class accent color — gives the characteristic glow */}
+      {/* Rim light in class accent color */}
       <pointLight position={[-3, 2, -2]} intensity={5} color={accentColor} distance={14} />
     </group>
   )
@@ -53,7 +56,7 @@ export interface CharacterViewerProps {
   glbPath: string
   accentColor: string
   animationName?: string
-  /** Change this to remount the model (use class+gender string) */
+  /** Remounts the model when this changes (use class+gender string) */
   modelKey: string
   fallback?: ReactNode
   className?: string
@@ -67,43 +70,69 @@ export default function CharacterViewer({
   fallback = null,
   className,
 }: CharacterViewerProps) {
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+
   return (
-    <GLBBoundary fallback={fallback}>
-      <div className={className ?? 'absolute inset-0'}>
-        <Canvas
-          camera={{ position: [0, 1.1, 3.4], fov: 42 }}
-          dpr={[1, 2]}
-          gl={{ antialias: true, alpha: true }}
-          style={{ background: 'transparent' }}
-          performance={{ min: 0.5 }}
-        >
-          {/* Ambient — dark purple tint matches the game atmosphere */}
-          <ambientLight intensity={0.55} color="#18142e" />
-          {/* Key light — front, slightly above */}
-          <directionalLight position={[1, 4, 3]} intensity={2.4} color="#ffffff" />
-          {/* Fill light — subtle cool from below */}
-          <pointLight position={[0, -0.5, 2]} intensity={0.7} color="#0a0820" />
+    <div className={className ?? 'absolute inset-0'} style={{ position: 'relative' }}>
 
-          <Suspense fallback={null}>
-            <CharacterModel
-              key={modelKey}
-              glbPath={glbPath}
-              accentColor={accentColor}
-              animationName={animationName}
-            />
-          </Suspense>
-
-          {/* Y-axis only orbit — lets players rotate to inspect the character */}
-          <OrbitControls
-            enableZoom={false}
-            enablePan={false}
-            minPolarAngle={Math.PI * 0.38}
-            maxPolarAngle={Math.PI * 0.52}
-            target={[0, 1.0, 0]}
-          />
-        </Canvas>
+      {/*
+        Portrait fallback — visible immediately and fades out once the 3D
+        model is ready. Stays visible permanently if the GLB fails to load.
+        pointer-events:none so OrbitControls still works when 3D is active.
+      */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity:       loaded && !failed ? 0 : 1,
+          transition:    'opacity 0.5s ease',
+          pointerEvents: loaded && !failed ? 'none' : undefined,
+        }}
+      >
+        {fallback}
       </div>
-    </GLBBoundary>
+
+      {/* 3D canvas — hidden until model loads, removed entirely on failure */}
+      {!failed && (
+        <div
+          className="absolute inset-0"
+          style={{ opacity: loaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
+        >
+          <GLBErrorBoundary onError={() => setFailed(true)}>
+            <Canvas
+              camera={{ position: [0, 1.1, 3.4], fov: 42 }}
+              dpr={[1, 2]}
+              gl={{ antialias: true, alpha: true }}
+              style={{ background: 'transparent' }}
+              performance={{ min: 0.5 }}
+            >
+              <ambientLight intensity={0.55} color="#18142e" />
+              <directionalLight position={[1, 4, 3]} intensity={2.4} color="#ffffff" />
+              <pointLight position={[0, -0.5, 2]} intensity={0.7} color="#0a0820" />
+
+              <Suspense fallback={null}>
+                <CharacterModel
+                  key={modelKey}
+                  glbPath={glbPath}
+                  accentColor={accentColor}
+                  animationName={animationName}
+                  onLoaded={() => setLoaded(true)}
+                />
+              </Suspense>
+
+              {/* Y-axis orbit — lets players inspect the character */}
+              <OrbitControls
+                enableZoom={false}
+                enablePan={false}
+                minPolarAngle={Math.PI * 0.38}
+                maxPolarAngle={Math.PI * 0.52}
+                target={[0, 1.0, 0]}
+              />
+            </Canvas>
+          </GLBErrorBoundary>
+        </div>
+      )}
+    </div>
   )
 }
 
