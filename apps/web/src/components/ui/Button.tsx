@@ -2,7 +2,8 @@
 
 import { forwardRef } from 'react'
 import { motion } from 'framer-motion'
-import type { ComponentPropsWithoutRef } from 'react'
+import type { ComponentPropsWithoutRef, MouseEvent } from 'react'
+import { getAudioManager } from '@/lib/audio'
 
 type Variant = 'primary' | 'warrior' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md' | 'lg'
@@ -28,6 +29,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ) {
     const isDisabled = disabled || loading
     const clip = angled ? 'polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%)' : undefined
+
+    const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
+      if (!isDisabled) {
+        const mgr = getAudioManager()
+        if (variant === 'primary' || variant === 'warrior') mgr.playButtonConfirm()
+        else mgr.playButtonTap()
+      }
+      props.onClick?.(e)
+    }
 
     const variantStyles: Record<Variant, React.CSSProperties> = {
       primary: {
@@ -74,6 +84,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           ...variantStyles[variant],
           ...style,
         }}
+        onClick={handleClick}
         {...(props as ComponentPropsWithoutRef<typeof motion.button>)}
       >
         {(variant === 'primary' || variant === 'warrior') && (

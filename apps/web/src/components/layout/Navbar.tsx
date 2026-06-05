@@ -7,6 +7,24 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
+import { useAudio } from '@/hooks/useAudio'
+
+function AudioToggle() {
+  const { muted, toggleMute } = useAudio()
+  return (
+    <button
+      onClick={toggleMute}
+      className="flex items-center justify-center w-8 h-8 rounded transition-opacity opacity-50 hover:opacity-100"
+      title={muted ? 'Unmute' : 'Mute'}
+      style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+      aria-label={muted ? 'Unmute audio' : 'Mute audio'}
+    >
+      <span style={{ fontSize: 14, lineHeight: 1, filter: muted ? 'grayscale(1)' : 'none' }}>
+        {muted ? '🔇' : '🔊'}
+      </span>
+    </button>
+  )
+}
 
 const NAV_LINKS = [
   { to: '/',            label: 'Home',   exact: true  },
@@ -120,6 +138,7 @@ export default function Navbar() {
             </Link>
           )}
 
+          <AudioToggle />
           <PrivyConnectButton />
         </div>
       </div>

@@ -7,6 +7,7 @@ import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
 import { useCombatFeel } from '@/hooks/useCombatFeel'
+import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ImpactBurst from './ImpactBurst'
 import XpMeter from '@/components/player-card/XpMeter'
@@ -64,7 +65,8 @@ export default function BattleArena({ player, walletAddress }: Props) {
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [phase])
 
-  // ── Combat feel ─────────────────────────────────────────────────────────
+  // ── Audio + combat feel ──────────────────────────────────────────────────
+  const { playHit, playSpecial, playVictory, playDefeat, startAmbient, stopAmbient } = useAudio()
   const combatFeel = useCombatFeel()
 
   // Drive animations + combat feel from round log
@@ -85,7 +87,11 @@ export default function BattleArena({ player, walletAddress }: Props) {
 
     const t1 = setTimeout(() => {
       setBotAnim(entry.playerDmg > 0 ? 'hit' : 'idle')
-      if (entry.playerDmg > 0) combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
+      if (entry.playerDmg > 0) {
+        combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
+        playHit(player.character_class as string, entry.playerDmg)
+        if (entry.playerMove === 'special') playSpecial(player.character_class as string)
+      }
     }, 320)
 
     const t2 = setTimeout(() => {
@@ -94,7 +100,11 @@ export default function BattleArena({ player, walletAddress }: Props) {
 
     const t3 = setTimeout(() => {
       setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle')
-      if (entry.botDmg > 0) combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
+      if (entry.botDmg > 0) {
+        combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
+        playHit(BOT_CLASS, entry.botDmg)
+        if (entry.botMove === 'special') playSpecial(BOT_CLASS)
+      }
     }, 980)
 
     const t4 = setTimeout(() => {
@@ -106,6 +116,8 @@ export default function BattleArena({ player, walletAddress }: Props) {
   }, [log])
 
   useEffect(() => {
+    if (phase === 'fighting') startAmbient()
+    if (phase === 'idle' || phase === 'result') stopAmbient()
     if (phase === 'idle') {
       clearTimers()
       prevLogLen.current = 0
@@ -261,6 +273,14 @@ export default function BattleArena({ player, walletAddress }: Props) {
   }
 
   // ── RESULT ──────────────────────────────────────────────────────────────
+  // ── Victory / defeat audio ───────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (phase !== 'result' || !result) return
+    if (result.won) playVictory()
+    else playDefeat()
+  }, [phase, result?.won])
+
   if (phase === 'result' && result) {
     return (
       <motion.div className="flex flex-col items-center gap-6 py-6"
