@@ -206,7 +206,7 @@ export default function LandingPage() {
             <motion.div className="flex items-center gap-2.5"
               initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:0.7, delay:0.25 }}>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to right, transparent, rgba(234,179,8,0.55))' }} />
-              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>The Arena Awaits</span>
+              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>One Verified Human. One Warrior.</span>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to left, transparent, rgba(234,179,8,0.55))' }} />
             </motion.div>
 
@@ -233,7 +233,7 @@ export default function LandingPage() {
 
             <p className="font-display font-bold uppercase"
               style={{ fontSize:'clamp(8px,1.5vw,10px)', letterSpacing:'0.35em', color:'rgba(100,116,139,0.72)' }}>
-              Warriors fight · Legends earn
+              One verified human · One warrior · Forever
             </p>
 
             <div className="flex items-center gap-2">
@@ -321,9 +321,9 @@ export default function LandingPage() {
         <div style={{ maxWidth:960, margin:'0 auto' }}>
 
           <SectionHead
-            eyebrow="Three Classes"
-            title="Choose Your Fighter"
-            sub="One class per wallet. Forever. Make it count."
+            eyebrow="Three Classes. One Covenant."
+            title="Choose Your Warrior"
+            sub="One class per wallet. Permanent. This is your identity in the arena — not a loadout, not a character slot."
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -496,16 +496,16 @@ export default function LandingPage() {
 
           <p className="font-display font-bold uppercase"
             style={{ fontSize:10, letterSpacing:'0.48em', color:'rgba(234,179,8,0.55)' }}>
-            Are You Ready?
+            One Verified Human. One Warrior.
           </p>
 
           <h2 className="font-display font-black text-white leading-tight"
             style={{ fontSize:'clamp(2rem,7vw,3.4rem)', letterSpacing:'0.04em' }}>
-            Your Legend<br />Begins Here
+            Your Warrior<br />Awaits
           </h2>
 
           <p className="text-slate-500 leading-relaxed" style={{ fontSize:13, maxWidth:340 }}>
-            Enter the arena. Prove your worth. Earn real G$ with every victory.
+            One identity. One warrior. Every victory earns real G$ on Celo. No bots. No alts. Only you.
           </p>
 
           <div className="w-full flex flex-col items-center gap-3 mt-2">

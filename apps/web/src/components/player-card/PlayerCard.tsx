@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { useConnection } from 'wagmi'
 import type { Player } from '@/types'
 import { RANK_COLORS, XP_PER_RANK } from '@/lib/constants'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { getDecayStatus } from '@/utils/decay'
 import { formatGDollarNumber, formatTimeAgo } from '@/utils/format'
 import { useGBalance } from '@/hooks/useGBalance'
@@ -20,6 +20,8 @@ interface Props {
 export default function PlayerCard({ player, isPublic = false, showShareLink = false }: Props) {
   const decayStatus = getDecayStatus(player.last_active, player.decay_frozen_until)
   const rankColor = RANK_COLORS[player.rank]
+  const classDef = player.character_class ? CLASS_DEFINITIONS[player.character_class as keyof typeof CLASS_DEFINITIONS] : null
+  const classColor = classDef?.accentColor
   const isDecaying = decayStatus === 'active'
   const isWarning = decayStatus === 'warning'
 
@@ -45,7 +47,11 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
       style={
         isDecaying
           ? { filter: 'saturate(0.35) brightness(0.75)' }
-          : { boxShadow: `0 0 24px ${rankColor}1a, 0 0 48px ${rankColor}0a` }
+          : {
+              boxShadow: classColor
+                ? `0 0 24px ${rankColor}1a, 0 0 48px ${rankColor}0a, 0 0 40px ${classColor}10`
+                : `0 0 24px ${rankColor}1a, 0 0 48px ${rankColor}0a`,
+            }
       }
       layout
       initial={{ opacity: 0, y: 16 }}
@@ -91,7 +97,14 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
             </p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <RankBadge rank={player.rank} />
-              <span className="text-xs text-slate-500 capitalize">{player.play_style}</span>
+              {classDef && (
+                <span
+                  className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider"
+                  style={{ color: classColor, background: `${classColor}15`, border: `1px solid ${classColor}30` }}
+                >
+                  {player.character_class}
+                </span>
+              )}
             </div>
           </div>
 

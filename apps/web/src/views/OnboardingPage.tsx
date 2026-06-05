@@ -175,6 +175,11 @@ export default function OnboardingPage() {
             }}>
               {def.name} · {def.tagline}
             </p>
+            <p className="font-display font-bold uppercase mt-2" style={{
+              fontSize: '8px', letterSpacing: '0.28em', color: 'rgba(255,255,255,0.18)',
+            }}>
+              ⬡ Permanently bound to your wallet
+            </p>
           </motion.div>
 
           {/* Stats row */}
@@ -246,7 +251,7 @@ export default function OnboardingPage() {
               animate={{ x: ['-140%', '220%'] }}
               transition={{ duration: 2.4, repeat: Infinity, ease: 'linear', repeatDelay: 2.5 }}
             />
-            {pending ? 'Entering Valor...' : `Enter as ${characterName}`}
+            {pending ? 'Forging Your Legacy...' : 'Forge Your Legacy'}
           </motion.button>
         </div>
       </div>

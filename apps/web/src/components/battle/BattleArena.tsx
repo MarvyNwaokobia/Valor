@@ -6,7 +6,7 @@ import { Sword, Shield, Zap, Bot, Trophy, HeartCrack, Users, ChevronLeft } from 
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
-import ChallengeBattle from './ChallengeBattle'
+import BattlePvP from './BattlePvP'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES } from '@/lib/classes'
@@ -103,9 +103,9 @@ export default function BattleArena({ player, walletAddress }: Props) {
     } finally { setRewardClaiming(false) }
   }
 
-  // ── CHALLENGE BATTLE ──────────────────────────────────────────────
+  // ── LIVE PVP ──────────────────────────────────────────────────────
   if (phase === 'idle' && showChallenge) {
-    return <ChallengeBattle walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
+    return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
   }
 
   // ── IDLE — choose fight type ───────────────────────────────────────
@@ -200,8 +200,8 @@ export default function BattleArena({ player, walletAddress }: Props) {
                 <Users size={28} style={{ color: '#3b82f6' }} strokeWidth={1.5} />
               </div>
               <div>
-                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Challenge Player</p>
-                <p className="text-slate-500 text-sm mt-0.5">Async PvP · Both earn XP · Instant result</p>
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Live PvP</p>
+                <p className="text-slate-500 text-sm mt-0.5">Real-time · Fight a live player · Winner takes XP</p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
             </div>

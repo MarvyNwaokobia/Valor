@@ -13,6 +13,7 @@ pub struct AppState {
     pub rewards:        Option<services::rewards::RewardService>,
     pub battle_limiter: services::rate_limiter::RateLimiter,
     pub rank_limiter:   services::rate_limiter::RateLimiter,
+    pub game_server:    services::game_server::GameServerHandle,
 }
 
 #[tokio::main]
@@ -48,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
     // rank_limiter:   2 requests / 60s per IP
     let battle_limiter = services::rate_limiter::RateLimiter::new(10, 60);
     let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
+    let game_server    = services::game_server::GameServerHandle::spawn();
 
     // FRONTEND_ORIGIN: always allow localhost in dev; lock to production domain when set
     let frontend_origin = std::env::var("FRONTEND_ORIGIN")
@@ -75,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
                 rewards:        rewards.clone(),
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
                 rank_limiter:   services::rate_limiter::RateLimiter::new(2, 60),
+                game_server:    game_server.clone(),
             }))
             .wrap(Logger::default())
             .wrap(cors)

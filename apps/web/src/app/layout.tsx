@@ -5,8 +5,8 @@ import './globals.css'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Valor',
-  description: 'Valor — Play, earn real G$, own everything.',
+  title: 'Valor — One Verified Human. One Warrior.',
+  description: 'Valor — One verified human. One permanent warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
   icons: { icon: '/valor-icon.svg' },
 }
 

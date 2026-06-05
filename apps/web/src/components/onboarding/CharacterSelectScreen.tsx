@@ -93,7 +93,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
           <h1 className="font-display font-black text-white leading-none" style={{
             fontSize: 'clamp(1.1rem, 3vw, 1.6rem)', letterSpacing: '0.08em',
           }}>
-            CHOOSE YOUR <span style={{ color: def.accentColor }}>FIGHTER</span>
+            CHOOSE YOUR <span style={{ color: def.accentColor }}>WARRIOR</span>
           </h1>
         </div>
 
@@ -302,6 +302,11 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
           </motion.div>
         </AnimatePresence>
 
+        {/* Permanence stamp */}
+        <div className="permanence-stamp justify-center py-1">
+          ⬡ This warrior is permanently bound to your wallet
+        </div>
+
         {/* CTA */}
         <motion.button
           onClick={() => onSelect(selectedClass, gender)}
@@ -325,7 +330,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
             animate={{ x: ['-140%', '220%'] }}
             transition={{ duration: 2.2, repeat: Infinity, ease: 'linear', repeatDelay: 2.8 }}
           />
-          Select {def.name}
+          Claim {def.name}
         </motion.button>
 
       </div>
