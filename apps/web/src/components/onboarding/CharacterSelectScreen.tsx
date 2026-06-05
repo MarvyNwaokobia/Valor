@@ -109,7 +109,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
       </div>
 
       {/* ── CHARACTER IMAGE ── */}
-      <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '38%' }}>
+      <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '38vh' }}>
         <AnimatePresence mode="wait" custom={dir}>
           <motion.img
             key={`${selectedClass}-${gender}`}
@@ -125,7 +125,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
               height: 'clamp(340px, 62vh, 620px)',
               width: 'auto',
               objectFit: 'contain',
-              objectPosition: 'bottom',
+              objectPosition: 'center',
               filter: `drop-shadow(0 0 40px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
               userSelect: 'none',
               pointerEvents: 'none',
