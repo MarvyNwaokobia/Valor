@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useConnection } from 'wagmi'
@@ -8,11 +8,12 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen, { type Gender } from '@/components/onboarding/CharacterSelectScreen'
+import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 
-type Step = 'verify' | 'select' | 'confirm'
+type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
 const PREFIXES = ['Iron','Dark','Storm','Ash','Void','Flame','Shadow','Silver','Crimson','Frost','Thunder','Ember','Blood','Death','War']
 const SUFFIXES = ['Blade','Fist','Heart','Walker','Strike','Guard','Born','Wolf','Hawk','Bane','Forge','Rift','Claw','Rage','Fire']
@@ -30,7 +31,8 @@ export default function OnboardingPage() {
   const player       = usePlayerStore(s => s.player)
 
   // DEV BYPASS: skip GoodDollar verify for testing — restore to 'verify' before launch
-  const [step,          setStep]          = useState<Step>('select')
+  const [step,           setStep]           = useState<Step>('covenant')
+  const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [selectedGender, setSelectedGender] = useState<Gender>('male')
   const [pending,       setPending]       = useState(false)
@@ -45,6 +47,11 @@ export default function OnboardingPage() {
         <p className="text-slate-400 text-sm mt-2">Use the button in the top right to sign in and begin.</p>
       </div>
     )
+  }
+
+  // ── Step: COVENANT — permanent identity intro (auto-advance to 'select') ──────
+  if (step === 'covenant') {
+    return <CovenantIntro onComplete={() => setStep('select')} />
   }
 
   // ── Step: SELECT ──────────────────────────────────────────────────────────────
@@ -108,7 +115,8 @@ export default function OnboardingPage() {
       }
       const created = await res.json()
       setPlayer(created)
-      router.replace('/')
+      setCreatedPlayer(created)
+      setStep('tutorial')
     }
 
     return (
@@ -258,11 +266,83 @@ export default function OnboardingPage() {
     )
   }
 
+  // ── Step: TUTORIAL ───────────────────────────────────────────────────────────
+  if (step === 'tutorial' && createdPlayer) {
+    return (
+      <TutorialArena
+        player={createdPlayer}
+        onComplete={() => router.replace('/')}
+      />
+    )
+  }
+
   // ── Step: VERIFY ──────────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-xl mx-auto py-8">
       <IdentityVerification walletAddress={address} onVerified={() => setStep('select')} />
     </div>
+  )
+}
+
+// ── Covenant intro — "One Verified Human. One Warrior." ───────────────────────
+
+const LINES = [
+  { text: 'ONE VERIFIED HUMAN',   delay: 0    },
+  { text: 'ONE WARRIOR',          delay: 0.45 },
+  { text: 'FOREVER',              delay: 0.8  },
+]
+
+function CovenantIntro({ onComplete }: { onComplete: () => void }) {
+  const [phase, setPhase] = useState<'in' | 'hold' | 'out'>('in')
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setPhase('hold'), 1200)
+    const t2 = setTimeout(() => setPhase('out'),  2200)
+    const t3 = setTimeout(onComplete,             2900)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [onComplete])
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-70 flex flex-col items-center justify-center gap-3"
+      style={{ background: '#04030c' }}
+      animate={phase === 'out' ? { opacity: 0 } : { opacity: 1 }}
+      transition={{ duration: 0.6 }}
+    >
+      {/* Background bloom */}
+      <motion.div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(234,179,8,0.12), transparent)' }}
+        animate={phase === 'hold' ? { opacity: [0.6, 1, 0.6] } : { opacity: 0.6 }}
+        transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+      />
+
+      {LINES.map(({ text, delay }) => (
+        <motion.p
+          key={text}
+          className="font-display font-black text-center"
+          style={{
+            fontSize: 'clamp(1.4rem, 5vw, 2.6rem)',
+            letterSpacing: '0.18em',
+            color: text === 'FOREVER' ? '#eab308' : 'rgba(255,255,255,0.85)',
+            textShadow: text === 'FOREVER' ? '0 0 40px rgba(234,179,8,0.5)' : undefined,
+          }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {text}
+        </motion.p>
+      ))}
+
+      {/* Horizontal rule */}
+      <motion.div
+        className="h-px w-32 mt-2"
+        style={{ background: 'linear-gradient(90deg, transparent, rgba(234,179,8,0.6), transparent)' }}
+        initial={{ scaleX: 0 }} animate={{ scaleX: 1 }}
+        transition={{ delay: 1.0, duration: 0.5 }}
+      />
+    </motion.div>
   )
 }
