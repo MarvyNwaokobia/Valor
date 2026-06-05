@@ -38,7 +38,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           },
           embeddedWallets: {
             ethereum: {
-              createOnLogin: 'users-without-wallets',
+              createOnLogin: 'off',
             },
           },
           defaultChain: celo,
