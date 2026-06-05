@@ -143,6 +143,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
                   objectFit: 'contain',
                   objectPosition: 'center',
                   filter: `drop-shadow(0 0 40px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
+                  mixBlendMode: 'screen',
                   userSelect: 'none',
                   pointerEvents: 'none',
                 }}

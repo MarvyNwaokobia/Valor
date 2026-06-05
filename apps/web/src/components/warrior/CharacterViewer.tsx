@@ -43,7 +43,7 @@ function CharacterModel({ glbPath, accentColor, animationName, onLoaded }: Model
 
   return (
     <group ref={group}>
-      <primitive object={scene} dispose={null} />
+      <primitive object={scene} dispose={null} scale={[0.01, 0.01, 0.01]} />
       {/* Rim light in class accent color */}
       <pointLight position={[-3, 2, -2]} intensity={5} color={accentColor} distance={14} />
     </group>
@@ -97,7 +97,7 @@ export default function CharacterViewer({
         >
           <GLBErrorBoundary onError={() => setFailed(true)}>
             <Canvas
-              camera={{ position: [0, 1.1, 3.4], fov: 42 }}
+              camera={{ position: [0, 0.9, 3.2], fov: 46 }}
               dpr={[1, 2]}
               gl={{ antialias: true, alpha: true }}
               style={{ background: 'transparent' }}
@@ -123,7 +123,7 @@ export default function CharacterViewer({
                 enablePan={false}
                 minPolarAngle={Math.PI * 0.38}
                 maxPolarAngle={Math.PI * 0.52}
-                target={[0, 1.0, 0]}
+                target={[0, 0.85, 0]}
               />
             </Canvas>
           </GLBErrorBoundary>
