@@ -23,6 +23,7 @@ const mockPlayer: Player = {
   decay_frozen_until:      null,
   wins:                    0,
   losses:                  0,
+  created_at:              new Date().toISOString(),
 }
 
 describe('useTutorialBattle', () => {

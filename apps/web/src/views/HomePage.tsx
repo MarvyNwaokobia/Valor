@@ -118,7 +118,7 @@ export default function HomePage() {
               { l: 'ATK', v: player.attack_stat,  c: '#ef4444' },
               { l: 'DEF', v: player.defense_stat, c: '#3b82f6' },
               { l: 'SPD', v: player.speed_stat,   c: '#22c55e' },
-            ].map(({ l, v, c }) => (
+            ].map(({ l, v }) => (
               <div key={l} className="flex items-center gap-1.5">
                 <span className="text-[8px] font-bold uppercase" style={{ color: 'rgba(100,116,139,0.7)' }}>{l}</span>
                 <span className="text-xs font-black text-white">{v}</span>

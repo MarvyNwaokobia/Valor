@@ -1,22 +1,29 @@
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import type { Achievement } from '@/types'
 
 interface Props {
   walletAddress: string
 }
 
+interface AchievementRow {
+  achievement_id: string
+  name: string
+  description: string
+  image_url: string
+  unlocked_at: string
+}
+
+async function fetchAchievements(wallet: string): Promise<AchievementRow[]> {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/players/${wallet}/achievements`,
+  )
+  if (!res.ok) return []
+  return res.json()
+}
+
 export default function AchievementSlots({ walletAddress }: Props) {
   const { data: unlocked = [] } = useQuery({
     queryKey: ['achievements', walletAddress],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('player_achievements')
-        .select('achievement_id, achievements(name, image_url)')
-        .eq('wallet_address', walletAddress)
-        .limit(6)
-      return data ?? []
-    },
+    queryFn: () => fetchAchievements(walletAddress),
     staleTime: 60_000,
   })
 
@@ -29,9 +36,7 @@ export default function AchievementSlots({ walletAddress }: Props) {
       </p>
       <div className="grid grid-cols-6 gap-1.5">
         {slots.map((_, i) => {
-          const achievement = unlocked[i] as
-            | { achievement_id: string; achievements: Achievement | null }
-            | undefined
+          const achievement = unlocked[i] as AchievementRow | undefined
 
           return (
             <div
@@ -41,12 +46,12 @@ export default function AchievementSlots({ walletAddress }: Props) {
                   ? 'bg-valor-gold/10 border-valor-gold/40'
                   : 'bg-valor-surface-2 border-valor-border/50'
               }`}
-              title={achievement?.achievements?.name ?? 'Locked'}
+              title={achievement?.name ?? 'Locked'}
             >
-              {achievement?.achievements?.image_url ? (
+              {achievement?.image_url ? (
                 <img
-                  src={achievement.achievements.image_url}
-                  alt={achievement.achievements.name}
+                  src={achievement.image_url}
+                  alt={achievement.name}
                   className="w-4 h-4 object-contain"
                 />
               ) : achievement ? (

@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useEffect } from 'react'
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion'
 import type { Rank } from '@/types'
 import { RANK_COLORS } from '@/lib/constants'
@@ -7,10 +7,9 @@ interface Props {
   xp: number
   max: number
   rank: Rank
-  showRankUp?: boolean
 }
 
-export default function XpMeter({ xp, max, rank, showRankUp = false }: Props) {
+export default function XpMeter({ xp, max, rank }: Props) {
   const pct = Math.min(100, (xp / max) * 100)
   const rankColor = RANK_COLORS[rank]
 

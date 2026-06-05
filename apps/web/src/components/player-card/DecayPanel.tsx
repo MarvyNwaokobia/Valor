@@ -20,10 +20,7 @@ export default function DecayPanel({ walletAddress }: Props) {
 
   const decayStatus = player.decay_status
   const hoursUntilWarning = getDecayTimeRemaining(player.last_active)
-  const msUntilWarning = hoursUntilWarning * 60 * 60 * 1000
-
-  // Check if player has a protection shield in inventory
-  const hasShield = inventory.some((i) => i.item_id !== null) // simplified check
+  const hasShield = inventory.some((i) => i.item_id !== null)
   const isFrozen =
     player.decay_frozen_until &&
     new Date(player.decay_frozen_until) > new Date()
@@ -118,8 +115,9 @@ export default function DecayPanel({ walletAddress }: Props) {
       <div className="flex flex-col gap-2">
         <button
           onClick={() => freeze()}
-          disabled={isFreezing}
+          disabled={isFreezing || !hasShield}
           className="w-full py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 transition-colors"
+          title={!hasShield ? 'Buy a Protection Shield from the Marketplace first' : undefined}
         >
           {isFreezing ? 'Activating...' : (
             <span className="flex items-center justify-center gap-1.5">

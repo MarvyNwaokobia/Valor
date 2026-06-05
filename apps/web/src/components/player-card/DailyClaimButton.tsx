@@ -10,8 +10,6 @@ interface Props {
   walletAddress: string
 }
 
-const CLAIM_COOLDOWN_MS = 24 * 60 * 60 * 1000
-
 export default function DailyClaimButton({ walletAddress }: Props) {
   const queryClient = useQueryClient()
   const [claimed, setClaimed] = useState(false)
@@ -67,13 +65,18 @@ export default function DailyClaimButton({ walletAddress }: Props) {
       </div>
 
       {claimed ? (
-        <motion.p
-          className="text-green-400 text-sm font-bold text-center"
+        <motion.div
+          className="text-center"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
         >
-          Reward claimed! ✓
-        </motion.p>
+          <p className="text-green-400 text-sm font-bold">Reward claimed! ✓</p>
+          {rewardTxHash && (
+            <p className="text-[10px] text-slate-500 mt-1 font-mono truncate" title={rewardTxHash}>
+              On-chain: {rewardTxHash.slice(0, 10)}…
+            </p>
+          )}
+        </motion.div>
       ) : canClaimDaily ? (
         <button
           onClick={() => mutate()}

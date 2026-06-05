@@ -5,7 +5,6 @@ import type { Item } from '@/types'
 import { formatCountdown, formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { ITEM_RARITY_COLORS } from '@/lib/constants'
 
 // The limited item ends at a fixed timestamp. This is set to 7 days from first deploy.
 // In production this would come from a config or DB field.
@@ -112,9 +111,9 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
             <div className="px-6 py-2.5 text-sm font-bold text-green-400 bg-green-500/10 rounded-xl border border-green-500/20">
               ✓ You own this
             </div>
-          ) : isSoldOut ? (
+          ) : isExpired || isSoldOut ? (
             <div className="px-6 py-2.5 text-sm font-bold text-slate-500 bg-valor-surface-2 rounded-xl border border-valor-border">
-              Gone Forever
+              {isExpired ? 'Sale Ended' : 'Gone Forever'}
             </div>
           ) : (
             <motion.button

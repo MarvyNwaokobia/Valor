@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Swords } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -20,21 +20,15 @@ export default function PlayerCardPage() {
   useEffect(() => {
     if (!walletAddress) return
 
-    supabase
-      .from('players')
-      .select('*')
-      .eq('wallet_address', walletAddress)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setPlayer(data)
-          // Update document title for sharing
-          document.title = `${data.character_name} | Valor`
-        } else {
-          setNotFound(true)
-        }
-        setLoading(false)
+    fetch(`${API}/players/${walletAddress}`)
+      .then(async res => {
+        if (!res.ok) { setNotFound(true); return }
+        const data: Player = await res.json()
+        setPlayer(data)
+        document.title = `${data.character_name} | Valor`
       })
+      .catch(() => setNotFound(true))
+      .finally(() => setLoading(false))
 
     return () => {
       document.title = 'Valor'

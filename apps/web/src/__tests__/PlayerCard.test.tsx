@@ -35,6 +35,7 @@ const basePlayer: Player = {
   decay_frozen_until:      null,
   wins:                    3,
   losses:                  1,
+  created_at:              new Date().toISOString(),
 }
 
 describe('PlayerCard', () => {

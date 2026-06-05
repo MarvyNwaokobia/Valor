@@ -5,8 +5,102 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::utils::{is_valid_wallet, normalize_wallet};
-
 use crate::AppState;
+
+// ── PATCH /players/:wallet ────────────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct UpdatePlayerRequest {
+    pub username:                Option<String>,
+    pub display_name:            Option<String>,
+    pub character_customization: Option<serde_json::Value>,
+    // Decay management fields (set by client after shield/scroll use)
+    pub decay_frozen_until:      Option<chrono::DateTime<Utc>>,
+    pub decay_status:            Option<String>,
+    pub rank:                    Option<String>,
+    pub last_active:             Option<chrono::DateTime<Utc>>,
+}
+
+pub async fn update_player(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<UpdatePlayerRequest>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+
+    // Validate username uniqueness if provided
+    if let Some(ref uname) = body.username {
+        if uname.len() < 3 || uname.len() > 20 {
+            return HttpResponse::BadRequest().json(json!({"error": "Username must be 3–20 characters"}));
+        }
+        let taken: Option<(String,)> = sqlx::query_as(
+            "SELECT wallet_address FROM players WHERE username = $1 AND wallet_address != $2",
+        )
+        .bind(uname)
+        .bind(&wallet)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+        if taken.is_some() {
+            return HttpResponse::Conflict().json(json!({"error": "Username already taken"}));
+        }
+    }
+
+    let result = sqlx::query_as::<_, crate::models::player::Player>(
+        "UPDATE players
+         SET
+           username                = COALESCE($1, username),
+           display_name            = COALESCE($2, display_name),
+           character_customization = COALESCE($3, character_customization),
+           decay_frozen_until      = COALESCE($4, decay_frozen_until),
+           decay_status            = COALESCE($5, decay_status),
+           rank                    = COALESCE($6, rank),
+           last_active             = COALESCE($7, last_active)
+         WHERE wallet_address = $8
+         RETURNING *",
+    )
+    .bind(&body.username)
+    .bind(&body.display_name)
+    .bind(body.character_customization.as_ref().map(|v| sqlx::types::Json(v.clone())))
+    .bind(body.decay_frozen_until)
+    .bind(&body.decay_status)
+    .bind(&body.rank)
+    .bind(body.last_active)
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await;
+
+    match result {
+        Ok(Some(player)) => HttpResponse::Ok().json(player),
+        Ok(None) => HttpResponse::NotFound().json(json!({"error": "Player not found"})),
+        Err(e) => {
+            tracing::error!("Failed to update player: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── GET /players/:wallet/username-available ───────────────────────────────────
+pub async fn check_username(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (wallet, username) = path.into_inner();
+    if username.len() < 3 || username.len() > 20 {
+        return HttpResponse::Ok().json(json!({"available": false, "reason": "Username must be 3–20 characters"}));
+    }
+
+    let taken: Option<(String,)> = sqlx::query_as(
+        "SELECT wallet_address FROM players WHERE username = $1 AND wallet_address != $2",
+    )
+    .bind(&username)
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    HttpResponse::Ok().json(json!({"available": taken.is_none()}))
+}
 
 pub async fn get_player(
     state: web::Data<AppState>,
@@ -386,5 +480,106 @@ pub async fn daily_claim_status(
             }))
         }
         None => HttpResponse::Ok().json(json!({ "can_claim": true })),
+    }
+}
+
+// ── GET /players/search?q=:query ─────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub exclude: Option<String>,
+}
+
+pub async fn search_players(
+    state: web::Data<AppState>,
+    query: web::Query<SearchQuery>,
+) -> HttpResponse {
+    let q       = format!("%{}%", query.q.to_lowercase());
+    let exclude = query.exclude.as_deref().unwrap_or("");
+
+    let result = sqlx::query_as::<_, crate::models::player::Player>(
+        "SELECT * FROM players
+         WHERE (LOWER(character_name) LIKE $1 OR LOWER(COALESCE(username,'')) LIKE $1)
+           AND wallet_address != $2
+         LIMIT 5",
+    )
+    .bind(&q)
+    .bind(exclude)
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(players) => HttpResponse::Ok().json(players),
+        Err(e) => {
+            tracing::error!("Search failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Search failed"}))
+        }
+    }
+}
+
+// ── GET /players/:wallet/achievements ─────────────────────────────────────────
+pub async fn get_achievements(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = path.into_inner();
+
+    #[derive(serde::Serialize, sqlx::FromRow)]
+    struct AchievementRow {
+        achievement_id: uuid::Uuid,
+        name:           String,
+        description:    String,
+        image_url:      String,
+        unlocked_at:    chrono::DateTime<Utc>,
+    }
+
+    let result = sqlx::query_as::<_, AchievementRow>(
+        "SELECT pa.achievement_id, a.name, a.description, a.image_url, pa.unlocked_at
+         FROM player_achievements pa
+         JOIN achievements a ON a.id = pa.achievement_id
+         WHERE pa.wallet_address = $1
+         ORDER BY pa.unlocked_at DESC
+         LIMIT 6",
+    )
+    .bind(&wallet)
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(rows) => HttpResponse::Ok().json(rows),
+        Err(e) => {
+            tracing::error!("Failed to fetch achievements: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── POST /players/:wallet/achievements/check ──────────────────────────────────
+pub async fn check_achievements(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = path.into_inner();
+
+    #[derive(serde::Serialize, sqlx::FromRow)]
+    struct NewAchievement {
+        achievement_id:   uuid::Uuid,
+        achievement_name: String,
+        unlocked_at:      chrono::DateTime<Utc>,
+    }
+
+    let result = sqlx::query_as::<_, NewAchievement>(
+        "SELECT * FROM check_and_unlock_achievements($1)",
+    )
+    .bind(&wallet)
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(rows) => HttpResponse::Ok().json(rows),
+        Err(e) => {
+            tracing::error!("Failed to check achievements: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
     }
 }

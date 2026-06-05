@@ -30,8 +30,7 @@ export default function OnboardingPage() {
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
 
-  // DEV BYPASS: skip GoodDollar verify for testing — restore to 'verify' before launch
-  const [step,           setStep]           = useState<Step>('covenant')
+  const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [selectedGender, setSelectedGender] = useState<Gender>('male')
@@ -45,6 +44,18 @@ export default function OnboardingPage() {
       <div className="max-w-xl mx-auto py-16 text-center">
         <p className="text-white font-display text-xl font-bold">Sign In to Play</p>
         <p className="text-slate-400 text-sm mt-2">Use the button in the top right to sign in and begin.</p>
+      </div>
+    )
+  }
+
+  // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
+  if (step === 'verify') {
+    return (
+      <div className="max-w-lg mx-auto py-16 px-4">
+        <IdentityVerification
+          walletAddress={address as `0x${string}`}
+          onVerified={() => setStep('covenant')}
+        />
       </div>
     )
   }

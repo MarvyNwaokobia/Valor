@@ -26,8 +26,9 @@ export default function ProfilePage() {
 
   if (!address || !player) { router.replace('/'); return null }
 
-  const def        = CLASS_DEFINITIONS[player.character_class]
-  const heroImg    = CLASS_SOLO[player.character_class]
+  const charClass  = player.character_class ?? 'Berserker'
+  const def        = CLASS_DEFINITIONS[charClass as keyof typeof CLASS_DEFINITIONS] ?? CLASS_DEFINITIONS['Berserker']
+  const heroImg    = CLASS_SOLO[charClass]
   const xpProgress = (player.xp / XP_PER_RANK) * 100
 
   return (
@@ -47,7 +48,7 @@ export default function ProfilePage() {
             background: `radial-gradient(ellipse 80% 90% at 50% 60%, ${def.accentColor}20, transparent)`,
           }}/>
           {/* Character image */}
-          <img src={heroImg} alt={player.character_class}
+          <img src={heroImg} alt={player.character_class ?? 'Warrior'}
             className="absolute inset-0 w-full h-full object-cover object-top select-none"
             style={{ filter: `contrast(1.05) drop-shadow(0 0 24px ${def.glowColor})` }}
           />

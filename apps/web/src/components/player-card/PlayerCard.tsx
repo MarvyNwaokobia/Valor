@@ -1,4 +1,5 @@
-import { motion } from 'framer-motion'
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useConnection } from 'wagmi'
 import type { Player } from '@/types'
 import { XP_PER_RANK } from '@/lib/constants'
@@ -12,6 +13,8 @@ import RankBadge from './RankBadge'
 import RankAura from '@/components/ui/RankAura'
 import DecayOverlay from './DecayOverlay'
 import AchievementSlots from './AchievementSlots'
+import UsernameSetup from '@/components/profile/UsernameSetup'
+import CustomizationModal from '@/components/profile/CustomizationModal'
 
 interface Props {
   player: Player
@@ -29,6 +32,8 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
   const isWarning = decayStatus === 'warning'
 
   // Only fetch live balance on the owner's own card (not public view)
+  const [showUsernameSetup,   setShowUsernameSetup]   = useState(false)
+  const [showCustomization,   setShowCustomization]   = useState(false)
   const { address } = useConnection()
   const isOwner = !isPublic && address?.toLowerCase() === player.wallet_address.toLowerCase()
   const { formatted: liveBalance } = useGBalance(isOwner ? (player.wallet_address as `0x${string}`) : undefined)
@@ -39,6 +44,7 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
       : `/card/${player.wallet_address}`
 
   return (
+    <>
     <motion.div
       className={`relative rounded-2xl overflow-hidden border-2 bg-valor-surface transition-all ${
         isDecaying
@@ -99,6 +105,26 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
             <p className="font-display font-bold text-white text-base truncate">
               {player.character_name}
             </p>
+            <div className="flex items-center gap-2">
+              {player.username ? (
+                <p className="text-[11px] text-slate-400 font-mono">@{player.username}</p>
+              ) : isOwner ? (
+                <button
+                  onClick={() => setShowUsernameSetup(true)}
+                  className="text-[10px] text-valor-gold/70 hover:text-valor-gold font-bold uppercase tracking-widest transition-colors"
+                >
+                  + Set username
+                </button>
+              ) : null}
+              {isOwner && (
+                <button
+                  onClick={() => setShowCustomization(true)}
+                  className="text-[10px] text-slate-600 hover:text-slate-300 font-bold uppercase tracking-widest transition-colors"
+                >
+                  Edit Look
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <RankBadge rank={player.rank} />
               {classDef && (
@@ -175,6 +201,25 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
         </div>
       </div>
     </motion.div>
+
+    <AnimatePresence>
+      {showUsernameSetup && (
+        <UsernameSetup
+          walletAddress={player.wallet_address}
+          onClose={() => setShowUsernameSetup(false)}
+        />
+      )}
+    </AnimatePresence>
+    <AnimatePresence>
+      {showCustomization && (
+        <CustomizationModal
+          walletAddress={player.wallet_address}
+          current={player.character_customization as import('@/types/database').CharacterCustomization}
+          onClose={() => setShowCustomization(false)}
+        />
+      )}
+    </AnimatePresence>
+    </>
   )
 }
 

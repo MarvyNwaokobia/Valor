@@ -77,11 +77,11 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       }
       addInventoryItem(newInventoryItem)
 
-      // Persist to Railway API
-      await fetch(`${API}/players/${walletAddress}/inventory`, {
+      // Persist purchase to Railway API — records inventory + decrements supply
+      await fetch(`${API}/items/${item.id}/purchase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_id: item.id }),
+        body: JSON.stringify({ wallet_address: walletAddress, tx_hash: txHash }),
       })
 
       queryClient.invalidateQueries({ queryKey: ['marketplace-items'] })

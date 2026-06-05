@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     // rank_limiter:   2 requests / 60s per IP
     let battle_limiter = services::rate_limiter::RateLimiter::new(10, 60);
     let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
-    let game_server    = services::game_server::GameServerHandle::spawn();
+    let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
     // FRONTEND_ORIGIN: always allow localhost in dev; lock to production domain when set
     let frontend_origin = std::env::var("FRONTEND_ORIGIN")

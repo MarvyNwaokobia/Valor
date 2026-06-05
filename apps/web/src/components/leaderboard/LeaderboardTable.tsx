@@ -7,17 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import type { Player } from '@/types'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_COLORS } from '@/lib/constants'
-import { CLASS_DEFINITIONS } from '@/lib/classes'
-
 interface Props { currentWallet: string | undefined }
-
-const RANK_ORDER = ['Diamond','Platinum','Gold','Silver','Bronze']
-function sortLeaderboard(players: Player[]) {
-  return [...players].sort((a, b) => {
-    const d = RANK_ORDER.indexOf(a.rank) - RANK_ORDER.indexOf(b.rank)
-    return d !== 0 ? d : b.xp - a.xp
-  })
-}
 
 const MEDAL = ['🥇','🥈','🥉']
 
@@ -73,7 +63,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
           {[players[1], players[0], players[2]].map((p, podiumIdx) => {
             if (!p) return <div key={podiumIdx} />
             const rank = podiumIdx === 0 ? 2 : podiumIdx === 1 ? 1 : 3
-            const accent = CLASS_ACCENT[p.character_class] ?? '#eab308'
+            const accent = CLASS_ACCENT[p.character_class ?? ''] ?? '#eab308'
             const isMe = p.wallet_address.toLowerCase() === currentWallet?.toLowerCase()
             const heights = ['h-24', 'h-28', 'h-20']
             return (
@@ -99,7 +89,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
           const isMe        = player.wallet_address.toLowerCase() === currentWallet?.toLowerCase()
           const pos         = i + 1
           const rankColor   = RANK_COLORS[player.rank]
-          const classAccent = CLASS_ACCENT[player.character_class] ?? rankColor
+          const classAccent = CLASS_ACCENT[player.character_class ?? ''] ?? rankColor
           const isUpdating  = false
 
           return (

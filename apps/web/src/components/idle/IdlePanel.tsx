@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Leaf, Send } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import type { Player, Mission, Item } from '@/types'
 import { MISSION_DURATION_MS, XP_IDLE_COLLECT } from '@/lib/constants'
 import { formatCountdown } from '@/utils/format'
@@ -31,16 +31,11 @@ export default function IdlePanel({ walletAddress, player }: Props) {
 
   const { data: mission } = useQuery({
     queryKey: ['active-mission', walletAddress],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('missions')
-        .select('*')
-        .eq('wallet_address', walletAddress)
-        .eq('collected', false)
-        .order('deployed_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      return data as Mission | null
+    queryFn: async (): Promise<Mission | null> => {
+      const res = await fetch(`${API}/missions/active?wallet=${walletAddress}`)
+      if (res.status === 404) return null
+      if (!res.ok) return null
+      return res.json()
     },
     refetchInterval: 10_000,
   })
@@ -58,22 +53,13 @@ export default function IdlePanel({ walletAddress, player }: Props) {
 
   const { mutate: deploy, isPending: isDeploying } = useMutation({
     mutationFn: async () => {
-      const now = new Date()
-      const collectBy = new Date(now.getTime() + MISSION_DURATION_MS)
-      const { data, error } = await supabase
-        .from('missions')
-        .insert({
-          wallet_address: walletAddress,
-          deployed_at: now.toISOString(),
-          collect_by: collectBy.toISOString(),
-          collected: false,
-          item_dropped: null,
-          xp_awarded: 0,
-        })
-        .select()
-        .single()
-      if (error) throw error
-      return data
+      const res = await fetch(`${API}/missions/deploy`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ wallet_address: walletAddress }),
+      })
+      if (!res.ok) throw new Error('Failed to deploy mission')
+      return res.json()
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['active-mission', walletAddress] })
@@ -95,20 +81,17 @@ export default function IdlePanel({ walletAddress, player }: Props) {
 
       // Fetch dropped item details if any
       if (data.item_dropped) {
-        const { data: item } = await supabase
-          .from('items')
-          .select('*')
-          .eq('id', data.item_dropped)
-          .single()
-
+        const itemRes = await fetch(`${API}/items`).then(r => r.ok ? r.json() : [])
+        const items = itemRes as Array<{ id: string; [key: string]: unknown }>
+        const item = items.find(i => i.id === data.item_dropped) ?? null
         if (item) {
           addInventoryItem({
             wallet_address: walletAddress,
-            item_id: item.id,
+            item_id: item.id as string,
             equipped: false,
             acquired_at: new Date().toISOString(),
           })
-          setLastReward({ ...data, item })
+          setLastReward({ ...data, item: item as unknown as import('@/types').Item })
         }
       }
 

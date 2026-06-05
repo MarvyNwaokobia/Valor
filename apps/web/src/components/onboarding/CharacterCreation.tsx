@@ -9,11 +9,9 @@ import type { CharacterClass } from '@/lib/classes'
 import type { PlayStyle } from '@/types'
 import CharacterPortrait from '@/components/warrior/CharacterPortrait'
 import AvatarGenerator, { type ArmorStyle } from '@/components/onboarding/AvatarGenerator'
-import { AnimatePresence as APWrapper } from 'framer-motion'
 
 const SKIN_TONES = ['#fde8d5','#f5c9a0','#d4935a','#a0612a','#7b4012','#3d1f0a']
 const HAIR_COLORS = ['#0a0805','#3d2210','#6b2a12','#c8901a','#c8c0a8','#e8e4f0']
-const HAIR_STYLE_LABELS = ['Crop','Spiky','Long','Topknot','Bald']
 const PREFIXES = ['Iron','Dark','Storm','Ash','Void','Flame','Shadow','Silver','Crimson','Frost','Thunder','Ember','Blood','Death','War']
 const SUFFIXES = ['Blade','Fist','Heart','Walker','Strike','Guard','Born','Wolf','Hawk','Bane','Forge','Rift','Claw','Rage','Fire']
 

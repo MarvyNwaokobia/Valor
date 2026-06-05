@@ -6,6 +6,61 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::models::mission::CollectResult;
 
+// ── GET /missions/active?wallet=:wallet ───────────────────────────────────────
+#[derive(serde::Deserialize)]
+pub struct WalletQuery { pub wallet: String }
+
+pub async fn get_active_mission(
+    state: web::Data<AppState>,
+    query: web::Query<WalletQuery>,
+) -> HttpResponse {
+    let result = sqlx::query_as::<_, crate::models::mission::Mission>(
+        "SELECT * FROM missions WHERE wallet_address = $1 AND collected = false
+         ORDER BY deployed_at DESC LIMIT 1",
+    )
+    .bind(&query.wallet)
+    .fetch_optional(&state.db)
+    .await;
+
+    match result {
+        Ok(Some(m)) => HttpResponse::Ok().json(m),
+        Ok(None)    => HttpResponse::NotFound().json(json!({"mission": null})),
+        Err(_)      => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+// ── POST /missions/deploy ─────────────────────────────────────────────────────
+#[derive(serde::Deserialize)]
+pub struct DeployRequest { pub wallet_address: String }
+
+pub async fn deploy_mission(
+    state: web::Data<AppState>,
+    body: web::Json<DeployRequest>,
+) -> HttpResponse {
+    let wallet = &body.wallet_address;
+    let now    = Utc::now();
+    let collect_by = now + chrono::Duration::minutes(30);
+
+    let result = sqlx::query_as::<_, crate::models::mission::Mission>(
+        "INSERT INTO missions (wallet_address, deployed_at, collect_by, collected, item_dropped, xp_awarded)
+         VALUES ($1, $2, $3, false, null, 0)
+         RETURNING *",
+    )
+    .bind(wallet)
+    .bind(now)
+    .bind(collect_by)
+    .fetch_one(&state.db)
+    .await;
+
+    match result {
+        Ok(m)  => HttpResponse::Ok().json(m),
+        Err(e) => {
+            tracing::error!("Deploy mission failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to deploy mission"}))
+        }
+    }
+}
+
 pub async fn collect_mission(
     state: web::Data<AppState>,
     path: web::Path<Uuid>,

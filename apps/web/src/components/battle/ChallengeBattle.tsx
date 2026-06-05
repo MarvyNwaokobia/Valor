@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Users, Search, Trophy, HeartCrack } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 interface Props {
   walletAddress: string
@@ -33,39 +33,31 @@ export default function ChallengeBattle({ walletAddress, onBack }: Props) {
     if (!input.trim()) return
 
     if (isAddress) {
-      // Validate the address has a character
       setSearching(true)
-      const { data } = await supabase
-        .from('players')
-        .select('wallet_address, character_name')
-        .eq('wallet_address', input.toLowerCase())
-        .single()
+      const res = await fetch(`${API}/players/${input.toLowerCase()}`)
       setSearching(false)
-
-      if (!data) {
+      if (!res.ok) {
         setError('No warrior found at that address.')
         return
       }
+      const data = await res.json()
       setResolvedOpponent(data.wallet_address)
       setResolvedName(data.character_name)
     } else {
-      // Search by username or character name
       setSearching(true)
-      const { data } = await supabase
-        .from('players')
-        .select('wallet_address, character_name, username')
-        .or(`character_name.ilike.${input},username.ilike.${input}`)
-        .neq('wallet_address', walletAddress)
-        .limit(1)
-        .maybeSingle()
+      const res = await fetch(`${API}/players/search?q=${encodeURIComponent(input)}&exclude=${walletAddress}`)
       setSearching(false)
-
-      if (!data) {
+      if (!res.ok) {
         setError(`No warrior named "${input}" found.`)
         return
       }
-      setResolvedOpponent(data.wallet_address)
-      setResolvedName(data.character_name)
+      const results = await res.json() as Array<{ wallet_address: string; character_name: string }>
+      if (!results.length) {
+        setError(`No warrior named "${input}" found.`)
+        return
+      }
+      setResolvedOpponent(results[0].wallet_address)
+      setResolvedName(results[0].character_name)
     }
   }
 
