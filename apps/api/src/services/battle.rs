@@ -187,6 +187,15 @@ pub fn simulate_bot_fight_with_moves(player: &Player, player_moves: &[String]) -
     }
 }
 
+/// Deterministic damage calculation for testing — no RNG variance.
+/// Returns the floor of: base * stat_mod * def_mult, minimum 1.
+pub fn calc_damage_det(attack: i32, defense: i32, is_special: bool, is_defending: bool) -> i32 {
+    let base: f64 = if is_special { 40.0 } else { 20.0 };
+    let stat_mod = 1.0 + (attack - defense) as f64 * 0.01;
+    let def_mult = if is_defending { 0.5 } else { 1.0 };
+    (base * stat_mod * def_mult).max(1.0) as i32
+}
+
 pub fn simulate_async_fight(challenger: &Player, opponent: &Player) -> AsyncFightResult {
     // Seed unused for now — rand::rng() provides sufficient variance for async fights
     let _seed: u64 = challenger.wallet_address.bytes().map(|b| b as u64).sum::<u64>()
@@ -233,5 +242,147 @@ pub fn simulate_async_fight(challenger: &Player, opponent: &Player) -> AsyncFigh
         xp_challenger: if challenger_won { XP_WIN } else { XP_LOSS },
         xp_opponent: if !challenger_won { XP_WIN } else { XP_LOSS },
         rounds,
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_player(rank: &str, atk: i32, def: i32) -> Player {
+        Player {
+            wallet_address:          "0xtest".into(),
+            username:                None,
+            display_name:            None,
+            character_class:         Some("Berserker".into()),
+            character_customization: serde_json::json!({}),
+            play_style:              "Fighter".into(),
+            avatar:                  "⚔️".into(),
+            character_name:          "TestWarrior".into(),
+            rank:                    rank.into(),
+            xp:                      0,
+            attack_stat:             atk,
+            defense_stat:            def,
+            speed_stat:              9,
+            g_earned_lifetime:       0.0,
+            last_active:             Utc::now(),
+            decay_status:            "none".into(),
+            decay_frozen_until:      None,
+            wins:                    0,
+            losses:                  0,
+            created_at:              Utc::now(),
+        }
+    }
+
+    // ── calc_damage_det tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn damage_is_at_least_one() {
+        assert!(calc_damage_det(1, 100, false, false) >= 1);
+    }
+
+    #[test]
+    fn special_hits_harder_than_normal() {
+        let normal  = calc_damage_det(10, 10, false, false);
+        let special = calc_damage_det(10, 10, true,  false);
+        assert!(special > normal, "special ({}) should exceed normal ({})", special, normal);
+    }
+
+    #[test]
+    fn defending_halves_damage() {
+        let undefended = calc_damage_det(10, 10, false, false);
+        let defended   = calc_damage_det(10, 10, false, true);
+        // defended should be approx half
+        assert!(defended <= undefended / 2 + 1, "defended ({}) should be ~half of undefended ({})", defended, undefended);
+    }
+
+    #[test]
+    fn higher_attack_deals_more_damage() {
+        let strong = calc_damage_det(25, 5, false, false);
+        let weak   = calc_damage_det(5, 25, false, false);
+        assert!(strong > weak);
+    }
+
+    // ── bot_stats_for_rank ────────────────────────────────────────────────────
+
+    #[test]
+    fn bot_stats_scale_with_rank() {
+        let (b_atk, _) = bot_stats_for_rank("Bronze");
+        let (s_atk, _) = bot_stats_for_rank("Silver");
+        let (g_atk, _) = bot_stats_for_rank("Gold");
+        assert!(b_atk < s_atk && s_atk < g_atk);
+    }
+
+    #[test]
+    fn unknown_rank_falls_back_to_bronze() {
+        let (atk, def) = bot_stats_for_rank("Unknown");
+        assert_eq!(atk, 10);
+        assert_eq!(def, 10);
+    }
+
+    // ── simulate_bot_fight_with_moves ─────────────────────────────────────────
+
+    #[test]
+    fn bot_fight_runs_at_most_five_rounds() {
+        let player = make_player("Bronze", 12, 10);
+        let moves  = vec!["attack".into(), "attack".into(), "attack".into(), "attack".into(), "attack".into()];
+        let result = simulate_bot_fight_with_moves(&player, &moves);
+        assert!(result.rounds.len() <= 5 && !result.rounds.is_empty());
+    }
+
+    #[test]
+    fn hp_never_goes_below_zero() {
+        let player = make_player("Bronze", 12, 10);
+        let moves: Vec<String> = (0..5).map(|_| "attack".into()).collect();
+        let result = simulate_bot_fight_with_moves(&player, &moves);
+        for r in &result.rounds {
+            assert!(r.challenger_hp >= 0 && r.opponent_hp >= 0);
+        }
+    }
+
+    #[test]
+    fn xp_awarded_is_win_or_loss() {
+        let player = make_player("Bronze", 12, 10);
+        let moves: Vec<String> = (0..5).map(|_| "attack".into()).collect();
+        let result = simulate_bot_fight_with_moves(&player, &moves);
+        assert!(result.xp_awarded == XP_WIN || result.xp_awarded == XP_LOSS);
+    }
+
+    #[test]
+    fn winner_has_higher_or_equal_hp() {
+        let player = make_player("Bronze", 12, 10);
+        let moves: Vec<String> = (0..5).map(|_| "attack".into()).collect();
+        let result = simulate_bot_fight_with_moves(&player, &moves);
+        let last = result.rounds.last().unwrap();
+        if result.challenger_won {
+            assert!(last.challenger_hp >= last.opponent_hp);
+        } else {
+            assert!(last.opponent_hp >= last.challenger_hp);
+        }
+    }
+
+    // ── Rank model ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rank_next_progression() {
+        assert_eq!(crate::models::player::Rank::Bronze.next(),   Some(crate::models::player::Rank::Silver));
+        assert_eq!(crate::models::player::Rank::Silver.next(),   Some(crate::models::player::Rank::Gold));
+        assert_eq!(crate::models::player::Rank::Diamond.next(),  None);
+    }
+
+    #[test]
+    fn rank_prev_regression() {
+        assert_eq!(crate::models::player::Rank::Diamond.prev(),  Some(crate::models::player::Rank::Platinum));
+        assert_eq!(crate::models::player::Rank::Bronze.prev(),   None);
+    }
+
+    #[test]
+    fn rank_g_reward_scales() {
+        let bronze  = crate::models::player::Rank::Bronze.g_reward();
+        let diamond = crate::models::player::Rank::Diamond.g_reward();
+        assert!(diamond > bronze);
     }
 }
