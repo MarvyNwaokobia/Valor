@@ -6,7 +6,9 @@ import { Sword, Shield, Zap, Bot, Trophy, HeartCrack, Users, ChevronLeft } from 
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
+import { useCombatFeel } from '@/hooks/useCombatFeel'
 import BattlePvP from './BattlePvP'
+import ImpactBurst from './ImpactBurst'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES } from '@/lib/classes'
@@ -14,7 +16,6 @@ import type { CharacterClass } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
-// Bot always shows as Berserker — the default arena enemy
 const BOT_CLASS: CharacterClass = 'Berserker'
 
 interface Props { player: Player; walletAddress: string }
@@ -25,6 +26,12 @@ const MOVES: { id: BattleMove; label: string; desc: string; Icon: typeof Sword; 
   { id: 'special', label: 'Special', desc: 'Max power — once only', Icon: Zap,    color: '#8b5cf6' },
 ]
 
+function getHpColor(hp: number, classColor: string): string {
+  if (hp > 60) return classColor
+  if (hp > 30) return '#f59e0b'
+  return '#ef4444'
+}
+
 export default function BattleArena({ player, walletAddress }: Props) {
   const [showChallenge, setShowChallenge] = useState(false)
   const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
@@ -33,7 +40,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
   const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, startBattle, handleMove, reset } =
     useBattle(player, walletAddress)
 
-  // ── Animation state ────────────────────────────────────────────────
+  // ── Animation state ─────────────────────────────────────────────────────
   const [playerAnim, setPlayerAnim] = useState('idle')
   const [botAnim,    setBotAnim]    = useState('idle')
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
@@ -43,7 +50,10 @@ export default function BattleArena({ player, walletAddress }: Props) {
     timers.current = []
   }
 
-  // Drive character animations from round log entries
+  // ── Combat feel ─────────────────────────────────────────────────────────
+  const combatFeel = useCombatFeel()
+
+  // Drive animations + combat feel from round log
   const prevLogLen = useRef(0)
   useEffect(() => {
     if (log.length <= prevLogLen.current) return
@@ -51,37 +61,41 @@ export default function BattleArena({ player, walletAddress }: Props) {
     const entry = log[log.length - 1]
     clearTimers()
 
-    if (entry.playerHp <= 0) {
-      setPlayerAnim('death')
-      return
-    }
-    if (entry.botHp <= 0) {
-      setBotAnim('death')
-      return
-    }
+    if (entry.playerHp <= 0) { setPlayerAnim('death'); return }
+    if (entry.botHp <= 0)    { setBotAnim('death');    return }
 
-    // Sequence: player acts → bot reacts → bot counters → player reacts → idle
     const playerAction = entry.playerMove === 'attack' || entry.playerMove === 'special' ? 'attack' : 'idle'
     setPlayerAnim(playerAction)
 
-    const t1 = setTimeout(() => setBotAnim(entry.playerDmg > 0 ? 'hit' : 'idle'), 320)
-    const t2 = setTimeout(() => setBotAnim(entry.botMove === 'attack' || entry.botMove === 'special' ? 'attack' : 'idle'), 740)
-    const t3 = setTimeout(() => setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle'), 980)
+    const t1 = setTimeout(() => {
+      setBotAnim(entry.playerDmg > 0 ? 'hit' : 'idle')
+      if (entry.botDmg > 0) combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
+    }, 320)
+
+    const t2 = setTimeout(() => {
+      setBotAnim(entry.botMove === 'attack' || entry.botMove === 'special' ? 'attack' : 'idle')
+    }, 740)
+
+    const t3 = setTimeout(() => {
+      setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle')
+      if (entry.playerDmg > 0) combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
+    }, 980)
+
     const t4 = setTimeout(() => { setPlayerAnim('idle'); setBotAnim('idle') }, 1500)
     timers.current = [t1, t2, t3, t4]
   }, [log])
 
-  // Reset animation state when battle resets
   useEffect(() => {
     if (phase === 'idle') {
       clearTimers()
       prevLogLen.current = 0
       setPlayerAnim('idle')
       setBotAnim('idle')
+      combatFeel.reset()
     }
   }, [phase])
 
-  // ── Reward state ───────────────────────────────────────────────────
+  // ── Reward state ─────────────────────────────────────────────────────────
   const { canClaim, claimEngagementReward, isReady: rewardsReady } = useValorEngagementRewards()
   const [rewardEligible, setRewardEligible] = useState(false)
   const [rewardClaiming, setRewardClaiming] = useState(false)
@@ -103,17 +117,15 @@ export default function BattleArena({ player, walletAddress }: Props) {
     } finally { setRewardClaiming(false) }
   }
 
-  // ── LIVE PVP ──────────────────────────────────────────────────────
+  // ── LIVE PVP ────────────────────────────────────────────────────────────
   if (phase === 'idle' && showChallenge) {
     return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
   }
 
-  // ── IDLE — choose fight type ───────────────────────────────────────
+  // ── IDLE — choose fight type ─────────────────────────────────────────────
   if (phase === 'idle') {
     return (
       <div className="flex flex-col lg:flex-row gap-6 items-stretch min-h-[calc(100vh-8rem)]">
-
-        {/* 3D character panel */}
         <motion.div
           className="relative lg:w-72 rounded-2xl overflow-hidden shrink-0"
           style={{ minHeight: 360, background: '#06050f' }}
@@ -151,7 +163,6 @@ export default function BattleArena({ player, walletAddress }: Props) {
           </div>
         </motion.div>
 
-        {/* Right: choose battle mode */}
         <div className="flex-1 flex flex-col gap-4 justify-center">
           <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <p className="text-[10px] uppercase tracking-[0.3em] font-bold mb-1" style={{ color: def.accentColor }}>
@@ -211,7 +222,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
     )
   }
 
-  // ── SAVING ────────────────────────────────────────────────────────
+  // ── SAVING ──────────────────────────────────────────────────────────────
   if (phase === 'saving') {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
@@ -226,7 +237,7 @@ export default function BattleArena({ player, walletAddress }: Props) {
     )
   }
 
-  // ── RESULT ────────────────────────────────────────────────────────
+  // ── RESULT ──────────────────────────────────────────────────────────────
   if (phase === 'result' && result) {
     return (
       <motion.div className="flex flex-col items-center gap-6 py-6"
@@ -331,88 +342,158 @@ export default function BattleArena({ player, walletAddress }: Props) {
     )
   }
 
-  // ── FIGHTING ──────────────────────────────────────────────────────
+  // ── FIGHTING ────────────────────────────────────────────────────────────
+  const shakeAnim = combatFeel.shakeLevel > 0
+    ? { x: combatFeel.shakeLevel >= 3 ? [-10, 10, -7, 7, -3, 3, 0] : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0] : [-3, 3, -2, 2, 0] }
+    : { x: 0 }
+
   return (
     <div className="flex flex-col gap-4 max-w-lg mx-auto">
 
-      {/* ── Arena scene — two 3D characters facing each other ── */}
-      <div className="relative w-full rounded-2xl overflow-hidden" style={{ height: 260, background: '#04030c' }}>
+      {/* ── Arena scene ── */}
+      <motion.div
+        key={combatFeel.shakeKey}
+        animate={shakeAnim}
+        transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
+      >
+        {/* Special-cam wrapper: scales in on special ability */}
+        <motion.div
+          key={`cam-${combatFeel.specialCam}`}
+          animate={combatFeel.specialCam > 0 ? { scale: [1, 1.045, 1.02, 1] } : {}}
+          transition={{ duration: 0.5, ease: 'easeInOut' }}
+          className="relative w-full rounded-2xl overflow-hidden"
+          style={{ height: 260, background: '#04030c' }}
+        >
+          {/* Ground atmosphere */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: 'radial-gradient(ellipse 70% 50% at 50% 100%, rgba(60,20,100,0.35), transparent)',
+          }} />
 
-        {/* Ground atmosphere */}
-        <div className="absolute inset-0 pointer-events-none" style={{
-          background: 'radial-gradient(ellipse 70% 50% at 50% 100%, rgba(60,20,100,0.35), transparent)',
-        }} />
+          {/* Player — left half */}
+          <div className="absolute left-0 top-0 w-1/2 h-full">
+            <CharacterViewer
+              glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
+              accentColor={def.accentColor}
+              animationName={playerAnim}
+              modelKey={`fight-player-${player.character_class}`}
+              className="absolute inset-0"
+              fallback={
+                <div className="absolute inset-0 flex items-end justify-center pb-2">
+                  <img
+                    src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.male}
+                    alt="" aria-hidden
+                    className="h-full w-auto object-contain object-bottom select-none"
+                    style={{ filter: `drop-shadow(0 0 20px ${def.glowColor})` }}
+                  />
+                </div>
+              }
+            />
 
-        {/* Player — left half */}
-        <div className="absolute left-0 top-0 w-1/2 h-full">
-          <CharacterViewer
-            glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
-            accentColor={def.accentColor}
-            animationName={playerAnim}
-            modelKey={`fight-player-${player.character_class}`}
-            className="absolute inset-0"
-            fallback={
-              <div className="absolute inset-0 flex items-end justify-center pb-2">
-                <img
-                  src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.male}
-                  alt="" aria-hidden
-                  className="h-full w-auto object-contain object-bottom select-none"
-                  style={{ filter: `drop-shadow(0 0 20px ${def.glowColor})` }}
+            {/* Player impact flash */}
+            <AnimatePresence>
+              {combatFeel.playerFlash && (
+                <motion.div
+                  key="player-flash"
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ background: `${combatFeel.playerFlash}40` }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: [0, 0.9, 0] }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
                 />
-              </div>
-            }
-          />
-          {/* Player name tag */}
-          <div className="absolute bottom-2 left-0 right-0 flex justify-center z-10 pointer-events-none">
+              )}
+            </AnimatePresence>
+
+            {/* Player particle burst */}
+            <AnimatePresence>
+              {combatFeel.playerBurst && (
+                <ImpactBurst
+                  key={`player-burst-${combatFeel.shakeKey}`}
+                  color={combatFeel.playerBurst}
+                  size="md"
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Player name tag */}
+            <div className="absolute bottom-2 left-0 right-0 flex justify-center z-10 pointer-events-none">
+              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
+                style={{ background: `${def.accentColor}22`, color: def.accentColor, border: `1px solid ${def.accentColor}33` }}>
+                {player.character_name}
+              </span>
+            </div>
+          </div>
+
+          {/* Bot — right half, mirrored */}
+          <div className="absolute right-0 top-0 w-1/2 h-full" style={{ transform: 'scaleX(-1)' }}>
+            <CharacterViewer
+              glbPath={CHARACTER_GLB[BOT_CLASS]}
+              accentColor={botDef.accentColor}
+              animationName={botAnim}
+              modelKey="fight-bot-berserker"
+              className="absolute inset-0"
+              fallback={
+                <div className="absolute inset-0 flex items-end justify-center pb-2">
+                  <img
+                    src={CHARACTER_IMAGES[BOT_CLASS]?.male}
+                    alt="" aria-hidden
+                    className="h-full w-auto object-contain object-bottom select-none"
+                    style={{ filter: `drop-shadow(0 0 20px ${botDef.glowColor})` }}
+                  />
+                </div>
+              }
+            />
+
+            {/* Bot impact flash (inside scaleX container, so auto-mirrors correctly) */}
+            <AnimatePresence>
+              {combatFeel.botFlash && (
+                <motion.div
+                  key="bot-flash"
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ background: `${combatFeel.botFlash}40` }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: [0, 0.9, 0] }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Bot particle burst */}
+            <AnimatePresence>
+              {combatFeel.botBurst && (
+                <ImpactBurst
+                  key={`bot-burst-${combatFeel.shakeKey}`}
+                  color={combatFeel.botBurst}
+                  size="md"
+                />
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Bot name tag (outside scaleX container) */}
+          <div className="absolute bottom-2 right-0 w-1/2 flex justify-center z-10 pointer-events-none">
             <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
-              style={{ background: `${def.accentColor}22`, color: def.accentColor, border: `1px solid ${def.accentColor}33` }}>
-              {player.character_name}
+              style={{ background: `${botDef.accentColor}22`, color: botDef.accentColor, border: `1px solid ${botDef.accentColor}33` }}>
+              Bot Warrior
             </span>
           </div>
-        </div>
 
-        {/* Bot — right half, mirrored so it faces left (toward the player) */}
-        <div className="absolute right-0 top-0 w-1/2 h-full" style={{ transform: 'scaleX(-1)' }}>
-          <CharacterViewer
-            glbPath={CHARACTER_GLB[BOT_CLASS]}
-            accentColor={botDef.accentColor}
-            animationName={botAnim}
-            modelKey="fight-bot-berserker"
-            className="absolute inset-0"
-            fallback={
-              <div className="absolute inset-0 flex items-end justify-center pb-2">
-                <img
-                  src={CHARACTER_IMAGES[BOT_CLASS]?.male}
-                  alt="" aria-hidden
-                  className="h-full w-auto object-contain object-bottom select-none"
-                  style={{ filter: `drop-shadow(0 0 20px ${botDef.glowColor})` }}
-                />
-              </div>
-            }
-          />
-        </div>
-        {/* Bot name tag (not mirrored — placed outside the scaleX container) */}
-        <div className="absolute bottom-2 right-0 w-1/2 flex justify-center z-10 pointer-events-none">
-          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
-            style={{ background: `${botDef.accentColor}22`, color: botDef.accentColor, border: `1px solid ${botDef.accentColor}33` }}>
-            Bot Warrior
-          </span>
-        </div>
+          {/* VS badge */}
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
+            <span className="font-display font-black text-xl"
+              style={{ color: 'rgba(234,179,8,0.45)', textShadow: '0 0 20px rgba(234,179,8,0.3)' }}>
+              VS
+            </span>
+          </div>
 
-        {/* VS badge */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
-          <span className="font-display font-black text-xl"
-            style={{ color: 'rgba(234,179,8,0.45)', textShadow: '0 0 20px rgba(234,179,8,0.3)' }}>
-            VS
-          </span>
-        </div>
-
-        {/* HP bars — overlaid at top of the scene */}
-        <div className="absolute inset-x-0 top-0 z-10 px-3 pt-2.5 grid grid-cols-2 gap-3">
-          <ArenaHpBar label={player.character_name} hp={playerHp} color={def.accentColor} side="player" />
-          <ArenaHpBar label="Bot" hp={botHp} color={botDef.accentColor} side="bot" />
-        </div>
-      </div>
+          {/* HP bars */}
+          <div className="absolute inset-x-0 top-0 z-10 px-3 pt-2.5 grid grid-cols-2 gap-3">
+            <ArenaHpBar label={player.character_name} hp={playerHp} classColor={def.accentColor} side="player" />
+            <ArenaHpBar label="Bot" hp={botHp} classColor={botDef.accentColor} side="bot" />
+          </div>
+        </motion.div>
+      </motion.div>
 
       {/* ── Round tracker ── */}
       <div className="flex items-center justify-between px-1">
@@ -462,10 +543,11 @@ export default function BattleArena({ player, walletAddress }: Props) {
               whileTap={disabled ? {} : { scale: 0.97 }}
               className="relative flex flex-col items-center gap-2 p-4 rounded-xl border transition-all overflow-hidden"
               style={{
-                background: disabled ? 'rgba(8,8,14,0.5)' : 'rgba(8,8,14,0.9)',
-                borderColor: disabled ? 'rgba(42,42,58,0.4)' : `${color}30`,
-                opacity: disabled ? 0.35 : 1,
-                cursor: disabled ? 'not-allowed' : 'pointer',
+                background:   disabled ? 'rgba(8,8,14,0.5)' : 'rgba(8,8,14,0.9)',
+                borderColor:  disabled ? 'rgba(42,42,58,0.4)' : `${color}30`,
+                opacity:      disabled ? 0.35 : 1,
+                cursor:       disabled ? 'not-allowed' : 'pointer',
+                boxShadow:    !disabled && id === 'special' ? `0 0 16px ${color}20` : 'none',
               }}
             >
               {!disabled && (
@@ -488,25 +570,42 @@ export default function BattleArena({ player, walletAddress }: Props) {
   )
 }
 
-// ── HP bar ────────────────────────────────────────────────────────────────────
+// ── HP bar with dynamic colors ────────────────────────────────────────────────
 
-function ArenaHpBar({ label, hp, color, side }: { label: string; hp: number; color: string; side: 'player' | 'bot' }) {
+function ArenaHpBar({ label, hp, classColor, side }: { label: string; hp: number; classColor: string; side: 'player' | 'bot' }) {
+  const barColor = getHpColor(hp, classColor)
+  const isCritical = hp <= 30
+  const isWarning  = hp > 30 && hp <= 60
+
   return (
     <div className={`flex flex-col gap-1 ${side === 'bot' ? 'items-end text-right' : ''}`}>
       <div className="flex items-center justify-between w-full gap-1 text-[10px]">
         {side === 'player'
-          ? <><span className="text-slate-400 font-bold truncate">{label}</span><span className="font-black text-white shrink-0">{hp}<span className="text-slate-500 font-normal">HP</span></span></>
-          : <><span className="font-black text-white shrink-0">{hp}<span className="text-slate-500 font-normal">HP</span></span><span className="text-slate-400 font-bold truncate">{label}</span></>
+          ? <>
+              <span className="text-slate-400 font-bold truncate">{label}</span>
+              <span className="font-black shrink-0" style={{ color: barColor }}>{hp}<span className="text-slate-500 font-normal">HP</span></span>
+            </>
+          : <>
+              <span className="font-black shrink-0" style={{ color: barColor }}>{hp}<span className="text-slate-500 font-normal">HP</span></span>
+              <span className="text-slate-400 font-bold truncate">{label}</span>
+            </>
         }
       </div>
       <div className="h-2 w-full rounded-full overflow-hidden"
         style={{ background: 'rgba(18,18,26,0.8)', border: '1px solid rgba(42,42,58,0.5)' }}>
-        <motion.div className="h-full rounded-full"
-          style={{ background: `linear-gradient(90deg, ${color}99, ${color})`, boxShadow: `0 0 4px ${color}60` }}
+        <motion.div
+          className="h-full rounded-full"
+          style={{
+            background: `linear-gradient(90deg, ${barColor}99, ${barColor})`,
+            boxShadow:  `0 0 ${isCritical ? '8px' : '4px'} ${barColor}${isCritical ? '90' : '60'}`,
+            animation:  isCritical ? 'pulse-glow 1s ease-in-out infinite' : undefined,
+          }}
           animate={{ width: `${hp}%` }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
         />
       </div>
+      {isWarning  && <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: '#f59e0b' }}>LOW HP</span>}
+      {isCritical && <span className="text-[7px] font-black uppercase tracking-widest animate-pulse-glow" style={{ color: '#ef4444' }}>CRITICAL</span>}
     </div>
   )
 }
