@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Users, Search, Trophy, HeartCrack } from 'lucide-react'
+import { Users, Search, Trophy, HeartCrack, Copy, Check } from 'lucide-react'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 interface Props {
   walletAddress: string
   onBack: () => void
+  prefillOpponent?: string
 }
 
 interface ChallengeResult {
@@ -15,26 +16,44 @@ interface ChallengeResult {
   battle_id: string
 }
 
-export default function ChallengeBattle({ walletAddress, onBack }: Props) {
-  const [input, setInput] = useState('')
+export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent }: Props) {
+  const [input, setInput] = useState(prefillOpponent ?? '')
   const [resolvedOpponent, setResolvedOpponent] = useState<string | null>(null)
+  const [copiedShare, setCopiedShare] = useState(false)
   const [resolvedName, setResolvedName] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [fighting, setFighting] = useState(false)
   const [result, setResult] = useState<ChallengeResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const isAddress = input.startsWith('0x') && input.length === 42
+  // Auto-resolve prefilled wallet from challenge link
+  useEffect(() => {
+    if (prefillOpponent && prefillOpponent.startsWith('0x')) {
+      handleLookup(prefillOpponent)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  async function handleLookup() {
+  function copyShareLink() {
+    const url = `${window.location.origin}/card/${walletAddress}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedShare(true)
+      setTimeout(() => setCopiedShare(false), 2000)
+    })
+  }
+
+  async function handleLookup(override?: string) {
+    const query = override ?? input
     setError(null)
     setResolvedOpponent(null)
 
-    if (!input.trim()) return
+    if (!query.trim()) return
 
-    if (isAddress) {
+    const lookupAsAddress = query.startsWith('0x') && query.length === 42
+
+    if (lookupAsAddress) {
       setSearching(true)
-      const res = await fetch(`${API}/players/${input.toLowerCase()}`)
+      const res = await fetch(`${API}/players/${query.toLowerCase()}`)
       setSearching(false)
       if (!res.ok) {
         setError('No warrior found at that address.')
@@ -45,15 +64,15 @@ export default function ChallengeBattle({ walletAddress, onBack }: Props) {
       setResolvedName(data.character_name)
     } else {
       setSearching(true)
-      const res = await fetch(`${API}/players/search?q=${encodeURIComponent(input)}&exclude=${walletAddress}`)
+      const res = await fetch(`${API}/players/search?q=${encodeURIComponent(query)}&exclude=${walletAddress}`)
       setSearching(false)
       if (!res.ok) {
-        setError(`No warrior named "${input}" found.`)
+        setError(`No warrior named "${query}" found.`)
         return
       }
       const results = await res.json() as Array<{ wallet_address: string; character_name: string }>
       if (!results.length) {
-        setError(`No warrior named "${input}" found.`)
+        setError(`No warrior named "${query}" found.`)
         return
       }
       setResolvedOpponent(results[0].wallet_address)
@@ -103,7 +122,15 @@ export default function ChallengeBattle({ walletAddress, onBack }: Props) {
         <button onClick={onBack} className="text-slate-500 hover:text-white transition-colors text-sm">
           ← Back
         </button>
-        <h2 className="font-display font-bold text-white text-lg">Challenge a Warrior</h2>
+        <h2 className="font-display font-bold text-white text-lg flex-1">Challenge a Warrior</h2>
+        <button
+          onClick={copyShareLink}
+          className="flex items-center gap-1 text-xs font-bold transition-colors"
+          style={{ color: copiedShare ? '#22c55e' : '#64748b' }}
+          title="Copy your challenge link"
+        >
+          {copiedShare ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Share link</>}
+        </button>
       </div>
 
       {result ? (
@@ -144,12 +171,12 @@ export default function ChallengeBattle({ walletAddress, onBack }: Props) {
             <input
               value={input}
               onChange={(e) => { setInput(e.target.value); setResolvedOpponent(null); setError(null) }}
-              onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+              onKeyDown={(e) => e.key === 'Enter' && void handleLookup()}
               placeholder="0x... or player name"
               className="flex-1 bg-valor-surface-2 border border-valor-border rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
             />
             <motion.button
-              onClick={handleLookup}
+              onClick={() => void handleLookup()}
               disabled={searching || !input.trim()}
               whileTap={{ scale: 0.97 }}
               className="px-4 py-2.5 bg-valor-surface-2 border border-valor-border rounded-xl hover:border-valor-gold/50 disabled:opacity-40 transition-colors"

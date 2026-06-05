@@ -454,6 +454,84 @@ pub async fn add_inventory_item(
     }
 }
 
+// ── PATCH /players/:wallet/inventory/:item_id ─────────────────────────────────
+#[derive(Deserialize)]
+pub struct EquipTogglePath {
+    pub wallet:  String,
+    pub item_id: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct EquipToggleRequest {
+    pub equipped: bool,
+}
+
+pub async fn toggle_equip(
+    state: web::Data<AppState>,
+    path: web::Path<EquipTogglePath>,
+    body: web::Json<EquipToggleRequest>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.wallet);
+
+    let result = sqlx::query(
+        "UPDATE inventory SET equipped = $1
+         WHERE wallet_address = $2 AND item_id = $3",
+    )
+    .bind(body.equipped)
+    .bind(&wallet)
+    .bind(path.item_id)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Err(e) => {
+            tracing::error!("Failed to toggle equip: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── GET /players/:wallet/battles ──────────────────────────────────────────────
+pub async fn get_battles(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+
+    #[derive(serde::Serialize, sqlx::FromRow)]
+    struct BattleRow {
+        id:                    Uuid,
+        challenger_wallet:     String,
+        opponent_wallet:       String,
+        winner_wallet:         String,
+        xp_awarded_challenger: i32,
+        xp_awarded_opponent:   i32,
+        is_bot:                bool,
+        created_at:            chrono::DateTime<Utc>,
+    }
+
+    let result = sqlx::query_as::<_, BattleRow>(
+        "SELECT id, challenger_wallet, opponent_wallet, winner_wallet,
+                xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at
+         FROM battles
+         WHERE challenger_wallet = $1 OR opponent_wallet = $1
+         ORDER BY created_at DESC
+         LIMIT 20",
+    )
+    .bind(&wallet)
+    .fetch_all(&state.db)
+    .await;
+
+    match result {
+        Ok(rows) => HttpResponse::Ok().json(rows),
+        Err(e) => {
+            tracing::error!("Failed to fetch battles: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
 // ── GET /players/:wallet/daily-claim-status ───────────────────────────────────
 pub async fn daily_claim_status(
     state: web::Data<AppState>,

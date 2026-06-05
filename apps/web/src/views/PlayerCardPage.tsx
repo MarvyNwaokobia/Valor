@@ -2,7 +2,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Swords } from 'lucide-react'
+import { Swords, Copy, Check } from 'lucide-react'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
@@ -16,6 +16,15 @@ export default function PlayerCardPage() {
   const [player, setPlayer] = useState<Player | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  function copyCardUrl() {
+    const url = `${window.location.origin}/card/${walletAddress}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   useEffect(() => {
     if (!walletAddress) return
@@ -86,15 +95,36 @@ export default function PlayerCardPage() {
           <p className="text-slate-500 text-sm">
             <span className="text-valor-gold font-bold">{player.character_name}</span> has earned{' '}
             <span className="text-valor-gold font-bold">
-              {formatGDollarNumber(player.g_earned_lifetime)} Gold
+              {formatGDollarNumber(player.g_earned_lifetime)} G$
             </span>{' '}
             playing Valor.
           </p>
+
+          {/* Action row */}
+          <div className="flex gap-2 justify-center">
+            <Link
+              href={`/battle?challenge=${walletAddress}`}
+              className="flex-1 max-w-45 px-5 py-3 rounded-xl font-bold text-sm text-center transition-colors"
+              style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}
+            >
+              <span className="flex items-center justify-center gap-1.5">
+                <Swords size={14} /> Challenge
+              </span>
+            </Link>
+            <button
+              onClick={copyCardUrl}
+              className="flex-1 max-w-45 flex items-center justify-center gap-1.5 px-5 py-3 rounded-xl font-bold text-sm transition-colors"
+              style={{ background: 'rgba(234,179,8,0.1)', color: copied ? '#22c55e' : '#eab308', border: `1px solid ${copied ? 'rgba(34,197,94,0.3)' : 'rgba(234,179,8,0.25)'}` }}
+            >
+              {copied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Share</>}
+            </button>
+          </div>
+
           <Link
             href="/"
-            className="inline-block px-8 py-3 bg-valor-gold text-black font-bold rounded-xl hover:bg-valor-gold-light transition-colors text-sm"
+            className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
           >
-            Create Your Character →
+            Create your own warrior →
           </Link>
         </motion.div>
       </motion.div>

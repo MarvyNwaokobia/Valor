@@ -8,8 +8,10 @@ import InventoryPanel from '@/components/player-card/InventoryPanel'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
+import BattleHistory from '@/components/profile/BattleHistory'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
+import type { Rank } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
 const CLASS_SOLO: Record<string, string> = {
@@ -155,7 +157,8 @@ export default function ProfilePage() {
         {(player.play_style === 'Wanderer' || player.play_style === 'Champion') && (
           <IdlePanel walletAddress={address} player={player} />
         )}
-        <InventoryPanel inventory={inventory} />
+        <InventoryPanel inventory={inventory} walletAddress={address} />
+        <BattleHistory walletAddress={address} playerRank={player.rank as Rank} />
       </motion.div>
     </div>
   )

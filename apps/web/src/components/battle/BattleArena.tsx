@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sword, Shield, Zap, Bot, Trophy, HeartCrack, Users, ChevronLeft } from 'lucide-react'
+import { Sword, Shield, Zap, Bot, Trophy, HeartCrack, Users, ChevronLeft, Swords } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
 import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
+import ChallengeBattle from './ChallengeBattle'
 import ImpactBurst from './ImpactBurst'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
@@ -21,7 +22,7 @@ import { formatGDollarNumber } from '@/utils/format'
 
 const BOT_CLASS: CharacterClass = 'Berserker'
 
-interface Props { player: Player; walletAddress: string }
+interface Props { player: Player; walletAddress: string; challengeTarget?: string }
 
 const MOVES: { id: BattleMove; label: string; desc: string; Icon: typeof Sword; color: string }[] = [
   { id: 'attack',  label: 'Attack',  desc: 'Standard strike',       Icon: Sword,  color: '#ef4444' },
@@ -35,8 +36,9 @@ function getHpColor(hp: number, classColor: string): string {
   return '#ef4444'
 }
 
-export default function BattleArena({ player, walletAddress }: Props) {
-  const [showChallenge, setShowChallenge] = useState(false)
+export default function BattleArena({ player, walletAddress, challengeTarget }: Props) {
+  const [showChallenge,       setShowChallenge]       = useState(false)
+  const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
   const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
   const botDef = CLASS_DEFINITIONS[BOT_CLASS]
 
@@ -159,6 +161,11 @@ export default function BattleArena({ player, walletAddress }: Props) {
     return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
   }
 
+  // ── DIRECT CHALLENGE ─────────────────────────────────────────────────────
+  if (phase === 'idle' && showDirectChallenge) {
+    return <ChallengeBattle walletAddress={walletAddress} onBack={() => setShowDirectChallenge(false)} prefillOpponent={challengeTarget} />
+  }
+
   // ── IDLE — choose fight type ─────────────────────────────────────────────
   if (phase === 'idle') {
     return (
@@ -252,6 +259,29 @@ export default function BattleArena({ player, walletAddress }: Props) {
               <div>
                 <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Live PvP</p>
                 <p className="text-slate-500 text-sm mt-0.5">Real-time · Fight a live player · Winner takes XP</p>
+              </div>
+              <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
+            </div>
+          </motion.button>
+
+          <motion.button onClick={() => setShowDirectChallenge(true)}
+            className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
+            style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
+            whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+          >
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(234,179,8,0.07), transparent)' }} />
+            <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ background: '#eab308' }} />
+            <div className="flex items-center gap-5 relative z-10">
+              <div className="w-14 h-14 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                <Swords size={28} style={{ color: '#eab308' }} strokeWidth={1.5} />
+              </div>
+              <div>
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Challenge a Warrior</p>
+                <p className="text-slate-500 text-sm mt-0.5">Search by name · Async duel · Share invite link</p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
             </div>
