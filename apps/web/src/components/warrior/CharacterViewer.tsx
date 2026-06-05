@@ -74,7 +74,7 @@ export default function CharacterViewer({
   const [failed, setFailed] = useState(false)
 
   return (
-    <div className={className ?? 'absolute inset-0'} style={{ position: 'relative' }}>
+    <div className={className ?? 'absolute inset-0'}>
 
       {/*
         Portrait fallback — visible immediately and fades out once the 3D

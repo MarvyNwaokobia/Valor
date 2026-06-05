@@ -225,7 +225,7 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
   }
 
   return (
-    <div className="fixed inset-0 z-998 overflow-hidden flex flex-col" style={{ background:'#04030c' }}>
+    <div className="fixed inset-0 z-60 overflow-hidden flex flex-col" style={{ background:'#04030c' }}>
 
       {/* ── ATMOSPHERE BACKGROUND ── */}
       <ClassAtmosphere characterClass={selectedClass} accentColor={def.accentColor} />

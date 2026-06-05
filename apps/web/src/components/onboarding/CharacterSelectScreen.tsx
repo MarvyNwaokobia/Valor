@@ -43,7 +43,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
   }, [index])
 
   return (
-    <div className="fixed inset-0 overflow-hidden" style={{ background: '#04030c' }}>
+    <div className="fixed inset-0 overflow-hidden z-60" style={{ background: '#04030c' }}>
 
       {/* ── ATMOSPHERE — faction color shifts with selected class ── */}
       <AnimatePresence mode="wait">
