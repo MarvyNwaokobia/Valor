@@ -1,19 +1,21 @@
 'use client'
 
 import { Suspense, useEffect, useMemo, useRef } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { useGLTF, useAnimations } from '@react-three/drei'
 import { SkeletonUtils } from 'three-stdlib'
 import * as THREE from 'three'
 import { CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 
-// ── Camera: side-on cinematic angle, both fighters in frame ──────────────────
+// ── Camera: offset 60% behind the player's side for ownership/immersion ───────
 
 function CameraSetup() {
   const { camera } = useThree()
   useEffect(() => {
-    camera.lookAt(0, 0.85, 0)
+    // Look slightly left of center — keeps both fighters in frame while player
+    // occupies more visual real estate
+    camera.lookAt(-0.1, 0.85, 0)
   }, [camera])
   return null
 }
@@ -114,12 +116,15 @@ interface FightCharacterProps {
   paused: boolean
   positionX: number
   rotationY: number
+  /** +1 for player (lunges toward opponent on right), -1 for bot */
+  lungeDir: number
 }
 
 function FightCharacter({
-  glbPath, accentColor, animationName, paused, positionX, rotationY,
+  glbPath, accentColor, animationName, paused, positionX, rotationY, lungeDir,
 }: FightCharacterProps) {
   const group = useRef<THREE.Group>(null!)
+  const xRef  = useRef(positionX)
   const { scene: rawScene, animations } = useGLTF(glbPath)
 
   // Clone so player and bot each own their skeleton — needed when same GLB is used twice
@@ -138,11 +143,23 @@ function FightCharacter({
     mixer.timeScale = paused ? 0 : 1
   }, [paused, mixer])
 
+  // Smooth lunge — character moves toward opponent while attacking
+  useFrame((_, delta) => {
+    if (!group.current) return
+    const targetX = animationName === 'attack' ? positionX + lungeDir * 0.2 : positionX
+    const factor  = Math.min(1, delta * 11)
+    xRef.current += (targetX - xRef.current) * factor
+    group.current.position.x = xRef.current
+  })
+
   return (
     <group ref={group} position={[positionX, 0, 0]} rotation={[0, rotationY, 0]}>
       {/* No explicit scale — the GLB's root Armature already has scale=0.01 baked in */}
       <primitive object={scene} dispose={null} />
-      <pointLight position={[0, 1.4, 0.8]} intensity={5} color={accentColor} distance={8} decay={2} />
+      {/* Front-facing accent glow — in local space, faces the opponent */}
+      <pointLight position={[0, 1.5, 1.0]} intensity={6}   color={accentColor} distance={9}  decay={2} />
+      {/* Soft fill from above */}
+      <pointLight position={[0, 2.5, 0]}   intensity={2.5} color="#ffffff"     distance={6}  decay={2} />
     </group>
   )
 }
@@ -166,7 +183,8 @@ export default function BattleScene({
 }: BattleSceneProps) {
   return (
     <Canvas
-      camera={{ position: [0, 1.2, 3.0], fov: 50 }}
+      // Offset 0.3 units toward player's side (player is at x=-0.7) for ownership feel
+      camera={{ position: [-0.3, 1.15, 2.8], fov: 52 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: false }}
       style={{ background: '#04030c', width: '100%', height: '100%' }}
@@ -175,18 +193,20 @@ export default function BattleScene({
       <CameraSetup />
 
       {/* Atmospheric depth fog */}
-      <fog attach="fog" args={['#04030c', 7, 18]} />
+      <fog attach="fog" args={['#04030c', 8, 20]} />
 
       {/* ── Lighting ── */}
-      {/* Dark purple ambient — establishes the tone */}
-      <ambientLight intensity={0.28} color="#0d0820" />
-      {/* Key light — main illumination from above-front */}
-      <directionalLight position={[1, 5, 3]} intensity={2.2} color="#ffffff" />
-      {/* Warm fill — prevents pure shadow on opposite side */}
-      <directionalLight position={[-4, 2, 1]} intensity={0.55} color="#ffe4c0" />
-      {/* Blue back rim — cinematic separation from background */}
-      <directionalLight position={[0, 3, -5]} intensity={2.8} color="#2a18ff" />
-      {/* Floor bounce — subtle uplight */}
+      {/* Ambient — slightly brighter so nothing goes fully black */}
+      <ambientLight intensity={0.5} color="#0d0820" />
+      {/* Key light — strong front-fill from camera side, illuminates both fighters' fronts */}
+      <directionalLight position={[0, 2.5, 5]}  intensity={3.2} color="#f5f0ff" />
+      {/* Secondary key — warm overhead from slightly right */}
+      <directionalLight position={[1, 5, 3]}    intensity={2.0} color="#ffffff" />
+      {/* Warm fill — softens shadows on the opposite side */}
+      <directionalLight position={[-4, 2, 1]}   intensity={0.7} color="#ffe4c0" />
+      {/* Blue back rim — cinematic depth separation from background (toned down so fronts win) */}
+      <directionalLight position={[0, 3, -5]}   intensity={1.4} color="#2a18ff" />
+      {/* Floor bounce — subtle uplight keeps feet visible */}
       <pointLight position={[0, 0.05, 0.5]} intensity={0.9} color="#18083a" distance={5} decay={2} />
 
       <Arena playerColor={playerAccentColor} botColor={botAccentColor} />
@@ -200,6 +220,7 @@ export default function BattleScene({
           paused={playerPaused}
           positionX={-0.7}
           rotationY={Math.PI / 2}
+          lungeDir={1}
         />
         <FightCharacter
           key={`bot-${botClass}`}
@@ -209,6 +230,7 @@ export default function BattleScene({
           paused={botPaused}
           positionX={0.7}
           rotationY={-Math.PI / 2}
+          lungeDir={-1}
         />
       </Suspense>
     </Canvas>

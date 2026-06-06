@@ -9,7 +9,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen, { type Gender } from '@/components/onboarding/CharacterSelectScreen'
 import TutorialArena from '@/components/onboarding/TutorialArena'
-import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES, statVarianceFromWallet } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 
@@ -30,7 +30,7 @@ export default function OnboardingPage() {
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
 
-  const [step,           setStep]           = useState<Step>('covenant') // DEV: skip verify
+  const [step,           setStep]           = useState<Step>('covenant') // TESTING: skip verify — re-enable before launch
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [selectedGender, setSelectedGender] = useState<Gender>('male')
@@ -160,33 +160,13 @@ export default function OnboardingPage() {
           <span className="text-[10px] font-bold uppercase tracking-widest">Change Class</span>
         </button>
 
-        {/* 3D character fills the screen; fallback portrait while GLB loads */}
+        {/* 3D character fills the screen */}
         <CharacterViewer
           glbPath={CHARACTER_GLB[selectedClass]}
           accentColor={def.accentColor}
           animationName="idle"
           modelKey={`confirm-${selectedClass}-${selectedGender}`}
           className="absolute inset-0"
-          fallback={
-            <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: '20vh' }}>
-              <img
-                src={CHARACTER_IMAGES[selectedClass][selectedGender]}
-                alt={selectedClass}
-                style={{
-                  height: 'clamp(360px, 68vh, 660px)',
-                  width: 'auto',
-                  objectFit: 'contain',
-                  filter: `drop-shadow(0 0 48px ${def.glowColor}) drop-shadow(0 28px 60px rgba(0,0,0,0.99))`,
-                  mixBlendMode: 'screen',
-                  WebkitMaskImage: 'radial-gradient(ellipse 88% 92% at 50% 38%, black 48%, transparent 82%)',
-                  maskImage: 'radial-gradient(ellipse 88% 92% at 50% 38%, black 48%, transparent 82%)',
-                  userSelect: 'none',
-                  pointerEvents: 'none',
-                }}
-                draggable={false}
-              />
-            </div>
-          }
         />
 
         {/* Bottom panel */}

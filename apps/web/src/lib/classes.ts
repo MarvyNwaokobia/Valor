@@ -23,8 +23,8 @@ export interface ClassDefinition {
 /** GLB paths for 3D character models (output of scripts/fbx_to_glb.py) */
 export const CHARACTER_GLB: Record<CharacterClass, string> = {
   Berserker: '/characters/glb/berserker.glb',
-  Sentinel:  '/characters/glb/sentinel.glb',
-  Phantom:   '/characters/glb/phantom.glb',
+  Sentinel:  '/characters/glb/phantom.glb',
+  Phantom:   '/characters/glb/sentinel.glb',
 }
 
 /** Fallback portrait images (used until GLBs are ready) */

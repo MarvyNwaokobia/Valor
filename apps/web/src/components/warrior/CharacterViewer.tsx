@@ -52,7 +52,8 @@ function CharacterModel({ glbPath, accentColor, animationName, paused, onLoaded 
     <group ref={group}>
       {/* No explicit scale — the GLB's root Armature already has scale=0.01 baked in */}
       <primitive object={scene} dispose={null} />
-      <pointLight position={[-3, 2, -2]} intensity={5} color={accentColor} distance={14} />
+      <pointLight position={[1, 2, 3]}  intensity={4.5} color={accentColor} distance={12} />
+      <pointLight position={[-1, 3, 2]} intensity={2.5} color="#ffffff"    distance={10} />
     </group>
   )
 }
@@ -105,9 +106,10 @@ export default function CharacterViewer({
               style={{ background: 'transparent' }}
               performance={{ min: 0.5 }}
             >
-              <ambientLight intensity={0.55} color="#18142e" />
-              <directionalLight position={[1, 4, 3]} intensity={2.4} color="#ffffff" />
-              <pointLight position={[0, -0.5, 2]} intensity={0.7} color="#0a0820" />
+              <ambientLight intensity={0.7} color="#18142e" />
+              <directionalLight position={[0, 3, 5]}  intensity={3.0} color="#f5f0ff" />
+              <directionalLight position={[1, 4, 3]}  intensity={1.8} color="#ffffff" />
+              <directionalLight position={[-2, 2, -3]} intensity={0.6} color="#2a18ff" />
 
               <Suspense fallback={null}>
                 <CharacterModel

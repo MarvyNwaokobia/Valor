@@ -378,3 +378,19 @@ body {
   /* Battle HUD: reduce top padding */
   .battle-hud { padding-top: 6px !important; }
 }
+
+/* ── Battle landscape lock ───────────────────────────────── */
+
+/* Portrait rotate prompt — hidden by default, shown in portrait during battle */
+.battle-rotate-prompt { display: none; }
+@media (orientation: portrait) {
+  .battle-rotate-prompt { display: flex; }
+}
+
+/* In landscape, add side safe-area padding for notched phones */
+@media (orientation: landscape) {
+  .battle-move-buttons {
+    padding-left:  max(12px, env(safe-area-inset-left, 12px));
+    padding-right: max(12px, env(safe-area-inset-right, 12px));
+  }
+}

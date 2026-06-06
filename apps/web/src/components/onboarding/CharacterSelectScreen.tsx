@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CHARACTER_CLASSES, CLASS_DEFINITIONS, CHARACTER_IMAGES, CHARACTER_GLB } from '@/lib/classes'
+import { CHARACTER_CLASSES, CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 
@@ -23,29 +23,20 @@ const TOTAL_CLASSES = CHARACTER_CLASSES.length
 export default function CharacterSelectScreen({ onSelect }: Props) {
   const [index, setIndex]   = useState(0)
   const [gender, setGender] = useState<Gender>('male')
-  const [dir, setDir]       = useState<1 | -1>(1)
 
   const selectedClass = CHARACTER_CLASSES[index]
   const def           = CLASS_DEFINITIONS[selectedClass]
-  const imgSrc        = CHARACTER_IMAGES[selectedClass][gender]
 
   const navigate = useCallback((direction: 1 | -1) => {
-    setDir(direction)
     setIndex(i => (i + direction + TOTAL_CLASSES) % TOTAL_CLASSES)
   }, [])
 
-  // Preload adjacent characters (GLBs + portrait images) for smooth transitions
+  // Preload adjacent GLBs for smooth transitions
   useEffect(() => {
     const next = CHARACTER_CLASSES[(index + 1) % TOTAL_CLASSES]
     const prev = CHARACTER_CLASSES[(index - 1 + TOTAL_CLASSES) % TOTAL_CLASSES]
     CharacterViewer.preload(CHARACTER_GLB[next])
     CharacterViewer.preload(CHARACTER_GLB[prev])
-    ;([next, prev] as CharacterClass[]).forEach(cls => {
-      ;(['male', 'female'] as Gender[]).forEach(g => {
-        const img = new window.Image()
-        img.src = CHARACTER_IMAGES[cls][g]
-      })
-    })
   }, [index])
 
   return (
@@ -123,43 +114,12 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
         </div>
       </div>
 
-      {/* ── CHARACTER — 3D viewer (falls back to portrait image if GLB not ready) ── */}
+      {/* ── CHARACTER — 3D viewer ── */}
       <CharacterViewer
         glbPath={CHARACTER_GLB[selectedClass]}
         accentColor={def.accentColor}
         animationName="idle"
         modelKey={`${selectedClass}-${gender}`}
-        fallback={
-          /* Portrait image fallback — active until GLBs are converted */
-          <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: '20vh' }}>
-            <AnimatePresence mode="wait" custom={dir}>
-              <motion.img
-                key={`${selectedClass}-${gender}`}
-                src={imgSrc}
-                alt={selectedClass}
-                custom={dir}
-                variants={slideVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
-                style={{
-                  height: 'clamp(340px, 62vh, 620px)',
-                  width: 'auto',
-                  objectFit: 'contain',
-                  objectPosition: 'center',
-                  filter: `brightness(1.18) contrast(1.12) drop-shadow(0 0 44px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
-                  mixBlendMode: 'screen',
-                  WebkitMaskImage: 'radial-gradient(ellipse 88% 94% at 50% 36%, black 45%, transparent 80%)',
-                  maskImage: 'radial-gradient(ellipse 88% 94% at 50% 36%, black 45%, transparent 80%)',
-                  userSelect: 'none',
-                  pointerEvents: 'none',
-                }}
-                draggable={false}
-              />
-            </AnimatePresence>
-          </div>
-        }
       />
 
       {/* ── LEFT / RIGHT NAVIGATION ── */}
@@ -214,7 +174,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
                 {CHARACTER_CLASSES.map((_, i) => (
                   <button
                     key={i}
-                    onClick={() => { setDir(i > index ? 1 : -1); setIndex(i) }}
+                    onClick={() => setIndex(i)}
                     style={{
                       width: i === index ? 20 : 6,
                       height: 6,
@@ -346,26 +306,6 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
       </div>
     </div>
   )
-}
-
-// ── Slide animation variants ──────────────────────────────────────────────────
-
-const slideVariants = {
-  enter: (dir: number) => ({
-    x: dir > 0 ? 80 : -80,
-    opacity: 0,
-    scale: 0.94,
-  }),
-  center: {
-    x: 0,
-    opacity: 1,
-    scale: 1,
-  },
-  exit: (dir: number) => ({
-    x: dir > 0 ? -80 : 80,
-    opacity: 0,
-    scale: 0.94,
-  }),
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────

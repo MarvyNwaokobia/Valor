@@ -67,6 +67,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     timers.current = []
   }
 
+  // ── Landscape orientation lock during battle ─────────────────────────────
+  useEffect(() => {
+    if (phase !== 'fighting') return
+    if (typeof screen !== 'undefined' && screen.orientation?.lock) {
+      screen.orientation.lock('landscape').catch(() => {})
+    }
+    return () => {
+      try { screen.orientation?.unlock?.() } catch {}
+    }
+  }, [phase])
+
   // ── Battle entrance ──────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'fighting' || round !== 1) return
@@ -106,11 +117,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         playHit(player.character_class as string, entry.playerDmg)
         if (entry.playerMove === 'special') playSpecial(player.character_class as string)
       }
-    }, 320)
+    }, 280) // pulled from 320ms — hits when lunge peaks
 
     const t2 = setTimeout(() => {
       setBotAnim(entry.botMove === 'attack' || entry.botMove === 'special' ? 'attack' : 'idle')
-    }, 740)
+    }, 680)
 
     const t3 = setTimeout(() => {
       setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle')
@@ -120,13 +131,13 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         playHit(BOT_CLASS, entry.botDmg)
         if (entry.botMove === 'special') playSpecial(BOT_CLASS)
       }
-    }, 980)
+    }, 920)
 
     const t4 = setTimeout(() => {
       setPlayerAnim('idle')
       setBotAnim('idle')
       setIsRoundAnimating(false)
-    }, 1500)
+    }, 1400)
     timers.current = [t1, t2, t3, t4]
   }, [log])
 
@@ -472,6 +483,21 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   return (
     <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ background: '#04030c' }}>
 
+      {/* ── Portrait rotate overlay — only visible when device is in portrait ── */}
+      <div className="battle-rotate-prompt fixed inset-0 z-200 flex-col items-center justify-center gap-5"
+        style={{ background: 'rgba(4,3,12,0.97)' }}>
+        <motion.div
+          animate={{ rotate: [0, 0, 90, 90, 0] }}
+          transition={{ duration: 2, repeat: Infinity, repeatDelay: 1, ease: 'easeInOut' }}
+          style={{ fontSize: 56 }}>
+          📱
+        </motion.div>
+        <div className="text-center px-6">
+          <p className="font-display font-black text-white text-xl tracking-wide">Rotate Your Device</p>
+          <p className="text-slate-400 text-sm mt-2">Battle Arena is designed for landscape</p>
+        </div>
+      </div>
+
       {/* ── Full-screen background atmosphere ── */}
       <div className="absolute inset-0 pointer-events-none">
         <div style={{
@@ -703,7 +729,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       </AnimatePresence>
 
       {/* ── Move buttons ── */}
-      <div className="relative z-30 grid grid-cols-3 gap-2 px-3"
+      <div className="battle-move-buttons relative z-30 grid grid-cols-3 gap-2 px-3"
         style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', paddingTop: 6 }}>
         {MOVES.map(({ id, label, desc, Icon, color }) => {
           const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating
