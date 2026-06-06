@@ -11,6 +11,7 @@ import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
 import ImpactBurst from './ImpactBurst'
+import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES } from '@/lib/classes'
@@ -53,6 +54,18 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const [isRoundAnimating, setIsRoundAnimating] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
+  // ── Damage number events ─────────────────────────────────────────────────
+  interface DmgEvent { id: number; value: number; isSpecial: boolean; side: 'player' | 'bot' }
+  const [dmgEvents, setDmgEvents] = useState<DmgEvent[]>([])
+  const dmgCounter = useRef(0)
+
+  function spawnDmgNumber(value: number, side: 'player' | 'bot', isSpecial: boolean) {
+    if (value <= 0) return
+    const id = ++dmgCounter.current
+    setDmgEvents(prev => [...prev, { id, value, isSpecial, side }])
+    setTimeout(() => setDmgEvents(prev => prev.filter(e => e.id !== id)), 700)
+  }
+
   function clearTimers() {
     timers.current.forEach(clearTimeout)
     timers.current = []
@@ -93,6 +106,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       setBotAnim(entry.playerDmg > 0 ? 'hit' : 'idle')
       if (entry.playerDmg > 0) {
         combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
+        spawnDmgNumber(entry.playerDmg, 'bot', entry.playerMove === 'special')
         playHit(player.character_class as string, entry.playerDmg)
         if (entry.playerMove === 'special') playSpecial(player.character_class as string)
       }
@@ -106,6 +120,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       setPlayerAnim(entry.botDmg > 0 ? 'hit' : 'idle')
       if (entry.botDmg > 0) {
         combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
+        spawnDmgNumber(entry.botDmg, 'player', entry.botMove === 'special')
         playHit(BOT_CLASS, entry.botDmg)
         if (entry.botMove === 'special') playSpecial(BOT_CLASS)
       }
@@ -130,6 +145,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       setIsEntering(false)
       setShowFightCall(false)
       setIsRoundAnimating(false)
+      setDmgEvents([])
       combatFeel.reset()
     }
   }, [phase])
@@ -471,6 +487,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
               accentColor={def.accentColor}
               animationName={playerAnim}
+              paused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
               modelKey={`fight-player-${player.character_class}`}
               className="absolute inset-0"
               fallback={
@@ -484,8 +501,14 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 </div>
               }
             />
-
             </RankAura>
+
+            {/* Player damage numbers */}
+            <AnimatePresence>
+              {dmgEvents.filter(e => e.side === 'player').map(e => (
+                <DamageNumber key={e.id} {...e} />
+              ))}
+            </AnimatePresence>
 
             {/* Player impact flash */}
             <AnimatePresence>
@@ -528,6 +551,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               glbPath={CHARACTER_GLB[BOT_CLASS]}
               accentColor={botDef.accentColor}
               animationName={botAnim}
+              paused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
               modelKey="fight-bot-berserker"
               className="absolute inset-0"
               fallback={
@@ -541,6 +565,15 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 </div>
               }
             />
+
+            {/* Bot damage numbers — rendered inside scaleX(-1) container so we un-mirror text */}
+            <div style={{ transform: 'scaleX(-1)' }} className="absolute inset-0 pointer-events-none">
+              <AnimatePresence>
+                {dmgEvents.filter(e => e.side === 'bot').map(e => (
+                  <DamageNumber key={e.id} {...e} />
+                ))}
+              </AnimatePresence>
+            </div>
 
             {/* Bot impact flash (inside scaleX container, so auto-mirrors correctly) */}
             <AnimatePresence>

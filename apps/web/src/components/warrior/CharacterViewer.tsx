@@ -23,16 +23,17 @@ interface ModelProps {
   glbPath: string
   accentColor: string
   animationName: string
+  paused: boolean
   onLoaded: () => void
 }
 
-function CharacterModel({ glbPath, accentColor, animationName, onLoaded }: ModelProps) {
+function CharacterModel({ glbPath, accentColor, animationName, paused, onLoaded }: ModelProps) {
   const group = useRef<THREE.Group>(null!)
   const { scene, animations } = useGLTF(glbPath)
-  const { actions } = useAnimations(animations, group)
+  const { actions, mixer } = useAnimations(animations, group)
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { onLoaded() }, [])   // mount = successful load
+  useEffect(() => { onLoaded() }, [])
 
   useEffect(() => {
     Object.values(actions).forEach(a => a?.stop())
@@ -41,10 +42,15 @@ function CharacterModel({ glbPath, accentColor, animationName, onLoaded }: Model
     return () => { Object.values(actions).forEach(a => a?.fadeOut(0.2)) }
   }, [animationName, actions])
 
+  // Hitstop: freeze the mixer for the duration
+  useEffect(() => {
+    if (!mixer) return
+    mixer.timeScale = paused ? 0 : 1
+  }, [paused, mixer])
+
   return (
     <group ref={group}>
       <primitive object={scene} dispose={null} scale={[0.01, 0.01, 0.01]} />
-      {/* Rim light in class accent color */}
       <pointLight position={[-3, 2, -2]} intensity={5} color={accentColor} distance={14} />
     </group>
   )
@@ -56,6 +62,7 @@ export interface CharacterViewerProps {
   glbPath: string
   accentColor: string
   animationName?: string
+  paused?: boolean
   /** Remounts the model when this changes (use class+gender string) */
   modelKey: string
   fallback?: ReactNode
@@ -66,6 +73,7 @@ export default function CharacterViewer({
   glbPath,
   accentColor,
   animationName = 'idle',
+  paused = false,
   modelKey,
   fallback = null,
   className,
@@ -113,6 +121,7 @@ export default function CharacterViewer({
                   glbPath={glbPath}
                   accentColor={accentColor}
                   animationName={animationName}
+                  paused={paused}
                   onLoaded={() => setLoaded(true)}
                 />
               </Suspense>
