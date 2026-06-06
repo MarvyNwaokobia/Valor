@@ -10,6 +10,7 @@ interface PlayerState {
   updatePlayer: (updates: Partial<Player>) => void
   setInventory: (inventory: InventoryItem[]) => void
   addInventoryItem: (item: InventoryItem) => void
+  removeInventoryItem: (itemId: string) => void
   toggleEquip: (itemId: string) => void
   setVerified: (verified: boolean) => void
   clearPlayer: () => void
@@ -30,6 +31,8 @@ export const usePlayerStore = create<PlayerState>()(
       setInventory: (inventory) => set({ inventory }),
       addInventoryItem: (item) =>
         set((state) => ({ inventory: [...state.inventory, item] })),
+      removeInventoryItem: (itemId) =>
+        set((state) => ({ inventory: state.inventory.filter((i) => i.item_id !== itemId) })),
       toggleEquip: (itemId) =>
         set((state) => ({
           inventory: state.inventory.map((i) =>

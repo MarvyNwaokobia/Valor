@@ -661,3 +661,57 @@ pub async fn check_achievements(
         }
     }
 }
+
+// ── POST /players/:wallet/freeze-decay ───────────────────────────────────────
+// Requires the player to own at least one shield category item.
+// Consumes one shield, then freezes decay for 7 days.
+pub async fn freeze_decay(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+
+    // Find the first owned shield item
+    let shield: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT inventory.item_id FROM inventory
+         JOIN items ON inventory.item_id = items.id
+         WHERE inventory.wallet_address = $1 AND items.category = 'shield'
+         LIMIT 1",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some((shield_item_id,)) = shield else {
+        return HttpResponse::UnprocessableEntity()
+            .json(json!({"error": "No Protection Shield in inventory"}));
+    };
+
+    // Consume the shield
+    let _ = sqlx::query(
+        "DELETE FROM inventory WHERE wallet_address = $1 AND item_id = $2",
+    )
+    .bind(&wallet)
+    .bind(shield_item_id)
+    .execute(&state.db)
+    .await;
+
+    let frozen_until = Utc::now() + chrono::Duration::days(7);
+
+    let _ = sqlx::query(
+        "UPDATE players
+         SET decay_frozen_until = $1, decay_status = 'none'
+         WHERE wallet_address = $2",
+    )
+    .bind(frozen_until)
+    .bind(&wallet)
+    .execute(&state.db)
+    .await;
+
+    HttpResponse::Ok().json(json!({
+        "frozen_until":   frozen_until.to_rfc3339(),
+        "shield_item_id": shield_item_id.to_string(),
+    }))
+}

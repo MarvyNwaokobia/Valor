@@ -1,12 +1,12 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { Trophy } from 'lucide-react'
 import LeaderboardTable from '@/components/leaderboard/LeaderboardTable'
 
 export default function LeaderboardPage() {
-  const { address } = useConnection()
+  const { address } = useAccount()
 
   return (
     <div className="flex flex-col gap-6">

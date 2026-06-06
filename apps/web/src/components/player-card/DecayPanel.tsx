@@ -1,7 +1,10 @@
+'use client'
+
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { ShieldCheck, AlertTriangle, Skull, Scroll } from 'lucide-react'
+import { ShieldCheck, AlertTriangle, Skull } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { useFreezeDecay, useResurrect } from '@/hooks/useDecayActions'
+import { useFreezeDecay } from '@/hooks/useDecayActions'
 import { getDecayTimeRemaining } from '@/utils/decay'
 import { formatCountdown } from '@/utils/format'
 import { DECAY_PENALIZE_HOURS, DECAY_WARNING_HOURS } from '@/lib/constants'
@@ -13,14 +16,12 @@ interface Props {
 export default function DecayPanel({ walletAddress }: Props) {
   const player = usePlayerStore((s) => s.player)
   const { mutate: freeze, isPending: isFreezing } = useFreezeDecay(walletAddress)
-  const { mutate: resurrect, isPending: isResurrecting } = useResurrect(walletAddress)
-  const inventory = usePlayerStore((s) => s.inventory)
+  const [freezeErrMsg, setFreezeErrMsg] = useState<string | null>(null)
 
   if (!player) return null
 
-  const decayStatus = player.decay_status
+  const decayStatus   = player.decay_status
   const hoursUntilWarning = getDecayTimeRemaining(player.last_active)
-  const hasShield = inventory.some((i) => i.item_id !== null)
   const isFrozen =
     player.decay_frozen_until &&
     new Date(player.decay_frozen_until) > new Date()
@@ -93,6 +94,13 @@ export default function DecayPanel({ walletAddress }: Props) {
   }
 
   // Active decay
+  function handleFreeze() {
+    setFreezeErrMsg(null)
+    freeze(undefined, {
+      onError: (e) => setFreezeErrMsg(e instanceof Error ? e.message : 'Failed to activate shield'),
+    })
+  }
+
   return (
     <motion.div
       className="bg-red-500/10 border border-red-500/40 rounded-xl p-4"
@@ -112,31 +120,25 @@ export default function DecayPanel({ walletAddress }: Props) {
         Your character has lost a rank. Battle or complete a mission to stop the decay.
       </p>
 
-      <div className="flex flex-col gap-2">
-        <button
-          onClick={() => freeze()}
-          disabled={isFreezing || !hasShield}
-          className="w-full py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 transition-colors"
-          title={!hasShield ? 'Buy a Protection Shield from the Marketplace first' : undefined}
-        >
-          {isFreezing ? 'Activating...' : (
-            <span className="flex items-center justify-center gap-1.5">
-              <ShieldCheck size={13} /> Activate Protection Shield
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => resurrect()}
-          disabled={isResurrecting}
-          className="w-full py-2 text-xs font-bold bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 transition-colors"
-        >
-          {isResurrecting ? 'Resurrecting...' : (
-            <span className="flex items-center justify-center gap-1.5">
-              <Scroll size={13} /> Use Resurrection Scroll
-            </span>
-          )}
-        </button>
-      </div>
+      <button
+        onClick={handleFreeze}
+        disabled={isFreezing}
+        className="w-full py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 transition-colors"
+      >
+        {isFreezing ? 'Activating...' : (
+          <span className="flex items-center justify-center gap-1.5">
+            <ShieldCheck size={13} /> Activate Protection Shield
+          </span>
+        )}
+      </button>
+
+      {freezeErrMsg && (
+        <p className="text-xs text-red-400 mt-2 text-center">
+          {freezeErrMsg.includes('No Protection Shield')
+            ? 'You need a Protection Shield from the Marketplace.'
+            : freezeErrMsg}
+        </p>
+      )}
     </motion.div>
   )
 }

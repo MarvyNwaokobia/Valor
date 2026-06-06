@@ -1,62 +1,33 @@
 import { useMutation } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { DECAY_FREEZE_DAYS } from '@/lib/constants'
-import type { Rank } from '@/types/database'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
-// Protection Shield: freeze decay for 7 days
+// Protection Shield: freeze decay for 7 days.
+// Server checks that the player owns a shield item and consumes it.
 export function useFreezeDecay(walletAddress: string) {
-  const updatePlayer = usePlayerStore((s) => s.updatePlayer)
+  const updatePlayer      = usePlayerStore((s) => s.updatePlayer)
+  const removeInventoryItem = usePlayerStore((s) => s.removeInventoryItem)
 
   return useMutation({
     mutationFn: async () => {
-      const freezeUntil = new Date(Date.now() + DECAY_FREEZE_DAYS * 24 * 60 * 60 * 1000).toISOString()
-      const res = await fetch(`${API}/players/${walletAddress}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ decay_frozen_until: freezeUntil, decay_status: 'none' }),
+      const res = await fetch(`${API}/players/${walletAddress}/freeze-decay`, {
+        method: 'POST',
       })
-      if (!res.ok) throw new Error('Failed to freeze decay')
-      return freezeUntil
+      if (res.status === 422) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? 'No Protection Shield in inventory')
+      }
+      if (!res.ok) throw new Error('Failed to activate Protection Shield')
+      return res.json() as Promise<{ frozen_until: string; shield_item_id: string }>
     },
-    onSuccess: (freezeUntil) => {
-      updatePlayer({ decay_frozen_until: freezeUntil, decay_status: 'none' })
+    onSuccess: ({ frozen_until, shield_item_id }) => {
+      updatePlayer({ decay_frozen_until: frozen_until, decay_status: 'none' })
+      removeInventoryItem(shield_item_id)
     },
   })
 }
 
-// Resurrection Scroll: restore one lost rank level
-export function useResurrect(walletAddress: string) {
-  const updatePlayer = usePlayerStore((s) => s.updatePlayer)
-  const player = usePlayerStore((s) => s.player)
-
-  return useMutation({
-    mutationFn: async () => {
-      if (!player) throw new Error('No player')
-
-      const rankOrder = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const
-      const idx = rankOrder.indexOf(player.rank as (typeof rankOrder)[number])
-      const restoredRank = idx < rankOrder.length - 1 ? rankOrder[idx + 1] : player.rank
-
-      const res = await fetch(`${API}/players/${walletAddress}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          rank:         restoredRank,
-          decay_status: 'none',
-          last_active:  new Date().toISOString(),
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to resurrect')
-      return restoredRank
-    },
-    onSuccess: (restoredRank) => {
-      updatePlayer({
-        rank:         restoredRank as Rank,
-        decay_status: 'none',
-        last_active:  new Date().toISOString(),
-      })
-    },
-  })
-}
+// Keep DECAY_FREEZE_DAYS in scope so imports stay consistent across the codebase.
+export { DECAY_FREEZE_DAYS }

@@ -39,7 +39,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/achievements", web::get().to(players::get_achievements))
                 .route("/{wallet}/achievements/check", web::post().to(players::check_achievements))
                 .route("/{wallet}/inventory/{item_id}", web::patch().to(players::toggle_equip))
-                .route("/{wallet}/battles", web::get().to(players::get_battles)),
+                .route("/{wallet}/battles", web::get().to(players::get_battles))
+                .route("/{wallet}/freeze-decay", web::post().to(players::freeze_decay)),
         )
         .service(
             web::scope("/battles")

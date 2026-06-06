@@ -5,8 +5,37 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::models::player::Player;
 use crate::services::battle::{simulate_bot_fight_with_moves, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
+
+#[derive(sqlx::FromRow)]
+struct EquippedBoost {
+    stat_boost: i32,
+    category:   String,
+}
+
+async fn apply_item_boosts(db: &sqlx::PgPool, mut player: Player) -> Player {
+    let boosts: Vec<EquippedBoost> = sqlx::query_as(
+        "SELECT items.stat_boost, items.category
+         FROM inventory
+         JOIN items ON inventory.item_id = items.id
+         WHERE inventory.wallet_address = $1 AND inventory.equipped = true",
+    )
+    .bind(&player.wallet_address)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    for b in boosts {
+        match b.category.as_str() {
+            "weapon" => player.attack_stat  += b.stat_boost,
+            "shield" => player.defense_stat += b.stat_boost,
+            _ => {}
+        }
+    }
+    player
+}
 
 const XP_PER_RANK: i32 = 1000;
 const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
@@ -87,6 +116,8 @@ pub async fn fight_bot(
     let Some(player) = player else {
         return HttpResponse::NotFound().json(json!({"error": "Player not found"}));
     };
+
+    let player = apply_item_boosts(&state.db, player).await;
 
     // Server-authoritative simulation — bot moves are generated here, not by the client
     let result = simulate_bot_fight_with_moves(&player, &body.player_moves);
@@ -208,6 +239,9 @@ pub async fn challenge_player(
     let (Some(challenger), Some(opponent)) = (challenger, opponent) else {
         return HttpResponse::NotFound().json(json!({"error": "One or both players not found"}));
     };
+
+    let challenger = apply_item_boosts(&state.db, challenger).await;
+    let opponent   = apply_item_boosts(&state.db, opponent).await;
 
     let result = simulate_async_fight(&challenger, &opponent);
     let now = Utc::now();
