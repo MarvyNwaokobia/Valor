@@ -376,7 +376,22 @@ body {
   .char-select-nav    { top: 40% !important; }
 
   /* Battle HUD: reduce top padding */
-  .battle-hud { padding-top: 6px !important; }
+  .battle-hud { padding-top: 6px !important; padding-bottom: 4px !important; }
+
+  /* Battle buttons: compact single-row strip — icon + label only, no description */
+  .battle-move-btn {
+    flex-direction: row !important;
+    gap: 6px !important;
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+    justify-content: center !important;
+  }
+  .battle-move-desc { display: none !important; }
+  .battle-move-icon {
+    width: 26px !important;
+    height: 26px !important;
+    flex-shrink: 0;
+  }
 }
 
 /* ── Battle landscape lock ───────────────────────────────── */

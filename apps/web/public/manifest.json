@@ -1,0 +1,19 @@
+{
+  "name": "Valor",
+  "short_name": "Valor",
+  "description": "One Verified Human. One Warrior. Fight for real rewards.",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#04030c",
+  "theme_color": "#04030c",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/valor-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -93,7 +93,20 @@ export default function CharacterViewer({
     <div className={className ?? 'absolute inset-0'} style={style}>
 
       {/* Fallback — shown while loading OR when WebGL fails */}
-      {(!modelLoaded || failed) && fallback}
+      {(!modelLoaded || failed) && (fallback ?? (
+        <div className="absolute inset-0 flex items-end justify-center pb-12 pointer-events-none">
+          {/* Subtle silhouette shimmer while GLB loads */}
+          <div className="relative w-24 h-40 rounded-2xl overflow-hidden"
+            style={{ background: 'rgba(42,42,58,0.18)' }}>
+            <div className="absolute inset-0"
+              style={{
+                background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.05) 50%, transparent 100%)',
+                backgroundSize: '200% 100%',
+                animation: 'shimmer-x 1.8s linear infinite',
+              }} />
+          </div>
+        </div>
+      ))}
 
       {/* 3D canvas — removed entirely on WebGL failure */}
       {!failed && (

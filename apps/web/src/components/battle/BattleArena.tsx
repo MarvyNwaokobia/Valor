@@ -15,29 +15,65 @@ import ImpactBurst from './ImpactBurst'
 import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_CLASSES } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import RankAura from '@/components/ui/RankAura'
 import { XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
-const BOT_CLASS: CharacterClass = 'Berserker'
-
 interface Props { player: Player; walletAddress: string; challengeTarget?: string }
 
 const MOVES: { id: BattleMove; label: string; desc: string; Icon: typeof Sword; color: string }[] = [
-  { id: 'attack',  label: 'Attack',  desc: 'Standard strike',       Icon: Sword,  color: '#ef4444' },
-  { id: 'defend',  label: 'Defend',  desc: 'Halve incoming damage', Icon: Shield, color: '#3b82f6' },
-  { id: 'special', label: 'Special', desc: 'Max power — once only', Icon: Zap,    color: '#8b5cf6' },
+  { id: 'attack',  label: 'Attack',  desc: 'Strike opponent',        Icon: Sword,  color: '#ef4444' },
+  { id: 'defend',  label: 'Defend',  desc: 'Halve incoming damage',  Icon: Shield, color: '#3b82f6' },
+  { id: 'special', label: 'Special', desc: 'Max power — once only',  Icon: Zap,    color: '#8b5cf6' },
 ]
+
+function pickBotClass(playerClass: CharacterClass): CharacterClass {
+  const options = CHARACTER_CLASSES.filter(c => c !== playerClass)
+  return options[Math.floor(Math.random() * options.length)]
+}
+
+// playerDealt = damage you dealt to bot; botDealt = damage bot dealt to you
+function roundNarrative(
+  playerMove: BattleMove,
+  botMove: BattleMove,
+  playerDealt: number,
+  botDealt: number,
+): { you: string; bot: string } {
+  let you: string
+  if (playerMove === 'defend') {
+    you = botDealt === 0 ? 'DEFENDED — full block!' : `DEFENDED — took ${botDealt} (halved incoming)`
+  } else {
+    const v = playerMove === 'special' ? 'SPECIAL' : 'ATTACKED'
+    if (playerDealt === 0)       you = `${v} — bot blocked!`
+    else if (botMove === 'defend') you = `${v} — ${playerDealt} dmg (bot defended, halved)`
+    else                           you = `${v} — dealt ${playerDealt} dmg`
+  }
+
+  let bot: string
+  if (botMove === 'defend') {
+    bot = playerDealt === 0 ? 'DEFENDED — blocked your hit!' : `DEFENDED — took ${playerDealt} (halved)`
+  } else {
+    const v = botMove === 'special' ? 'SPECIAL' : 'ATTACKED'
+    if (botDealt === 0)              bot = `${v} — you blocked!`
+    else if (playerMove === 'defend') bot = `${v} — ${botDealt} to you (halved by defend)`
+    else                               bot = `${v} — ${botDealt} to you`
+  }
+
+  return { you, bot }
+}
 
 
 export default function BattleArena({ player, walletAddress, challengeTarget }: Props) {
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
+  const [botClass, setBotClass] = useState<CharacterClass>(() =>
+    pickBotClass(player.character_class as CharacterClass)
+  )
   const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
-  const botDef = CLASS_DEFINITIONS[BOT_CLASS]
+  const botDef = CLASS_DEFINITIONS[botClass]
 
   const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, startBattle, handleMove, reset } =
     useBattle(player, walletAddress)
@@ -66,6 +102,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     timers.current.forEach(clearTimeout)
     timers.current = []
   }
+
+  // ── Preload player GLB so idle panel renders immediately ─────────────────
+  useEffect(() => {
+    CharacterViewer.preload(CHARACTER_GLB[player.character_class as CharacterClass])
+  }, [player.character_class])
 
   // ── Landscape orientation lock during battle ─────────────────────────────
   useEffect(() => {
@@ -128,8 +169,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       if (entry.botDmg > 0) {
         combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
         spawnDmgNumber(entry.botDmg, 'player', entry.botMove === 'special')
-        playHit(BOT_CLASS, entry.botDmg)
-        if (entry.botMove === 'special') playSpecial(BOT_CLASS)
+        playHit(botClass, entry.botDmg)
+        if (entry.botMove === 'special') playSpecial(botClass)
       }
     }, 920)
 
@@ -435,18 +476,39 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           <motion.div className="w-full max-w-xs rounded-xl border overflow-hidden"
             style={{ background: 'rgba(4,3,12,0.9)', borderColor: 'rgba(42,42,58,0.7)' }}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
-            <div className="max-h-28 overflow-y-auto px-3 py-2 flex flex-col gap-1">
-              {result.rounds.map(r => (
-                <div key={r.round} className="flex items-start gap-2 text-[10px]">
-                  <span className="text-slate-600 w-10 shrink-0 font-bold">Rd {r.round}</span>
-                  <span className="text-slate-400">
-                    You <span className="text-white font-bold">{r.playerMove}</span>{' '}
-                    <span className="text-red-400">(-{r.botDmg}HP)</span> · Bot{' '}
-                    <span className="text-white font-bold">{r.botMove}</span>{' '}
-                    <span className="text-red-400">(-{r.playerDmg}HP)</span>
-                  </span>
-                </div>
-              ))}
+            <div className="px-2 py-1.5">
+              <p className="text-[8px] font-black uppercase tracking-[0.25em] text-slate-600 mb-1.5 px-1">Round Breakdown</p>
+            </div>
+            <div className="max-h-36 overflow-y-auto px-2 pb-2 flex flex-col gap-2">
+              {result.rounds.map(r => {
+                const { you, bot } = roundNarrative(r.playerMove, r.botMove, r.playerDmg, r.botDmg)
+                const rd = CLASS_DEFINITIONS[player.character_class as CharacterClass]
+                const bd = CLASS_DEFINITIONS[botClass]
+                return (
+                  <div key={r.round} className="rounded-lg px-2 py-1.5" style={{ background: 'rgba(8,8,14,0.7)' }}>
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className="text-[7px] font-black uppercase tracking-widest text-slate-600">Round {r.round}</span>
+                      <span className="ml-auto text-[7px] font-bold" style={{ color: r.playerHp > r.botHp ? rd.accentColor : bd.accentColor }}>
+                        {r.playerHp > r.botHp ? 'You lead' : r.playerHp < r.botHp ? 'Bot leads' : 'Tied'}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-[7px] font-black uppercase tracking-wider shrink-0 mt-px" style={{ color: rd.accentColor }}>YOU</span>
+                        <span className="text-[9px] text-slate-300 leading-tight">{you}</span>
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-[7px] font-black uppercase tracking-wider shrink-0 mt-px" style={{ color: bd.accentColor }}>BOT</span>
+                        <span className="text-[9px] text-slate-300 leading-tight">{bot}</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-1 pt-1" style={{ borderTop: '1px solid rgba(42,42,58,0.5)' }}>
+                      <span className="text-[7px] text-slate-600">Your HP: <span className="text-white font-bold">{r.playerHp}</span></span>
+                      <span className="text-[7px] text-slate-600">Bot HP: <span className="text-white font-bold">{r.botHp}</span></span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </motion.div>
 
@@ -458,7 +520,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         {/* ── Fight again CTA ── */}
         <div className="relative z-10 px-4"
           style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))' }}>
-          <motion.button onClick={reset}
+          <motion.button onClick={() => { setBotClass(pickBotClass(player.character_class as CharacterClass)); reset() }}
             className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
             style={{
               fontSize: 'clamp(14px, 3.5vw, 18px)',
@@ -518,7 +580,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               playerAnim={playerAnim}
               playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
               playerAccentColor={def.accentColor}
-              botClass={BOT_CLASS}
+              botClass={botClass}
               botAnim={botAnim}
               botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
               botAccentColor={botDef.accentColor}
@@ -659,7 +721,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         </div>
 
         <ArenaPlayerCard name="Bot" hp={botHp}
-          classLabel={BOT_CLASS} color={botDef.accentColor} side="right" />
+          classLabel={botClass} color={botDef.accentColor} side="right" />
       </div>
 
       {/* ── Round log — floats just above the buttons ── */}
@@ -675,13 +737,18 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {(() => {
               const last = log[log.length - 1]
+              const { you, bot } = roundNarrative(last.playerMove, last.botMove, last.playerDmg, last.botDmg)
               return (
-                <span className="text-slate-400">
-                  You <span className="text-white font-bold">{last.playerMove}</span>{' '}
-                  <span className="text-green-400 font-bold">dealt {last.playerDmg}</span>{' · '}
-                  Bot <span className="text-white font-bold">{last.botMove}</span>{' '}
-                  <span className="text-red-400 font-bold">dealt {last.botDmg}</span>
-                </span>
+                <div className="flex flex-col gap-0.5 text-left">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[8px] font-black uppercase tracking-wider shrink-0" style={{ color: def.accentColor }}>YOU</span>
+                    <span className="text-slate-300 text-[9px]">{you}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[8px] font-black uppercase tracking-wider shrink-0" style={{ color: botDef.accentColor }}>BOT</span>
+                    <span className="text-slate-300 text-[9px]">{bot}</span>
+                  </div>
+                </div>
               )
             })()}
           </motion.div>
@@ -700,7 +767,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           return (
             <motion.button key={id} onClick={() => handleMove(id)} disabled={disabled}
               whileTap={disabled ? {} : { scale: 0.93 }}
-              className="relative flex flex-col items-center gap-1.5 py-3 rounded-2xl border overflow-hidden"
+              className="battle-move-btn relative flex flex-col items-center gap-1.5 py-3 rounded-2xl border overflow-hidden"
               style={{
                 background: disabled ? 'rgba(8,8,14,0.5)' : 'rgba(6,5,16,0.92)',
                 borderColor: disabled ? 'rgba(42,42,58,0.3)' : `${color}45`,
@@ -711,12 +778,12 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 <div className="absolute inset-0 pointer-events-none"
                   style={{ background: `radial-gradient(ellipse at 50% 0%, ${color}10, transparent 60%)` }} />
               )}
-              <div className="relative z-10 w-9 h-9 rounded-xl flex items-center justify-center"
+              <div className="battle-move-icon relative z-10 w-9 h-9 rounded-xl flex items-center justify-center"
                 style={{ background: `${color}16`, border: `1px solid ${color}30` }}>
                 <Icon size={18} style={{ color: disabled ? '#4a4a5a' : color }} strokeWidth={1.8} />
               </div>
               <span className="relative z-10 font-black text-white text-xs">{label}</span>
-              <span className="relative z-10 text-[8px] text-slate-500">{disabled ? 'Used' : desc}</span>
+              <span className="battle-move-desc relative z-10 text-[8px] text-slate-500">{disabled ? 'Used' : desc}</span>
             </motion.button>
           )
         })}

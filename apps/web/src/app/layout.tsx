@@ -8,6 +8,23 @@ export const metadata: Metadata = {
   title: 'Valor — One Verified Human. One Warrior.',
   description: 'Valor — One verified human. One permanent warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
   icons: { icon: '/valor-icon.svg' },
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Valor',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
+}
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  minimumScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#04030c',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

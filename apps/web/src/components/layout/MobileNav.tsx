@@ -27,7 +27,7 @@ export default function MobileNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-40 md:hidden"
       style={{
         background: 'rgba(4,3,12,0.96)',
         backdropFilter: 'blur(16px)',
