@@ -1,5 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use ethers::types::Address;
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -290,9 +291,17 @@ pub async fn rank_up_reward(
     .execute(&state.db)
     .await;
 
-    // On-chain G$ is distributed via the Engagement Rewards claim flow on the frontend.
-    // This endpoint records the rank-up and returns the amount for the UI to display.
     tracing::info!("Rank-up recorded: {} -> {} (+{} G$)", wallet, new_rank, amount);
+
+    // Background chain write
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        if let Ok(addr) = wallet.parse::<Address>() {
+            let rank_str = new_rank.clone();
+            tokio::spawn(async move {
+                chain.record_rank_up(addr, rank_str).await;
+            });
+        }
+    }
 
     HttpResponse::Ok().json(json!({
         "success": true,
@@ -356,7 +365,30 @@ pub async fn create_player(
     .await;
 
     match result {
-        Ok(player) => HttpResponse::Ok().json(player),
+        Ok(player) => {
+            // Background chain write — record character claim on-chain
+            if let Some(chain) = state.chain.as_ref().cloned() {
+                let addr_str = wallet.clone();
+                let class = player.character_class.clone().unwrap_or_default();
+                let name = player.character_name.clone();
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    if let Ok(addr) = addr_str.parse::<Address>() {
+                        if let Some(hash) = chain.claim_character(addr, class, name).await {
+                            let hash_str = format!("{:?}", hash);
+                            let _ = sqlx::query(
+                                "UPDATE players SET character_claim_tx = $1 WHERE wallet_address = $2",
+                            )
+                            .bind(hash_str)
+                            .bind(addr_str)
+                            .execute(&db)
+                            .await;
+                        }
+                    }
+                });
+            }
+            HttpResponse::Ok().json(player)
+        }
         Err(e) => {
             tracing::error!("Failed to create player: {}", e);
             HttpResponse::InternalServerError().json(json!({"error": "Failed to create player"}))
@@ -509,11 +541,13 @@ pub async fn get_battles(
         xp_awarded_opponent:   i32,
         is_bot:                bool,
         created_at:            chrono::DateTime<Utc>,
+        game_record_tx:        Option<String>,
     }
 
     let result = sqlx::query_as::<_, BattleRow>(
         "SELECT id, challenger_wallet, opponent_wallet, winner_wallet,
-                xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at
+                xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at,
+                game_record_tx
          FROM battles
          WHERE challenger_wallet = $1 OR opponent_wallet = $1
          ORDER BY created_at DESC

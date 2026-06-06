@@ -85,4 +85,5 @@ pub struct Player {
     pub wins: i32,
     pub losses: i32,
     pub created_at: DateTime<Utc>,
+    pub character_claim_tx: Option<String>,
 }

@@ -1,5 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use ethers::types::Address;
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -8,6 +9,12 @@ use crate::AppState;
 use crate::models::player::Player;
 use crate::services::battle::{simulate_bot_fight_with_moves, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
+
+fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(id.as_bytes());
+    bytes
+}
 
 #[derive(sqlx::FromRow)]
 struct EquippedBoost {
@@ -204,6 +211,45 @@ pub async fn fight_bot(
         .await;
     }
 
+    // Background chain write — non-blocking
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        let battle_bytes = uuid_to_bytes32(battle_id);
+        let player_addr: Option<Address> = wallet.parse().ok();
+        let won = result.challenger_won;
+        let xp_u8 = xp_earned.min(255) as u8;
+        let db = state.db.clone();
+        let battle_uuid = battle_id;
+        tokio::spawn(async move {
+            if let Some(addr) = player_addr {
+                let (winner, loser) = if won {
+                    (addr, Address::zero())
+                } else {
+                    (Address::zero(), addr)
+                };
+                if let Some(hash) = chain.record_battle(battle_bytes, winner, loser, xp_u8, 0, true).await {
+                    let hash_str = format!("{:?}", hash);
+                    let _ = sqlx::query(
+                        "UPDATE battles SET game_record_tx = $1 WHERE id = $2",
+                    )
+                    .bind(hash_str)
+                    .bind(battle_uuid)
+                    .execute(&db)
+                    .await;
+                }
+            }
+        });
+        // Record rank-up on-chain if applicable
+        if let Some(rank) = new_rank {
+            let chain2 = state.chain.as_ref().cloned();
+            if let (Some(chain2), Ok(addr)) = (chain2, wallet.parse::<Address>()) {
+                let rank_str = rank.to_string();
+                tokio::spawn(async move {
+                    chain2.record_rank_up(addr, rank_str).await;
+                });
+            }
+        }
+    }
+
     HttpResponse::Ok().json(json!({
         "won":          result.challenger_won,
         "xp_awarded":   xp_earned,
@@ -304,6 +350,33 @@ pub async fn challenge_player(
         .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
         .execute(&state.db)
         .await;
+    }
+
+    // Background chain write — non-blocking
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        let battle_bytes = uuid_to_bytes32(battle_id);
+        let ch_addr: Option<Address> = body.challenger_wallet.parse().ok();
+        let op_addr: Option<Address> = body.opponent_wallet.parse().ok();
+        let ch_won = result.challenger_won;
+        let xp_ch = xp_challenger.min(255) as u8;
+        let xp_op = xp_opponent.min(255) as u8;
+        let db = state.db.clone();
+        let battle_uuid = battle_id;
+        tokio::spawn(async move {
+            if let (Some(ch), Some(op)) = (ch_addr, op_addr) {
+                let (winner_addr, loser_addr) = if ch_won { (ch, op) } else { (op, ch) };
+                if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_ch, xp_op, false).await {
+                    let hash_str = format!("{:?}", hash);
+                    let _ = sqlx::query(
+                        "UPDATE battles SET game_record_tx = $1 WHERE id = $2",
+                    )
+                    .bind(hash_str)
+                    .bind(battle_uuid)
+                    .execute(&db)
+                    .await;
+                }
+            }
+        });
     }
 
     HttpResponse::Ok().json(json!({

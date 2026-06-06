@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS players (
   last_active        TIMESTAMPTZ NOT NULL DEFAULT now(),
   decay_status       TEXT NOT NULL DEFAULT 'none' CHECK (decay_status IN ('none', 'warning', 'active')),
   decay_frozen_until TIMESTAMPTZ,
+  character_claim_tx TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS battles (
   xp_awarded_challenger INTEGER NOT NULL DEFAULT 0,
   xp_awarded_opponent   INTEGER NOT NULL DEFAULT 0,
   is_bot                BOOLEAN NOT NULL DEFAULT true,
+  game_record_tx        TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_battles_challenger ON battles (challenger_wallet, created_at DESC);

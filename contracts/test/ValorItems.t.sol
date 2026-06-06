@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ValorItems.sol";
 
 contract ValorItemsTest is Test {
@@ -11,8 +12,12 @@ contract ValorItemsTest is Test {
     address player = makeAddr("player");
 
     function setUp() public {
-        vm.prank(owner);
-        items = new ValorItems(owner);
+        ValorItems impl = new ValorItems();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorItems.initialize, (owner))
+        );
+        items = ValorItems(address(proxy));
         vm.prank(owner);
         items.setMarketplace(marketplace);
     }

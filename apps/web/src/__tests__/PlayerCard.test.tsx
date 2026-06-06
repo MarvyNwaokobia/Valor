@@ -35,6 +35,7 @@ const basePlayer: Player = {
   decay_frozen_until:      null,
   wins:                    3,
   losses:                  1,
+  character_claim_tx:      null,
   created_at:              new Date().toISOString(),
 }
 

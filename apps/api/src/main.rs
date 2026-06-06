@@ -12,6 +12,7 @@ mod utils;
 pub struct AppState {
     pub db:             sqlx::PgPool,
     pub rewards:        Option<services::rewards::RewardService>,
+    pub chain:          Option<services::chain::ChainWriter>,
     pub battle_limiter: services::rate_limiter::RateLimiter,
     pub rank_limiter:   services::rate_limiter::RateLimiter,
     pub game_server:    services::game_server::GameServerHandle,
@@ -40,6 +41,11 @@ async fn main() -> anyhow::Result<()> {
     let rewards = services::rewards::RewardService::from_env()
         .map_err(|e| tracing::warn!("Reward service disabled: {}", e))
         .ok();
+
+    let chain = services::chain::ChainWriter::from_env();
+    if chain.is_none() {
+        tracing::info!("ChainWriter disabled (GAME_RECORD_CONTRACT not set)");
+    }
 
     // Start event listener as a background task
     if let Some(listener) = services::event_listener::EventListener::from_env(db.clone()) {
@@ -87,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
             .app_data(web::Data::new(AppState {
                 db:             db.clone(),
                 rewards:        rewards.clone(),
+                chain:          chain.clone(),
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
                 rank_limiter:   services::rate_limiter::RateLimiter::new(2, 60),
                 game_server:    game_server.clone(),

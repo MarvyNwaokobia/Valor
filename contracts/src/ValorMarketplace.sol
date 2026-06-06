@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./ValorItems.sol";
-
 import "./interfaces/IGoodDollar.sol";
 
 interface IERC677Receiver {
     function onTokenTransfer(address from, uint256 value, bytes calldata data) external;
 }
 
-/// @title ValorMarketplace — Accepts G$ via transferAndCall, mints item NFTs
+/// @title ValorMarketplace — Accepts G$ via transferAndCall, mints item NFTs (UUPS upgradeable)
 /// @notice Single-tx purchases: player calls G$.transferAndCall(marketplace, price, itemId)
-contract ValorMarketplace is IERC677Receiver, Ownable, ReentrancyGuard {
-    IGoodDollar public immutable gToken;
-    ValorItems public immutable items;
+contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
+    IGoodDollar public gToken;
+    ValorItems public items;
 
     struct MarketItem {
         uint256 itemId;
@@ -39,10 +39,18 @@ contract ValorMarketplace is IERC677Receiver, Ownable, ReentrancyGuard {
     error InsufficientPayment(uint256 sent, uint256 required);
     error InvalidItemData();
 
-    constructor(address _gToken, address _items, address _owner) Ownable(_owner) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _gToken, address _items, address _owner) public initializer {
+        __Ownable_init(_owner);
         gToken = IGoodDollar(_gToken);
         items = ValorItems(_items);
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// @notice Called by the G$ ERC677 token on transferAndCall
     /// @param from  Buyer wallet

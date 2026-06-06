@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-/// @title ValorItems — ERC1155 NFT contract for all in-game items
-contract ValorItems is ERC1155, Ownable {
+/// @title ValorItems — ERC1155 NFT contract for all in-game items (UUPS upgradeable)
+contract ValorItems is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
     using Strings for uint256;
 
-    string public name = "Valor Items";
-    string public symbol = "VITEM";
+    string public name;
+    string public symbol;
 
     // Only the marketplace contract can mint items
     address public marketplace;
@@ -34,7 +35,19 @@ contract ValorItems is ERC1155, Ownable {
         _;
     }
 
-    constructor(address _owner) ERC1155("") Ownable(_owner) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _owner) public initializer {
+        __ERC1155_init("");
+        __Ownable_init(_owner);
+        name = "Valor Items";
+        symbol = "VITEM";
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function setMarketplace(address _marketplace) external onlyOwner {
         marketplace = _marketplace;

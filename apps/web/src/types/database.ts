@@ -113,6 +113,9 @@ export interface Player {
   decay_status: 'none' | 'warning' | 'active'
   decay_frozen_until: string | null
 
+  // On-chain proof
+  character_claim_tx: string | null
+
   created_at: string
 }
 

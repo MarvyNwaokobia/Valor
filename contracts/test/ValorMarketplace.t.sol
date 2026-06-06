@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ValorMarketplace.sol";
 import "../src/ValorItems.sol";
 
@@ -42,9 +43,20 @@ contract ValorMarketplaceTest is Test {
 
     function setUp() public {
         gToken = new MockGToken();
+
+        ValorItems itemsImpl = new ValorItems();
+        items = ValorItems(address(new ERC1967Proxy(
+            address(itemsImpl),
+            abi.encodeCall(ValorItems.initialize, (owner))
+        )));
+
+        ValorMarketplace marketplaceImpl = new ValorMarketplace();
+        marketplace = ValorMarketplace(address(new ERC1967Proxy(
+            address(marketplaceImpl),
+            abi.encodeCall(ValorMarketplace.initialize, (address(gToken), address(items), owner))
+        )));
+
         vm.startPrank(owner);
-        items = new ValorItems(owner);
-        marketplace = new ValorMarketplace(address(gToken), address(items), owner);
         items.setMarketplace(address(marketplace));
         items.registerItem(ITEM_ID, 0, "ipfs://sword");
         marketplace.listItem(ITEM_ID, PRICE);
