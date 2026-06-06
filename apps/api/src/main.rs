@@ -55,21 +55,29 @@ async fn main() -> anyhow::Result<()> {
     let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
-    // FRONTEND_ORIGIN: always allow localhost in dev; lock to production domain when set
-    let frontend_origin = std::env::var("FRONTEND_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:5173".into());
+    // FRONTEND_ORIGIN: comma-separated list of allowed origins.
+    // Defaults to production URL so deploys work without manual env var setup.
+    // Always allows localhost for local dev.
+    let raw_origins = std::env::var("FRONTEND_ORIGIN")
+        .unwrap_or_else(|_| "https://playvalor.vercel.app".into());
+    let allowed_origins: Vec<String> = raw_origins
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
     tracing::info!("Starting Valor API on {}", bind_addr);
-    tracing::info!("CORS allowed origin: {}", frontend_origin);
+    tracing::info!("CORS allowed origins: {:?}", allowed_origins);
 
     HttpServer::new(move || {
-        let allowed = frontend_origin.clone();
+        let origins = allowed_origins.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let s = origin.to_str().unwrap_or("");
-                // Always allow local dev; lock everything else to the configured origin
-                s == allowed || s.starts_with("http://localhost:")
+                s.starts_with("http://localhost:")
+                    || s.starts_with("https://localhost:")
+                    || origins.iter().any(|o| s == o.as_str())
             })
             .allow_any_method()
             .allow_any_header()
