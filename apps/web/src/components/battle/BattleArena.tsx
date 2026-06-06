@@ -481,9 +481,9 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     : { x: 0 }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ background: '#04030c' }}>
+    <div className="fixed inset-0 z-50 overflow-hidden" style={{ background: '#04030c' }}>
 
-      {/* ── Portrait rotate overlay — only visible when device is in portrait ── */}
+      {/* ── Portrait rotate overlay — CSS shows it only in portrait ── */}
       <div className="battle-rotate-prompt fixed inset-0 z-200 flex-col items-center justify-center gap-5"
         style={{ background: 'rgba(4,3,12,0.97)' }}>
         <motion.div
@@ -498,24 +498,142 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         </div>
       </div>
 
-      {/* ── Full-screen background atmosphere ── */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div style={{
-          background: `
-            radial-gradient(ellipse 90% 55% at 50% 0%, ${def.accentColor}15, transparent),
-            radial-gradient(ellipse 110% 65% at 50% 110%, rgba(40,10,80,0.7), transparent),
-            linear-gradient(180deg, #06050f 0%, #0c0820 60%, #04030c 100%)
-          `
-        }} className="absolute inset-0" />
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0, height: '28%',
-          background: `radial-gradient(ellipse 130% 100% at 50% 100%, ${def.accentColor}10, transparent 70%)`,
-        }} />
-      </div>
+      {/* ── 3D scene — fills the entire screen, controls overlay on top ── */}
+      <motion.div
+        key={combatFeel.shakeKey}
+        animate={shakeAnim}
+        transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
+        className="absolute inset-0"
+      >
+        <motion.div
+          key={`cam-${combatFeel.specialCam}`}
+          animate={combatFeel.specialCam > 0 ? { scale: [1, 1.055, 1.02, 1] } : {}}
+          transition={{ duration: 0.5, ease: 'easeInOut' }}
+          className="absolute inset-0"
+        >
+          {/* Canvas */}
+          <div className="absolute inset-0">
+            <BattleScene
+              playerClass={player.character_class as CharacterClass}
+              playerAnim={playerAnim}
+              playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
+              playerAccentColor={def.accentColor}
+              botClass={BOT_CLASS}
+              botAnim={botAnim}
+              botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
+              botAccentColor={botDef.accentColor}
+            />
+          </div>
 
-      {/* ── Top HUD — player cards + round counter ── */}
-      <div className="battle-hud relative z-30 flex justify-between items-start px-3"
-        style={{ paddingTop: 'max(14px, env(safe-area-inset-top, 14px))' }}>
+          {/* Player DOM overlays — left half */}
+          <div className="absolute left-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
+            <AnimatePresence>
+              {dmgEvents.filter(e => e.side === 'player').map(e => (
+                <DamageNumber key={e.id} {...e} />
+              ))}
+            </AnimatePresence>
+            <AnimatePresence>
+              {combatFeel.playerFlash && (
+                <motion.div key="player-flash" className="absolute inset-0"
+                  style={{ background: `${combatFeel.playerFlash}40` }}
+                  initial={{ opacity: 0 }} animate={{ opacity: [0, 0.9, 0] }} exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }} />
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {combatFeel.playerBurst && (
+                <ImpactBurst key={`player-burst-${combatFeel.shakeKey}`} color={combatFeel.playerBurst} size="md" />
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Bot DOM overlays — right half */}
+          <div className="absolute right-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
+            <AnimatePresence>
+              {dmgEvents.filter(e => e.side === 'bot').map(e => (
+                <DamageNumber key={e.id} {...e} />
+              ))}
+            </AnimatePresence>
+            <AnimatePresence>
+              {combatFeel.botFlash && (
+                <motion.div key="bot-flash" className="absolute inset-0"
+                  style={{ background: `${combatFeel.botFlash}40` }}
+                  initial={{ opacity: 0 }} animate={{ opacity: [0, 0.9, 0] }} exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }} />
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {combatFeel.botBurst && (
+                <ImpactBurst key={`bot-burst-${combatFeel.shakeKey}`} color={combatFeel.botBurst} size="md" />
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* VS badge */}
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
+            <span className="font-display font-black"
+              style={{ fontSize: 'clamp(1.1rem, 4vw, 1.5rem)', color: 'rgba(234,179,8,0.35)', textShadow: '0 0 24px rgba(234,179,8,0.3)' }}>
+              VS
+            </span>
+          </div>
+
+          {/* Battle entrance overlay */}
+          <AnimatePresence>
+            {isEntering && !showFightCall && (
+              <motion.div key="arena-title"
+                className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none gap-3"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}>
+                <motion.p className="font-display font-bold uppercase"
+                  style={{ fontSize: '9px', letterSpacing: '0.5em', color: 'rgba(234,179,8,0.55)' }}
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15, duration: 0.35 }}>
+                  Valor Arena
+                </motion.p>
+                <div className="flex items-center gap-4">
+                  <motion.span className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: def.accentColor }}
+                    initial={{ x: -40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
+                    {player.character_name}
+                  </motion.span>
+                  <span className="font-display font-black text-slate-600"
+                    style={{ fontSize: 'clamp(1rem, 3.5vw, 1.5rem)' }}>VS</span>
+                  <motion.span className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: botDef.accentColor }}
+                    initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
+                    Bot Warrior
+                  </motion.span>
+                </div>
+              </motion.div>
+            )}
+            {showFightCall && (
+              <motion.div key="fight-call"
+                className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
+                initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}>
+                <h2 className="font-display font-black tracking-widest"
+                  style={{
+                    fontSize: 'clamp(3.5rem, 12vw, 6rem)',
+                    color: def.accentColor,
+                    textShadow: `0 0 60px ${def.accentColor}, 0 0 100px ${def.accentColor}60`,
+                  }}>
+                  FIGHT
+                </h2>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </motion.div>
+
+      {/* ── HUD overlay — floats over the 3D scene at the top ── */}
+      <div className="battle-hud absolute inset-x-0 top-0 z-30 flex justify-between items-start px-3"
+        style={{
+          paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
+          background: 'linear-gradient(180deg, rgba(4,3,12,0.82) 0%, rgba(4,3,12,0.5) 70%, transparent 100%)',
+        }}>
         <ArenaPlayerCard name={player.character_name} hp={playerHp}
           classLabel={player.character_class as string} color={def.accentColor} side="left" />
 
@@ -544,175 +662,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           classLabel={BOT_CLASS} color={botDef.accentColor} side="right" />
       </div>
 
-      {/* ── Arena — unified 3D scene ── */}
-      <div className="flex-1 relative">
-        <motion.div
-          key={combatFeel.shakeKey}
-          animate={shakeAnim}
-          transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
-          className="absolute inset-0"
-        >
-          <motion.div
-            key={`cam-${combatFeel.specialCam}`}
-            animate={combatFeel.specialCam > 0 ? { scale: [1, 1.055, 1.02, 1] } : {}}
-            transition={{ duration: 0.5, ease: 'easeInOut' }}
-            className="absolute inset-0"
-          >
-
-          {/* Single canvas — both fighters in one shared scene */}
-          <div className="absolute inset-0">
-            <BattleScene
-              playerClass={player.character_class as CharacterClass}
-              playerAnim={playerAnim}
-              playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
-              playerAccentColor={def.accentColor}
-              botClass={BOT_CLASS}
-              botAnim={botAnim}
-              botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
-              botAccentColor={botDef.accentColor}
-            />
-          </div>
-
-          {/* Player DOM overlays — left half */}
-          <div className="absolute left-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
-            <AnimatePresence>
-              {dmgEvents.filter(e => e.side === 'player').map(e => (
-                <DamageNumber key={e.id} {...e} />
-              ))}
-            </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.playerFlash && (
-                <motion.div
-                  key="player-flash"
-                  className="absolute inset-0"
-                  style={{ background: `${combatFeel.playerFlash}40` }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: [0, 0.9, 0] }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                />
-              )}
-            </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.playerBurst && (
-                <ImpactBurst
-                  key={`player-burst-${combatFeel.shakeKey}`}
-                  color={combatFeel.playerBurst}
-                  size="md"
-                />
-              )}
-            </AnimatePresence>
-            <div className="absolute bottom-2 inset-x-0 flex justify-center">
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
-                style={{ background: `${def.accentColor}22`, color: def.accentColor, border: `1px solid ${def.accentColor}33` }}>
-                {player.character_name}
-              </span>
-            </div>
-          </div>
-
-          {/* Bot DOM overlays — right half */}
-          <div className="absolute right-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
-            <AnimatePresence>
-              {dmgEvents.filter(e => e.side === 'bot').map(e => (
-                <DamageNumber key={e.id} {...e} />
-              ))}
-            </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.botFlash && (
-                <motion.div
-                  key="bot-flash"
-                  className="absolute inset-0"
-                  style={{ background: `${combatFeel.botFlash}40` }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: [0, 0.9, 0] }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                />
-              )}
-            </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.botBurst && (
-                <ImpactBurst
-                  key={`bot-burst-${combatFeel.shakeKey}`}
-                  color={combatFeel.botBurst}
-                  size="md"
-                />
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* VS badge */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
-            <span className="font-display font-black"
-              style={{ fontSize: 'clamp(1.1rem, 4vw, 1.5rem)', color: 'rgba(234,179,8,0.35)', textShadow: '0 0 24px rgba(234,179,8,0.3)' }}>
-              VS
-            </span>
-          </div>
-
-          {/* ── Battle entrance overlay ── */}
-          <AnimatePresence>
-            {isEntering && !showFightCall && (
-              <motion.div
-                key="arena-title"
-                className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none gap-3"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <motion.p className="font-display font-bold uppercase"
-                  style={{ fontSize: '9px', letterSpacing: '0.5em', color: 'rgba(234,179,8,0.55)' }}
-                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15, duration: 0.35 }}>
-                  Valor Arena
-                </motion.p>
-                <div className="flex items-center gap-4">
-                  <motion.span className="font-display font-black"
-                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: def.accentColor }}
-                    initial={{ x: -40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
-                    {player.character_name}
-                  </motion.span>
-                  <span className="font-display font-black text-slate-600"
-                    style={{ fontSize: 'clamp(1rem, 3.5vw, 1.5rem)' }}>VS</span>
-                  <motion.span className="font-display font-black"
-                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: botDef.accentColor }}
-                    initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
-                    Bot Warrior
-                  </motion.span>
-                </div>
-              </motion.div>
-            )}
-
-            {showFightCall && (
-              <motion.div
-                key="fight-call"
-                className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
-                initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.6, opacity: 0 }}
-                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <h2 className="font-display font-black tracking-widest"
-                  style={{
-                    fontSize: 'clamp(3.5rem, 12vw, 6rem)',
-                    color: def.accentColor,
-                    textShadow: `0 0 60px ${def.accentColor}, 0 0 100px ${def.accentColor}60`,
-                  }}>
-                  FIGHT
-                </h2>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-        </motion.div>
-      </div>{/* end arena */}
-
-      {/* ── Last round log ── */}
+      {/* ── Round log — floats just above the buttons ── */}
       <AnimatePresence mode="wait">
         {log.length > 0 && (
           <motion.div key={log.length}
-            className="relative z-30 text-[10px] text-center mx-3 rounded-xl px-4 py-2"
-            style={{ background: 'rgba(4,3,12,0.88)', border: '1px solid rgba(42,42,58,0.7)' }}
-            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            className="absolute inset-x-3 z-30 text-[10px] text-center rounded-xl px-4 py-2"
+            style={{
+              bottom: 'calc(max(16px, env(safe-area-inset-bottom, 16px)) + 106px)',
+              background: 'rgba(4,3,12,0.85)',
+              border: '1px solid rgba(42,42,58,0.7)',
+            }}
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {(() => {
               const last = log[log.length - 1]
               return (
@@ -728,9 +688,13 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         )}
       </AnimatePresence>
 
-      {/* ── Move buttons ── */}
-      <div className="battle-move-buttons relative z-30 grid grid-cols-3 gap-2 px-3"
-        style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', paddingTop: 6 }}>
+      {/* ── Move buttons — overlay at bottom with gradient backdrop ── */}
+      <div className="battle-move-buttons absolute inset-x-0 bottom-0 z-30 grid grid-cols-3 gap-2 px-3"
+        style={{
+          paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))',
+          paddingTop: 8,
+          background: 'linear-gradient(0deg, rgba(4,3,12,0.92) 0%, rgba(4,3,12,0.7) 70%, transparent 100%)',
+        }}>
         {MOVES.map(({ id, label, desc, Icon, color }) => {
           const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating
           return (

@@ -13,9 +13,8 @@ import type { CharacterClass } from '@/lib/classes'
 function CameraSetup() {
   const { camera } = useThree()
   useEffect(() => {
-    // Look slightly left of center — keeps both fighters in frame while player
-    // occupies more visual real estate
-    camera.lookAt(-0.1, 0.85, 0)
+    // Aim at chest/head level so characters fill the frame rather than leaving dead space above
+    camera.lookAt(-0.1, 1.05, 0)
   }, [camera])
   return null
 }
@@ -183,8 +182,8 @@ export default function BattleScene({
 }: BattleSceneProps) {
   return (
     <Canvas
-      // Offset 0.3 units toward player's side (player is at x=-0.7) for ownership feel
-      camera={{ position: [-0.3, 1.15, 2.8], fov: 52 }}
+      // Pulled closer + lower so characters fill the full-screen canvas
+      camera={{ position: [-0.25, 0.9, 2.1], fov: 55 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: false }}
       style={{ background: '#04030c', width: '100%', height: '100%' }}
