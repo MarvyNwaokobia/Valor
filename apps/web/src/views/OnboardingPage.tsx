@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
@@ -25,12 +25,12 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { address } = useConnection()
+  const { address } = useAccount()
   const router       = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
 
-  const [step,           setStep]           = useState<Step>('covenant') // TESTING: skip verify — re-enable before launch
+  const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [pending,       setPending]       = useState(false)

@@ -1,12 +1,12 @@
 import { usePrivy, useLogin, useLogout } from '@privy-io/react-auth'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { motion } from 'framer-motion'
 
 export function PrivyConnectButton() {
   const { ready, authenticated } = usePrivy()
   const { login } = useLogin()
   const { logout } = useLogout()
-  const { address } = useConnection()
+  const { address } = useAccount()
 
   // Privy not yet initialised — show skeleton to prevent layout shift
   if (!ready) {

@@ -15,6 +15,24 @@ struct EquippedBoost {
     category:   String,
 }
 
+async fn equipped_xp_multiplier(db: &sqlx::PgPool, wallet: &str) -> i32 {
+    let has_booster: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM inventory
+            JOIN items ON inventory.item_id = items.id
+            WHERE inventory.wallet_address = $1
+              AND inventory.equipped = true
+              AND items.category = 'booster'
+        )",
+    )
+    .bind(wallet)
+    .fetch_one(db)
+    .await
+    .unwrap_or(false);
+
+    if has_booster { 2 } else { 1 }
+}
+
 async fn apply_item_boosts(db: &sqlx::PgPool, mut player: Player) -> Player {
     let boosts: Vec<EquippedBoost> = sqlx::query_as(
         "SELECT items.stat_boost, items.category
@@ -118,13 +136,15 @@ pub async fn fight_bot(
     };
 
     let player = apply_item_boosts(&state.db, player).await;
+    let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
 
     // Server-authoritative simulation — bot moves are generated here, not by the client
     let result = simulate_bot_fight_with_moves(&player, &body.player_moves);
     let now = Utc::now();
 
     // ── XP + rank-up logic ───────────────────────────────────────────
-    let raw_new_xp = player.xp + result.xp_awarded;
+    let xp_earned  = result.xp_awarded * xp_multiplier;
+    let raw_new_xp = player.xp + xp_earned;
     let ranked_up  = raw_new_xp >= XP_PER_RANK;
     let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
     let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
@@ -145,7 +165,7 @@ pub async fn fight_bot(
     .bind(&wallet)
     .bind(if result.challenger_won { wallet.as_str() } else { "bot" })
     .bind(serde_json::to_value(&result.rounds).unwrap_or_default())
-    .bind(result.xp_awarded)
+    .bind(xp_earned)
     .bind(now)
     .execute(&state.db)
     .await;
@@ -185,14 +205,15 @@ pub async fn fight_bot(
     }
 
     HttpResponse::Ok().json(json!({
-        "won":       result.challenger_won,
-        "xp_awarded": result.xp_awarded,
-        "new_xp":    new_xp,
-        "ranked_up": ranked_up,
-        "new_rank":  new_rank,
-        "g_awarded": g_awarded,
-        "rounds":    result.rounds_response,
-        "battle_id": battle_id,
+        "won":          result.challenger_won,
+        "xp_awarded":   xp_earned,
+        "xp_multiplier": xp_multiplier,
+        "new_xp":       new_xp,
+        "ranked_up":    ranked_up,
+        "new_rank":     new_rank,
+        "g_awarded":    g_awarded,
+        "rounds":       result.rounds_response,
+        "battle_id":    battle_id,
     }))
 }
 
@@ -242,11 +263,16 @@ pub async fn challenge_player(
 
     let challenger = apply_item_boosts(&state.db, challenger).await;
     let opponent   = apply_item_boosts(&state.db, opponent).await;
+    let ch_multiplier = equipped_xp_multiplier(&state.db, &body.challenger_wallet).await;
+    let op_multiplier = equipped_xp_multiplier(&state.db, &body.opponent_wallet).await;
 
     let result = simulate_async_fight(&challenger, &opponent);
     let now = Utc::now();
     let battle_id = Uuid::new_v4();
     let winner = if result.challenger_won { &body.challenger_wallet } else { &body.opponent_wallet };
+
+    let xp_challenger = result.xp_challenger * ch_multiplier;
+    let xp_opponent   = result.xp_opponent   * op_multiplier;
 
     let _ = sqlx::query(
         "INSERT INTO battles (id, challenger_wallet, opponent_wallet, winner_wallet, rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
@@ -257,16 +283,16 @@ pub async fn challenge_player(
     .bind(&body.opponent_wallet)
     .bind(winner)
     .bind(serde_json::to_value(&result.rounds).unwrap_or_default())
-    .bind(result.xp_challenger)
-    .bind(result.xp_opponent)
+    .bind(xp_challenger)
+    .bind(xp_opponent)
     .bind(now)
     .execute(&state.db)
     .await;
 
     // Update both players
     for (wallet, xp, won) in [
-        (&body.challenger_wallet, result.xp_challenger, result.challenger_won),
-        (&body.opponent_wallet, result.xp_opponent, !result.challenger_won),
+        (&body.challenger_wallet, xp_challenger, result.challenger_won),
+        (&body.opponent_wallet, xp_opponent, !result.challenger_won),
     ] {
         let player = if wallet == &body.challenger_wallet { &challenger } else { &opponent };
         let new_xp = (player.xp + xp).min(999);
@@ -281,10 +307,10 @@ pub async fn challenge_player(
     }
 
     HttpResponse::Ok().json(json!({
-        "winner": winner,
-        "battle_id": battle_id,
-        "xp_challenger": result.xp_challenger,
-        "xp_opponent": result.xp_opponent,
-        "rounds": result.rounds,
+        "winner":        winner,
+        "battle_id":     battle_id,
+        "xp_challenger": xp_challenger,
+        "xp_opponent":   xp_opponent,
+        "rounds":        result.rounds,
     }))
 }

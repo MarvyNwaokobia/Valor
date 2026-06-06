@@ -1,12 +1,12 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { ShoppingBag } from 'lucide-react'
 import MarketplaceGrid from '@/components/marketplace/MarketplaceGrid'
 
 export default function MarketplacePage() {
-  const { address } = useConnection()
+  const { address } = useAccount()
 
   return (
     <div className="flex flex-col gap-6">

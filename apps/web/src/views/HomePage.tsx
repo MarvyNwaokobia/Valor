@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { Swords, ShoppingBag, Trophy, ChevronRight, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -25,7 +25,7 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
-  const { address } = useConnection()
+  const { address } = useAccount()
   const player = usePlayerStore(s => s.player)
 
   if (!address) return <LandingPage />

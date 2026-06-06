@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
@@ -36,7 +36,7 @@ const NAV_LINKS = [
 export default function Navbar() {
   const pathname  = usePathname()
   const player    = usePlayerStore(s => s.player)
-  const { address } = useConnection()
+  const { address } = useAccount()
   const { formatted: gBalance } = useGBalance(address)
 
   const classDef = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null

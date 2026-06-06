@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Home, Swords, User, ShoppingBag, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 
@@ -17,7 +17,7 @@ const NAV_ITEMS: { to: string; Icon: LucideIcon; label: string; exact: boolean }
 ]
 
 export default function MobileNav() {
-  const { address } = useConnection()
+  const { address } = useAccount()
   const pathname    = usePathname()
   const player      = usePlayerStore(s => s.player)
   const classDef    = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null

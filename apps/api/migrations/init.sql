@@ -198,8 +198,8 @@ INSERT INTO items (on_chain_id, name, description, rarity, category, stat_boost,
   (4, 'Iron Shield',   'Basic protection against attacks.',          'common',    'shield',  3,  5,   ''),
   (5, 'Valor Guard',   'A shield that delays decay for 7 days.',     'rare',      'shield',  6,  20,  ''),
   (6, 'Fortress Wall', 'Maximum defense.',                           'epic',      'shield',  10, 40,  ''),
-  (7, 'XP Booster',    'Double XP from all sources for 24 hours.',  'common',    'booster', 0,  10,  ''),
-  (8, 'Elite Booster', '2x XP + 1.5x battle rewards for 24 hours.', 'rare',      'booster', 0,  25,  '')
+  (7, 'XP Booster',    'Double XP earned from battles while equipped.', 'common', 'booster', 0, 10, ''),
+  (8, 'Elite Booster', '2x XP earned from battles while equipped.',    'rare',   'booster', 0, 25, '')
 ON CONFLICT (on_chain_id) DO NOTHING;
 
 INSERT INTO items (on_chain_id, name, description, rarity, category, stat_boost, price_g, image_url, total_supply, remaining_supply) VALUES

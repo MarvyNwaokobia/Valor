@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { DAILY_CLAIM_G } from '@/lib/constants'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
@@ -60,8 +59,8 @@ export default function DailyClaimButton({ walletAddress }: Props) {
   return (
     <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
-        <p className="font-bold text-white text-sm">Daily Bonus</p>
-        <span className="text-valor-gold font-bold">+{DAILY_CLAIM_G} Gold</span>
+        <p className="font-bold text-white text-sm">Daily Check-in</p>
+        <span className="text-slate-400 text-xs font-bold">Resets Decay</span>
       </div>
 
       {claimed ? (

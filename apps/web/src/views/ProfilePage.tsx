@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useConnection } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
@@ -21,7 +21,7 @@ const CLASS_SOLO: Record<string, string> = {
 }
 
 export default function ProfilePage() {
-  const { address } = useConnection()
+  const { address } = useAccount()
   const router      = useRouter()
   const player      = usePlayerStore(s => s.player)
   const inventory   = usePlayerStore(s => s.inventory)
