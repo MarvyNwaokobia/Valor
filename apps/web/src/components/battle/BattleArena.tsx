@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sword, Shield, Zap, Bot, Trophy, HeartCrack, Users, ChevronLeft, Swords } from 'lucide-react'
+import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
@@ -31,11 +31,6 @@ const MOVES: { id: BattleMove; label: string; desc: string; Icon: typeof Sword; 
   { id: 'special', label: 'Special', desc: 'Max power — once only', Icon: Zap,    color: '#8b5cf6' },
 ]
 
-function getHpColor(hp: number, classColor: string): string {
-  if (hp > 60) return classColor
-  if (hp > 30) return '#f59e0b'
-  return '#ef4444'
-}
 
 export default function BattleArena({ player, walletAddress, challengeTarget }: Props) {
   const [showChallenge,       setShowChallenge]       = useState(false)
@@ -333,123 +328,145 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   // ── RESULT ──────────────────────────────────────────────────────────────
 
   if (phase === 'result' && result) {
+    const resultColor = result.won ? '#eab308' : '#ef4444'
     return (
-      <motion.div className="flex flex-col items-center gap-6 py-6"
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}
+      <motion.div className="fixed inset-0 z-50 flex flex-col overflow-hidden"
+        style={{ background: '#04030c' }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}
       >
-        <motion.div
-          className="w-full relative overflow-hidden rounded-2xl p-8 flex flex-col items-center gap-3"
-          style={{
+        {/* Background atmosphere */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div style={{
             background: result.won
-              ? 'linear-gradient(135deg, rgba(234,179,8,0.15) 0%, rgba(4,3,12,0.95) 70%)'
-              : 'linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(4,3,12,0.95) 70%)',
-            border: `1px solid ${result.won ? 'rgba(234,179,8,0.3)' : 'rgba(239,68,68,0.25)'}`,
-          }}
-          initial={{ scale: 0.9 }} animate={{ scale: 1 }}
-          transition={{ type: 'spring', stiffness: 200, damping: 14 }}
-        >
-          <motion.div initial={{ scale: 0, rotate: -15 }} animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: 'spring', stiffness: 180, damping: 12, delay: 0.1 }}>
-            {result.won
-              ? <Trophy size={64} className="text-amber-400" strokeWidth={1.2} />
-              : <HeartCrack size={64} className="text-red-500" strokeWidth={1.2} />}
-          </motion.div>
-          <h2 className="font-display font-black text-white text-4xl tracking-wider">
-            {result.won ? 'VICTORY' : 'DEFEATED'}
-          </h2>
-          {!result.won && (
-            <motion.p
-              className="font-display font-bold uppercase"
-              style={{ fontSize: '10px', letterSpacing: '0.3em', color: 'rgba(255,255,255,0.3)' }}
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }}
-            >
-              Your warrior endures
+              ? `radial-gradient(ellipse 90% 60% at 50% 30%, rgba(234,179,8,0.12), transparent),
+                 radial-gradient(ellipse 110% 60% at 50% 110%, rgba(60,10,80,0.6), transparent)`
+              : `radial-gradient(ellipse 90% 60% at 50% 30%, rgba(239,68,68,0.08), transparent),
+                 radial-gradient(ellipse 110% 60% at 50% 110%, rgba(60,10,80,0.6), transparent)`,
+          }} className="absolute inset-0" />
+        </div>
+
+        {/* ── Big result announcement ── */}
+        <div className="flex-1 flex flex-col items-center justify-center relative z-10 gap-5 px-6">
+
+          {/* Character name + result */}
+          <motion.div className="text-center"
+            initial={{ scale: 0.6, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 200, damping: 16, delay: 0.1 }}>
+            <p className="font-display font-black uppercase tracking-[0.18em] text-white"
+              style={{ fontSize: 'clamp(0.9rem, 3.5vw, 1.2rem)', opacity: 0.6, marginBottom: 4 }}>
+              {player.character_name}
+            </p>
+            <h1 className="font-display font-black leading-none"
+              style={{
+                fontSize: 'clamp(4rem, 16vw, 7rem)',
+                color: resultColor,
+                letterSpacing: '0.04em',
+                textShadow: `0 0 80px ${resultColor}60, 0 0 160px ${resultColor}30`,
+              }}>
+              {result.won ? 'WINS!' : 'FALLS'}
+            </h1>
+            <motion.p className="font-black mt-3" style={{ fontSize: 'clamp(1.3rem, 5vw, 1.8rem)', color: resultColor }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}>
+              +{result.xpAwarded} XP
             </motion.p>
+          </motion.div>
+
+          {/* XP progress */}
+          <motion.div className="w-full max-w-xs"
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
+            <XpMeter xp={result.newXp} max={XP_PER_RANK} rank={result.newRank ?? player.rank} />
+          </motion.div>
+
+          {/* Rank up banner */}
+          {result.rankedUp && result.newRank && (
+            <motion.div className="w-full max-w-xs rounded-2xl p-4 text-center"
+              style={{
+                background: `${RANK_DEFINITIONS[result.newRank]?.badgeBg ?? 'rgba(234,179,8,0.08)'}`,
+                border: `1px solid ${RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308'}50`,
+                boxShadow: RANK_DEFINITIONS[result.newRank]?.glow,
+              }}
+              initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.55, type: 'spring', stiffness: 200, damping: 14 }}>
+              <RankAura rank={result.newRank} mode="badge">
+                <p className="font-display font-black text-lg"
+                  style={{ color: RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308' }}>
+                  ✦ RANK UP → {result.newRank}
+                </p>
+              </RankAura>
+              <p className="text-slate-400 text-xs mt-1">{formatGDollarNumber(result.gAwarded)} dispatched to your wallet</p>
+            </motion.div>
           )}
-          <p className="font-black text-2xl" style={{ color: result.won ? '#eab308' : '#ef4444' }}>
-            +{result.xpAwarded} XP
-          </p>
-        </motion.div>
 
-        {result.rankedUp && result.newRank && (
-          <motion.div className="w-full rounded-2xl p-5 text-center"
-            style={{
-              background: `${RANK_DEFINITIONS[result.newRank]?.badgeBg ?? 'rgba(234,179,8,0.08)'}`,
-              border: `1px solid ${RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308'}44`,
-              boxShadow: RANK_DEFINITIONS[result.newRank]?.glow,
-            }}
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-          >
-            <RankAura rank={result.newRank} mode="badge">
-              <p className="font-display font-black text-xl"
-                style={{ color: RANK_DEFINITIONS[result.newRank]?.color ?? '#eab308' }}>
-                ✦ RANK UP → {result.newRank}
-              </p>
-            </RankAura>
-            <p className="text-slate-300 text-sm mt-1">{formatGDollarNumber(result.gAwarded)} dispatched to your wallet</p>
-          </motion.div>
-        )}
-
-        {result.won && (rewardEligible || rewardTxHash || rewardError) && (
-          <motion.div className="w-full rounded-2xl p-4"
-            style={{ background: 'rgba(18,18,26,0.9)', border: '1px solid rgba(42,42,58,0.8)' }}
-            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
-          >
-            {rewardTxHash ? (
-              <div className="text-center">
-                <p className="text-green-400 font-black text-sm">G$ Reward Claimed!</p>
-                <a href={`https://celoscan.io/tx/${rewardTxHash}`} target="_blank" rel="noreferrer"
-                  className="text-xs text-slate-500 underline mt-1 block">View on Celoscan</a>
-              </div>
-            ) : rewardError ? (
-              <p className="text-red-400 text-xs text-center">{rewardError}</p>
-            ) : (
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-white font-black text-sm">Claim G$ Reward</p>
-                  <p className="text-slate-500 text-xs mt-0.5">GoodDollar rewards for verified humans who play</p>
+          {/* G$ reward claim */}
+          {result.won && (rewardEligible || rewardTxHash || rewardError) && (
+            <motion.div className="w-full max-w-xs rounded-2xl p-4"
+              style={{ background: 'rgba(8,8,14,0.9)', border: '1px solid rgba(42,42,58,0.8)' }}
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
+              {rewardTxHash ? (
+                <div className="text-center">
+                  <p className="text-green-400 font-black text-sm">G$ Reward Claimed!</p>
+                  <a href={`https://celoscan.io/tx/${rewardTxHash}`} target="_blank" rel="noreferrer"
+                    className="text-xs text-slate-500 underline mt-1 block">View on Celoscan</a>
                 </div>
-                <button onClick={handleClaimReward} disabled={rewardClaiming}
-                  className="clip-angled-sm shrink-0 px-5 py-2.5 font-black text-black text-sm disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg, #fde047, #eab308)' }}>
-                  {rewardClaiming ? 'Signing...' : 'Claim G$'}
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
+              ) : rewardError ? (
+                <p className="text-red-400 text-xs text-center">{rewardError}</p>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-white font-black text-sm">Claim G$ Reward</p>
+                    <p className="text-slate-500 text-xs mt-0.5">GoodDollar rewards for verified humans</p>
+                  </div>
+                  <button onClick={handleClaimReward} disabled={rewardClaiming}
+                    className="clip-angled-sm shrink-0 px-4 py-2.5 font-black text-black text-sm disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #fde047, #eab308)' }}>
+                    {rewardClaiming ? '...' : 'Claim G$'}
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          )}
 
-        <div className="w-full">
-          <XpMeter xp={result.newXp} max={XP_PER_RANK} rank={result.newRank ?? player.rank} />
-        </div>
-
-        <div className="w-full rounded-xl border p-4 flex flex-col gap-1.5 max-h-44 overflow-y-auto"
-          style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}>
-          {result.rounds.map(r => (
-            <div key={r.round} className="flex items-start gap-2 text-xs">
-              <span className="text-slate-600 w-14 shrink-0 font-bold">Round {r.round}</span>
-              <span className="text-slate-400">
-                You <span className="text-white font-bold">{r.playerMove}</span>{' '}
-                <span className="text-red-400">(-{r.botDmg}HP)</span> · Bot{' '}
-                <span className="text-white font-bold">{r.botMove}</span>{' '}
-                <span className="text-red-400">(-{r.playerDmg}HP)</span>
-              </span>
+          {/* Round breakdown (compact, scrollable) */}
+          <motion.div className="w-full max-w-xs rounded-xl border overflow-hidden"
+            style={{ background: 'rgba(4,3,12,0.9)', borderColor: 'rgba(42,42,58,0.7)' }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
+            <div className="max-h-28 overflow-y-auto px-3 py-2 flex flex-col gap-1">
+              {result.rounds.map(r => (
+                <div key={r.round} className="flex items-start gap-2 text-[10px]">
+                  <span className="text-slate-600 w-10 shrink-0 font-bold">Rd {r.round}</span>
+                  <span className="text-slate-400">
+                    You <span className="text-white font-bold">{r.playerMove}</span>{' '}
+                    <span className="text-red-400">(-{r.botDmg}HP)</span> · Bot{' '}
+                    <span className="text-white font-bold">{r.botMove}</span>{' '}
+                    <span className="text-red-400">(-{r.playerDmg}HP)</span>
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
+          </motion.div>
+
+          {saveError && (
+            <p className="text-red-400 text-xs text-center">{saveError}</p>
+          )}
         </div>
 
-        {saveError && (
-          <div className="w-full rounded-xl p-3"
-            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
-            <p className="text-red-400 text-xs text-center">{saveError}</p>
-          </div>
-        )}
-
-        <button onClick={reset}
-          className="w-full clip-angled py-4 font-display font-black text-black uppercase tracking-[0.18em] text-sm"
-          style={{ background: 'linear-gradient(135deg, #fde047 0%, #eab308 50%, #b45309 100%)', boxShadow: '0 0 28px rgba(234,179,8,0.35)' }}>
-          Fight Again
-        </button>
+        {/* ── Fight again CTA ── */}
+        <div className="relative z-10 px-4"
+          style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))' }}>
+          <motion.button onClick={reset}
+            className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
+            style={{
+              fontSize: 'clamp(14px, 3.5vw, 18px)',
+              background: 'linear-gradient(135deg, #fde047 0%, #eab308 50%, #b45309 100%)',
+              boxShadow: '0 0 40px rgba(234,179,8,0.4)',
+            }}
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, type: 'spring', stiffness: 180, damping: 14 }}
+            whileTap={{ scale: 0.97 }}>
+            Fight Again
+          </motion.button>
+        </div>
       </motion.div>
     )
   }
@@ -460,29 +477,71 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     : { x: 0 }
 
   return (
-    <div className="flex flex-col gap-4 max-w-lg mx-auto">
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ background: '#04030c' }}>
 
-      {/* ── Arena scene ── */}
-      <motion.div
-        key={combatFeel.shakeKey}
-        animate={shakeAnim}
-        transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
-      >
-        {/* Special-cam wrapper: scales in on special ability */}
+      {/* ── Full-screen background atmosphere ── */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div style={{
+          background: `
+            radial-gradient(ellipse 90% 55% at 50% 0%, ${def.accentColor}15, transparent),
+            radial-gradient(ellipse 110% 65% at 50% 110%, rgba(40,10,80,0.7), transparent),
+            linear-gradient(180deg, #06050f 0%, #0c0820 60%, #04030c 100%)
+          `
+        }} className="absolute inset-0" />
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '28%',
+          background: `radial-gradient(ellipse 130% 100% at 50% 100%, ${def.accentColor}10, transparent 70%)`,
+        }} />
+      </div>
+
+      {/* ── Top HUD — player cards + round counter ── */}
+      <div className="relative z-30 flex justify-between items-start px-3"
+        style={{ paddingTop: 'max(14px, env(safe-area-inset-top, 14px))' }}>
+        <ArenaPlayerCard name={player.character_name} hp={playerHp}
+          classLabel={player.character_class as string} color={def.accentColor} side="left" />
+
+        {/* Round counter */}
+        <div className="flex flex-col items-center pt-1 gap-1">
+          <motion.span key={round} className="font-display font-black text-white leading-none"
+            style={{ fontSize: 'clamp(1.1rem, 4vw, 1.4rem)' }}
+            initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}>
+            {round}<span className="text-slate-500 font-normal text-xs ml-0.5">/ 5</span>
+          </motion.span>
+          <span className="text-[8px] font-bold uppercase tracking-[0.25em] text-slate-600">Round</span>
+          <div className="flex gap-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: i < round - 1 ? def.accentColor : i === round - 1 ? `${def.accentColor}70` : 'rgba(42,42,58,0.8)',
+                boxShadow: i < round ? `0 0 4px ${def.accentColor}80` : 'none',
+                transition: 'all 0.3s ease',
+              }} />
+            ))}
+          </div>
+        </div>
+
+        <ArenaPlayerCard name="Bot" hp={botHp}
+          classLabel={BOT_CLASS} color={botDef.accentColor} side="right" />
+      </div>
+
+      {/* ── Arena characters ── */}
+      <div className="flex-1 relative">
         <motion.div
-          key={`cam-${combatFeel.specialCam}`}
-          animate={combatFeel.specialCam > 0 ? { scale: [1, 1.045, 1.02, 1] } : {}}
-          transition={{ duration: 0.5, ease: 'easeInOut' }}
-          className="relative w-full rounded-2xl overflow-hidden"
-          style={{ height: 260, background: '#04030c' }}
+          key={combatFeel.shakeKey}
+          animate={shakeAnim}
+          transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
+          className="absolute inset-0"
         >
-          {/* Ground atmosphere */}
-          <div className="absolute inset-0 pointer-events-none" style={{
-            background: 'radial-gradient(ellipse 70% 50% at 50% 100%, rgba(60,20,100,0.35), transparent)',
-          }} />
+          <motion.div
+            key={`cam-${combatFeel.specialCam}`}
+            animate={combatFeel.specialCam > 0 ? { scale: [1, 1.055, 1.02, 1] } : {}}
+            transition={{ duration: 0.5, ease: 'easeInOut' }}
+            className="absolute inset-0"
+          >
 
           {/* Player — left half */}
-          <div className="absolute left-0 top-0 w-1/2 h-full">
+          <div className="absolute left-0 top-0 bottom-0 w-1/2">
             <RankAura rank={player.rank} classColor={def.accentColor} mode="character">
             <CharacterViewer
               glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
@@ -492,12 +551,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               modelKey={`fight-player-${player.character_class}`}
               className="absolute inset-0"
               fallback={
-                <div className="absolute inset-0 flex items-end justify-center pb-2">
+                <div className="absolute inset-0 flex items-end justify-center">
                   <img
                     src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
                     alt="" aria-hidden
                     className="h-full w-auto object-contain object-bottom select-none"
-                    style={{ filter: `drop-shadow(0 0 20px ${def.glowColor})` }}
+                    style={{
+                      filter: `brightness(1.1) drop-shadow(0 0 32px ${def.glowColor})`,
+                      mixBlendMode: 'screen',
+                      WebkitMaskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
+                      maskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
+                    }}
                   />
                 </div>
               }
@@ -547,7 +611,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           </div>
 
           {/* Bot — right half, mirrored */}
-          <div className="absolute right-0 top-0 w-1/2 h-full" style={{ transform: 'scaleX(-1)' }}>
+          <div className="absolute right-0 top-0 bottom-0 w-1/2" style={{ transform: 'scaleX(-1)' }}>
             <CharacterViewer
               glbPath={CHARACTER_GLB[BOT_CLASS]}
               accentColor={botDef.accentColor}
@@ -556,12 +620,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               modelKey="fight-bot-berserker"
               className="absolute inset-0"
               fallback={
-                <div className="absolute inset-0 flex items-end justify-center pb-2">
+                <div className="absolute inset-0 flex items-end justify-center">
                   <img
                     src={CHARACTER_IMAGES[BOT_CLASS]?.male}
                     alt="" aria-hidden
                     className="h-full w-auto object-contain object-bottom select-none"
-                    style={{ filter: `drop-shadow(0 0 20px ${botDef.glowColor})` }}
+                    style={{
+                      filter: `brightness(1.1) drop-shadow(0 0 32px ${botDef.glowColor})`,
+                      mixBlendMode: 'screen',
+                      WebkitMaskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
+                      maskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
+                    }}
                   />
                 </div>
               }
@@ -603,26 +672,12 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </AnimatePresence>
           </div>
 
-          {/* Bot name tag (outside scaleX container) */}
-          <div className="absolute bottom-2 right-0 w-1/2 flex justify-center z-10 pointer-events-none">
-            <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
-              style={{ background: `${botDef.accentColor}22`, color: botDef.accentColor, border: `1px solid ${botDef.accentColor}33` }}>
-              Bot Warrior
-            </span>
-          </div>
-
-          {/* VS badge */}
+          {/* VS badge — center of arena */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
-            <span className="font-display font-black text-xl"
-              style={{ color: 'rgba(234,179,8,0.45)', textShadow: '0 0 20px rgba(234,179,8,0.3)' }}>
+            <span className="font-display font-black"
+              style={{ fontSize: 'clamp(1.1rem, 4vw, 1.5rem)', color: 'rgba(234,179,8,0.35)', textShadow: '0 0 24px rgba(234,179,8,0.3)' }}>
               VS
             </span>
-          </div>
-
-          {/* HP bars */}
-          <div className="absolute inset-x-0 top-0 z-10 px-3 pt-2.5 grid grid-cols-2 gap-3">
-            <ArenaHpBar label={player.character_name} hp={playerHp} classColor={def.accentColor} side="player" />
-            <ArenaHpBar label="Bot" hp={botHp} classColor={botDef.accentColor} side="bot" />
           </div>
 
           {/* ── Battle entrance overlay ── */}
@@ -630,42 +685,32 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             {isEntering && !showFightCall && (
               <motion.div
                 key="arena-title"
-                className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none gap-2"
+                className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none gap-3"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                <motion.p
-                  className="font-display font-bold uppercase"
+                <motion.p className="font-display font-bold uppercase"
                   style={{ fontSize: '9px', letterSpacing: '0.5em', color: 'rgba(234,179,8,0.55)' }}
                   initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15, duration: 0.35 }}
-                >
+                  transition={{ delay: 0.15, duration: 0.35 }}>
                   Valor Arena
                 </motion.p>
-                <motion.div
-                  className="flex gap-3"
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3, duration: 0.3 }}
-                >
-                  <motion.span
-                    className="font-display font-black"
-                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)', letterSpacing: '0.06em', color: def.accentColor }}
-                    initial={{ x: -30, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-                  >
+                <div className="flex items-center gap-4">
+                  <motion.span className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: def.accentColor }}
+                    initial={{ x: -40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
                     {player.character_name}
                   </motion.span>
                   <span className="font-display font-black text-slate-600"
-                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)' }}>VS</span>
-                  <motion.span
-                    className="font-display font-black"
-                    style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.8rem)', letterSpacing: '0.06em', color: botDef.accentColor }}
-                    initial={{ x: 30, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-                  >
+                    style={{ fontSize: 'clamp(1rem, 3.5vw, 1.5rem)' }}>VS</span>
+                  <motion.span className="font-display font-black"
+                    style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', letterSpacing: '0.06em', color: botDef.accentColor }}
+                    initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
                     Bot Warrior
                   </motion.span>
-                </motion.div>
+                </div>
               </motion.div>
             )}
 
@@ -673,59 +718,32 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               <motion.div
                 key="fight-call"
                 className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
-                initial={{ scale: 1.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.7, opacity: 0 }}
+                initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               >
-                <h2
-                  className="font-display font-black tracking-widest"
+                <h2 className="font-display font-black tracking-widest"
                   style={{
-                    fontSize: 'clamp(2.5rem, 8vw, 4.5rem)',
+                    fontSize: 'clamp(3.5rem, 12vw, 6rem)',
                     color: def.accentColor,
-                    textShadow: `0 0 48px ${def.accentColor}, 0 0 80px ${def.accentColor}60`,
-                  }}
-                >
+                    textShadow: `0 0 60px ${def.accentColor}, 0 0 100px ${def.accentColor}60`,
+                  }}>
                   FIGHT
                 </h2>
               </motion.div>
             )}
           </AnimatePresence>
         </motion.div>
-      </motion.div>
-
-      {/* ── Round tracker ── */}
-      <div className="flex items-center justify-between px-1">
-        <div className="flex items-center gap-2">
-          <span className="font-display font-bold text-slate-500 text-xs uppercase tracking-[0.18em]">Round</span>
-          <motion.span
-            key={round}
-            className="font-display font-black text-white text-lg leading-none"
-            initial={{ scale: 1.6, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          >
-            {round}
-          </motion.span>
-          <span className="text-slate-600 font-normal text-sm">/ 5</span>
-        </div>
-        <div className="flex gap-1.5">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="w-2.5 h-2.5 rounded-full transition-all" style={{
-              background: i < round - 1 ? def.accentColor : i === round - 1 ? `${def.accentColor}66` : 'rgba(42,42,58,0.8)',
-              boxShadow: i < round ? `0 0 6px ${def.accentColor}80` : 'none',
-            }} />
-          ))}
-        </div>
-      </div>
+        </motion.div>
+      </div>{/* end arena characters */}
 
       {/* ── Last round log ── */}
       <AnimatePresence mode="wait">
         {log.length > 0 && (
           <motion.div key={log.length}
-            className="text-xs text-center rounded-lg px-4 py-2.5 border"
-            style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
-            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-          >
+            className="relative z-30 text-[10px] text-center mx-3 rounded-xl px-4 py-2"
+            style={{ background: 'rgba(4,3,12,0.88)', border: '1px solid rgba(42,42,58,0.7)' }}
+            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {(() => {
               const last = log[log.length - 1]
               return (
@@ -742,34 +760,30 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       </AnimatePresence>
 
       {/* ── Move buttons ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="relative z-30 grid grid-cols-3 gap-2 px-3"
+        style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', paddingTop: 6 }}>
         {MOVES.map(({ id, label, desc, Icon, color }) => {
           const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating
           return (
             <motion.button key={id} onClick={() => handleMove(id)} disabled={disabled}
-              whileHover={disabled ? {} : { scale: 1.03, y: -2 }}
-              whileTap={disabled ? {} : { scale: 0.97 }}
-              className="relative flex flex-col items-center gap-2 p-4 rounded-xl border transition-all overflow-hidden"
+              whileTap={disabled ? {} : { scale: 0.93 }}
+              className="relative flex flex-col items-center gap-1.5 py-3 rounded-2xl border overflow-hidden"
               style={{
-                background:   disabled ? 'rgba(8,8,14,0.5)' : 'rgba(8,8,14,0.9)',
-                borderColor:  disabled ? 'rgba(42,42,58,0.4)' : `${color}30`,
-                opacity:      disabled ? 0.35 : 1,
-                cursor:       disabled ? 'not-allowed' : 'pointer',
-                boxShadow:    !disabled && id === 'special' ? `0 0 16px ${color}20` : 'none',
-              }}
-            >
+                background: disabled ? 'rgba(8,8,14,0.5)' : 'rgba(6,5,16,0.92)',
+                borderColor: disabled ? 'rgba(42,42,58,0.3)' : `${color}45`,
+                opacity: disabled ? 0.35 : 1,
+                boxShadow: !disabled && id === 'special' ? `0 0 20px ${color}25, inset 0 0 20px ${color}08` : 'none',
+              }}>
               {!disabled && (
-                <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity"
-                  style={{ background: `radial-gradient(ellipse at 50% 0%, ${color}12, transparent 65%)` }} />
+                <div className="absolute inset-0 pointer-events-none"
+                  style={{ background: `radial-gradient(ellipse at 50% 0%, ${color}10, transparent 60%)` }} />
               )}
-              <div className="relative z-10 w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{ background: `${color}12`, border: `1px solid ${color}25` }}>
-                <Icon size={20} style={{ color: disabled ? '#4a4a5a' : color }} strokeWidth={1.8} />
+              <div className="relative z-10 w-9 h-9 rounded-xl flex items-center justify-center"
+                style={{ background: `${color}16`, border: `1px solid ${color}30` }}>
+                <Icon size={18} style={{ color: disabled ? '#4a4a5a' : color }} strokeWidth={1.8} />
               </div>
-              <div className="relative z-10 text-center">
-                <p className="font-black text-white text-sm">{label}</p>
-                <p className="text-[9px] text-slate-500 mt-0.5">{disabled ? 'Used' : desc}</p>
-              </div>
+              <span className="relative z-10 font-black text-white text-xs">{label}</span>
+              <span className="relative z-10 text-[8px] text-slate-500">{disabled ? 'Used' : desc}</span>
             </motion.button>
           )
         })}
@@ -778,42 +792,41 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   )
 }
 
-// ── HP bar with dynamic colors ────────────────────────────────────────────────
+// ── Arena player card (corner HUD) ───────────────────────────────────────────
 
-function ArenaHpBar({ label, hp, classColor, side }: { label: string; hp: number; classColor: string; side: 'player' | 'bot' }) {
-  const barColor = getHpColor(hp, classColor)
+function ArenaPlayerCard({ name, hp, classLabel, color, side }: {
+  name: string; hp: number; classLabel: string; color: string; side: 'left' | 'right'
+}) {
+  const hpColor = hp > 60 ? color : hp > 30 ? '#f59e0b' : '#ef4444'
   const isCritical = hp <= 30
-  const isWarning  = hp > 30 && hp <= 60
-
   return (
-    <div className={`flex flex-col gap-1 ${side === 'bot' ? 'items-end text-right' : ''}`}>
-      <div className="flex items-center justify-between w-full gap-1 text-[10px]">
-        {side === 'player'
-          ? <>
-              <span className="text-slate-400 font-bold truncate">{label}</span>
-              <span className="font-black shrink-0" style={{ color: barColor }}>{hp}<span className="text-slate-500 font-normal">HP</span></span>
-            </>
-          : <>
-              <span className="font-black shrink-0" style={{ color: barColor }}>{hp}<span className="text-slate-500 font-normal">HP</span></span>
-              <span className="text-slate-400 font-bold truncate">{label}</span>
-            </>
-        }
+    <div className={`flex flex-col gap-1 ${side === 'right' ? 'items-end' : 'items-start'}`}
+      style={{ minWidth: 110, maxWidth: 150 }}>
+      <div className={`flex items-center gap-1.5 ${side === 'right' ? 'flex-row-reverse' : ''}`}>
+        <div className="w-7 h-7 rounded-full border flex items-center justify-center shrink-0 font-black text-xs"
+          style={{ borderColor: `${color}60`, background: `${color}18`, color }}>
+          ⚔
+        </div>
+        <div className={side === 'right' ? 'text-right' : ''}>
+          <p className="font-black text-white leading-none" style={{ fontSize: 10 }}>{name}</p>
+          <p className="font-bold uppercase" style={{ fontSize: 7, letterSpacing: '0.18em', color }}>{classLabel}</p>
+        </div>
       </div>
-      <div className="h-2 w-full rounded-full overflow-hidden"
-        style={{ background: 'rgba(18,18,26,0.8)', border: '1px solid rgba(42,42,58,0.5)' }}>
-        <motion.div
-          className="h-full rounded-full"
+      <div className="h-1.5 rounded-full overflow-hidden w-full"
+        style={{ background: 'rgba(42,42,58,0.7)' }}>
+        <motion.div className="h-full rounded-full"
           style={{
-            background: `linear-gradient(90deg, ${barColor}99, ${barColor})`,
-            boxShadow:  `0 0 ${isCritical ? '8px' : '4px'} ${barColor}${isCritical ? '90' : '60'}`,
-            animation:  isCritical ? 'pulse-glow 1s ease-in-out infinite' : undefined,
+            background: `linear-gradient(90deg, ${hpColor}90, ${hpColor})`,
+            boxShadow: isCritical ? `0 0 6px ${hpColor}` : 'none',
           }}
           animate={{ width: `${hp}%` }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
         />
       </div>
-      {isWarning  && <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: '#f59e0b' }}>LOW HP</span>}
-      {isCritical && <span className="text-[7px] font-black uppercase tracking-widest animate-pulse-glow" style={{ color: '#ef4444' }}>CRITICAL</span>}
+      <span className="font-black" style={{ fontSize: 9, color: hpColor }}>
+        {hp}<span className="text-slate-500 font-normal" style={{ fontSize: 8 }}>HP</span>
+        {isCritical && <span className="text-red-400 font-black ml-1 animate-pulse" style={{ fontSize: 7 }}>CRIT</span>}
+      </span>
     </div>
   )
 }
