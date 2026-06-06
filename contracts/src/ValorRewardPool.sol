@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IGoodDollar.sol";
 
-/// @title ValorRewardPool — Holds G$ and distributes rank-up + daily claim rewards
+/// @title ValorRewardPool — Holds G$ and distributes rank-up + daily claim rewards (UUPS upgradeable)
 /// @notice Backend calls distributeReward() after verifying XP milestone on-chain
-contract ValorRewardPool is Ownable, ReentrancyGuard {
-    IGoodDollar public immutable gToken;
+contract ValorRewardPool is OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
+    IGoodDollar public gToken;
 
     // Authorized backend address that can trigger distributions
     address public backendSigner;
@@ -32,7 +33,13 @@ contract ValorRewardPool is Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address _gToken, address _backendSigner, address _owner) Ownable(_owner) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _gToken, address _backendSigner, address _owner) public initializer {
+        __Ownable_init(_owner);
         if (_gToken == address(0) || _backendSigner == address(0)) revert ZeroAddress();
         gToken = IGoodDollar(_gToken);
         backendSigner = _backendSigner;
@@ -44,6 +51,8 @@ contract ValorRewardPool is Ownable, ReentrancyGuard {
         rankRewards["Platinum"] = 80e18;
         rankRewards["Diamond"]  = 150e18;
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function distributeRankUpReward(address player, string calldata newRank)
         external

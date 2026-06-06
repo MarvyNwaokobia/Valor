@@ -9,6 +9,7 @@ import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
+import { ChainBadge } from '@/components/ui/ChainBadge'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
@@ -72,10 +73,15 @@ export default function ProfilePage() {
                 <p className="font-display font-black text-white text-xl tracking-wider leading-none">
                   {player.character_name}
                 </p>
-                <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-sm mt-1.5 inline-block"
-                  style={{ background: def.accentColorDim, color: def.accentColor, border: `1px solid ${def.accentColor}40` }}>
-                  {player.character_class}
-                </span>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-sm inline-block"
+                    style={{ background: def.accentColorDim, color: def.accentColor, border: `1px solid ${def.accentColor}40` }}>
+                    {player.character_class}
+                  </span>
+                  {player.character_claim_tx && (
+                    <ChainBadge txHash={player.character_claim_tx} />
+                  )}
+                </div>
               </div>
               <div className="text-right">
                 <p className="text-[9px] text-slate-500 uppercase tracking-wider">Rank</p>

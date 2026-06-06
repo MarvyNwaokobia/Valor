@@ -6,6 +6,7 @@ import { Swords, Bot, ExternalLink } from 'lucide-react'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_G_REWARD } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
+import { ChainBadge } from '@/components/ui/ChainBadge'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -18,6 +19,7 @@ interface BattleRow {
   xp_awarded_opponent: number
   is_bot: boolean
   created_at: string
+  game_record_tx: string | null
 }
 
 interface Props {
@@ -138,17 +140,9 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
                 )}
               </div>
 
-              {/* Celoscan link — only for on-chain battles (non-bot, xp > 0) */}
-              {!battle.is_bot && (
-                <a
-                  href={`https://celoscan.io/address/${walletAddress}#tokentxns`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="shrink-0 text-slate-700 hover:text-amber-400 transition-colors"
-                  title="View on Celoscan"
-                >
-                  <ExternalLink size={11} />
-                </a>
+              {/* On-chain record badge */}
+              {battle.game_record_tx && (
+                <ChainBadge txHash={battle.game_record_tx} className="shrink-0" />
               )}
             </motion.div>
           )

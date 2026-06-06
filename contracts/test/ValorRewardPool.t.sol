@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ValorRewardPool.sol";
 
 contract MockGToken2 {
@@ -28,8 +29,11 @@ contract ValorRewardPoolTest is Test {
 
     function setUp() public {
         gToken = new MockGToken2();
-        vm.prank(owner);
-        pool = new ValorRewardPool(address(gToken), backend, owner);
+        ValorRewardPool impl = new ValorRewardPool();
+        pool = ValorRewardPool(address(new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorRewardPool.initialize, (address(gToken), backend, owner))
+        )));
         gToken.mint(address(pool), 10_000e18); // Fund pool
     }
 
@@ -58,16 +62,13 @@ contract ValorRewardPoolTest is Test {
     }
 
     function test_InsufficientPoolBalance() public {
-        // Drain pool
-        vm.prank(backend);
-        pool.distributeRankUpReward(player, "Diamond"); // 150 G$
-        // Deploy new pool with 1 G$
-        gToken.mint(address(this), 1e18);
         MockGToken2 smallToken = new MockGToken2();
-        smallToken.mint(address(this), 1e18);
-        vm.prank(owner);
-        ValorRewardPool smallPool = new ValorRewardPool(address(smallToken), backend, owner);
-        // Don't fund — pool has 0 balance
+        ValorRewardPool impl = new ValorRewardPool();
+        ValorRewardPool smallPool = ValorRewardPool(address(new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorRewardPool.initialize, (address(smallToken), backend, owner))
+        )));
+        // Pool has 0 balance
         vm.prank(backend);
         vm.expectRevert(ValorRewardPool.InsufficientPoolBalance.selector);
         smallPool.distributeRankUpReward(player, "Bronze");
