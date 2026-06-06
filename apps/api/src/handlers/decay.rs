@@ -15,7 +15,8 @@ pub async fn run_decay_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if !expected.is_empty() && provided != expected {
+    // Deny if secret is unset (empty) OR if header doesn't match
+    if expected.is_empty() || provided != expected {
         return HttpResponse::Unauthorized().finish();
     }
 
