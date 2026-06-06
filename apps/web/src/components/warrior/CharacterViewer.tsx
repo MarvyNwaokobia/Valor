@@ -101,7 +101,7 @@ export default function CharacterViewer({
       {!failed && (
         <div
           className="absolute inset-0"
-          style={{ opacity: loaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
+          style={{ opacity: loaded ? 1 : 0, transition: 'opacity 0.5s ease', pointerEvents: loaded ? undefined : 'none' }}
         >
           <GLBErrorBoundary onError={() => setFailed(true)}>
             <Canvas

@@ -81,6 +81,7 @@ export interface CharacterCustomization {
   outfit?: string     // item id or preset key
   weapon?: string
   accessories?: string[]
+  gender?: 'male' | 'female'
 }
 
 export interface Player {

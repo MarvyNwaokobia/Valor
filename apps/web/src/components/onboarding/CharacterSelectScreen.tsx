@@ -34,12 +34,18 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
     setIndex(i => (i + direction + TOTAL_CLASSES) % TOTAL_CLASSES)
   }, [])
 
-  // Preload adjacent characters for smooth transitions
+  // Preload adjacent characters (GLBs + portrait images) for smooth transitions
   useEffect(() => {
     const next = CHARACTER_CLASSES[(index + 1) % TOTAL_CLASSES]
     const prev = CHARACTER_CLASSES[(index - 1 + TOTAL_CLASSES) % TOTAL_CLASSES]
     CharacterViewer.preload(CHARACTER_GLB[next])
     CharacterViewer.preload(CHARACTER_GLB[prev])
+    ;([next, prev] as CharacterClass[]).forEach(cls => {
+      ;(['male', 'female'] as Gender[]).forEach(g => {
+        const img = new window.Image()
+        img.src = CHARACTER_IMAGES[cls][g]
+      })
+    })
   }, [index])
 
   return (
@@ -142,8 +148,10 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
                   width: 'auto',
                   objectFit: 'contain',
                   objectPosition: 'center',
-                  filter: `drop-shadow(0 0 40px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
+                  filter: `brightness(1.18) contrast(1.12) drop-shadow(0 0 44px ${def.glowColor}) drop-shadow(0 24px 56px rgba(0,0,0,0.99))`,
                   mixBlendMode: 'screen',
+                  WebkitMaskImage: 'radial-gradient(ellipse 88% 94% at 50% 36%, black 45%, transparent 80%)',
+                  maskImage: 'radial-gradient(ellipse 88% 94% at 50% 36%, black 45%, transparent 80%)',
                   userSelect: 'none',
                   pointerEvents: 'none',
                 }}

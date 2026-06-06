@@ -162,6 +162,14 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     canClaim(walletAddress as `0x${string}`).then(setRewardEligible)
   }, [result?.won, rewardsReady, walletAddress, canClaim])
 
+  // ── Victory / defeat audio — MUST stay above all conditional returns ──────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (phase !== 'result' || !result) return
+    if (result.won) playVictory()
+    else playDefeat()
+  }, [phase, result?.won])
+
   async function handleClaimReward() {
     setRewardClaiming(true); setRewardError(null)
     try {
@@ -205,7 +213,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             className="absolute inset-0"
             fallback={
               <img
-                src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.male}
+                src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
                 alt="" aria-hidden
                 className="absolute inset-0 w-full h-full object-cover object-top select-none"
                 style={{ filter: `contrast(1.05) drop-shadow(0 0 24px ${def.glowColor})` }}
@@ -323,13 +331,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   }
 
   // ── RESULT ──────────────────────────────────────────────────────────────
-  // ── Victory / defeat audio ───────────────────────────────────────────────
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (phase !== 'result' || !result) return
-    if (result.won) playVictory()
-    else playDefeat()
-  }, [phase, result?.won])
 
   if (phase === 'result' && result) {
     return (
@@ -493,7 +494,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               fallback={
                 <div className="absolute inset-0 flex items-end justify-center pb-2">
                   <img
-                    src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.male}
+                    src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
                     alt="" aria-hidden
                     className="h-full w-auto object-contain object-bottom select-none"
                     style={{ filter: `drop-shadow(0 0 20px ${def.glowColor})` }}
