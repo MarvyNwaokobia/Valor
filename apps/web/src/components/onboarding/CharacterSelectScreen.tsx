@@ -6,10 +6,8 @@ import { CHARACTER_CLASSES, CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/class
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 
-export type Gender = 'male' | 'female'
-
 interface Props {
-  onSelect: (characterClass: CharacterClass, gender: Gender) => void
+  onSelect: (characterClass: CharacterClass) => void
 }
 
 const STAT_LABELS = [
@@ -21,8 +19,7 @@ const STAT_LABELS = [
 const TOTAL_CLASSES = CHARACTER_CLASSES.length
 
 export default function CharacterSelectScreen({ onSelect }: Props) {
-  const [index, setIndex]   = useState(0)
-  const [gender, setGender] = useState<Gender>('male')
+  const [index, setIndex] = useState(0)
 
   const selectedClass = CHARACTER_CLASSES[index]
   const def           = CLASS_DEFINITIONS[selectedClass]
@@ -94,24 +91,6 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
           </h1>
         </div>
 
-        {/* Gender toggle */}
-        <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          {(['male', 'female'] as Gender[]).map(g => (
-            <button
-              key={g}
-              onClick={() => setGender(g)}
-              className="px-3 py-1.5 font-display font-black uppercase transition-all"
-              style={{
-                fontSize: '9px',
-                letterSpacing: '0.14em',
-                background: gender === g ? def.accentColor : 'rgba(255,255,255,0.04)',
-                color: gender === g ? '#000' : 'rgba(255,255,255,0.3)',
-              }}
-            >
-              {g === 'male' ? '♂' : '♀'} {g}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* ── CHARACTER — 3D viewer ── */}
@@ -119,7 +98,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
         glbPath={CHARACTER_GLB[selectedClass]}
         accentColor={def.accentColor}
         animationName="idle"
-        modelKey={`${selectedClass}-${gender}`}
+        modelKey={selectedClass}
       />
 
       {/* ── LEFT / RIGHT NAVIGATION ── */}
@@ -279,7 +258,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
 
         {/* CTA */}
         <motion.button
-          onClick={() => onSelect(selectedClass, gender)}
+          onClick={() => onSelect(selectedClass)}
           whileHover={{ scale: 1.02, filter: 'brightness(1.12)' }}
           whileTap={{ scale: 0.97 }}
           className="relative overflow-hidden font-display font-black uppercase w-full"

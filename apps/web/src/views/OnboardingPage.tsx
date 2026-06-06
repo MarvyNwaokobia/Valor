@@ -7,7 +7,7 @@ import { useConnection } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
-import CharacterSelectScreen, { type Gender } from '@/components/onboarding/CharacterSelectScreen'
+import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
 import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
@@ -33,7 +33,6 @@ export default function OnboardingPage() {
   const [step,           setStep]           = useState<Step>('covenant') // TESTING: skip verify — re-enable before launch
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
-  const [selectedGender, setSelectedGender] = useState<Gender>('male')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
@@ -70,9 +69,8 @@ export default function OnboardingPage() {
   if (step === 'select') {
     return (
       <CharacterSelectScreen
-        onSelect={(cls, gen) => {
+        onSelect={(cls) => {
           setSelectedClass(cls)
-          setSelectedGender(gen)
           setStep('confirm')
         }}
       />
@@ -103,7 +101,7 @@ export default function OnboardingPage() {
         username:                null,
         display_name:            null,
         character_class:         selectedClass,
-        character_customization: { gender: selectedGender },
+        character_customization: {},
         rank:                    'Bronze' as const,
         xp:                      0,
         attack_stat:             stats.attack,
@@ -165,7 +163,7 @@ export default function OnboardingPage() {
           glbPath={CHARACTER_GLB[selectedClass]}
           accentColor={def.accentColor}
           animationName="idle"
-          modelKey={`confirm-${selectedClass}-${selectedGender}`}
+          modelKey={`confirm-${selectedClass}`}
           className="absolute inset-0"
         />
 

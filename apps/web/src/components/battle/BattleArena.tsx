@@ -108,14 +108,21 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     CharacterViewer.preload(CHARACTER_GLB[player.character_class as CharacterClass])
   }, [player.character_class])
 
-  // ── Landscape orientation lock during battle ─────────────────────────────
+  // ── Landscape + fullscreen during battle ────────────────────────────────
   useEffect(() => {
     if (phase !== 'fighting') return
     if (typeof screen !== 'undefined' && screen.orientation?.lock) {
       screen.orientation.lock('landscape').catch(() => {})
     }
+    const el = document.documentElement
+    if (el.requestFullscreen && !document.fullscreenElement) {
+      el.requestFullscreen().catch(() => {})
+    }
     return () => {
       try { screen.orientation?.unlock?.() } catch {}
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {})
+      }
     }
   }, [phase])
 
@@ -375,12 +382,12 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   if (phase === 'result' && result) {
     const resultColor = result.won ? '#eab308' : '#ef4444'
     return (
-      <motion.div className="fixed inset-0 z-50 flex flex-col overflow-hidden"
+      <motion.div className="fixed inset-0 z-50 overflow-y-auto"
         style={{ background: '#04030c' }}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}
       >
-        {/* Background atmosphere */}
-        <div className="absolute inset-0 pointer-events-none">
+        {/* Background atmosphere — fixed behind scroll */}
+        <div className="fixed inset-0 pointer-events-none">
           <div style={{
             background: result.won
               ? `radial-gradient(ellipse 90% 60% at 50% 30%, rgba(234,179,8,0.12), transparent),
@@ -390,8 +397,9 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           }} className="absolute inset-0" />
         </div>
 
-        {/* ── Big result announcement ── */}
-        <div className="flex-1 flex flex-col items-center justify-center relative z-10 gap-5 px-6">
+        {/* ── All content scrolls together ── */}
+        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-10"
+          style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom, 32px))' }}>
 
           {/* Character name + result */}
           <motion.div className="text-center"
@@ -515,11 +523,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           {saveError && (
             <p className="text-red-400 text-xs text-center">{saveError}</p>
           )}
-        </div>
 
-        {/* ── Fight again CTA ── */}
-        <div className="relative z-10 px-4"
-          style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))' }}>
+          {/* ── Fight again CTA ── */}
           <motion.button onClick={() => { setBotClass(pickBotClass(player.character_class as CharacterClass)); reset() }}
             className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
             style={{
@@ -691,69 +696,49 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       </motion.div>
 
       {/* ── HUD overlay — floats over the 3D scene at the top ── */}
-      <div className="battle-hud absolute inset-x-0 top-0 z-30 flex justify-between items-start px-3"
-        style={{
-          paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
-          background: 'linear-gradient(180deg, rgba(4,3,12,0.82) 0%, rgba(4,3,12,0.5) 70%, transparent 100%)',
-        }}>
-        <ArenaPlayerCard name={player.character_name} hp={playerHp}
-          classLabel={player.character_class as string} color={def.accentColor} side="left" />
-
-        {/* Round counter */}
-        <div className="flex flex-col items-center pt-1 gap-1">
-          <motion.span key={round} className="font-display font-black text-white leading-none"
-            style={{ fontSize: 'clamp(1.1rem, 4vw, 1.4rem)' }}
-            initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}>
-            {round}<span className="text-slate-500 font-normal text-xs ml-0.5">/ 5</span>
-          </motion.span>
-          <span className="text-[8px] font-bold uppercase tracking-[0.25em] text-slate-600">Round</span>
-          <div className="flex gap-1">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} style={{
-                width: 5, height: 5, borderRadius: '50%',
-                background: i < round - 1 ? def.accentColor : i === round - 1 ? `${def.accentColor}70` : 'rgba(42,42,58,0.8)',
-                boxShadow: i < round ? `0 0 4px ${def.accentColor}80` : 'none',
-                transition: 'all 0.3s ease',
-              }} />
-            ))}
-          </div>
-        </div>
-
-        <ArenaPlayerCard name="Bot" hp={botHp}
-          classLabel={botClass} color={botDef.accentColor} side="right" />
-      </div>
-
-      {/* ── Round log — floats just above the buttons ── */}
-      <AnimatePresence mode="wait">
-        {log.length > 0 && (
-          <motion.div key={log.length}
-            className="absolute inset-x-3 z-30 text-[10px] text-center rounded-xl px-4 py-2"
+      {(() => {
+        const lastEntry = log.length > 0 ? log[log.length - 1] : null
+        return (
+          <div className="battle-hud absolute inset-x-0 top-0 z-30 flex justify-between items-start px-3"
             style={{
-              bottom: 'calc(max(16px, env(safe-area-inset-bottom, 16px)) + 106px)',
-              background: 'rgba(4,3,12,0.85)',
-              border: '1px solid rgba(42,42,58,0.7)',
-            }}
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {(() => {
-              const last = log[log.length - 1]
-              const { you, bot } = roundNarrative(last.playerMove, last.botMove, last.playerDmg, last.botDmg)
-              return (
-                <div className="flex flex-col gap-0.5 text-left">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[8px] font-black uppercase tracking-wider shrink-0" style={{ color: def.accentColor }}>YOU</span>
-                    <span className="text-slate-300 text-[9px]">{you}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[8px] font-black uppercase tracking-wider shrink-0" style={{ color: botDef.accentColor }}>BOT</span>
-                    <span className="text-slate-300 text-[9px]">{bot}</span>
-                  </div>
-                </div>
-              )
-            })()}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
+              background: 'linear-gradient(180deg, rgba(4,3,12,0.82) 0%, rgba(4,3,12,0.5) 70%, transparent 100%)',
+            }}>
+            <ArenaPlayerCard name={player.character_name} hp={playerHp}
+              classLabel={player.character_class as string} color={def.accentColor} side="left"
+              lastMove={lastEntry?.playerMove ?? null}
+              lastDmgDealt={lastEntry?.playerDmg ?? 0}
+              opponentDefended={lastEntry?.botMove === 'defend'} />
+
+            {/* Round counter */}
+            <div className="flex flex-col items-center pt-1 gap-1">
+              <motion.span key={round} className="font-display font-black text-white leading-none"
+                style={{ fontSize: 'clamp(1.1rem, 4vw, 1.4rem)' }}
+                initial={{ scale: 1.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}>
+                {round}<span className="text-slate-500 font-normal text-xs ml-0.5">/ 5</span>
+              </motion.span>
+              <span className="text-[8px] font-bold uppercase tracking-[0.25em] text-slate-600">Round</span>
+              <div className="flex gap-1">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} style={{
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: i < round - 1 ? def.accentColor : i === round - 1 ? `${def.accentColor}70` : 'rgba(42,42,58,0.8)',
+                    boxShadow: i < round ? `0 0 4px ${def.accentColor}80` : 'none',
+                    transition: 'all 0.3s ease',
+                  }} />
+                ))}
+              </div>
+            </div>
+
+            <ArenaPlayerCard name="Bot" hp={botHp}
+              classLabel={botClass} color={botDef.accentColor} side="right"
+              lastMove={lastEntry?.botMove ?? null}
+              lastDmgDealt={lastEntry?.botDmg ?? 0}
+              opponentDefended={lastEntry?.playerMove === 'defend'} />
+          </div>
+        )
+      })()}
 
       {/* ── Move buttons — overlay at bottom with gradient backdrop ── */}
       <div className="battle-move-buttons absolute inset-x-0 bottom-0 z-30 grid grid-cols-3 gap-2 px-3"
@@ -794,11 +779,23 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
 // ── Arena player card (corner HUD) ───────────────────────────────────────────
 
-function ArenaPlayerCard({ name, hp, classLabel, color, side }: {
+function ArenaPlayerCard({ name, hp, classLabel, color, side, lastMove, lastDmgDealt, opponentDefended }: {
   name: string; hp: number; classLabel: string; color: string; side: 'left' | 'right'
+  lastMove?: BattleMove | null
+  lastDmgDealt?: number
+  opponentDefended?: boolean
 }) {
   const hpColor = hp > 60 ? color : hp > 30 ? '#f59e0b' : '#ef4444'
   const isCritical = hp <= 30
+
+  const moveColor = lastMove === 'special' ? '#8b5cf6' : lastMove === 'defend' ? '#3b82f6' : '#ef4444'
+  const moveIcon  = lastMove === 'special' ? '⚡' : lastMove === 'defend' ? '🛡' : '⚔'
+  const moveLabel = lastMove === 'defend'
+    ? 'DEFEND'
+    : lastMove === 'special'
+      ? `SPECIAL +${lastDmgDealt ?? 0}${opponentDefended ? '(↓½)' : ''}`
+      : `ATTACK +${lastDmgDealt ?? 0}${opponentDefended ? '(↓½)' : ''}`
+
   return (
     <div className={`flex flex-col gap-1 ${side === 'right' ? 'items-end' : 'items-start'}`}
       style={{ minWidth: 110, maxWidth: 150 }}>
@@ -823,10 +820,22 @@ function ArenaPlayerCard({ name, hp, classLabel, color, side }: {
           transition={{ duration: 0.3, ease: 'easeOut' }}
         />
       </div>
-      <span className="font-black" style={{ fontSize: 9, color: hpColor }}>
-        {hp}<span className="text-slate-500 font-normal" style={{ fontSize: 8 }}>HP</span>
-        {isCritical && <span className="text-red-400 font-black ml-1 animate-pulse" style={{ fontSize: 7 }}>CRIT</span>}
-      </span>
+      <div className={`flex items-center gap-1 w-full ${side === 'right' ? 'justify-end' : ''}`}>
+        <span className="font-black" style={{ fontSize: 9, color: hpColor }}>
+          {hp}<span className="text-slate-500 font-normal" style={{ fontSize: 8 }}>HP</span>
+          {isCritical && <span className="text-red-400 font-black ml-1 animate-pulse" style={{ fontSize: 7 }}>!</span>}
+        </span>
+        {lastMove && (
+          <AnimatePresence mode="wait">
+            <motion.span key={`${lastMove}-${lastDmgDealt}`}
+              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              style={{ fontSize: 7, color: moveColor, fontWeight: 900, letterSpacing: '0.04em', marginLeft: 4 }}>
+              {moveIcon} {moveLabel}
+            </motion.span>
+          </AnimatePresence>
+        )}
+      </div>
     </div>
   )
 }
