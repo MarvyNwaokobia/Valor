@@ -3,11 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-
-interface IGoodDollar {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
+import "./interfaces/IGoodDollar.sol";
 
 /// @title ValorRewardPool — Holds G$ and distributes rank-up + daily claim rewards
 /// @notice Backend calls distributeReward() after verifying XP milestone on-chain

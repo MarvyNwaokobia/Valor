@@ -5,14 +5,10 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./ValorItems.sol";
 
+import "./interfaces/IGoodDollar.sol";
+
 interface IERC677Receiver {
     function onTokenTransfer(address from, uint256 value, bytes calldata data) external;
-}
-
-interface IGoodDollar {
-    function transferAndCall(address to, uint256 value, bytes calldata data) external returns (bool);
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
 }
 
 /// @title ValorMarketplace — Accepts G$ via transferAndCall, mints item NFTs
