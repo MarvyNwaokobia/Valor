@@ -24,12 +24,17 @@ interface ModelProps {
   accentColor: string
   animationName: string
   paused: boolean
+  onLoaded: () => void
 }
 
-function CharacterModel({ glbPath, accentColor, animationName, paused }: ModelProps) {
+function CharacterModel({ glbPath, accentColor, animationName, paused, onLoaded }: ModelProps) {
   const group = useRef<THREE.Group>(null!)
   const { scene, animations } = useGLTF(glbPath)
   const { actions, mixer } = useAnimations(animations, group)
+
+  // Signal parent that model is mounted and visible
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onLoaded() }, [])
 
   useEffect(() => {
     Object.values(actions).forEach(a => a?.stop())
@@ -38,7 +43,6 @@ function CharacterModel({ glbPath, accentColor, animationName, paused }: ModelPr
     return () => { Object.values(actions).forEach(a => a?.fadeOut(0.2)) }
   }, [animationName, actions])
 
-  // Hitstop: freeze the mixer for the duration
   useEffect(() => {
     if (!mixer) return
     mixer.timeScale = paused ? 0 : 1
@@ -46,7 +50,8 @@ function CharacterModel({ glbPath, accentColor, animationName, paused }: ModelPr
 
   return (
     <group ref={group}>
-      <primitive object={scene} dispose={null} scale={[0.01, 0.01, 0.01]} />
+      {/* No explicit scale — the GLB's root Armature already has scale=0.01 baked in */}
+      <primitive object={scene} dispose={null} />
       <pointLight position={[-3, 2, -2]} intensity={5} color={accentColor} distance={14} />
     </group>
   )
@@ -78,9 +83,16 @@ export default function CharacterViewer({
   style,
 }: CharacterViewerProps) {
   const [failed, setFailed] = useState(false)
+  const [modelLoaded, setModelLoaded] = useState(false)
+
+  // Reset loaded state whenever the character switches
+  useEffect(() => { setModelLoaded(false) }, [modelKey])
 
   return (
     <div className={className ?? 'absolute inset-0'} style={style}>
+
+      {/* Fallback — shown while loading OR when WebGL fails */}
+      {(!modelLoaded || failed) && fallback}
 
       {/* 3D canvas — removed entirely on WebGL failure */}
       {!failed && (
@@ -104,10 +116,10 @@ export default function CharacterViewer({
                   accentColor={accentColor}
                   animationName={animationName}
                   paused={paused}
+                  onLoaded={() => setModelLoaded(true)}
                 />
               </Suspense>
 
-              {/* Y-axis orbit — lets players inspect the character */}
               <OrbitControls
                 enableZoom={false}
                 enablePan={false}
@@ -119,9 +131,6 @@ export default function CharacterViewer({
           </GLBErrorBoundary>
         </div>
       )}
-
-      {/* Fallback — only shown when WebGL fails (not a loading placeholder) */}
-      {failed && fallback}
     </div>
   )
 }

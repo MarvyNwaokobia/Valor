@@ -189,10 +189,10 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   // ── IDLE — choose fight type ─────────────────────────────────────────────
   if (phase === 'idle') {
     return (
-      <div className="flex flex-col lg:flex-row gap-6 items-stretch min-h-[calc(100vh-8rem)]">
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 items-stretch min-h-[calc(100vh-10rem)] lg:min-h-[calc(100vh-8rem)]">
         <motion.div
           className="relative lg:w-72 rounded-2xl overflow-hidden shrink-0"
-          style={{ minHeight: 360, background: '#06050f' }}
+          style={{ minHeight: 'clamp(200px, 35vh, 360px)', background: '#06050f' }}
           initial={{ opacity: 0, x: -24 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
@@ -488,7 +488,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       </div>
 
       {/* ── Top HUD — player cards + round counter ── */}
-      <div className="relative z-30 flex justify-between items-start px-3"
+      <div className="battle-hud relative z-30 flex justify-between items-start px-3"
         style={{ paddingTop: 'max(14px, env(safe-area-inset-top, 14px))' }}>
         <ArenaPlayerCard name={player.character_name} hp={playerHp}
           classLabel={player.character_class as string} color={def.accentColor} side="left" />

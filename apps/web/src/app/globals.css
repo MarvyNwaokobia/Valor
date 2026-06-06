@@ -366,3 +366,15 @@ body {
   color: rgba(255,255,255,0.2);
   animation: permanence-reveal 0.6s ease-out 0.3s both;
 }
+
+/* ── Landscape mobile — compact layouts ─────────────────── */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Character select: tighten bottom panel so character has room */
+  .char-select-desc   { display: none; }
+  .char-select-panel  { gap: 6px !important; }
+  .char-select-header { padding-top: 8px !important; }
+  .char-select-nav    { top: 40% !important; }
+
+  /* Battle HUD: reduce top padding */
+  .battle-hud { padding-top: 6px !important; }
+}

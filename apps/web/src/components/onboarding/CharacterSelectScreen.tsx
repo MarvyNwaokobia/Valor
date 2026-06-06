@@ -89,7 +89,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
       </AnimatePresence>
 
       {/* ── HEADER ── */}
-      <div className="absolute inset-x-0 top-0 z-20 flex items-start justify-between px-5 pt-5">
+      <div className="char-select-header absolute inset-x-0 top-0 z-20 flex items-start justify-between px-5 pt-5">
         <div>
           <p className="font-display font-bold uppercase" style={{
             fontSize: '9px', letterSpacing: '0.42em', color: 'rgba(234,179,8,0.5)',
@@ -165,7 +165,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
       {/* ── LEFT / RIGHT NAVIGATION ── */}
       <button
         onClick={() => navigate(-1)}
-        className="absolute left-3 top-1/2 -translate-y-1/2 z-20 flex items-center justify-center rounded-full transition-all active:scale-90"
+        className="char-select-nav absolute left-3 top-1/2 -translate-y-1/2 z-20 flex items-center justify-center rounded-full transition-all active:scale-90"
         style={{
           width: 44, height: 44,
           background: 'rgba(255,255,255,0.05)',
@@ -187,7 +187,8 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
       </button>
 
       {/* ── BOTTOM PANEL ── */}
-      <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col px-5 pb-8 gap-3">
+      <div className="char-select-panel absolute inset-x-0 bottom-0 z-20 flex flex-col px-5 gap-3"
+        style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))' }}>
 
         {/* Class name + tagline */}
         <AnimatePresence mode="wait">
@@ -269,10 +270,11 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
           </motion.div>
         </AnimatePresence>
 
-        {/* Class description */}
+        {/* Class description — hidden in landscape compact mode */}
         <AnimatePresence mode="wait">
           <motion.p
             key={`desc-${selectedClass}`}
+            className="char-select-desc"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

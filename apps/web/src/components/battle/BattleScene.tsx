@@ -140,8 +140,8 @@ function FightCharacter({
 
   return (
     <group ref={group} position={[positionX, 0, 0]} rotation={[0, rotationY, 0]}>
-      <primitive object={scene} dispose={null} scale={[0.01, 0.01, 0.01]} />
-      {/* Accent point light sits in front of the character so it illuminates their front face */}
+      {/* No explicit scale — the GLB's root Armature already has scale=0.01 baked in */}
+      <primitive object={scene} dispose={null} />
       <pointLight position={[0, 1.4, 0.8]} intensity={5} color={accentColor} distance={8} decay={2} />
     </group>
   )
