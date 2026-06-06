@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useRef, useState, Component, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, Component, type ReactNode, type CSSProperties } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { useGLTF, useAnimations, OrbitControls } from '@react-three/drei'
 import type * as THREE from 'three'
@@ -24,16 +24,12 @@ interface ModelProps {
   accentColor: string
   animationName: string
   paused: boolean
-  onLoaded: () => void
 }
 
-function CharacterModel({ glbPath, accentColor, animationName, paused, onLoaded }: ModelProps) {
+function CharacterModel({ glbPath, accentColor, animationName, paused }: ModelProps) {
   const group = useRef<THREE.Group>(null!)
   const { scene, animations } = useGLTF(glbPath)
   const { actions, mixer } = useAnimations(animations, group)
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { onLoaded() }, [])
 
   useEffect(() => {
     Object.values(actions).forEach(a => a?.stop())
@@ -65,8 +61,10 @@ export interface CharacterViewerProps {
   paused?: boolean
   /** Remounts the model when this changes (use class+gender string) */
   modelKey: string
+  /** @deprecated — do not use in battle scenes; 3D is the only character representation */
   fallback?: ReactNode
   className?: string
+  style?: CSSProperties
 }
 
 export default function CharacterViewer({
@@ -77,32 +75,16 @@ export default function CharacterViewer({
   modelKey,
   fallback = null,
   className,
+  style,
 }: CharacterViewerProps) {
-  const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
 
   return (
-    <div className={className ?? 'absolute inset-0'}>
+    <div className={className ?? 'absolute inset-0'} style={style}>
 
-      {/*
-        Portrait — always visible as background. The 3D canvas renders on top
-        with a transparent background, so if the GLB loads correctly the 3D
-        model naturally obscures the portrait. If WebGL fails or the model is
-        invisible the portrait stays visible.
-      */}
-      <div
-        className="absolute inset-0"
-        style={{ pointerEvents: loaded && !failed ? 'none' : undefined }}
-      >
-        {fallback}
-      </div>
-
-      {/* 3D canvas — hidden until model loads, removed entirely on failure */}
+      {/* 3D canvas — removed entirely on WebGL failure */}
       {!failed && (
-        <div
-          className="absolute inset-0"
-          style={{ opacity: loaded ? 1 : 0, transition: 'opacity 0.5s ease', pointerEvents: loaded ? undefined : 'none' }}
-        >
+        <div className="absolute inset-0">
           <GLBErrorBoundary onError={() => setFailed(true)}>
             <Canvas
               camera={{ position: [0, 0.9, 3.2], fov: 46 }}
@@ -122,7 +104,6 @@ export default function CharacterViewer({
                   accentColor={accentColor}
                   animationName={animationName}
                   paused={paused}
-                  onLoaded={() => setLoaded(true)}
                 />
               </Suspense>
 
@@ -138,6 +119,9 @@ export default function CharacterViewer({
           </GLBErrorBoundary>
         </div>
       )}
+
+      {/* Fallback — only shown when WebGL fails (not a loading placeholder) */}
+      {failed && fallback}
     </div>
   )
 }

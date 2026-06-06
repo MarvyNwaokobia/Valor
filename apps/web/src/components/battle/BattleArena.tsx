@@ -10,11 +10,12 @@ import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
+import BattleScene from './BattleScene'
 import ImpactBurst from './ImpactBurst'
 import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import RankAura from '@/components/ui/RankAura'
@@ -206,14 +207,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             animationName="idle"
             modelKey={`idle-panel-${player.character_class}`}
             className="absolute inset-0"
-            fallback={
-              <img
-                src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
-                alt="" aria-hidden
-                className="absolute inset-0 w-full h-full object-cover object-top select-none"
-                style={{ filter: `contrast(1.05) drop-shadow(0 0 24px ${def.glowColor})` }}
-              />
-            }
           />
           </RankAura>
           <div className="absolute inset-x-0 bottom-0 h-28" style={{
@@ -525,7 +518,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           classLabel={BOT_CLASS} color={botDef.accentColor} side="right" />
       </div>
 
-      {/* ── Arena characters ── */}
+      {/* ── Arena — unified 3D scene ── */}
       <div className="flex-1 relative">
         <motion.div
           key={combatFeel.shakeKey}
@@ -540,47 +533,32 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             className="absolute inset-0"
           >
 
-          {/* Player — left half */}
-          <div className="absolute left-0 top-0 bottom-0 w-1/2">
-            <RankAura rank={player.rank} classColor={def.accentColor} mode="character">
-            <CharacterViewer
-              glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
-              accentColor={def.accentColor}
-              animationName={playerAnim}
-              paused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
-              modelKey={`fight-player-${player.character_class}`}
-              className="absolute inset-0"
-              fallback={
-                <div className="absolute inset-0 flex items-end justify-center">
-                  <img
-                    src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
-                    alt="" aria-hidden
-                    className="h-full w-auto object-contain object-bottom select-none"
-                    style={{
-                      filter: `brightness(1.1) drop-shadow(0 0 32px ${def.glowColor})`,
-                      mixBlendMode: 'screen',
-                      WebkitMaskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
-                      maskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
-                    }}
-                  />
-                </div>
-              }
+          {/* Single canvas — both fighters in one shared scene */}
+          <div className="absolute inset-0">
+            <BattleScene
+              playerClass={player.character_class as CharacterClass}
+              playerAnim={playerAnim}
+              playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
+              playerAccentColor={def.accentColor}
+              botClass={BOT_CLASS}
+              botAnim={botAnim}
+              botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
+              botAccentColor={botDef.accentColor}
             />
-            </RankAura>
+          </div>
 
-            {/* Player damage numbers */}
+          {/* Player DOM overlays — left half */}
+          <div className="absolute left-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
             <AnimatePresence>
               {dmgEvents.filter(e => e.side === 'player').map(e => (
                 <DamageNumber key={e.id} {...e} />
               ))}
             </AnimatePresence>
-
-            {/* Player impact flash */}
             <AnimatePresence>
               {combatFeel.playerFlash && (
                 <motion.div
                   key="player-flash"
-                  className="absolute inset-0 pointer-events-none"
+                  className="absolute inset-0"
                   style={{ background: `${combatFeel.playerFlash}40` }}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: [0, 0.9, 0] }}
@@ -589,8 +567,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 />
               )}
             </AnimatePresence>
-
-            {/* Player particle burst */}
             <AnimatePresence>
               {combatFeel.playerBurst && (
                 <ImpactBurst
@@ -600,9 +576,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 />
               )}
             </AnimatePresence>
-
-            {/* Player name tag */}
-            <div className="absolute bottom-2 left-0 right-0 flex justify-center z-10 pointer-events-none">
+            <div className="absolute bottom-2 inset-x-0 flex justify-center">
               <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded"
                 style={{ background: `${def.accentColor}22`, color: def.accentColor, border: `1px solid ${def.accentColor}33` }}>
                 {player.character_name}
@@ -610,47 +584,18 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
           </div>
 
-          {/* Bot — right half, mirrored */}
-          <div className="absolute right-0 top-0 bottom-0 w-1/2" style={{ transform: 'scaleX(-1)' }}>
-            <CharacterViewer
-              glbPath={CHARACTER_GLB[BOT_CLASS]}
-              accentColor={botDef.accentColor}
-              animationName={botAnim}
-              paused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
-              modelKey="fight-bot-berserker"
-              className="absolute inset-0"
-              fallback={
-                <div className="absolute inset-0 flex items-end justify-center">
-                  <img
-                    src={CHARACTER_IMAGES[BOT_CLASS]?.male}
-                    alt="" aria-hidden
-                    className="h-full w-auto object-contain object-bottom select-none"
-                    style={{
-                      filter: `brightness(1.1) drop-shadow(0 0 32px ${botDef.glowColor})`,
-                      mixBlendMode: 'screen',
-                      WebkitMaskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
-                      maskImage: 'radial-gradient(ellipse 90% 95% at 50% 35%, black 50%, transparent 85%)',
-                    }}
-                  />
-                </div>
-              }
-            />
-
-            {/* Bot damage numbers — rendered inside scaleX(-1) container so we un-mirror text */}
-            <div style={{ transform: 'scaleX(-1)' }} className="absolute inset-0 pointer-events-none">
-              <AnimatePresence>
-                {dmgEvents.filter(e => e.side === 'bot').map(e => (
-                  <DamageNumber key={e.id} {...e} />
-                ))}
-              </AnimatePresence>
-            </div>
-
-            {/* Bot impact flash (inside scaleX container, so auto-mirrors correctly) */}
+          {/* Bot DOM overlays — right half */}
+          <div className="absolute right-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
+            <AnimatePresence>
+              {dmgEvents.filter(e => e.side === 'bot').map(e => (
+                <DamageNumber key={e.id} {...e} />
+              ))}
+            </AnimatePresence>
             <AnimatePresence>
               {combatFeel.botFlash && (
                 <motion.div
                   key="bot-flash"
-                  className="absolute inset-0 pointer-events-none"
+                  className="absolute inset-0"
                   style={{ background: `${combatFeel.botFlash}40` }}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: [0, 0.9, 0] }}
@@ -659,8 +604,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 />
               )}
             </AnimatePresence>
-
-            {/* Bot particle burst */}
             <AnimatePresence>
               {combatFeel.botBurst && (
                 <ImpactBurst
@@ -672,7 +615,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </AnimatePresence>
           </div>
 
-          {/* VS badge — center of arena */}
+          {/* VS badge */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
             <span className="font-display font-black"
               style={{ fontSize: 'clamp(1.1rem, 4vw, 1.5rem)', color: 'rgba(234,179,8,0.35)', textShadow: '0 0 24px rgba(234,179,8,0.3)' }}>
@@ -735,7 +678,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           </AnimatePresence>
         </motion.div>
         </motion.div>
-      </div>{/* end arena characters */}
+      </div>{/* end arena */}
 
       {/* ── Last round log ── */}
       <AnimatePresence mode="wait">
