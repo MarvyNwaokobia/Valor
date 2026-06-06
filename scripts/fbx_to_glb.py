@@ -68,9 +68,11 @@ def get_armatures():
 
 def remove_except(keep_object):
     """Remove all scene armatures and meshes except keep_object and its children."""
+    # keep_object (the main armature) AND all its children (the character mesh)
+    keep = {keep_object} | set(keep_object.children_recursive)
     to_remove = [
         obj for obj in bpy.context.scene.objects
-        if obj != keep_object and obj.type in ('ARMATURE', 'MESH')
+        if obj not in keep and obj.type in ('ARMATURE', 'MESH')
     ]
     for obj in to_remove:
         try:
@@ -188,6 +190,15 @@ def process_class(class_dir, output_path, class_name):
         except Exception as e:
             print(f"  WARNING — could not generate idle: {e}")
 
+    # ── Resize textures > 1024px before export to keep file sizes web-safe ──
+    for img in bpy.data.images:
+        if img.size[0] > 1024 or img.size[1] > 1024:
+            scale = 1024 / max(img.size[0], img.size[1])
+            new_w = max(1, int(img.size[0] * scale))
+            new_h = max(1, int(img.size[1] * scale))
+            img.scale(new_w, new_h)
+            print(f"  Resized texture '{img.name}' → {new_w}×{new_h}")
+
     # ── Export GLB ─────────────────────────────────────────────────────
     print("  Exporting GLB ...")
     bpy.ops.export_scene.gltf(
@@ -197,7 +208,8 @@ def process_class(class_dir, output_path, class_name):
         export_nla_strips=True,
         export_skins=True,
         export_apply=False,
-        export_image_format='AUTO',
+        export_image_format='WEBP',
+        export_image_quality=80,
     )
 
     if os.path.exists(output_path):
