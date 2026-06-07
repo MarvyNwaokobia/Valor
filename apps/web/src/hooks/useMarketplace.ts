@@ -25,6 +25,16 @@ const NONCES_ABI = [
   },
 ] as const
 
+const BALANCE_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
+
 export function useMarketplaceItems() {
   return useQuery({
     queryKey: ['marketplace-items'],
@@ -53,6 +63,17 @@ export function usePurchaseItem(walletAddress: string | undefined) {
     try {
       const amount   = parseUnits(item.price_g.toString(), G_DECIMALS)
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30) // 30-min window
+
+      // Check G$ balance before attempting — surface a clear error instead of contract revert
+      const balance = await readContract(wagmiConfig, {
+        address: G_TOKEN_ADDRESS,
+        abi: BALANCE_ABI,
+        functionName: 'balanceOf',
+        args: [walletAddress as `0x${string}`],
+      })
+      if (balance < amount) {
+        throw new Error('Insufficient G$ balance')
+      }
 
       // Read player's current permit nonce from the G$ token contract
       const nonce = await readContract(wagmiConfig, {

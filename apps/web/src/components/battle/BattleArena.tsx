@@ -16,7 +16,7 @@ import ImpactBurst from './ImpactBurst'
 import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_IMAGES, CHARACTER_CLASSES } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_CLASSES } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import RankAura from '@/components/ui/RankAura'
@@ -264,16 +264,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             animationName="idle"
             modelKey={`idle-panel-${player.character_class}`}
             className="absolute inset-0"
-            fallback={
-              <div className="absolute inset-0 flex items-end justify-center overflow-hidden">
-                <img
-                  src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
-                  alt={player.character_class ?? 'character'}
-                  className="h-full w-full object-cover object-top"
-                  style={{ filter: `drop-shadow(0 0 32px ${def.accentColor}80)` }}
-                />
-              </div>
-            }
           />
           </RankAura>
           <div className="absolute inset-x-0 bottom-0 h-28" style={{
