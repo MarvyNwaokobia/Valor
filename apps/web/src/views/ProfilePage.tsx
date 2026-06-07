@@ -18,6 +18,7 @@ import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { useGBalance } from '@/hooks/useGBalance'
+import LoadingScreen from '@/components/ui/LoadingScreen'
 
 export default function ProfilePage() {
   const { address } = useAccount()
@@ -25,7 +26,8 @@ export default function ProfilePage() {
   const player      = usePlayerStore(s => s.player)
   const inventory   = usePlayerStore(s => s.inventory)
 
-  if (!address || !player) { router.replace('/'); return null }
+  if (!address) { router.replace('/'); return null }
+  if (!player) return <LoadingScreen />
 
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
