@@ -38,7 +38,7 @@ export default function MarketplacePage() {
           <div>
             <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-amber-500/60 mb-0.5">Valor Armoury</p>
             <h1 className="font-display font-black text-white text-2xl tracking-wide">Marketplace</h1>
-            <p className="text-slate-500 text-xs mt-0.5">Weapons · Shields · Boosters — yours forever on-chain</p>
+            <p className="text-slate-500 text-xs mt-0.5">Weapons · Shields · Boosters — yours to keep forever</p>
           </div>
         </div>
       </motion.div>

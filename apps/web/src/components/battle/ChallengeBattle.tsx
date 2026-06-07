@@ -162,7 +162,7 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
       ) : (
         <>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Enter a wallet address or player name. The fight is simulated instantly based on stats —
+            Enter a player name or address. The fight is simulated instantly based on stats —
             both players' XP updates via real-time.
           </p>
 

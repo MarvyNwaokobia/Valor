@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
@@ -67,6 +68,7 @@ function roundNarrative(
 
 
 export default function BattleArena({ player, walletAddress, challengeTarget }: Props) {
+  const router = useRouter()
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
   const [botClass, setBotClass] = useState<CharacterClass>(() =>
@@ -289,7 +291,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             <p className="text-slate-500 text-sm mt-1">Win = +100 XP · Loss = +30 XP · Every fight counts.</p>
           </motion.div>
 
-          <motion.button onClick={startBattle}
+          <motion.button onClick={() => {
+              const el = document.documentElement
+              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+              startBattle()
+            }}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
             whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -312,7 +318,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
           </motion.button>
 
-          <motion.button onClick={() => setShowChallenge(true)}
+          <motion.button onClick={() => {
+              const el = document.documentElement
+              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+              setShowChallenge(true)
+            }}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
             whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -335,7 +345,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
           </motion.button>
 
-          <motion.button onClick={() => setShowDirectChallenge(true)}
+          <motion.button onClick={() => {
+              const el = document.documentElement
+              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+              setShowDirectChallenge(true)
+            }}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
             whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -447,7 +461,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                   ✦ RANK UP → {result.newRank}
                 </p>
               </RankAura>
-              <p className="text-slate-400 text-xs mt-1">{formatGDollarNumber(result.gAwarded)} dispatched to your wallet</p>
+              <p className="text-slate-400 text-xs mt-1">{formatGDollarNumber(result.gAwarded)} G$ earned</p>
             </motion.div>
           )}
 
@@ -457,23 +471,16 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               style={{ background: 'rgba(8,8,14,0.9)', border: '1px solid rgba(42,42,58,0.8)' }}
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
               {rewardTxHash ? (
-                <div className="text-center">
-                  <p className="text-green-400 font-black text-sm">G$ Reward Claimed!</p>
-                  <a href={`https://celoscan.io/tx/${rewardTxHash}`} target="_blank" rel="noreferrer"
-                    className="text-xs text-slate-500 underline mt-1 block">View on Celoscan</a>
-                </div>
+                <p className="text-green-400 font-black text-sm text-center">G$ Reward Collected!</p>
               ) : rewardError ? (
                 <p className="text-red-400 text-xs text-center">{rewardError}</p>
               ) : (
                 <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-white font-black text-sm">Claim G$ Reward</p>
-                    <p className="text-slate-500 text-xs mt-0.5">GoodDollar rewards for verified humans</p>
-                  </div>
+                  <p className="text-white font-black text-sm">Victory Reward</p>
                   <button onClick={handleClaimReward} disabled={rewardClaiming}
                     className="clip-angled-sm shrink-0 px-4 py-2.5 font-black text-black text-sm disabled:opacity-50"
                     style={{ background: 'linear-gradient(135deg, #fde047, #eab308)' }}>
-                    {rewardClaiming ? '...' : 'Claim G$'}
+                    {rewardClaiming ? '...' : 'Collect G$'}
                   </button>
                 </div>
               )}
@@ -536,6 +543,26 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             transition={{ delay: 0.6, type: 'spring', stiffness: 180, damping: 14 }}
             whileTap={{ scale: 0.97 }}>
             Fight Again
+          </motion.button>
+
+          {/* ── Return home ── */}
+          <motion.button
+            onClick={() => {
+              if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+              router.push('/')
+            }}
+            className="w-full py-3 font-display font-black uppercase tracking-[0.2em] rounded-xl border transition-colors"
+            style={{
+              fontSize: 'clamp(11px, 2.5vw, 13px)',
+              color: 'rgba(148,163,184,0.7)',
+              borderColor: 'rgba(42,42,58,0.6)',
+              background: 'transparent',
+            }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            transition={{ delay: 0.7 }}
+            whileHover={{ color: '#fff', borderColor: 'rgba(148,163,184,0.4)' }}
+            whileTap={{ scale: 0.97 }}>
+            ← Return Home
           </motion.button>
         </div>
       </motion.div>

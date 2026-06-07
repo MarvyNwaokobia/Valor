@@ -1,7 +1,9 @@
+'use client'
+
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
+import { useGBalance } from '@/hooks/useGBalance'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -12,9 +14,8 @@ interface Props {
 export default function DailyClaimButton({ walletAddress }: Props) {
   const queryClient = useQueryClient()
   const [claimed, setClaimed] = useState(false)
-  const [rewardTxHash, setRewardTxHash] = useState<string | null>(null)
 
-  const { canClaim, claimEngagementReward, isReady: rewardsReady } = useValorEngagementRewards()
+  const { formatted: gBalance } = useGBalance(walletAddress as `0x${string}`)
 
   const { data: claimStatus } = useQuery({
     queryKey: ['daily-claim', walletAddress],
@@ -29,22 +30,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
-      await fetch(`${API}/players/${walletAddress}/daily-claim`, {
-        method: 'POST',
-      })
-
-      // 3. Attempt on-chain engagement reward if eligible
-      if (rewardsReady) {
-        const eligible = await canClaim(walletAddress as `0x${string}`)
-        if (eligible) {
-          try {
-            const receipt = await claimEngagementReward(walletAddress as `0x${string}`)
-            setRewardTxHash(receipt.transactionHash)
-          } catch {
-            // Non-fatal: daily claim still recorded, on-chain reward failed silently
-          }
-        }
-      }
+      await fetch(`${API}/players/${walletAddress}/daily-claim`, { method: 'POST' })
     },
     onSuccess: () => {
       setClaimed(true)
@@ -57,36 +43,41 @@ export default function DailyClaimButton({ walletAddress }: Props) {
     : 0
 
   return (
-    <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-valor-surface border border-valor-border rounded-xl p-4 flex flex-col gap-3">
+
+      {/* Header + balance */}
+      <div className="flex items-center justify-between">
         <p className="font-bold text-white text-sm">Daily Check-in</p>
-        <span className="text-slate-400 text-xs font-bold">Resets Decay</span>
+        {gBalance ? (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded"
+            style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
+            <span className="text-[9px] font-bold text-amber-500/60 uppercase tracking-wider">Balance</span>
+            <span className="text-xs font-black text-amber-400">{gBalance}</span>
+          </div>
+        ) : (
+          <span className="text-slate-600 text-xs font-bold">Resets Decay</span>
+        )}
       </div>
 
       {claimed ? (
-        <motion.div
-          className="text-center"
+        <motion.p
+          className="text-green-400 text-sm font-bold text-center"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
         >
-          <p className="text-green-400 text-sm font-bold">Reward claimed! ✓</p>
-          {rewardTxHash && (
-            <p className="text-[10px] text-slate-500 mt-1 font-mono truncate" title={rewardTxHash}>
-              On-chain: {rewardTxHash.slice(0, 10)}…
-            </p>
-          )}
-        </motion.div>
+          Checked in! Decay reset ✓
+        </motion.p>
       ) : canClaimDaily ? (
         <button
           onClick={() => mutate()}
           disabled={isPending}
           className="w-full py-2 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
         >
-          {isPending ? 'Claiming...' : 'Claim Daily Reward'}
+          {isPending ? 'Checking in...' : 'Daily Check-in'}
         </button>
       ) : (
         <p className="text-xs text-slate-500 text-center">
-          Next claim in {hoursRemaining.toFixed(1)}h
+          Next check-in in {hoursRemaining.toFixed(1)}h
         </p>
       )}
     </div>
