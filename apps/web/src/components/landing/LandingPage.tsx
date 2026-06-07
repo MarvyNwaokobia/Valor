@@ -206,7 +206,7 @@ export default function LandingPage() {
             <motion.div className="flex items-center gap-2.5"
               initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:0.7, delay:0.25 }}>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to right, transparent, rgba(234,179,8,0.55))' }} />
-              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>One Verified Human. One Warrior.</span>
+              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>One human. One warrior.</span>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to left, transparent, rgba(234,179,8,0.55))' }} />
             </motion.div>
 
@@ -496,7 +496,7 @@ export default function LandingPage() {
 
           <p className="font-display font-bold uppercase"
             style={{ fontSize:10, letterSpacing:'0.48em', color:'rgba(234,179,8,0.55)' }}>
-            One Verified Human. One Warrior.
+            One human. One warrior.
           </p>
 
           <h2 className="font-display font-black text-white leading-tight"
@@ -505,7 +505,7 @@ export default function LandingPage() {
           </h2>
 
           <p className="text-slate-500 leading-relaxed" style={{ fontSize:13, maxWidth:340 }}>
-            One identity. One warrior. Every victory earns real G$ on Celo. No bots. No alts. Only you.
+            One human. One warrior. Every victory earns real G$ on Celo. No bots. No alts. Only you.
           </p>
 
           <div className="w-full flex flex-col items-center gap-3 mt-2">
