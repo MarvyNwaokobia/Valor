@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.5",
+    "@gooddollar/goodcollective-sdk": "^1.4.0",
     "@goodsdks/citizen-sdk": "^1.2.5",
     "@goodsdks/engagement-sdk": "^1.0.4",
     "@privy-io/react-auth": "^3.28.0",
@@ -25,6 +26,7 @@
     "@react-three/fiber": "^9.6.1",
     "@supabase/supabase-js": "^2.106.2",
     "@tanstack/react-query": "^5.100.14",
+    "ethers": "^5.8.0",
     "framer-motion": "^12.40.0",
     "howler": "^2.2.4",
     "lucide-react": "^0.515.0",

@@ -5,7 +5,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, H256},
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 abigen!(
     ValorGameRecord,
@@ -16,11 +16,20 @@ abigen!(
     ]"#
 );
 
+abigen!(
+    GoodCollectiveUBIPool,
+    r#"[
+        function addMember(address member) external
+    ]"#
+);
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 #[derive(Clone)]
 pub struct ChainWriter {
-    contract: Arc<ValorGameRecord<ChainClient>>,
+    contract:   Arc<ValorGameRecord<ChainClient>>,
+    client:     Arc<ChainClient>,
+    rank_pools: HashMap<String, Address>,
 }
 
 impl ChainWriter {
@@ -47,10 +56,20 @@ impl ChainWriter {
             .ok()?;
 
         let client = Arc::new(SignerMiddleware::new(provider, wallet));
-        let contract = Arc::new(ValorGameRecord::new(address, client));
+        let contract = Arc::new(ValorGameRecord::new(address, client.clone()));
+
+        // Load GoodCollective UBI pool addresses from env — optional, pools are skipped if unset
+        let mut rank_pools = HashMap::new();
+        for rank in ["Silver", "Gold", "Platinum", "Diamond"] {
+            let key = format!("RANK_POOL_{}", rank.to_uppercase());
+            if let Ok(addr) = std::env::var(&key).and_then(|v| v.parse::<Address>().map_err(|_| std::env::VarError::NotPresent)) {
+                rank_pools.insert(rank.to_string(), addr);
+                tracing::info!("Rank pool {} → {:?}", rank, rank_pools[rank]);
+            }
+        }
 
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract })
+        Some(Self { contract, client, rank_pools })
     }
 
     pub async fn claim_character(
@@ -108,6 +127,22 @@ impl ChainWriter {
             }
             Err(e) => {
                 tracing::warn!("recordRankUp chain write failed: {}", e);
+                None
+            }
+        }
+    }
+
+    pub async fn enroll_in_rank_pool(&self, player: Address, rank: &str) -> Option<H256> {
+        let pool_addr = self.rank_pools.get(rank)?;
+        let pool = GoodCollectiveUBIPool::new(*pool_addr, self.client.clone());
+        match pool.add_member(player).send().await {
+            Ok(pending) => {
+                let hash = pending.tx_hash();
+                tracing::info!("enrollRankPool {} → {:?}", rank, hash);
+                Some(hash)
+            }
+            Err(e) => {
+                tracing::warn!("enrollRankPool {} failed: {}", rank, e);
                 None
             }
         }

@@ -28,6 +28,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@gooddollar/goodcollective-contracts/typechain-types": [
+        "./src/types/goodcollective-contracts-shim.d.ts"
+      ],
+      "@gooddollar/goodcollective-contracts/typechain-types/*": [
+        "./src/types/goodcollective-contracts-shim.d.ts"
       ]
     },
     "allowJs": true,
