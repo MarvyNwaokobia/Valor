@@ -195,7 +195,7 @@ export default function OnboardingPage() {
             <p className="font-display font-bold uppercase mt-2" style={{
               fontSize: '8px', letterSpacing: '0.28em', color: 'rgba(255,255,255,0.18)',
             }}>
-              ⬡ Permanently bound to your wallet
+              ⬡ Your permanent warrior identity
             </p>
           </motion.div>
 

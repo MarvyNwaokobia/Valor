@@ -257,7 +257,7 @@ function OnboardingPrompt() {
       <div>
         <h2 className="font-display font-black text-white text-3xl tracking-wider">Forge Your Fighter</h2>
         <p className="text-slate-400 mt-3 max-w-md leading-relaxed text-sm">
-          One character per wallet. Choose your class, customize your warrior, earn your legend.
+          One character. Choose your class, customize your warrior, earn your legend.
         </p>
       </div>
       <Link

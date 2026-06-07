@@ -14,7 +14,7 @@ export function ChainBadge({ txHash, className = '' }: ChainBadgeProps) {
       className={`inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-500 hover:text-emerald-400 transition-colors ${className}`}
       title={`View on Celoscan: ${txHash}`}
     >
-      ⛓ on-chain
+      ✦ verified
     </a>
   )
 }

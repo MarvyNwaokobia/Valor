@@ -35,12 +35,12 @@ function useEmbers(n = 18) {
 
 const FEATURES = [
   { Icon: Swords, label: 'Fight',  color: '#ef4444', desc: 'Turn-based combat where class, skill, and timing decide who wins. No pay-to-win.' },
-  { Icon: Coins,  label: 'Earn G$', color: '#eab308', desc: 'Every victory pays out GoodDollar tokens — real money sent directly to your wallet.' },
-  { Icon: Gem,    label: 'Own',    color: '#8b5cf6', desc: 'Weapons and gear are NFTs on Celo. Buy, sell, and equip in the Armoury.' },
+  { Icon: Coins,  label: 'Earn G$', color: '#eab308', desc: 'Every victory pays out GoodDollar tokens — real money that goes directly into your account.' },
+  { Icon: Gem,    label: 'Own',    color: '#8b5cf6', desc: 'Weapons and gear are yours permanently. Buy, sell, and equip in the Armoury.' },
 ] as const
 
 const HOW_IT_WORKS = [
-  { num: '01', color: '#ef4444', title: 'Prove You\'re Human', desc: 'Connect via GoodDollar — the universal basic income protocol. One warrior per verified wallet. No bots.' },
+  { num: '01', color: '#ef4444', title: 'Prove You\'re Human', desc: 'Connect via GoodDollar — the universal basic income protocol. One warrior per verified player. No bots.' },
   { num: '02', color: '#3b82f6', title: 'Choose Your Class',  desc: 'Berserker, Sentinel, or Phantom. Your class is permanent — it defines your identity in the arena.' },
   { num: '03', color: '#8b5cf6', title: 'Battle & Earn',      desc: 'Climb the ranks. Every win pays out G$ tokens on Celo. Every loss teaches you something.' },
 ] as const
@@ -323,7 +323,7 @@ export default function LandingPage() {
           <SectionHead
             eyebrow="Three Classes. One Covenant."
             title="Choose Your Warrior"
-            sub="One class per wallet. Permanent. This is your identity in the arena — not a loadout, not a character slot."
+            sub="One class. Permanent. This is your identity in the arena — not a loadout, not a character slot."
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

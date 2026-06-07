@@ -253,7 +253,7 @@ export default function CharacterSelectScreen({ onSelect }: Props) {
 
         {/* Permanence stamp */}
         <div className="permanence-stamp justify-center py-1">
-          ⬡ This warrior is permanently bound to your wallet
+          ⬡ This warrior is your permanent identity
         </div>
 
         {/* CTA */}

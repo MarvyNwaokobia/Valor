@@ -468,7 +468,7 @@ export default function CharacterCreation({ walletAddress, initialClass = 'Berse
               </span>
             ) : `Forge ${characterName}`}
           </motion.button>
-          <p className="text-slate-700 text-[8px] tracking-widest uppercase text-center mt-2">One character per wallet</p>
+          <p className="text-slate-700 text-[8px] tracking-widest uppercase text-center mt-2">One permanent warrior</p>
         </div>
       </div>
 
