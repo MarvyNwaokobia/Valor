@@ -5,8 +5,8 @@ import './globals.css'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Valor — One Verified Human. One Warrior.',
-  description: 'Valor — One verified human. One permanent warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
+  title: 'Valor — One human. One warrior.',
+  description: 'Valor — One human. One warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
   icons: { icon: '/valor-icon.svg' },
   manifest: '/manifest.json',
   appleWebApp: {

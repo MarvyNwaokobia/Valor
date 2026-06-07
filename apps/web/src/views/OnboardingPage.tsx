@@ -294,12 +294,11 @@ export default function OnboardingPage() {
   )
 }
 
-// ── Covenant intro — "One Verified Human. One Warrior." ───────────────────────
+// ── Covenant intro — "One human. One warrior." ────────────────────────────────
 
 const LINES = [
-  { text: 'ONE VERIFIED HUMAN',   delay: 0    },
-  { text: 'ONE WARRIOR',          delay: 0.45 },
-  { text: 'FOREVER',              delay: 0.8  },
+  { text: 'ONE HUMAN',   delay: 0    },
+  { text: 'ONE WARRIOR', delay: 0.45 },
 ]
 
 function CovenantIntro({ onComplete }: { onComplete: () => void }) {
