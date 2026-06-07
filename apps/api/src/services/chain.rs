@@ -30,14 +30,23 @@ abigen!(
     ]"#
 );
 
+abigen!(
+    ValorRewardPool,
+    r#"[
+        function distributeRankUpReward(address player, string newRank) external
+        function distributeDailyClaim(address player) external
+    ]"#
+);
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 #[derive(Clone)]
 pub struct ChainWriter {
-    contract:    Arc<ValorGameRecord<ChainClient>>,
-    client:      Arc<ChainClient>,
-    rank_pools:  HashMap<String, Address>,
-    marketplace: Option<Arc<ValorMarketplace<ChainClient>>>,
+    contract:     Arc<ValorGameRecord<ChainClient>>,
+    client:       Arc<ChainClient>,
+    rank_pools:   HashMap<String, Address>,
+    marketplace:  Option<Arc<ValorMarketplace<ChainClient>>>,
+    reward_pool:  Option<Arc<ValorRewardPool<ChainClient>>>,
 }
 
 impl ChainWriter {
@@ -87,8 +96,17 @@ impl ChainWriter {
                 Arc::new(ValorMarketplace::new(addr, client.clone()))
             });
 
+        // Reward pool — optional (distributions skipped if unset)
+        let reward_pool = std::env::var("REWARD_POOL_CONTRACT")
+            .ok()
+            .and_then(|v| v.parse::<Address>().ok())
+            .map(|addr| {
+                tracing::info!("Reward pool enabled → {:?}", addr);
+                Arc::new(ValorRewardPool::new(addr, client.clone()))
+            });
+
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract, client, rank_pools, marketplace })
+        Some(Self { contract, client, rank_pools, marketplace, reward_pool })
     }
 
     pub async fn claim_character(
@@ -165,6 +183,40 @@ impl ChainWriter {
                 None
             }
         }
+    }
+
+    /// Distributes a rank-up G$ reward from the ValorRewardPool to the player's wallet.
+    /// Returns Ok(true) on success, Ok(false) if pool not configured, Err on failure.
+    pub async fn distribute_rank_up_reward(&self, player: Address, rank: String) -> Result<bool, String> {
+        let pool = match &self.reward_pool {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        pool.distribute_rank_up_reward(player, rank.clone())
+            .send()
+            .await
+            .map_err(|e| format!("distributeRankUpReward failed: {}", e))?
+            .await
+            .map_err(|e| format!("distributeRankUpReward tx failed: {}", e))?;
+        tracing::info!("distributeRankUpReward: {} → {}", player, rank);
+        Ok(true)
+    }
+
+    /// Distributes the daily claim G$ reward from the ValorRewardPool to the player's wallet.
+    /// Returns Ok(true) on success, Ok(false) if pool not configured, Err on failure.
+    pub async fn distribute_daily_claim(&self, player: Address) -> Result<bool, String> {
+        let pool = match &self.reward_pool {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        pool.distribute_daily_claim(player)
+            .send()
+            .await
+            .map_err(|e| format!("distributeDailyClaim failed: {}", e))?
+            .await
+            .map_err(|e| format!("distributeDailyClaim tx failed: {}", e))?;
+        tracing::info!("distributeDailyClaim: {}", player);
+        Ok(true)
     }
 
     /// Relays a marketplace purchase on behalf of the player.
