@@ -54,8 +54,9 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
       setShowConfirm(false)
     } catch (err) {
       if (isUserRejection(err)) {
-        // User cancelled — not an error, just close the modal
         setShowConfirm(false)
+      } else if (err instanceof Error && err.message === 'Insufficient G$ balance') {
+        setError('You don\'t have enough G$ to buy this item.')
       } else {
         setError('Purchase could not be completed. Please try again.')
         console.error('[Purchase]', err)
@@ -162,9 +163,12 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
             >
               {/* Header */}
               <div className="flex items-start justify-between gap-2">
-                <h2 className="font-display font-black text-white text-xl leading-tight">
-                  Confirm Purchase
-                </h2>
+                <div>
+                  <h2 className="font-display font-black text-white text-xl leading-tight">
+                    Confirm Purchase
+                  </h2>
+                  <p className="text-slate-500 text-xs mt-0.5">One-tap authorization · No gas fees</p>
+                </div>
                 {!isPending && (
                   <button
                     onClick={() => setShowConfirm(false)}
@@ -226,7 +230,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
                       Processing...
                     </span>
                   ) : (
-                    'Confirm Purchase'
+                    'Sign & Buy'
                   )}
                 </motion.button>
               </div>
