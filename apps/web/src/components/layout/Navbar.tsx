@@ -27,10 +27,11 @@ function AudioToggle() {
 }
 
 const NAV_LINKS = [
-  { to: '/',            label: 'Home',   exact: true  },
-  { to: '/battle',      label: 'Battle', exact: false },
-  { to: '/marketplace', label: 'Market', exact: false },
-  { to: '/leaderboard', label: 'Ranks',  exact: false },
+  { to: '/',            label: 'Home',    exact: true  },
+  { to: '/battle',      label: 'Battle',  exact: false },
+  { to: '/profile',     label: 'Profile', exact: false },
+  { to: '/marketplace', label: 'Market',  exact: false },
+  { to: '/leaderboard', label: 'Ranks',   exact: false },
 ]
 
 export default function Navbar() {
