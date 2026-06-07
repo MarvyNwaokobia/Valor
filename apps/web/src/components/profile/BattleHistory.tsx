@@ -43,14 +43,15 @@ function timeAgo(iso: string) {
 }
 
 export default function BattleHistory({ walletAddress, playerRank }: Props) {
-  const { data: battles = [], isLoading } = useQuery<BattleRow[]>({
+  const { data: battles = [], isLoading, isError } = useQuery<BattleRow[]>({
     queryKey: ['battles', walletAddress],
     queryFn: async () => {
       const res = await fetch(`${API}/players/${walletAddress}/battles`)
-      if (!res.ok) return []
+      if (!res.ok) throw new Error(`${res.status}`)
       return res.json()
     },
     staleTime: 60_000,
+    retry: 1,
   })
 
   const gPerWin = RANK_G_REWARD[playerRank] ?? 10
@@ -64,6 +65,15 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
             <div key={i} className="h-14 rounded-lg animate-pulse" style={{ background: 'rgba(18,18,26,0.6)' }} />
           ))}
         </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="bg-valor-surface border border-valor-border rounded-xl p-6 text-center">
+        <Swords size={28} className="text-red-800 mx-auto mb-2" strokeWidth={1.2} />
+        <p className="text-slate-500 text-sm">Could not load battle history.</p>
       </div>
     )
   }

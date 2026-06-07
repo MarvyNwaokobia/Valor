@@ -110,21 +110,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     CharacterViewer.preload(CHARACTER_GLB[player.character_class as CharacterClass])
   }, [player.character_class])
 
-  // ── Landscape + fullscreen during battle ────────────────────────────────
+  // ── Landscape lock during battle ────────────────────────────────────────
+  // requestFullscreen() must come from a user gesture (button onClick) — not here.
+  // The fighting and result phases render as fixed inset-0 overlays, covering the
+  // layout container, so no additional fullscreen API call is needed.
   useEffect(() => {
     if (phase !== 'fighting') return
     if (typeof screen !== 'undefined' && screen.orientation?.lock) {
       screen.orientation.lock('landscape').catch(() => {})
     }
-    const el = document.documentElement
-    if (el.requestFullscreen && !document.fullscreenElement) {
-      el.requestFullscreen().catch(() => {})
-    }
     return () => {
       try { screen.orientation?.unlock?.() } catch {}
-      if (document.fullscreenElement && document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {})
-      }
     }
   }, [phase])
 
@@ -547,10 +543,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
           {/* ── Return home ── */}
           <motion.button
-            onClick={() => {
-              if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-              router.push('/')
-            }}
+            onClick={() => router.push('/')}
             className="w-full py-3 font-display font-black uppercase tracking-[0.2em] rounded-xl border transition-colors"
             style={{
               fontSize: 'clamp(11px, 2.5vw, 13px)',

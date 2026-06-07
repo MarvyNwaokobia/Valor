@@ -11,16 +11,12 @@ import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import { ChainBadge } from '@/components/ui/ChainBadge'
-import { CLASS_DEFINITIONS } from '@/lib/classes'
+import CharacterViewer from '@/components/warrior/CharacterViewer'
+import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
+import type { CharacterClass } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
-
-const CLASS_SOLO: Record<string, string> = {
-  Berserker: '/characters/Berserkers.png',
-  Sentinel:  '/characters/Sentinel.png',
-  Phantom:   '/characters/Phanthom.png',
-}
 
 export default function ProfilePage() {
   const { address } = useAccount()
@@ -30,9 +26,8 @@ export default function ProfilePage() {
 
   if (!address || !player) { router.replace('/'); return null }
 
-  const charClass  = player.character_class ?? 'Berserker'
-  const def        = CLASS_DEFINITIONS[charClass as keyof typeof CLASS_DEFINITIONS] ?? CLASS_DEFINITIONS['Berserker']
-  const heroImg    = CLASS_SOLO[charClass]
+  const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
+  const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
   const xpProgress = (player.xp / XP_PER_RANK) * 100
 
   return (
@@ -51,10 +46,13 @@ export default function ProfilePage() {
           <div className="absolute inset-0" style={{
             background: `radial-gradient(ellipse 80% 90% at 50% 60%, ${def.accentColor}20, transparent)`,
           }}/>
-          {/* Character image */}
-          <img src={heroImg} alt={player.character_class ?? 'Warrior'}
-            className="absolute inset-0 w-full h-full object-cover object-top select-none"
-            style={{ filter: `contrast(1.05) drop-shadow(0 0 24px ${def.glowColor})` }}
+          {/* 3D character model */}
+          <CharacterViewer
+            glbPath={CHARACTER_GLB[charClass]}
+            accentColor={def.accentColor}
+            animationName="idle"
+            modelKey={`profile-${charClass}`}
+            className="absolute inset-0"
           />
           {/* Bottom fade */}
           <div className="absolute inset-x-0 bottom-0 h-44 pointer-events-none" style={{

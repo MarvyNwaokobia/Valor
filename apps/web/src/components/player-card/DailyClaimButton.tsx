@@ -17,7 +17,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
 
   const { formatted: gBalance } = useGBalance(walletAddress as `0x${string}`)
 
-  const { data: claimStatus } = useQuery({
+  const { data: claimStatus, isLoading: statusLoading } = useQuery({
     queryKey: ['daily-claim', walletAddress],
     queryFn: async () => {
       const res = await fetch(`${API}/players/${walletAddress}/daily-claim-status`)
@@ -26,7 +26,8 @@ export default function DailyClaimButton({ walletAddress }: Props) {
     },
   })
 
-  const canClaimDaily = claimStatus?.can_claim ?? true
+  // Default to false while loading — prevents double-claiming before status resolves
+  const canClaimDaily = claimStatus?.can_claim ?? false
 
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
@@ -70,10 +71,10 @@ export default function DailyClaimButton({ walletAddress }: Props) {
       ) : canClaimDaily ? (
         <button
           onClick={() => mutate()}
-          disabled={isPending}
+          disabled={isPending || statusLoading}
           className="w-full py-2 bg-valor-gold text-black font-bold rounded-lg hover:bg-valor-gold-light disabled:opacity-50 transition-colors text-sm"
         >
-          {isPending ? 'Checking in...' : 'Daily Check-in'}
+          {isPending ? 'Checking in...' : statusLoading ? '...' : 'Daily Check-in'}
         </button>
       ) : (
         <p className="text-xs text-slate-500 text-center">
