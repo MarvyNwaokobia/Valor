@@ -267,8 +267,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             fallback={
               <div className="absolute inset-0 flex items-end justify-center overflow-hidden">
                 <img
-                  src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.gender ?? 'male']}
-                  alt={player.character_class}
+                  src={CHARACTER_IMAGES[player.character_class as CharacterClass]?.[player.character_customization?.gender ?? 'male']}
+                  alt={player.character_class ?? 'character'}
                   className="h-full w-full object-cover object-top"
                   style={{ filter: `drop-shadow(0 0 32px ${def.accentColor}80)` }}
                 />
