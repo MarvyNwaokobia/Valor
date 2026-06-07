@@ -17,6 +17,7 @@ import type { CharacterClass } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
+import { useGBalance } from '@/hooks/useGBalance'
 
 export default function ProfilePage() {
   const { address } = useAccount()
@@ -29,6 +30,7 @@ export default function ProfilePage() {
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
   const xpProgress = (player.xp / XP_PER_RANK) * 100
+  const { formatted: gBalanceFormatted } = useGBalance(address as `0x${string}`)
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 items-start">
@@ -120,12 +122,27 @@ export default function ProfilePage() {
           ))}
         </div>
 
-        {/* G$ earned */}
+        {/* G$ wallet balance — spendable */}
         <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
-          style={{ background: 'rgba(234,179,8,0.06)', borderColor: 'rgba(234,179,8,0.2)' }}>
+          style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.35)' }}>
           <div>
-            <p className="text-[9px] uppercase tracking-widest text-amber-500/60 font-bold">Lifetime G$</p>
-            <p className="font-black text-amber-400 text-lg">{formatGDollarNumber(player.g_earned_lifetime)}</p>
+            <p className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ Balance</p>
+            <p className="font-black text-amber-400 text-lg">
+              {gBalanceFormatted ?? '—'}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Spendable</p>
+            <p className="text-[9px] text-slate-500 mt-0.5">Use in Marketplace</p>
+          </div>
+        </div>
+
+        {/* Lifetime G$ earned + record */}
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
+          style={{ background: 'rgba(234,179,8,0.04)', borderColor: 'rgba(234,179,8,0.12)' }}>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-amber-500/40 font-bold">Total Earned</p>
+            <p className="font-black text-amber-400/70 text-base">{formatGDollarNumber(player.g_earned_lifetime)} G$</p>
           </div>
           <div className="text-right">
             <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Record</p>
