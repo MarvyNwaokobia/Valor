@@ -30,20 +30,22 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
   const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
   const inventory = usePlayerStore((s) => s.inventory)
   const [error, setError] = useState<string | null>(null)
+  const [txHash, setTxHash] = useState<string | null>(null)
 
   const rarityColor = ITEM_RARITY_COLORS[item.rarity]
-  const isLimited = item.total_supply !== null
-  const isSoldOut = isLimited && (item.remaining_supply ?? 0) <= 0
-  const isPending = pendingItemId === item.id
+  const isLimited   = item.total_supply !== null
+  const isSoldOut   = isLimited && (item.remaining_supply ?? 0) <= 0
+  const isPending   = pendingItemId === item.id
   const alreadyOwned = inventory.some((i) => i.item_id === item.id)
 
   async function handleBuy() {
     setError(null)
+    setTxHash(null)
     try {
-      await purchase(item)
+      const hash = await purchase(item)
+      setTxHash(hash)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Purchase failed'
-      setError(msg.length > 60 ? 'Transaction rejected or failed.' : msg)
+      setError(err instanceof Error ? err.message : 'Purchase failed')
     }
   }
 
@@ -72,10 +74,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
       {/* Icon */}
       <div
         className="w-full aspect-square rounded-xl flex items-center justify-center border"
-        style={{
-          background: `${rarityColor}0d`,
-          borderColor: `${rarityColor}22`,
-        }}
+        style={{ background: `${rarityColor}0d`, borderColor: `${rarityColor}22` }}
       >
         {(() => {
           const Icon = CATEGORY_ICONS[item.category] ?? Sword
@@ -93,7 +92,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
 
       {/* Price + stat */}
       <div className="flex items-center justify-between mt-auto">
-        <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)}</span>
+        <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)} G$</span>
         {item.stat_boost > 0 && (
           <span className="text-xs text-slate-400 font-bold">
             +{item.stat_boost} {STAT_LABELS[item.category]}
@@ -102,6 +101,11 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
       </div>
 
       {error && <p className="text-red-400 text-xs">{error}</p>}
+      {txHash && (
+        <p className="text-green-400 text-xs truncate">
+          ✓ Purchased
+        </p>
+      )}
 
       {/* Action button */}
       {alreadyOwned ? (
@@ -126,12 +130,12 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
                 animate={{ rotate: 360 }}
                 transition={{ duration: 0.7, repeat: Infinity, ease: 'linear' }}
               />
-              Confirming...
+              Purchasing...
             </span>
           ) : isSoldOut ? (
             'Sold Out'
           ) : !walletAddress ? (
-            'Connect Wallet'
+            'Sign in to buy'
           ) : (
             'Buy with G$'
           )}

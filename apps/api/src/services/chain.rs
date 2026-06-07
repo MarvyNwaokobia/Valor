@@ -3,9 +3,9 @@ use ethers::{
     prelude::abigen,
     providers::{Http, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, H256},
+    types::{Address, H256, U256},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
 abigen!(
     ValorGameRecord,
@@ -23,18 +23,26 @@ abigen!(
     ]"#
 );
 
+abigen!(
+    ValorMarketplace,
+    r#"[
+        function purchaseWithPermit(address buyer, uint256 itemId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+    ]"#
+);
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 #[derive(Clone)]
 pub struct ChainWriter {
-    contract:   Arc<ValorGameRecord<ChainClient>>,
-    client:     Arc<ChainClient>,
-    rank_pools: HashMap<String, Address>,
+    contract:    Arc<ValorGameRecord<ChainClient>>,
+    client:      Arc<ChainClient>,
+    rank_pools:  HashMap<String, Address>,
+    marketplace: Option<Arc<ValorMarketplace<ChainClient>>>,
 }
 
 impl ChainWriter {
     pub fn from_env() -> Option<Self> {
-        let private_key = std::env::var("BACKEND_PRIVATE_KEY").ok()?;
+        let private_key   = std::env::var("BACKEND_PRIVATE_KEY").ok()?;
         let contract_addr = std::env::var("GAME_RECORD_CONTRACT").ok()?;
         let rpc_url = std::env::var("CELO_RPC_URL")
             .unwrap_or_else(|_| "https://forno.celo.org".to_string());
@@ -58,18 +66,29 @@ impl ChainWriter {
         let client = Arc::new(SignerMiddleware::new(provider, wallet));
         let contract = Arc::new(ValorGameRecord::new(address, client.clone()));
 
-        // Load GoodCollective UBI pool addresses from env — optional, pools are skipped if unset
+        // GoodCollective UBI pool addresses — optional
         let mut rank_pools = HashMap::new();
         for rank in ["Silver", "Gold", "Platinum", "Diamond"] {
             let key = format!("RANK_POOL_{}", rank.to_uppercase());
-            if let Ok(addr) = std::env::var(&key).and_then(|v| v.parse::<Address>().map_err(|_| std::env::VarError::NotPresent)) {
+            if let Ok(addr) = std::env::var(&key)
+                .and_then(|v| v.parse::<Address>().map_err(|_| std::env::VarError::NotPresent))
+            {
                 rank_pools.insert(rank.to_string(), addr);
                 tracing::info!("Rank pool {} → {:?}", rank, rank_pools[rank]);
             }
         }
 
+        // Marketplace contract — optional (relay purchases disabled if unset)
+        let marketplace = std::env::var("MARKETPLACE_CONTRACT")
+            .ok()
+            .and_then(|v| v.parse::<Address>().ok())
+            .map(|addr| {
+                tracing::info!("Marketplace relay enabled → {:?}", addr);
+                Arc::new(ValorMarketplace::new(addr, client.clone()))
+            });
+
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract, client, rank_pools })
+        Some(Self { contract, client, rank_pools, marketplace })
     }
 
     pub async fn claim_character(
@@ -146,5 +165,57 @@ impl ChainWriter {
                 None
             }
         }
+    }
+
+    /// Relays a marketplace purchase on behalf of the player.
+    /// The player signed an EIP-2612 permit off-chain — no CELO required from them.
+    /// This wallet pays gas. Waits for on-chain confirmation before returning.
+    pub async fn purchase_item_for(
+        &self,
+        buyer: Address,
+        item_id: u64,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let marketplace = self
+            .marketplace
+            .as_ref()
+            .ok_or_else(|| "Marketplace relay not configured (MARKETPLACE_CONTRACT unset)".to_string())?;
+
+        let r: [u8; 32] = H256::from_str(r_hex)
+            .map_err(|_| format!("Invalid r: {}", r_hex))?
+            .0;
+        let s: [u8; 32] = H256::from_str(s_hex)
+            .map_err(|_| format!("Invalid s: {}", s_hex))?
+            .0;
+
+        let call = marketplace.purchase_with_permit(
+            buyer,
+            U256::from(item_id),
+            U256::from(deadline),
+            v,
+            r,
+            s,
+        );
+        let pending = call.send().await
+            .map_err(|e| format!("TX submission failed: {}", e))?;
+
+        let hash = pending.tx_hash();
+        tracing::info!("purchaseWithPermit submitted: {:?}", hash);
+
+        // Wait for 1 confirmation (Celo ~5s blocks) — 90s timeout
+        tokio::time::timeout(
+            Duration::from_secs(90),
+            pending.confirmations(1),
+        )
+        .await
+        .map_err(|_| "Transaction timed out waiting for confirmation".to_string())?
+        .map_err(|e| format!("Transaction failed on-chain: {}", e))?
+        .ok_or_else(|| "Transaction was dropped from mempool".to_string())?;
+
+        tracing::info!("purchaseWithPermit confirmed: {:?}", hash);
+        Ok(hash)
     }
 }

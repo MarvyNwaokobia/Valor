@@ -56,7 +56,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/items")
                 .route("", web::get().to(items::list_items))
-                .route("/{id}/purchase", web::post().to(items::purchase_item)),
+                .route("/{id}/purchase", web::post().to(items::purchase_item))
+                .route("/{id}/purchase-relay", web::post().to(items::purchase_item_relay)),
         )
         .service(
             web::scope("/decay")

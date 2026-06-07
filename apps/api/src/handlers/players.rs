@@ -366,26 +366,28 @@ pub async fn create_player(
 
     match result {
         Ok(player) => {
-            // Background chain write — record character claim on-chain
-            if let Some(chain) = state.chain.as_ref().cloned() {
-                let addr_str = wallet.clone();
-                let class = player.character_class.clone().unwrap_or_default();
-                let name = player.character_name.clone();
-                let db = state.db.clone();
-                tokio::spawn(async move {
-                    if let Ok(addr) = addr_str.parse::<Address>() {
-                        if let Some(hash) = chain.claim_character(addr, class, name).await {
-                            let hash_str = format!("{:?}", hash);
-                            let _ = sqlx::query(
-                                "UPDATE players SET character_claim_tx = $1 WHERE wallet_address = $2",
-                            )
-                            .bind(hash_str)
-                            .bind(addr_str)
-                            .execute(&db)
-                            .await;
+            // Background chain write — only for brand-new players (no existing claim tx)
+            if player.character_claim_tx.is_none() {
+                if let Some(chain) = state.chain.as_ref().cloned() {
+                    let addr_str = wallet.clone();
+                    let class = player.character_class.clone().unwrap_or_default();
+                    let name = player.character_name.clone();
+                    let db = state.db.clone();
+                    tokio::spawn(async move {
+                        if let Ok(addr) = addr_str.parse::<Address>() {
+                            if let Some(hash) = chain.claim_character(addr, class, name).await {
+                                let hash_str = format!("{:?}", hash);
+                                let _ = sqlx::query(
+                                    "UPDATE players SET character_claim_tx = $1 WHERE wallet_address = $2",
+                                )
+                                .bind(hash_str)
+                                .bind(addr_str)
+                                .execute(&db)
+                                .await;
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
             HttpResponse::Ok().json(player)
         }
