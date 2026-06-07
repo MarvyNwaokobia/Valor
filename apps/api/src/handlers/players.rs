@@ -176,8 +176,33 @@ pub async fn daily_claim(
     .execute(&state.db)
     .await;
 
-    // TODO: Distribute 5 G$ via GoodCollective SDK
-    // This will be implemented when GoodCollective pool is configured.
+    // Distribute 5 G$ from the reward pool (background — doesn't block the response)
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        if let Ok(addr) = wallet.parse::<Address>() {
+            let wallet2 = wallet.clone();
+            let db      = state.db.clone();
+            tokio::spawn(async move {
+                match chain.distribute_daily_claim(addr).await {
+                    Ok(true) => {
+                        // Transfer confirmed — record in g_earned_lifetime
+                        let _ = sqlx::query(
+                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + 5 WHERE wallet_address = $1",
+                        )
+                        .bind(&wallet2)
+                        .execute(&db)
+                        .await;
+                        tracing::info!("Daily claim G$ distributed: {}", wallet2);
+                    }
+                    Ok(false) => {
+                        tracing::warn!("Reward pool not configured — daily claim decay-reset only for {}", wallet2);
+                    }
+                    Err(e) => {
+                        tracing::error!("Daily claim G$ distribution failed for {}: {}", wallet2, e);
+                    }
+                }
+            });
+        }
+    }
 
     HttpResponse::Ok().json(json!({
         "success": true,
@@ -282,23 +307,38 @@ pub async fn rank_up_reward(
         return HttpResponse::BadRequest().json(json!({"error": "Unknown rank"}));
     };
 
-    // Update g_earned_lifetime in DB
-    let _ = sqlx::query(
-        "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
-    )
-    .bind(amount as i64)
-    .bind(&wallet)
-    .execute(&state.db)
-    .await;
+    tracing::info!("Rank-up: {} -> {} (+{} G$)", wallet, new_rank, amount);
 
-    tracing::info!("Rank-up recorded: {} -> {} (+{} G$)", wallet, new_rank, amount);
-
-    // Background chain write
+    // Background chain writes: record event + distribute reward
     if let Some(chain) = state.chain.as_ref().cloned() {
         if let Ok(addr) = wallet.parse::<Address>() {
-            let rank_str = new_rank.clone();
+            let rank_str  = new_rank.clone();
+            let wallet2   = wallet.clone();
+            let db        = state.db.clone();
             tokio::spawn(async move {
-                chain.record_rank_up(addr, rank_str).await;
+                // 1. Record rank-up on-chain (non-blocking, best-effort)
+                chain.record_rank_up(addr, rank_str.clone()).await;
+
+                // 2. Distribute real G$ from the reward pool
+                match chain.distribute_rank_up_reward(addr, rank_str.clone()).await {
+                    Ok(true) => {
+                        // Transfer confirmed — now reflect it in g_earned_lifetime
+                        let _ = sqlx::query(
+                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
+                        )
+                        .bind(amount as i64)
+                        .bind(&wallet2)
+                        .execute(&db)
+                        .await;
+                        tracing::info!("G$ distributed + recorded: {} +{}", wallet2, amount);
+                    }
+                    Ok(false) => {
+                        tracing::warn!("Reward pool not configured — skipping G$ distribution for {}", wallet2);
+                    }
+                    Err(e) => {
+                        tracing::error!("G$ distribution failed for {}: {}", wallet2, e);
+                    }
+                }
             });
         }
     }
