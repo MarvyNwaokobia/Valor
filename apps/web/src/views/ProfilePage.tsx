@@ -9,6 +9,7 @@ import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
+import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import { ChainBadge } from '@/components/ui/ChainBadge'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
@@ -140,6 +141,9 @@ export default function ProfilePage() {
 
         {/* Daily claim */}
         <DailyClaimButton walletAddress={address} />
+
+        {/* GoodCollective rank pool rewards */}
+        <RankPoolPanel rank={player.rank} walletAddress={address} />
 
         {/* Decay panel */}
         <DecayPanel walletAddress={address} />

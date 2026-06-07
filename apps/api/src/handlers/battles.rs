@@ -238,13 +238,14 @@ pub async fn fight_bot(
                 }
             }
         });
-        // Record rank-up on-chain if applicable
+        // Record rank-up on-chain + enroll in GoodCollective pool
         if let Some(rank) = new_rank {
             let chain2 = state.chain.as_ref().cloned();
             if let (Some(chain2), Ok(addr)) = (chain2, wallet.parse::<Address>()) {
                 let rank_str = rank.to_string();
                 tokio::spawn(async move {
-                    chain2.record_rank_up(addr, rank_str).await;
+                    chain2.record_rank_up(addr, rank_str.clone()).await;
+                    chain2.enroll_in_rank_pool(addr, &rank_str).await;
                 });
             }
         }
