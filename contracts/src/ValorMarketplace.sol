@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "./ValorItems.sol";
 import "./interfaces/IGoodDollar.sol";
 
@@ -11,8 +13,10 @@ interface IERC677Receiver {
     function onTokenTransfer(address from, uint256 value, bytes calldata data) external;
 }
 
-/// @title ValorMarketplace — Accepts G$ via transferAndCall, mints item NFTs (UUPS upgradeable)
-/// @notice Single-tx purchases: player calls G$.transferAndCall(marketplace, price, itemId)
+/// @title ValorMarketplace — Accepts G$ via transferAndCall or gasless permit relay
+/// @notice Two purchase paths:
+///   1. transferAndCall  — user calls G$.transferAndCall(marketplace, price, itemId) directly
+///   2. purchaseWithPermit — user signs EIP-2612 permit off-chain; backend relays the tx (no CELO gas for user)
 contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
     IGoodDollar public gToken;
     ValorItems public items;
@@ -52,7 +56,7 @@ contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuar
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    /// @notice Called by the G$ ERC677 token on transferAndCall
+    /// @notice Path 1 — called by the G$ ERC677 token on transferAndCall
     /// @param from  Buyer wallet
     /// @param value Amount of G$ sent (in wei)
     /// @param data  ABI-encoded uint256 itemId
@@ -70,7 +74,6 @@ contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuar
         if (!listing.active) revert ItemNotListed();
         if (value < listing.price) revert InsufficientPayment(value, listing.price);
 
-        // Refund excess
         uint256 excess = value - listing.price;
         accumulatedRevenue += listing.price;
 
@@ -78,10 +81,41 @@ contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuar
             gToken.transfer(from, excess);
         }
 
-        // Mint the item NFT to the buyer
         items.mint(from, itemId, 1);
-
         emit ItemPurchased(from, itemId, listing.price);
+    }
+
+    /// @notice Path 2 — gasless purchase via EIP-2612 permit
+    /// @dev Caller (Valor backend) pays gas; buyer signs a permit off-chain so no CELO needed from them
+    /// @param buyer    Player's wallet address
+    /// @param itemId   On-chain item ID (must be listed)
+    /// @param deadline Permit expiry (unix timestamp)
+    /// @param v        Permit signature v
+    /// @param r        Permit signature r
+    /// @param s        Permit signature s
+    function purchaseWithPermit(
+        address buyer,
+        uint256 itemId,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant {
+        MarketItem storage listing = listings[itemId];
+        if (!listing.active) revert ItemNotListed();
+
+        uint256 price = listing.price;
+
+        // Consume the permit — allows this contract to spend exactly `price` G$ from buyer
+        IERC20Permit(address(gToken)).permit(buyer, address(this), price, deadline, v, r, s);
+
+        // Pull G$ from buyer to this contract
+        IERC20(address(gToken)).transferFrom(buyer, address(this), price);
+
+        accumulatedRevenue += price;
+        items.mint(buyer, itemId, 1);
+
+        emit ItemPurchased(buyer, itemId, price);
     }
 
     function listItem(uint256 itemId, uint256 price) external onlyOwner {
