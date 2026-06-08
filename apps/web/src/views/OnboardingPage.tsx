@@ -30,7 +30,7 @@ export default function OnboardingPage() {
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
 
-  const [step,           setStep]           = useState<Step>('covenant') // DEV BYPASS: skip GoodDollar face verification
+  const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [pending,       setPending]       = useState(false)
