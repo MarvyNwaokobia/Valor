@@ -36,21 +36,23 @@ export default function HomePage() {
   const router       = useRouter()
 
   useEffect(() => {
-    // Only send to onboarding once Privy is ready, wallet is connected,
-    // sync finished, and the API confirmed no player record exists.
+    // Once sync confirms no player exists (and it's not a network failure),
+    // send to onboarding. Only do this after sync — not during — to avoid
+    // redirecting a returning user whose cached data is about to load.
     if (!ready || !authenticated || !address) return
     if (playerSynced && !player && !syncFailed) {
       router.replace('/onboarding')
     }
   }, [ready, authenticated, address, player, playerSynced, syncFailed, router])
 
-  // Privy still re-hydrating — don't flash anything yet
+  // Privy still re-hydrating (~200ms on reload) — only unavoidable wait
   if (!ready) return <LoadingScreen />
-  // Genuinely unauthenticated
+  // Unauthenticated
   if (!authenticated || !address) return <LandingPage />
-  // Sync in progress
-  if (!playerSynced) return <LoadingScreen />
-  // Network error — show retry instead of blank screen
+  // Cached player from localStorage → render immediately, sync runs in background
+  // No cached player + sync still running → brief wait only for genuinely new users
+  if (!player && !playerSynced) return <LoadingScreen />
+  // Network failure with no cache — show retry
   if (syncFailed && !player) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-4" style={{ background: '#04030c' }}>
@@ -66,8 +68,7 @@ export default function HomePage() {
       </div>
     )
   }
-  // Player data still loading after sync (shouldn't normally happen, but guard it)
-  if (!player) return <LoadingScreen />
+  if (!player) return null
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
