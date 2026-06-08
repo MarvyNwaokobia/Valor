@@ -13,7 +13,7 @@ const BALANCE_OF_ABI = [
 ] as const
 
 export function useGBalance(address: `0x${string}` | undefined) {
-  const { data: rawBalance, isLoading } = useReadContract({
+  const { data: rawBalance, isLoading, refetch } = useReadContract({
     address: G_TOKEN_ADDRESS,
     abi: BALANCE_OF_ABI,
     functionName: 'balanceOf',
@@ -33,5 +33,5 @@ export function useGBalance(address: `0x${string}` | undefined) {
       ? `${(balance / 1000).toFixed(1)}k G$`
       : `${balance.toFixed(2)} G$`
 
-  return { balance, formatted, isLoading }
+  return { balance, formatted, isLoading, refetch }
 }
