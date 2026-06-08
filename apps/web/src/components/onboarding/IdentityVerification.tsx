@@ -23,7 +23,8 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       setVerified(true)
       setTimeout(onVerified, 900)
     } else {
-      await getFaceVerifyUrl()
+      const url = await getFaceVerifyUrl()
+      if (url) window.open(url, '_blank', 'noopener')
     }
   }
 
@@ -41,7 +42,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6" style={{ background: '#04030c' }}>
       <div className="absolute inset-0 pointer-events-none" style={{
-        background: 'radial-gradient(ellipse 60% 40% at 50% 55%, rgba(0,191,114,0.06), transparent)',
+        background: 'radial-gradient(ellipse 60% 40% at 50% 55%, rgba(59,130,246,0.06), transparent)',
       }} />
 
       <AnimatePresence mode="wait">
@@ -56,10 +57,10 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             transition={{ duration: 0.35 }}
           >
             <div className="w-16 h-16 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(0,191,114,0.08)', border: '2px solid rgba(0,191,114,0.22)' }}>
+              style={{ background: 'rgba(59,130,246,0.08)', border: '2px solid rgba(59,130,246,0.22)' }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2a5 5 0 1 1 0 10A5 5 0 0 1 12 2zm0 12c-5.33 0-8 2.67-8 4v2h16v-2c0-1.33-2.67-4-8-4z"
-                  fill="#00bf72" fillOpacity="0.8" />
+                  fill="#3b82f6" fillOpacity="0.8" />
               </svg>
             </div>
 
@@ -75,7 +76,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
               whileHover={{ scale: 1.02, filter: 'brightness(1.1)' }}
               whileTap={{ scale: 0.97 }}
               className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
-              style={{ background: '#00bf72', color: '#04030c' }}
+              style={{ background: '#3b82f6', color: '#fff' }}
             >
               Verify Identity
             </motion.button>
@@ -93,7 +94,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           >
             <motion.div
               className="w-14 h-14 rounded-full border-2"
-              style={{ borderColor: '#00bf72', borderTopColor: 'transparent' }}
+              style={{ borderColor: '#3b82f6', borderTopColor: 'transparent' }}
               animate={{ rotate: 360 }}
               transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
             />
@@ -106,7 +107,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           </motion.div>
         )}
 
-        {/* ── NOT WHITELISTED: face scan ───────────────────────────── */}
+        {/* ── NOT WHITELISTED: redirected to GoodDollar ───────────── */}
         {status === 'not_whitelisted' && !signing && (
           <motion.div
             key="fv"
@@ -116,44 +117,35 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             transition={{ duration: 0.35 }}
           >
             <div className="w-16 h-16 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(0,191,114,0.08)', border: '2px solid rgba(0,191,114,0.22)' }}>
+              style={{ background: 'rgba(59,130,246,0.08)', border: '2px solid rgba(59,130,246,0.22)' }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2a5 5 0 1 1 0 10A5 5 0 0 1 12 2zm0 12c-5.33 0-8 2.67-8 4v2h16v-2c0-1.33-2.67-4-8-4z"
-                  fill="#00bf72" fillOpacity="0.8" />
+                  fill="#3b82f6" fillOpacity="0.8" />
               </svg>
             </div>
 
             <div>
-              <p className="font-display font-black text-white text-2xl">Verification Required</p>
+              <p className="font-display font-black text-white text-2xl">Complete Verification</p>
               <p className="text-slate-400 text-sm mt-2 leading-relaxed">
-                Complete a GoodDollar identity check to enter Valor. Takes under 60 seconds — your data stays private.
+                GoodDollar opened in a new tab. Complete the face scan there, then return here.
               </p>
             </div>
 
-            {faceVerifyUrl ? (
+            {faceVerifyUrl && (
               <a
                 href={faceVerifyUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl flex items-center justify-center gap-2"
-                style={{ background: '#00bf72', color: '#04030c' }}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2"
               >
-                Verify Identity <span className="opacity-60 text-base">↗</span>
+                Didn't open? Tap here ↗
               </a>
-            ) : (
-              <motion.button
-                onClick={getFaceVerifyUrl}
-                whileTap={{ scale: 0.97 }}
-                className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
-                style={{ background: '#00bf72', color: '#04030c' }}
-              >
-                Get Verification Link
-              </motion.button>
             )}
 
             <button
               onClick={handleRecheckAfterFV}
-              className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+              className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
+              style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd' }}
             >
               Already verified — continue
             </button>
@@ -169,9 +161,9 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             transition={{ type: 'spring', stiffness: 200, damping: 16 }}
           >
             <div className="w-20 h-20 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(0,191,114,0.12)', border: '2px solid rgba(0,191,114,0.4)' }}>
+              style={{ background: 'rgba(59,130,246,0.12)', border: '2px solid rgba(59,130,246,0.4)' }}>
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-                <path d="M5 13l4 4L19 7" stroke="#00bf72" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 13l4 4L19 7" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
             <p className="font-display font-black text-white text-2xl">Verified!</p>
