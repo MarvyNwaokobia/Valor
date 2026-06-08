@@ -6,7 +6,8 @@ Players verify their identity via GoodDollar, choose a character class, battle b
 
 **Live**: https://playvalor.vercel.app  
 **API**: https://valor-production.up.railway.app  
-**Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)
+**Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)  
+**Domain**: [playvalor.app](https://playvalor.app) (custom domain — configure DNS to point to Vercel)
 
 ---
 
