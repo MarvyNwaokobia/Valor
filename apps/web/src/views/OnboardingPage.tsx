@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
+import { usePrivy } from '@privy-io/react-auth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import LoadingScreen from '@/components/ui/LoadingScreen'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
@@ -26,10 +28,12 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
+  const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
   const router       = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
+  const playerSynced = usePlayerStore(s => s.playerSynced)
 
   const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
@@ -38,9 +42,16 @@ export default function OnboardingPage() {
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
+  // Privy still hydrating, or player sync in progress — don't render anything yet.
+  // Without this guard, returning users briefly see the verify screen before their
+  // existing player record loads and the redirect to / fires.
+  if (!ready) return <LoadingScreen />
+  if (address && !playerSynced) return <LoadingScreen />
+
+  // Returning user — already has a character, send them home
   if (player) { router.replace('/'); return null }
 
-  if (!address) {
+  if (!authenticated || !address) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
         <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
