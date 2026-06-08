@@ -30,10 +30,12 @@ function deterministicName(wallet: string) {
 export default function OnboardingPage() {
   const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
-  const router       = useRouter()
-  const setPlayer    = usePlayerStore(s => s.setPlayer)
-  const player       = usePlayerStore(s => s.player)
-  const playerSynced = usePlayerStore(s => s.playerSynced)
+  const router          = useRouter()
+  const setPlayer       = usePlayerStore(s => s.setPlayer)
+  const setProfileExists = usePlayerStore(s => s.setProfileExists)
+  const player          = usePlayerStore(s => s.player)
+  const playerSynced    = usePlayerStore(s => s.playerSynced)
+  const profileExists   = usePlayerStore(s => s.profileExists)
 
   const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
@@ -42,14 +44,21 @@ export default function OnboardingPage() {
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
-  // Privy still hydrating, or player sync in progress — don't render anything yet.
-  // Without this guard, returning users briefly see the verify screen before their
-  // existing player record loads and the redirect to / fires.
+  // Privy still hydrating — don't render or route yet.
   if (!ready) return <LoadingScreen />
+
+  // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
 
-  // Returning user — already has a character, send them home
+  // Returning user: player loaded from API — send home.
   if (player) { router.replace('/'); return null }
+
+  // API might be down but we know from persisted state this wallet has a profile.
+  // Send them home rather than forcing them through onboarding again.
+  if (address && playerSynced && !player && profileExists[address]) {
+    router.replace('/')
+    return null
+  }
 
   if (!authenticated || !address) {
     return (
@@ -139,6 +148,7 @@ export default function OnboardingPage() {
       }
       const created = await res.json()
       setPlayer(created)
+      setProfileExists(address, true)
       setCreatedPlayer(created)
       setStep('tutorial')
     }

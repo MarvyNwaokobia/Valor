@@ -30,13 +30,20 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 export default function HomePage() {
   const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
-  const player       = usePlayerStore(s => s.player)
-  const playerSynced = usePlayerStore(s => s.playerSynced)
-  const router       = useRouter()
+  const player         = usePlayerStore(s => s.player)
+  const playerSynced   = usePlayerStore(s => s.playerSynced)
+  const profileExists  = usePlayerStore(s => s.profileExists)
+  const router         = useRouter()
 
   useEffect(() => {
-    if (address && playerSynced && !player) router.replace('/onboarding')
-  }, [address, player, playerSynced, router])
+    // Only redirect to onboarding once Privy is ready, the wallet is connected,
+    // sync has finished, and no player record exists — either in this session or
+    // in the persisted per-wallet cache.
+    if (!ready || !authenticated || !address) return
+    if (playerSynced && !player && !profileExists[address]) {
+      router.replace('/onboarding')
+    }
+  }, [ready, authenticated, address, player, playerSynced, profileExists, router])
 
   // Privy still re-hydrating from persisted session — don't flash the landing page
   if (!ready) return <LoadingScreen />

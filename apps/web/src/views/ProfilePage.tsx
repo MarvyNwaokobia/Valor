@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
+import { usePrivy } from '@privy-io/react-auth'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -25,12 +26,17 @@ import { useGBalance } from '@/hooks/useGBalance'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 export default function ProfilePage() {
+  const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
   const router      = useRouter()
   const player      = usePlayerStore(s => s.player)
   const inventory   = usePlayerStore(s => s.inventory)
 
-  if (!address) { router.replace('/'); return null }
+  // Wait for Privy to re-hydrate before making any routing decisions.
+  // Without this, address is undefined on every page reload for ~500ms,
+  // which would incorrectly send the user back to /.
+  if (!ready) return <LoadingScreen />
+  if (!authenticated || !address) { router.replace('/'); return null }
   if (!player) return <LoadingScreen />
 
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
