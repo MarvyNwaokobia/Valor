@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { usePrivy } from '@privy-io/react-auth'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -12,6 +13,7 @@ interface Props {
 
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified = usePlayerStore((s) => s.setVerified)
+  const { logout } = usePrivy()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
 
@@ -43,6 +45,15 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       <div className="absolute inset-0 pointer-events-none" style={{
         background: 'radial-gradient(ellipse 60% 40% at 50% 55%, rgba(59,130,246,0.06), transparent)',
       }} />
+
+      {status !== 'whitelisted' && (
+        <button
+          onClick={logout}
+          className="absolute top-5 right-5 z-20 text-xs text-slate-600 hover:text-slate-300 transition-colors font-medium tracking-wide"
+        >
+          Sign out
+        </button>
+      )}
 
       <AnimatePresence mode="wait">
 
