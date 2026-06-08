@@ -176,37 +176,8 @@ pub async fn daily_claim(
     .execute(&state.db)
     .await;
 
-    // Distribute 5 G$ from the reward pool (background — doesn't block the response)
-    if let Some(chain) = state.chain.as_ref().cloned() {
-        if let Ok(addr) = wallet.parse::<Address>() {
-            let wallet2 = wallet.clone();
-            let db      = state.db.clone();
-            tokio::spawn(async move {
-                match chain.distribute_daily_claim(addr).await {
-                    Ok(true) => {
-                        // Transfer confirmed — record in g_earned_lifetime
-                        let _ = sqlx::query(
-                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + 5 WHERE wallet_address = $1",
-                        )
-                        .bind(&wallet2)
-                        .execute(&db)
-                        .await;
-                        tracing::info!("Daily claim G$ distributed: {}", wallet2);
-                    }
-                    Ok(false) => {
-                        tracing::warn!("Reward pool not configured — daily claim decay-reset only for {}", wallet2);
-                    }
-                    Err(e) => {
-                        tracing::error!("Daily claim G$ distribution failed for {}: {}", wallet2, e);
-                    }
-                }
-            });
-        }
-    }
-
     HttpResponse::Ok().json(json!({
         "success": true,
-        "g_claimed": 5,
         "next_claim_at": now + chrono::Duration::hours(24)
     }))
 }

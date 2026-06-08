@@ -1,4 +1,4 @@
-import { IdentitySDK, chainConfigs, SupportedChains, type contractEnv } from '@goodsdks/citizen-sdk'
+import { IdentitySDK, ClaimSDK, chainConfigs, SupportedChains, type contractEnv } from '@goodsdks/citizen-sdk'
 import { REWARDS_CONTRACT } from '@goodsdks/engagement-sdk'
 import type { PublicClient, WalletClient, Address } from 'viem'
 
@@ -51,6 +51,14 @@ export interface IdentityExpiry {
   expiresAt: Date | null
   daysLeft: number
   isExpired: boolean
+}
+
+export async function createClaimSDK(
+  publicClient: PublicClient,
+  walletClient: WalletClient,
+): Promise<ClaimSDK> {
+  const identitySDK = await IdentitySDK.init({ publicClient, walletClient, env: GD_ENV })
+  return ClaimSDK.init({ publicClient, walletClient, identitySDK, env: GD_ENV })
 }
 
 export async function getIdentityExpiry(
