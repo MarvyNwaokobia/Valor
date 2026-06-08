@@ -23,8 +23,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       setVerified(true)
       setTimeout(onVerified, 900)
     } else {
-      const url = await getFaceVerifyUrl()
-      if (url) window.open(url, '_blank', 'noopener')
+      await getFaceVerifyUrl()
     }
   }
 
@@ -127,25 +126,23 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             <div>
               <p className="font-display font-black text-white text-2xl">Complete Verification</p>
               <p className="text-slate-400 text-sm mt-2 leading-relaxed">
-                GoodDollar opened in a new tab. Complete the face scan there, then return here.
+                Complete a GoodDollar identity check to enter Valor. Takes under 60 seconds — your data stays private.
               </p>
             </div>
 
-            {faceVerifyUrl && (
-              <a
-                href={faceVerifyUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2"
-              >
-                Didn't open? Tap here ↗
-              </a>
-            )}
+            <motion.button
+              onClick={() => { if (faceVerifyUrl) window.location.href = faceVerifyUrl }}
+              whileHover={{ scale: 1.02, filter: 'brightness(1.1)' }}
+              whileTap={{ scale: 0.97 }}
+              className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
+              style={{ background: '#3b82f6', color: '#fff' }}
+            >
+              Continue with Verification
+            </motion.button>
 
             <button
               onClick={handleRecheckAfterFV}
-              className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
-              style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd' }}
+              className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
             >
               Already verified — continue
             </button>
