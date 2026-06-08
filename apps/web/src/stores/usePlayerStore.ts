@@ -6,6 +6,7 @@ interface PlayerState {
   player: Player | null
   inventory: InventoryItem[]
   isVerified: boolean
+  playerSynced: boolean
   setPlayer: (player: Player) => void
   updatePlayer: (updates: Partial<Player>) => void
   setInventory: (inventory: InventoryItem[]) => void
@@ -13,6 +14,7 @@ interface PlayerState {
   removeInventoryItem: (itemId: string) => void
   toggleEquip: (itemId: string) => void
   setVerified: (verified: boolean) => void
+  setPlayerSynced: (synced: boolean) => void
   clearPlayer: () => void
 }
 
@@ -22,6 +24,7 @@ export const usePlayerStore = create<PlayerState>()(
       player: null,
       inventory: [],
       isVerified: false,
+      playerSynced: false,
 
       setPlayer: (player) => set({ player }),
       updatePlayer: (updates) =>
@@ -40,7 +43,8 @@ export const usePlayerStore = create<PlayerState>()(
           ),
         })),
       setVerified: (isVerified) => set({ isVerified }),
-      clearPlayer: () => set({ player: null, inventory: [], isVerified: false }),
+      setPlayerSynced: (playerSynced) => set({ playerSynced }),
+      clearPlayer: () => set({ player: null, inventory: [], isVerified: false, playerSynced: false }),
     }),
     {
       name: 'valor-player',

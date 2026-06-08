@@ -27,15 +27,19 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 
 export default function HomePage() {
   const { address } = useAccount()
-  const player = usePlayerStore(s => s.player)
-  const router = useRouter()
+  const player       = usePlayerStore(s => s.player)
+  const playerSynced = usePlayerStore(s => s.playerSynced)
+  const router       = useRouter()
 
+  // Wait until the API sync finishes before deciding to redirect.
+  // Without this guard, the redirect fires before usePlayerSync resolves,
+  // sending returning users to /onboarding even though they have a character.
   useEffect(() => {
-    if (address && !player) router.replace('/onboarding')
-  }, [address, player, router])
+    if (address && playerSynced && !player) router.replace('/onboarding')
+  }, [address, player, playerSynced, router])
 
   if (!address) return <LandingPage />
-  if (!player)  return null
+  if (!playerSynced || !player) return null
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]

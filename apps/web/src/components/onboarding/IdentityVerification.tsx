@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { usePrivy } from '@privy-io/react-auth'
+import { useWalletClient } from 'wagmi'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -12,10 +13,13 @@ interface Props {
 }
 
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
-  const setVerified = usePlayerStore((s) => s.setVerified)
-  const { logout } = usePrivy()
+  const setVerified    = usePlayerStore((s) => s.setVerified)
+  const isVerified     = usePlayerStore((s) => s.isVerified)
+  const { logout }     = usePrivy()
+  const { data: walletClient } = useWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
+  const autoChecked = useRef(false)
 
   async function handleVerify() {
     setSigning(true)
@@ -28,6 +32,16 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       await getFaceVerifyUrl()
     }
   }
+
+  // Returning verified users: auto-run the whitelist check as soon as the
+  // wallet client is ready — no button click needed. If they're still
+  // whitelisted they pass straight through; if not, the normal flow shows.
+  useEffect(() => {
+    if (isVerified && walletClient && status === 'idle' && !autoChecked.current) {
+      autoChecked.current = true
+      handleVerify()
+    }
+  }, [walletClient, isVerified, status])
 
   async function handleRecheckAfterFV() {
     const verified = await check(walletAddress)

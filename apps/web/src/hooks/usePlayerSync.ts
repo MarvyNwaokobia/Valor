@@ -4,7 +4,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export function usePlayerSync(address: string | undefined) {
-  const { setPlayer, setInventory, clearPlayer } = usePlayerStore()
+  const { setPlayer, setInventory, clearPlayer, setPlayerSynced } = usePlayerStore()
 
   useEffect(() => {
     if (!address) {
@@ -27,8 +27,12 @@ export function usePlayerSync(address: string | undefined) {
         const inventory = await inventoryRes.json()
         setInventory(inventory ?? [])
       }
+
+      // Mark sync complete regardless of whether a player record was found.
+      // HomePage waits for this before deciding to redirect to /onboarding.
+      setPlayerSynced(true)
     }
 
     sync()
-  }, [address, setPlayer, setInventory, clearPlayer])
+  }, [address, setPlayer, setInventory, clearPlayer, setPlayerSynced])
 }
