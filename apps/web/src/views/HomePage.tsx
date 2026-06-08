@@ -30,27 +30,44 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 export default function HomePage() {
   const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
-  const player         = usePlayerStore(s => s.player)
-  const playerSynced   = usePlayerStore(s => s.playerSynced)
-  const profileExists  = usePlayerStore(s => s.profileExists)
-  const router         = useRouter()
+  const player       = usePlayerStore(s => s.player)
+  const playerSynced = usePlayerStore(s => s.playerSynced)
+  const syncFailed   = usePlayerStore(s => s.syncFailed)
+  const router       = useRouter()
 
   useEffect(() => {
-    // Only redirect to onboarding once Privy is ready, the wallet is connected,
-    // sync has finished, and no player record exists — either in this session or
-    // in the persisted per-wallet cache.
+    // Only send to onboarding once Privy is ready, wallet is connected,
+    // sync finished, and the API confirmed no player record exists.
     if (!ready || !authenticated || !address) return
-    if (playerSynced && !player && !profileExists[address]) {
+    if (playerSynced && !player && !syncFailed) {
       router.replace('/onboarding')
     }
-  }, [ready, authenticated, address, player, playerSynced, profileExists, router])
+  }, [ready, authenticated, address, player, playerSynced, syncFailed, router])
 
-  // Privy still re-hydrating from persisted session — don't flash the landing page
+  // Privy still re-hydrating — don't flash anything yet
   if (!ready) return <LoadingScreen />
   // Genuinely unauthenticated
   if (!authenticated || !address) return <LandingPage />
-  // Authenticated, waiting for player API sync
-  if (!playerSynced || !player) return null
+  // Sync in progress
+  if (!playerSynced) return <LoadingScreen />
+  // Network error — show retry instead of blank screen
+  if (syncFailed && !player) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-4" style={{ background: '#04030c' }}>
+        <p className="text-white font-display font-black text-xl">Connection issue</p>
+        <p className="text-slate-500 text-sm">Check your internet and try again.</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-2 px-6 py-3 rounded-xl font-bold text-sm text-black"
+          style={{ background: '#eab308' }}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+  // Player data still loading after sync (shouldn't normally happen, but guard it)
+  if (!player) return <LoadingScreen />
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]

@@ -12,12 +12,14 @@ export default function BattlePage() {
   const { address } = useAccount()
   const router        = useRouter()
   const player        = usePlayerStore(s => s.player)
+  const playerSynced  = usePlayerStore(s => s.playerSynced)
   const searchParams  = useSearchParams()
   const challengeTarget = searchParams.get('challenge') ?? undefined
 
   if (!ready) return <LoadingScreen />
   if (!authenticated || !address) { router.replace('/'); return null }
-  if (!player) return <LoadingScreen />
+  if (!playerSynced) return <LoadingScreen />
+  if (!player) { router.replace('/'); return null }
 
   return (
     <div className="max-w-2xl mx-auto">
