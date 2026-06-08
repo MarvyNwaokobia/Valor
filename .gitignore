@@ -64,3 +64,7 @@ lcov.info
 
 # Railway
 .railway
+
+# Local demo / presentation files
+DEMO_SCRIPT.md
+*.mov

@@ -123,7 +123,7 @@ Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, 
 
 ### GoodDollar Integration
 
-- **Identity gate**: Players must be GoodDollar-verified humans to create a character (ERC-725 whitelist check via `@goodsdks/citizen-sdk`). Verification happens in-app via a full-screen onboarding step before character creation.
+- **Identity gate**: Players must be GoodDollar-verified humans to create a character (ERC-725 whitelist check via `@goodsdks/citizen-sdk`). A full-screen gate blocks all navigation until verification passes. The flow: wallet check → if already whitelisted, advance immediately; if not, an inline "Complete Verification" panel redirects to GoodDollar face verification in the same tab, with an "Already verified — continue" re-check button on return. A sign-out option is available throughout.
 - **Daily G$ claim**: The in-app Daily Check-In triggers GoodDollar's UBI `ClaimSDK.claim()` directly — G$ flows from the GoodDollar protocol to the player's wallet. Gas top-up (if needed) and the claim itself are handled in two wallet prompts, surfaced with live step feedback in the UI.
 - **Engagement Rewards**: Battle wins can earn additional G$ via the GoodDollar Engagement Rewards SDK (EIP-712 dual-signature: backend signs `AppClaim`, user signs `Claim`, frontend calls `nonContractAppClaim` on-chain). Requires portal approval — see *GoodDollar App Registration* below.
 - **Marketplace**: All purchases use G$ on Celo — gasless via EIP-2612 permit relay
@@ -364,7 +364,7 @@ Once approved, set `NEXT_PUBLIC_VALOR_APP_ADDRESS` (frontend) and `VALOR_BACKEND
 |------|--------|-------|
 | Daily G$ UBI claim | Live | `ClaimSDK.claim()` wired in-app. Players claim GoodDollar UBI directly from the Daily Check-In button. |
 | Engagement Rewards | Pending approval | App submitted at `engagement-rewards.vercel.app`. Once approved, battle-win G$ distributions go live automatically. |
-| Identity gate | Re-enabled | `IdentityVerification` runs the full GoodDollar whitelist check. Full-screen onboarding gate — nav is inaccessible until verified. |
+| Identity gate | Live | Full-screen GoodDollar whitelist check. Already-whitelisted wallets pass instantly. Unverified wallets see an inline "Complete Verification" panel that redirects to GoodDollar face verification (same tab). Sign-out button available throughout. Nav is inaccessible until verified. |
 | GoodCollective rank pools | Not deployed | `RANK_POOL_*` env vars are placeholders. Deploy pools on `goodcollective.xyz` and grant `MANAGER_ROLE` to the backend signer to activate passive UBI drip for Silver+ ranks. |
 | Character 3D customization | Deferred | `character_customization` JSON is stored but not yet applied to GLB meshes. |
 | On-chain character claim | Deferred | `character_claim_tx` column exists and `ChainBadge` renders it, but character minting is not yet triggered in the onboarding flow. |
