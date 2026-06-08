@@ -12,6 +12,7 @@ import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
+import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
 
 type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
@@ -41,9 +42,12 @@ export default function OnboardingPage() {
 
   if (!address) {
     return (
-      <div className="max-w-xl mx-auto py-16 text-center">
-        <p className="text-white font-display text-xl font-bold">Sign In to Play</p>
-        <p className="text-slate-400 text-sm mt-2">Use the button in the top right to sign in and begin.</p>
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
+        <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
+        <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
+          Connect your wallet to enter Valor and forge your warrior.
+        </p>
+        <PrivyConnectButton />
       </div>
     )
   }
