@@ -77,7 +77,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
   const botDef = CLASS_DEFINITIONS[botClass]
 
-  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, startBattle, handleMove, reset } =
+  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, startBattle, handleMove, reset,
+    attackBoost, defenseBoost, hasXpBooster, effectiveAttack, effectiveDefense } =
     useBattle(player, walletAddress)
 
   // ── Animation state ─────────────────────────────────────────────────────
@@ -275,6 +276,22 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               style={{ background: def.accentColorDim, color: def.accentColor }}>
               {player.character_class}
             </span>
+            <div className="flex gap-1.5 mt-2 flex-wrap">
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>
+                {attackBoost > 0 ? `⚔ ${effectiveAttack} (+${attackBoost})` : `⚔ ${effectiveAttack}`}
+              </span>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}>
+                {defenseBoost > 0 ? `🛡 ${effectiveDefense} (+${defenseBoost})` : `🛡 ${effectiveDefense}`}
+              </span>
+              {hasXpBooster && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                  style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>
+                  2× XP
+                </span>
+              )}
+            </div>
           </div>
         </motion.div>
 
