@@ -52,7 +52,11 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: 'valor-player',
-      partialize: (state) => ({ isVerified: state.isVerified }),
+      partialize: (state) => ({
+        isVerified: state.isVerified,
+        player:     state.player,
+        inventory:  state.inventory,
+      }),
     },
   ),
 )

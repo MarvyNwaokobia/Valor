@@ -35,9 +35,9 @@ export default function ProfilePage() {
 
   if (!ready) return <LoadingScreen />
   if (!authenticated || !address) { router.replace('/'); return null }
-  // Sync still running — show loader
-  if (!playerSynced) return <LoadingScreen />
-  // Sync done, no player — home page will route them appropriately
+  // No cache and sync not done yet — brief wait
+  if (!player && !playerSynced) return <LoadingScreen />
+  // Sync done, confirmed no player — let home page route them
   if (!player) { router.replace('/'); return null }
 
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
