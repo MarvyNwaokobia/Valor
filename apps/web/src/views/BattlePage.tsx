@@ -18,7 +18,7 @@ export default function BattlePage() {
 
   if (!ready) return <LoadingScreen />
   if (!authenticated || !address) { router.replace('/'); return null }
-  if (!playerSynced) return <LoadingScreen />
+  if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
   return (
