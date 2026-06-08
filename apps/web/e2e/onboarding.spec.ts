@@ -43,8 +43,7 @@ test.describe('Navigation', () => {
   test('navbar is absent on landing page for unauthenticated users', async ({ page }) => {
     await page.goto('/')
     // Navbar returns null when no wallet connected
-    const nav = page.locator('nav')
-    // Either no nav, or nav is hidden/invisible — just confirm no crash
+    await expect(page.locator('nav')).not.toBeVisible()
     await expect(page.locator('body')).toBeVisible()
   })
 })

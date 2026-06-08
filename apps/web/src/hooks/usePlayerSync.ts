@@ -20,6 +20,13 @@ export function usePlayerSync(address: string | undefined) {
     // Always lowercase — wagmi returns EIP-55 checksummed addresses but
     // the DB stores them normalized (lowercase) via normalize_wallet on the backend.
     const wallet = address.toLowerCase()
+
+    // Guard: Clear cached player immediately if it belongs to a different wallet
+    const cachedPlayer = usePlayerStore.getState().player
+    if (cachedPlayer && cachedPlayer.wallet_address.toLowerCase() !== wallet) {
+      clearPlayer()
+    }
+
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
@@ -32,10 +39,18 @@ export function usePlayerSync(address: string | undefined) {
 
         if (playerRes.ok) {
           const player = await playerRes.json()
-          if (player) {
+          if (player && player.wallet_address.toLowerCase() === wallet) {
             setPlayer(player)
             setVerified(true)
+            setSyncFailed(false)
+          } else {
+            clearPlayer()
           }
+        } else if (playerRes.status === 404) {
+          clearPlayer()
+          setSyncFailed(false)
+        } else {
+          setSyncFailed(true)
         }
 
         if (inventoryRes.ok) {
@@ -43,7 +58,6 @@ export function usePlayerSync(address: string | undefined) {
           setInventory(inventory ?? [])
         }
 
-        setSyncFailed(false)
       } catch {
         setSyncFailed(true)
       } finally {

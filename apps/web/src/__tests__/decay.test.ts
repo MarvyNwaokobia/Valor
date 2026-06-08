@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getDecayStatus, getDecayTimeRemaining, getRankDowngrade, getRankUpgrade } from '@/utils/decay'
 import { DECAY_WARNING_HOURS, DECAY_PENALIZE_HOURS } from '@/lib/constants'
-import type { Rank } from '@/types/database'
 
 describe('getDecayStatus', () => {
   const NOW = new Date('2026-06-05T12:00:00Z')
