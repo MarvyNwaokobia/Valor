@@ -29,15 +29,16 @@ export default function ProfilePage() {
   const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
   const router      = useRouter()
-  const player      = usePlayerStore(s => s.player)
-  const inventory   = usePlayerStore(s => s.inventory)
+  const player       = usePlayerStore(s => s.player)
+  const playerSynced = usePlayerStore(s => s.playerSynced)
+  const inventory    = usePlayerStore(s => s.inventory)
 
-  // Wait for Privy to re-hydrate before making any routing decisions.
-  // Without this, address is undefined on every page reload for ~500ms,
-  // which would incorrectly send the user back to /.
   if (!ready) return <LoadingScreen />
   if (!authenticated || !address) { router.replace('/'); return null }
-  if (!player) return <LoadingScreen />
+  // Sync still running — show loader
+  if (!playerSynced) return <LoadingScreen />
+  // Sync done, no player — home page will route them appropriately
+  if (!player) { router.replace('/'); return null }
 
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
