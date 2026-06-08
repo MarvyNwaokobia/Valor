@@ -122,9 +122,10 @@ Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, 
 
 ### GoodDollar Integration
 
-- **Identity gate**: Players must be GoodDollar-verified humans to create a character (ERC-725 whitelist check)
-- **Engagement Rewards**: Daily check-in earns G$ once the app is approved by GoodDollar's team
-- **Marketplace**: All purchases use G$ on Celo — gasless via permit relay
+- **Identity gate**: Players must be GoodDollar-verified humans to create a character (ERC-725 whitelist check via `@goodsdks/citizen-sdk`). Verification happens in-app via a full-screen onboarding step before character creation.
+- **Daily G$ claim**: The in-app Daily Check-In triggers GoodDollar's UBI `ClaimSDK.claim()` directly — G$ flows from the GoodDollar protocol to the player's wallet. Gas top-up (if needed) and the claim itself are handled in two wallet prompts, surfaced with live step feedback in the UI.
+- **Engagement Rewards**: Battle wins can earn additional G$ via the GoodDollar Engagement Rewards SDK (EIP-712 dual-signature: backend signs `AppClaim`, user signs `Claim`, frontend calls `nonContractAppClaim` on-chain). Requires portal approval — see *GoodDollar App Registration* below.
+- **Marketplace**: All purchases use G$ on Celo — gasless via EIP-2612 permit relay
 - **Rank rewards**: G$ distributed from `ValorRewardPool` on each rank-up
 
 ---
@@ -342,13 +343,17 @@ Deploys automatically on push to `main`. Set all `NEXT_PUBLIC_*` env vars in the
 
 ### GoodDollar App Registration
 
-Valor is registered on the GoodDollar Engagement Rewards contract. The registration is a two-step process:
+Valor is registered on the GoodDollar Engagement Rewards contract at `engagement-rewards.vercel.app`.
 
-1. **Applied** (done): `applyApp()` was called on the GoodDollar Engagement Rewards contract  
-   TX: `0x015015973be829fd461df506480fbc8a9bfe00c6085aff622024ba1ca151f569`
+| Field | Value |
+|-------|-------|
+| App / Signer Address | `0x43a5BA0da132b21bdACfBc4392b72EeBaF6f2D82` |
+| Reward Receiver | `0x12a3F1f4...` (ValorRewardPool) |
+| User+Inviter % | 100% (all rewards flow to players) |
+| User % | 70% (70% to battling player, 30% to their inviter) |
+| Status | Pending approval |
 
-2. **Approved** (pending): GoodDollar's team must call `approve()` before daily G$ distributions go live.  
-   Contact: `partnerships@gooddollar.org` or `#builders` on the GoodDollar Discord.
+Once approved, set `NEXT_PUBLIC_VALOR_APP_ADDRESS` (frontend) and `VALOR_BACKEND_SIGNER_KEY` (API) to the registered wallet. The `useValorEngagementRewards` hook and the `/rewards/sign-claim` backend endpoint are already wired — no code changes needed after approval.
 
 ---
 
@@ -356,9 +361,12 @@ Valor is registered on the GoodDollar Engagement Rewards contract. The registrat
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Daily G$ distribution | Pending | Waiting on GoodDollar `approve()`. Check-in resets decay only until approved. |
-| Identity gate | Bypassed for testing | Currently set to `'skip'` mode in `gooddollar.ts`. Set back to `'verify'` before launch. |
-| Character 3D customization | Deferred | `character_customization` JSON is saved but not yet applied to GLB mesh. Portrait images respect skin/hair. |
+| Daily G$ UBI claim | Live | `ClaimSDK.claim()` wired in-app. Players claim GoodDollar UBI directly from the Daily Check-In button. |
+| Engagement Rewards | Pending approval | App submitted at `engagement-rewards.vercel.app`. Once approved, battle-win G$ distributions go live automatically. |
+| Identity gate | Re-enabled | `IdentityVerification` runs the full GoodDollar whitelist check. Full-screen onboarding gate — nav is inaccessible until verified. |
+| GoodCollective rank pools | Not deployed | `RANK_POOL_*` env vars are placeholders. Deploy pools on `goodcollective.xyz` and grant `MANAGER_ROLE` to the backend signer to activate passive UBI drip for Silver+ ranks. |
+| Character 3D customization | Deferred | `character_customization` JSON is stored but not yet applied to GLB meshes. |
+| On-chain character claim | Deferred | `character_claim_tx` column exists and `ChainBadge` renders it, but character minting is not yet triggered in the onboarding flow. |
 | Mission signature auth | Not implemented | `x-wallet` header is trusted without EIP-712 sign. Acceptable for MVP. |
 | Inventory IDOR | Not implemented | Inventory endpoints don't require wallet signature. Acceptable for MVP. |
 | RewardPool funding | Manual | Fund `ValorRewardPool` with G$ before rank-up rewards can be distributed. |
