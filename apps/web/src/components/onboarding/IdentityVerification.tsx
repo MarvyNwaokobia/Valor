@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -13,17 +13,19 @@ interface Props {
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified = usePlayerStore((s) => s.setVerified)
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
+  const [signing, setSigning] = useState(false)
 
-  // Auto-trigger on mount — no button click needed
-  useEffect(() => {
-    check(walletAddress).then(verified => {
-      if (verified) {
-        setVerified(true)
-        setTimeout(onVerified, 900)
-      }
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  async function handleVerify() {
+    setSigning(true)
+    const verified = await check(walletAddress)
+    setSigning(false)
+    if (verified) {
+      setVerified(true)
+      setTimeout(onVerified, 900)
+    } else {
+      await getFaceVerifyUrl()
+    }
+  }
 
   async function handleRecheckAfterFV() {
     const verified = await check(walletAddress)
@@ -33,7 +35,8 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
     }
   }
 
-  const isChecking = status === 'idle' || status === 'checking' || status === 'switching_chain'
+  const isChecking = signing || status === 'checking' || status === 'switching_chain'
+  const showButton = status === 'idle' && !signing
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6" style={{ background: '#04030c' }}>
@@ -43,12 +46,49 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
 
       <AnimatePresence mode="wait">
 
-        {/* ── CHECKING ─────────────────────────────────────────────── */}
+        {/* ── IDLE: verify prompt ──────────────────────────────────── */}
+        {showButton && (
+          <motion.div
+            key="idle"
+            className="relative z-10 flex flex-col items-center gap-6 max-w-sm w-full text-center"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.35 }}
+          >
+            <div className="w-16 h-16 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(0,191,114,0.08)', border: '2px solid rgba(0,191,114,0.22)' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2a5 5 0 1 1 0 10A5 5 0 0 1 12 2zm0 12c-5.33 0-8 2.67-8 4v2h16v-2c0-1.33-2.67-4-8-4z"
+                  fill="#00bf72" fillOpacity="0.8" />
+              </svg>
+            </div>
+
+            <div>
+              <p className="font-display font-black text-white text-2xl">Verification Required</p>
+              <p className="text-slate-400 text-sm mt-2 leading-relaxed">
+                Valor is a real-people-only game. A quick GoodDollar identity check keeps every warrior genuine.
+              </p>
+            </div>
+
+            <motion.button
+              onClick={handleVerify}
+              whileHover={{ scale: 1.02, filter: 'brightness(1.1)' }}
+              whileTap={{ scale: 0.97 }}
+              className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
+              style={{ background: '#00bf72', color: '#04030c' }}
+            >
+              Verify Identity
+            </motion.button>
+          </motion.div>
+        )}
+
+        {/* ── CHECKING: wallet prompt in progress ─────────────────── */}
         {isChecking && (
           <motion.div
             key="checking"
             className="relative z-10 flex flex-col items-center gap-5 text-center"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
           >
             <motion.div
@@ -66,16 +106,17 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           </motion.div>
         )}
 
-        {/* ── VERIFICATION REQUIRED ────────────────────────────────── */}
-        {status === 'not_whitelisted' && (
+        {/* ── NOT WHITELISTED: face scan ───────────────────────────── */}
+        {status === 'not_whitelisted' && !signing && (
           <motion.div
             key="fv"
             className="relative z-10 flex flex-col items-center gap-6 max-w-sm w-full text-center"
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.35 }}
           >
             <div className="w-16 h-16 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(0,191,114,0.08)', border: '2px solid rgba(0,191,114,0.25)' }}>
+              style={{ background: 'rgba(0,191,114,0.08)', border: '2px solid rgba(0,191,114,0.22)' }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2a5 5 0 1 1 0 10A5 5 0 0 1 12 2zm0 12c-5.33 0-8 2.67-8 4v2h16v-2c0-1.33-2.67-4-8-4z"
                   fill="#00bf72" fillOpacity="0.8" />
@@ -85,7 +126,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             <div>
               <p className="font-display font-black text-white text-2xl">Verification Required</p>
               <p className="text-slate-400 text-sm mt-2 leading-relaxed">
-                Complete a quick GoodDollar identity check to enter Valor. Takes under 60 seconds — your data stays private.
+                Complete a GoodDollar identity check to enter Valor. Takes under 60 seconds — your data stays private.
               </p>
             </div>
 
@@ -143,16 +184,14 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           <motion.div
             key="error"
             className="relative z-10 flex flex-col items-center gap-5 max-w-sm w-full text-center"
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
           >
             <div className="px-4 py-3 rounded-xl w-full"
               style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
               <p className="text-red-400 text-sm">{error}</p>
             </div>
-            <button
-              onClick={reset}
-              className="text-sm text-slate-400 hover:text-white transition-colors"
-            >
+            <button onClick={reset} className="text-sm text-slate-400 hover:text-white transition-colors">
               Try again
             </button>
           </motion.div>
