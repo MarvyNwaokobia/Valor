@@ -5,10 +5,12 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
+import { usePrivy } from '@privy-io/react-auth'
 import { Swords, ShoppingBag, Trophy, ChevronRight, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LandingPage from '@/components/landing/LandingPage'
+import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -26,19 +28,21 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
+  const { ready, authenticated } = usePrivy()
   const { address } = useAccount()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const router       = useRouter()
 
-  // Wait until the API sync finishes before deciding to redirect.
-  // Without this guard, the redirect fires before usePlayerSync resolves,
-  // sending returning users to /onboarding even though they have a character.
   useEffect(() => {
     if (address && playerSynced && !player) router.replace('/onboarding')
   }, [address, player, playerSynced, router])
 
-  if (!address) return <LandingPage />
+  // Privy still re-hydrating from persisted session — don't flash the landing page
+  if (!ready) return <LoadingScreen />
+  // Genuinely unauthenticated
+  if (!authenticated || !address) return <LandingPage />
+  // Authenticated, waiting for player API sync
   if (!playerSynced || !player) return null
 
   const charClass    = player.character_class ?? 'Sentinel'

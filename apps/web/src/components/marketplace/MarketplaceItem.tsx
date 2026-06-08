@@ -9,6 +9,7 @@ import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useGBalance } from '@/hooks/useGBalance'
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
   weapon:   Sword,
@@ -36,6 +37,7 @@ interface Props {
 export default function MarketplaceItem({ item, walletAddress }: Props) {
   const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
   const inventory = usePlayerStore((s) => s.inventory)
+  const { refetch: refetchBalance } = useGBalance(walletAddress as `0x${string}` | undefined)
   const [showConfirm, setShowConfirm] = useState(false)
   const [error, setError]             = useState<string | null>(null)
   const [purchased, setPurchased]     = useState(false)
@@ -52,6 +54,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
       await purchase(item)
       setPurchased(true)
       setShowConfirm(false)
+      refetchBalance()
     } catch (err) {
       if (isUserRejection(err)) {
         setShowConfirm(false)
