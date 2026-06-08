@@ -107,7 +107,7 @@ pub async fn get_player(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
 
     let result = sqlx::query_as::<_, crate::models::player::Player>(
         "SELECT * FROM players WHERE wallet_address = $1",
@@ -130,7 +130,7 @@ pub async fn daily_claim(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
     let now = Utc::now();
     let cutoff = now - chrono::Duration::hours(24);
 
@@ -186,7 +186,7 @@ pub async fn decay_check(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
     let now = Utc::now();
 
     let player_result = sqlx::query_as::<_, crate::models::player::Player>(
@@ -440,7 +440,7 @@ pub async fn get_inventory(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     struct InventoryRow {
@@ -584,7 +584,7 @@ pub async fn daily_claim_status(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
 
     let result: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
         "SELECT last_claimed_at FROM daily_claims WHERE wallet_address = $1",
@@ -647,7 +647,7 @@ pub async fn get_achievements(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     struct AchievementRow {
@@ -684,7 +684,7 @@ pub async fn check_achievements(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let wallet = path.into_inner();
+    let wallet = normalize_wallet(&path.into_inner());
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     struct NewAchievement {

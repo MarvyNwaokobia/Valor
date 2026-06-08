@@ -4,7 +4,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export function usePlayerSync(address: string | undefined) {
-  const { setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setProfileExists } = usePlayerStore()
+  const { setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setSyncFailed } = usePlayerStore()
 
   useEffect(() => {
     if (!address) {
@@ -12,7 +12,9 @@ export function usePlayerSync(address: string | undefined) {
       return
     }
 
-    const wallet = address // narrowed to string, safe to capture in closure
+    // Always lowercase — wagmi returns EIP-55 checksummed addresses but
+    // the DB stores them normalized (lowercase) via normalize_wallet on the backend.
+    const wallet = address.toLowerCase()
 
     async function sync() {
       try {
@@ -25,10 +27,7 @@ export function usePlayerSync(address: string | undefined) {
           const player = await playerRes.json()
           if (player) {
             setPlayer(player)
-            // A player record in the DB means verification was completed.
             setVerified(true)
-            // Persist per-wallet so routing works even if the API is temporarily down.
-            setProfileExists(wallet, true)
           }
         }
 
@@ -36,16 +35,16 @@ export function usePlayerSync(address: string | undefined) {
           const inventory = await inventoryRes.json()
           setInventory(inventory ?? [])
         }
+
+        setSyncFailed(false)
       } catch {
-        // Network or parse error — don't crash, just mark sync done so
-        // routing guards can still use the persisted profileExists flag.
+        // Network error — mark failure so the UI can show a retry prompt.
+        setSyncFailed(true)
       } finally {
-        // Mark sync complete regardless of outcome.
-        // HomePage waits for this before deciding to redirect to /onboarding.
         setPlayerSynced(true)
       }
     }
 
     sync()
-  }, [address, setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setProfileExists])
+  }, [address, setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setSyncFailed])
 }
