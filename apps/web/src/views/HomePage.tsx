@@ -1,13 +1,14 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
 import { Swords, ShoppingBag, Trophy, ChevronRight, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LandingPage from '@/components/landing/LandingPage'
-import { useLogin } from '@privy-io/react-auth'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -27,9 +28,14 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 export default function HomePage() {
   const { address } = useAccount()
   const player = usePlayerStore(s => s.player)
+  const router = useRouter()
+
+  useEffect(() => {
+    if (address && !player) router.replace('/onboarding')
+  }, [address, player, router])
 
   if (!address) return <LandingPage />
-  if (!player)  return <OnboardingPrompt />
+  if (!player)  return null
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
@@ -242,34 +248,3 @@ export default function HomePage() {
   )
 }
 
-function OnboardingPrompt() {
-  const { login } = useLogin()
-  return (
-    <section className="flex flex-col items-center text-center gap-6 py-20">
-      <motion.div
-        className="w-24 h-24 rounded-full flex items-center justify-center"
-        style={{ background: 'rgba(234,179,8,0.1)', border: '2px solid rgba(234,179,8,0.3)' }}
-        animate={{ scale: [1,1.05,1] }}
-        transition={{ duration: 2, repeat: Infinity }}
-      >
-        <Swords size={40} className="text-amber-400" strokeWidth={1.4} />
-      </motion.div>
-      <div>
-        <h2 className="font-display font-black text-white text-3xl tracking-wider">Forge Your Fighter</h2>
-        <p className="text-slate-400 mt-3 max-w-md leading-relaxed text-sm">
-          One character. Choose your class, customize your warrior, earn your legend.
-        </p>
-      </div>
-      <Link
-        href="/onboarding"
-        className="clip-angled px-10 py-4 font-display font-black text-black uppercase tracking-[0.18em]"
-        style={{ background: 'linear-gradient(135deg, #fde047, #eab308)', boxShadow: '0 0 30px rgba(234,179,8,0.4)' }}
-      >
-        Create Character
-      </Link>
-      <button onClick={() => login()} className="text-sm text-slate-600 hover:text-slate-300 transition-colors">
-        Switch account
-      </button>
-    </section>
-  )
-}
