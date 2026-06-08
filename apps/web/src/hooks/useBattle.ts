@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
-import type { Player, BattleMove } from '@/types'
+import type { Player, BattleMove, Item } from '@/types'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export type BattlePhase = 'idle' | 'fighting' | 'saving' | 'result'
 
@@ -51,6 +54,29 @@ function generateBotPreviewStats(playerRank: Player['rank']): { attack: number; 
 export function useBattle(player: Player, walletAddress: string) {
   const updatePlayer              = usePlayerStore((s) => s.updatePlayer)
   const { checkAchievements, checkDecayRecovery } = useAchievements()
+  const inventory = usePlayerStore((s) => s.inventory)
+  const itemIds   = inventory.map(i => i.item_id)
+
+  const { data: items = [] } = useQuery({
+    queryKey: ['items', itemIds],
+    queryFn: async () => {
+      if (itemIds.length === 0) return []
+      const res = await fetch(`${API}/items`)
+      if (!res.ok) return []
+      const all: Item[] = await res.json()
+      return all.filter(i => itemIds.includes(i.id))
+    },
+    enabled: itemIds.length > 0,
+    staleTime: 60_000,
+  })
+
+  const itemMap      = new Map(items.map(i => [i.id, i]))
+  const equipped     = inventory.filter(i => i.equipped).map(i => itemMap.get(i.item_id)).filter(Boolean) as Item[]
+  const attackBoost  = equipped.filter(i => i.category === 'weapon').reduce((s, i) => s + i.stat_boost, 0)
+  const defenseBoost = equipped.filter(i => i.category === 'shield').reduce((s, i) => s + i.stat_boost, 0)
+  const hasXpBooster = equipped.some(i => i.category === 'booster')
+  const effectiveAttack  = player.attack_stat  + attackBoost
+  const effectiveDefense = player.defense_stat + defenseBoost
 
   const [phase,         setPhase]         = useState<BattlePhase>('idle')
   const [playerHp,      setPlayerHp]      = useState(100)
@@ -86,8 +112,8 @@ export function useBattle(player: Player, walletAddress: string) {
     const botPreviewMove: BattleMove =
       Math.random() < 0.5 ? 'attack' : Math.random() < 0.5 ? 'defend' : 'special'
 
-    const playerDmg = previewDamage(player.attack_stat, botStats.defense,  move === 'special',         botPreviewMove === 'defend')
-    const botDmg    = previewDamage(botStats.attack,    player.defense_stat, botPreviewMove === 'special', move === 'defend')
+    const playerDmg = previewDamage(effectiveAttack,  botStats.defense,  move === 'special',          botPreviewMove === 'defend')
+    const botDmg    = previewDamage(botStats.attack,  effectiveDefense,  botPreviewMove === 'special', move === 'defend')
 
     const newBotHp    = Math.max(0, botHp    - playerDmg)
     const newPlayerHp = Math.max(0, playerHp - botDmg)
@@ -204,11 +230,11 @@ export function useBattle(player: Player, walletAddress: string) {
     result,
     saveError,
     botStats,
-    // Item boost computation removed — server uses base stats; re-add when server reads inventory
-    attackBoost:     0,
-    defenseBoost:    0,
-    effectiveAttack: player.attack_stat,
-    effectiveDefense: player.defense_stat,
+    attackBoost,
+    defenseBoost,
+    hasXpBooster,
+    effectiveAttack,
+    effectiveDefense,
     startBattle,
     handleMove,
     reset,

@@ -33,6 +33,7 @@ export default function OnboardingPage() {
   const [step,           setStep]           = useState<Step>('verify')
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
+  const [nameInput,     setNameInput]     = useState('')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
@@ -71,6 +72,7 @@ export default function OnboardingPage() {
       <CharacterSelectScreen
         onSelect={(cls) => {
           setSelectedClass(cls)
+          setNameInput(deterministicName(address))
           setStep('confirm')
         }}
       />
@@ -82,7 +84,7 @@ export default function OnboardingPage() {
   if (step === 'confirm') {
     const def           = CLASS_DEFINITIONS[selectedClass]
     const variance      = statVarianceFromWallet(address)
-    const characterName = deterministicName(address)
+    const characterName = nameInput || deterministicName(address)
     const stats         = {
       attack:  def.stats.attack  + variance,
       defense: def.stats.defense + variance,
@@ -177,16 +179,20 @@ export default function OnboardingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35 }}
           >
-            <h2
-              className="font-display font-black leading-none"
+            <input
+              type="text"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value.replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 24))}
+              placeholder={deterministicName(address)}
+              className="w-full bg-transparent border-b-2 font-display font-black leading-none focus:outline-none placeholder:opacity-30"
               style={{
                 fontSize: 'clamp(2.2rem, 7vw, 3.5rem)',
                 color: def.accentColor,
-                textShadow: `0 0 32px ${def.accentColor}`,
+                textShadow: `0 0 32px ${def.accentColor}60`,
+                borderColor: `${def.accentColor}40`,
+                caretColor: def.accentColor,
               }}
-            >
-              {characterName}
-            </h2>
+            />
             <p className="font-display font-bold uppercase mt-1" style={{
               fontSize: '10px', letterSpacing: '0.28em', color: 'rgba(255,255,255,0.35)',
             }}>
@@ -195,7 +201,7 @@ export default function OnboardingPage() {
             <p className="font-display font-bold uppercase mt-2" style={{
               fontSize: '8px', letterSpacing: '0.28em', color: 'rgba(255,255,255,0.18)',
             }}>
-              ⬡ Your permanent warrior identity
+              ⬡ Tap to edit · can be changed later
             </p>
           </motion.div>
 

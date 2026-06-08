@@ -1,8 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
 import { motion } from 'framer-motion'
+import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
@@ -10,12 +12,14 @@ import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
+import UsernameSetup from '@/components/profile/UsernameSetup'
 import { ChainBadge } from '@/components/ui/ChainBadge'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
+import type { Item } from '@/types'
 import { formatGDollarNumber } from '@/utils/format'
 import { useGBalance } from '@/hooks/useGBalance'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -33,6 +37,26 @@ export default function ProfilePage() {
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
   const xpProgress = (player.xp / XP_PER_RANK) * 100
   const { formatted: gBalanceFormatted } = useGBalance(address as `0x${string}`)
+  const [showUsernameModal, setShowUsernameModal] = useState(false)
+
+  const itemIds = inventory.map(i => i.item_id)
+  const { data: items = [] } = useQuery({
+    queryKey: ['items', itemIds],
+    queryFn: async () => {
+      if (itemIds.length === 0) return []
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ''}/items`)
+      if (!res.ok) return []
+      const all: Item[] = await res.json()
+      return all.filter(i => itemIds.includes(i.id))
+    },
+    enabled: itemIds.length > 0,
+    staleTime: 60_000,
+  })
+  const itemMap      = new Map(items.map(i => [i.id, i]))
+  const equipped     = inventory.filter(i => i.equipped).map(i => itemMap.get(i.item_id)).filter(Boolean) as Item[]
+  const attackBoost  = equipped.filter(i => i.category === 'weapon').reduce((s, i) => s + i.stat_boost, 0)
+  const defenseBoost = equipped.filter(i => i.category === 'shield').reduce((s, i) => s + i.stat_boost, 0)
+  const hasXpBooster = equipped.some(i => i.category === 'booster')
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 items-start">
@@ -76,6 +100,22 @@ export default function ProfilePage() {
                 <p className="font-display font-black text-white text-xl tracking-wider leading-none">
                   {player.character_name}
                 </p>
+                {player.username ? (
+                  <button
+                    onClick={() => setShowUsernameModal(true)}
+                    className="text-[9px] text-slate-400 hover:text-white transition-colors font-medium mt-0.5 block"
+                  >
+                    @{player.username} · <span className="text-slate-600">edit</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowUsernameModal(true)}
+                    className="text-[9px] font-bold hover:opacity-100 transition-opacity mt-0.5 block opacity-70"
+                    style={{ color: def.accentColor }}
+                  >
+                    + Set username
+                  </button>
+                )}
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-sm inline-block"
                     style={{ background: def.accentColorDim, color: def.accentColor, border: `1px solid ${def.accentColor}40` }}>
@@ -112,17 +152,27 @@ export default function ProfilePage() {
         {/* Stat grid */}
         <div className="grid grid-cols-3 gap-2">
           {[
-            { l: 'ATK', v: player.attack_stat,  c: '#ef4444' },
-            { l: 'DEF', v: player.defense_stat, c: '#3b82f6' },
-            { l: 'SPD', v: player.speed_stat,   c: '#22c55e' },
-          ].map(({ l, v, c }) => (
+            { l: 'ATK', v: player.attack_stat,  boost: attackBoost,  c: '#ef4444' },
+            { l: 'DEF', v: player.defense_stat, boost: defenseBoost, c: '#3b82f6' },
+            { l: 'SPD', v: player.speed_stat,   boost: 0,            c: '#22c55e' },
+          ].map(({ l, v, boost, c }) => (
             <div key={l} className="flex flex-col items-center py-3 rounded-xl border"
-              style={{ background: `${c}08`, borderColor: `${c}20` }}>
+              style={{ background: `${c}08`, borderColor: boost > 0 ? `${c}45` : `${c}20` }}>
               <span className="text-[8px] uppercase tracking-widest font-bold mb-0.5" style={{ color: c }}>{l}</span>
-              <span className="font-display font-black text-white text-lg leading-none">{v}</span>
+              <span className="font-display font-black text-white text-lg leading-none">{v + boost}</span>
+              {boost > 0 && (
+                <span className="text-[7px] font-bold mt-0.5" style={{ color: c }}>+{boost}</span>
+              )}
             </div>
           ))}
         </div>
+
+        {hasXpBooster && (
+          <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg"
+            style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)' }}>
+            <span className="text-[8px] font-black uppercase tracking-widest text-purple-400">2× XP Active</span>
+          </div>
+        )}
 
         {/* G$ wallet balance — spendable */}
         <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
@@ -181,12 +231,17 @@ export default function ProfilePage() {
           <h1 className="font-display font-black text-white text-2xl tracking-wide">Profile</h1>
         </div>
 
-        {(player.play_style === 'Wanderer' || player.play_style === 'Champion') && (
-          <IdlePanel walletAddress={address} player={player} />
-        )}
+        <IdlePanel walletAddress={address} player={player} />
         <InventoryPanel inventory={inventory} walletAddress={address} />
         <BattleHistory walletAddress={address} playerRank={player.rank as Rank} />
       </motion.div>
+
+      {showUsernameModal && (
+        <UsernameSetup
+          walletAddress={address}
+          onClose={() => setShowUsernameModal(false)}
+        />
+      )}
     </div>
   )
 }
