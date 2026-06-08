@@ -22,14 +22,23 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   const autoChecked = useRef(false)
 
   async function handleVerify() {
+    console.log('[IdentityVerification] handleVerify started')
     setSigning(true)
-    const verified = await check(walletAddress)
-    setSigning(false)
-    if (verified) {
-      setVerified(true)
-      setTimeout(onVerified, 900)
-    } else {
-      await getFaceVerifyUrl()
+    try {
+      const verified = await check(walletAddress)
+      if (verified) {
+        console.log('[IdentityVerification] handleVerify: verified, proceeding')
+        setVerified(true)
+        setTimeout(onVerified, 900)
+      } else {
+        console.log('[IdentityVerification] handleVerify: not whitelisted, retrieving face verify URL')
+        await getFaceVerifyUrl()
+      }
+    } catch (err) {
+      console.error('[IdentityVerification] handleVerify encountered unexpected error:', err)
+    } finally {
+      setSigning(false)
+      console.log('[IdentityVerification] handleVerify finished, signing state cleared')
     }
   }
 
@@ -39,19 +48,50 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   useEffect(() => {
     if (isVerified && walletClient && status === 'idle' && !autoChecked.current) {
       autoChecked.current = true
+      console.log('[IdentityVerification] Auto-check triggered because player isVerified but has no registered player profile')
       handleVerify()
     }
   }, [walletClient, isVerified, status])
 
   async function handleRecheckAfterFV() {
-    const verified = await check(walletAddress)
-    if (verified) {
-      setVerified(true)
-      setTimeout(onVerified, 900)
+    console.log('[IdentityVerification] handleRecheckAfterFV started')
+    setSigning(true)
+    try {
+      const verified = await check(walletAddress)
+      if (verified) {
+        console.log('[IdentityVerification] handleRecheckAfterFV: verified, proceeding')
+        setVerified(true)
+        setTimeout(onVerified, 900)
+      } else {
+        console.log('[IdentityVerification] handleRecheckAfterFV: still not whitelisted')
+      }
+    } catch (err) {
+      console.error('[IdentityVerification] handleRecheckAfterFV encountered unexpected error:', err)
+    } finally {
+      setSigning(false)
+      console.log('[IdentityVerification] handleRecheckAfterFV finished')
     }
   }
 
   const isChecking = signing || status === 'checking' || status === 'switching_chain'
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+    if (isChecking) {
+      console.log('[IdentityVerification] Spinner/checking state active. Setting 20s safety timeout.')
+      timer = setTimeout(() => {
+        console.warn('[IdentityVerification] Safety timeout reached! Resetting verification status and state.')
+        reset()
+        setSigning(false)
+      }, 20000)
+    }
+    return () => {
+      if (timer) {
+        console.log('[IdentityVerification] Clearing safety timeout.')
+        clearTimeout(timer)
+      }
+    }
+  }, [isChecking, reset])
   const showButton = status === 'idle' && !signing
 
   return (
