@@ -51,12 +51,10 @@ export default function OnboardingPage() {
   // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
   if (step === 'verify') {
     return (
-      <div className="max-w-lg mx-auto py-16 px-4">
-        <IdentityVerification
-          walletAddress={address as `0x${string}`}
-          onVerified={() => setStep('covenant')}
-        />
-      </div>
+      <IdentityVerification
+        walletAddress={address as `0x${string}`}
+        onVerified={() => setStep('covenant')}
+      />
     )
   }
 
@@ -291,13 +289,7 @@ export default function OnboardingPage() {
     )
   }
 
-  // ── Step: VERIFY ──────────────────────────────────────────────────────────────
-
-  return (
-    <div className="max-w-xl mx-auto py-8">
-      <IdentityVerification walletAddress={address} onVerified={() => setStep('select')} />
-    </div>
-  )
+  return null
 }
 
 // ── Covenant intro — "One human. One warrior." ────────────────────────────────
