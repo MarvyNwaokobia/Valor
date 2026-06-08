@@ -18,6 +18,20 @@ export const ENGAGEMENT_REWARDS_CONTRACT = REWARDS_CONTRACT
 // Valor's registered app wallet on the Engagement Rewards contract
 export const VALOR_APP_ADDRESS = (process.env.NEXT_PUBLIC_VALOR_APP_ADDRESS ?? '') as `0x${string}`
 
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  errorMessage: string = 'Operation timed out'
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorMessage)), ms)
+  })
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId)
+  })
+}
+
 export async function createIdentitySDK(
   publicClient: PublicClient,
   walletClient: WalletClient,
@@ -30,8 +44,19 @@ export async function checkWhitelistStatus(
   walletClient: WalletClient,
   address: `0x${string}`,
 ): Promise<{ isWhitelisted: boolean; root: `0x${string}` }> {
-  const sdk = await createIdentitySDK(publicClient, walletClient)
-  return sdk.getWhitelistedRoot(address)
+  console.log('[GoodDollar] checkWhitelistStatus: starting verification check for', address)
+  const sdk = await withTimeout(
+    createIdentitySDK(publicClient, walletClient),
+    10000,
+    'GoodDollar SDK initialization timed out'
+  )
+  const result = await withTimeout(
+    sdk.getWhitelistedRoot(address),
+    10000,
+    'GoodDollar whitelist lookup timed out'
+  )
+  console.log('[GoodDollar] checkWhitelistStatus result:', result)
+  return result
 }
 
 export async function generateFaceVerifyLink(
@@ -39,12 +64,23 @@ export async function generateFaceVerifyLink(
   walletClient: WalletClient,
   callbackUrl?: string,
 ): Promise<string> {
-  const sdk = await createIdentitySDK(publicClient, walletClient)
-  return sdk.generateFVLink(
-    true,
-    callbackUrl ?? `${window.location.origin}/onboarding?step=verify`,
-    SupportedChains.CELO,
+  console.log('[GoodDollar] generateFaceVerifyLink: generating link')
+  const sdk = await withTimeout(
+    createIdentitySDK(publicClient, walletClient),
+    10000,
+    'GoodDollar SDK initialization timed out'
   )
+  const url = await withTimeout(
+    sdk.generateFVLink(
+      true,
+      callbackUrl ?? `${window.location.origin}/onboarding?step=verify`,
+      SupportedChains.CELO,
+    ),
+    10000,
+    'GoodDollar face verification link generation timed out'
+  )
+  console.log('[GoodDollar] generateFaceVerifyLink result url:', url)
+  return url
 }
 
 export interface IdentityExpiry {
@@ -67,14 +103,26 @@ export async function getIdentityExpiry(
   address: Address,
 ): Promise<IdentityExpiry> {
   try {
-    const sdk = await createIdentitySDK(publicClient, walletClient)
-    const { lastAuthenticated, authPeriod } = await sdk.getIdentityExpiryData(address)
+    console.log('[GoodDollar] getIdentityExpiry: fetching for', address)
+    const sdk = await withTimeout(
+      createIdentitySDK(publicClient, walletClient),
+      10000,
+      'GoodDollar SDK initialization timed out'
+    )
+    const { lastAuthenticated, authPeriod } = await withTimeout(
+      sdk.getIdentityExpiryData(address),
+      10000,
+      'GoodDollar expiry data lookup timed out'
+    )
     const { expiryTimestamp } = sdk.calculateIdentityExpiry(lastAuthenticated, authPeriod)
     const expiresAt = new Date(Number(expiryTimestamp))
     const now = Date.now()
     const daysLeft = Math.max(0, Math.floor((expiresAt.getTime() - now) / (1000 * 60 * 60 * 24)))
+    console.log('[GoodDollar] getIdentityExpiry success. Days left:', daysLeft)
     return { expiresAt, daysLeft, isExpired: expiresAt.getTime() <= now }
-  } catch {
+  } catch (err) {
+    console.warn('[GoodDollar] getIdentityExpiry failed:', err)
     return { expiresAt: null, daysLeft: 0, isExpired: false }
   }
 }
+
