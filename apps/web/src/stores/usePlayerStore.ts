@@ -7,6 +7,9 @@ interface PlayerState {
   inventory: InventoryItem[]
   isVerified: boolean
   playerSynced: boolean
+  // Persisted across sessions so routing decisions survive API outages.
+  // Keyed by wallet address; true once a player record is confirmed in the DB.
+  profileExists: Record<string, boolean>
   setPlayer: (player: Player) => void
   updatePlayer: (updates: Partial<Player>) => void
   setInventory: (inventory: InventoryItem[]) => void
@@ -15,6 +18,7 @@ interface PlayerState {
   toggleEquip: (itemId: string) => void
   setVerified: (verified: boolean) => void
   setPlayerSynced: (synced: boolean) => void
+  setProfileExists: (address: string, exists: boolean) => void
   clearPlayer: () => void
 }
 
@@ -25,6 +29,7 @@ export const usePlayerStore = create<PlayerState>()(
       inventory: [],
       isVerified: false,
       playerSynced: false,
+      profileExists: {},
 
       setPlayer: (player) => set({ player }),
       updatePlayer: (updates) =>
@@ -44,11 +49,13 @@ export const usePlayerStore = create<PlayerState>()(
         })),
       setVerified: (isVerified) => set({ isVerified }),
       setPlayerSynced: (playerSynced) => set({ playerSynced }),
+      setProfileExists: (address, exists) =>
+        set((state) => ({ profileExists: { ...state.profileExists, [address]: exists } })),
       clearPlayer: () => set({ player: null, inventory: [], isVerified: false, playerSynced: false }),
     }),
     {
       name: 'valor-player',
-      partialize: (state) => ({ isVerified: state.isVerified }),
+      partialize: (state) => ({ isVerified: state.isVerified, profileExists: state.profileExists }),
     },
   ),
 )
