@@ -16,7 +16,7 @@ import ImpactBurst from './ImpactBurst'
 import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { CLASS_DEFINITIONS, CHARACTER_GLB, CHARACTER_CLASSES } from '@/lib/classes'
+import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import RankAura from '@/components/ui/RankAura'
@@ -30,11 +30,6 @@ const MOVES: { id: BattleMove; label: string; desc: string; Icon: typeof Sword; 
   { id: 'defend',  label: 'Defend',  desc: 'Halve incoming damage',  Icon: Shield, color: '#3b82f6' },
   { id: 'special', label: 'Special', desc: 'Max power — once only',  Icon: Zap,    color: '#8b5cf6' },
 ]
-
-function pickBotClass(playerClass: CharacterClass): CharacterClass {
-  const options = CHARACTER_CLASSES.filter(c => c !== playerClass)
-  return options[Math.floor(Math.random() * options.length)]
-}
 
 // playerDealt = damage you dealt to bot; botDealt = damage bot dealt to you
 function roundNarrative(
@@ -71,15 +66,14 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const router = useRouter()
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
-  const [botClass, setBotClass] = useState<CharacterClass>(() =>
-    pickBotClass(player.character_class as CharacterClass)
-  )
-  const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
-  const botDef = CLASS_DEFINITIONS[botClass]
+  const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
 
-  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, startBattle, handleMove, reset,
+  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, botClass, starting, submitting,
+    startBattle, handleMove, reset,
     attackBoost, defenseBoost, hasXpBooster, effectiveAttack, effectiveDefense } =
     useBattle(player, walletAddress)
+
+  const botDef = CLASS_DEFINITIONS[botClass ?? 'Sentinel']
 
   // ── Animation state ─────────────────────────────────────────────────────
   const [playerAnim,       setPlayerAnim]       = useState('idle')
@@ -175,8 +169,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       if (entry.botDmg > 0) {
         combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
         spawnDmgNumber(entry.botDmg, 'player', entry.botMove === 'special')
-        playHit(botClass, entry.botDmg)
-        if (entry.botMove === 'special') playSpecial(botClass)
+        playHit(botDef.id, entry.botDmg)
+        if (entry.botMove === 'special') playSpecial(botDef.id)
       }
     }, 920)
 
@@ -309,7 +303,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
               startBattle()
             }}
-            className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
+            disabled={starting}
+            className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all disabled:opacity-60 disabled:pointer-events-none"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
             whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
@@ -325,11 +320,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               </div>
               <div>
                 <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Fight a Bot</p>
-                <p className="text-slate-500 text-sm mt-0.5">5-round battle · Scales to your rank · Instant result</p>
+                <p className="text-slate-500 text-sm mt-0.5">
+                  {starting ? 'Finding an opponent...' : '5-round battle · Scales to your rank · Instant result'}
+                </p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
             </div>
           </motion.button>
+
+          {saveError && phase === 'idle' && (
+            <p className="text-red-400 text-xs text-center -mt-2">{saveError}</p>
+          )}
 
           <motion.button onClick={() => {
               const el = document.documentElement
@@ -385,21 +386,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
           </motion.button>
         </div>
-      </div>
-    )
-  }
-
-  // ── SAVING ──────────────────────────────────────────────────────────────
-  if (phase === 'saving') {
-    return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20">
-        <motion.div
-          className="w-12 h-12 rounded-full border-2 border-t-transparent"
-          style={{ borderColor: `${def.accentColor} transparent transparent transparent` }}
-          animate={{ rotate: 360 }}
-          transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-        />
-        <p className="text-slate-400 text-sm uppercase tracking-widest">Recording battle...</p>
       </div>
     )
   }
@@ -511,7 +497,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               {result.rounds.map(r => {
                 const { you, bot } = roundNarrative(r.playerMove, r.botMove, r.playerDmg, r.botDmg)
                 const rd = CLASS_DEFINITIONS[player.character_class as CharacterClass]
-                const bd = CLASS_DEFINITIONS[botClass]
+                const bd = botDef
                 return (
                   <div key={r.round} className="rounded-lg px-2 py-1.5" style={{ background: 'rgba(8,8,14,0.7)' }}>
                     <div className="flex items-center gap-1 mb-1">
@@ -540,12 +526,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
           </motion.div>
 
-          {saveError && (
-            <p className="text-red-400 text-xs text-center">{saveError}</p>
-          )}
-
           {/* ── Fight again CTA ── */}
-          <motion.button onClick={() => { setBotClass(pickBotClass(player.character_class as CharacterClass)); reset() }}
+          <motion.button onClick={() => reset()}
             className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
             style={{
               fontSize: 'clamp(14px, 3.5vw, 18px)',
@@ -622,7 +604,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               playerAnim={playerAnim}
               playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
               playerAccentColor={def.accentColor}
-              botClass={botClass}
+              botClass={botDef.id}
               botAnim={botAnim}
               botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
               botAccentColor={botDef.accentColor}
@@ -769,7 +751,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             </div>
 
             <ArenaPlayerCard name="Bot" hp={botHp}
-              classLabel={botClass} color={botDef.accentColor} side="right"
+              classLabel={botDef.id} color={botDef.accentColor} side="right"
               lastMove={lastEntry?.botMove ?? null}
               lastDmgDealt={lastEntry?.botDmg ?? 0}
               opponentDefended={lastEntry?.playerMove === 'defend'} />
@@ -784,8 +766,13 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           paddingTop: 8,
           background: 'linear-gradient(0deg, rgba(4,3,12,0.92) 0%, rgba(4,3,12,0.7) 70%, transparent 100%)',
         }}>
+        {saveError && (
+          <div className="col-span-3 -mt-1 mb-1">
+            <p className="text-red-400 text-[10px] text-center">{saveError} — try again</p>
+          </div>
+        )}
         {MOVES.map(({ id, label, desc, Icon, color }) => {
-          const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating
+          const disabled = (id === 'special' && specialUsed) || isEntering || isRoundAnimating || submitting
           return (
             <motion.button key={id} onClick={() => handleMove(id)} disabled={disabled}
               whileTap={disabled ? {} : { scale: 0.93 }}
