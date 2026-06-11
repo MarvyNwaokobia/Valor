@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useAnimation } from 'framer-motion'
 import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
@@ -134,6 +134,28 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   // ── Audio + combat feel ──────────────────────────────────────────────────
   const { playHit, playSpecial, playVictory, playDefeat, startAmbient, stopAmbient } = useAudio()
   const combatFeel = useCombatFeel()
+
+  // Imperative shake/camera-punch controls — replay on every hit WITHOUT
+  // remounting the persistent 3D canvas (a `key`-based remount destroys and
+  // recreates the WebGL context, causing a black flash on every round).
+  const shakeControls = useAnimation()
+  const camControls = useAnimation()
+
+  useEffect(() => {
+    if (combatFeel.shakeLevel === 0) return
+    const x = combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0]
+      : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0]
+      : [-3, 3, -2, 2, 0]
+    const rotate = combatFeel.shakeLevel >= 3 ? [-0.7, 0.6, -0.5, 0.4, -0.2, 0.2, 0] : 0
+    shakeControls.start({ x, rotate, transition: { duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [combatFeel.shakeKey])
+
+  useEffect(() => {
+    if (combatFeel.specialCam === 0) return
+    camControls.start({ scale: [1, 1.055, 1.02, 1], transition: { duration: 0.5, ease: 'easeInOut' } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [combatFeel.specialCam])
 
   // Drive animations + combat feel from round log
   const prevLogLen = useRef(0)
@@ -563,13 +585,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   }
 
   // ── FIGHTING ────────────────────────────────────────────────────────────
-  const shakeAnim = combatFeel.shakeLevel > 0
-    ? {
-        x: combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0] : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0] : [-3, 3, -2, 2, 0],
-        rotate: combatFeel.shakeLevel >= 3 ? [-0.7, 0.6, -0.5, 0.4, -0.2, 0.2, 0] : 0,
-      }
-    : { x: 0, rotate: 0 }
-
   return (
     <div className="fixed inset-0 z-50 overflow-hidden" style={{ background: '#04030c' }}>
 
@@ -590,15 +605,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
       {/* ── 3D scene — fills the entire screen, controls overlay on top ── */}
       <motion.div
-        key={combatFeel.shakeKey}
-        animate={shakeAnim}
-        transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.26 : 0.18, ease: 'easeOut' }}
+        animate={shakeControls}
         className="absolute inset-0"
       >
         <motion.div
-          key={`cam-${combatFeel.specialCam}`}
-          animate={combatFeel.specialCam > 0 ? { scale: [1, 1.055, 1.02, 1] } : {}}
-          transition={{ duration: 0.5, ease: 'easeInOut' }}
+          animate={camControls}
           className="absolute inset-0"
         >
           {/* Canvas */}
