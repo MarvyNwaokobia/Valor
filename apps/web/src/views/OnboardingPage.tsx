@@ -24,7 +24,7 @@ const SUFFIXES = ['Blade','Fist','Heart','Walker','Strike','Guard','Born','Wolf'
 function deterministicName(wallet: string) {
   const seed = wallet.replace('0x', '').slice(0, 8)
   const hash = seed.split('').reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 7)
-  return `${PREFIXES[hash % PREFIXES.length]}${SUFFIXES[(hash >> 4) % SUFFIXES.length]}`
+  return `${PREFIXES[hash % PREFIXES.length]}${SUFFIXES[(hash >>> 4) % SUFFIXES.length]}`
 }
 
 export default function OnboardingPage() {
