@@ -35,8 +35,9 @@ export async function withTimeout<T>(
 export async function createIdentitySDK(
   publicClient: PublicClient,
   walletClient: WalletClient,
+  account: Address,
 ): Promise<IdentitySDK> {
-  return IdentitySDK.init({ publicClient, walletClient, env: GD_ENV })
+  return new IdentitySDK({ account, publicClient, walletClient, env: GD_ENV })
 }
 
 export async function checkWhitelistStatus(
@@ -46,7 +47,7 @@ export async function checkWhitelistStatus(
 ): Promise<{ isWhitelisted: boolean; root: `0x${string}` }> {
   console.log('[GoodDollar] checkWhitelistStatus: starting verification check for', address)
   const sdk = await withTimeout(
-    createIdentitySDK(publicClient, walletClient),
+    createIdentitySDK(publicClient, walletClient, address),
     10000,
     'GoodDollar SDK initialization timed out'
   )
@@ -62,11 +63,12 @@ export async function checkWhitelistStatus(
 export async function generateFaceVerifyLink(
   publicClient: PublicClient,
   walletClient: WalletClient,
+  account: Address,
   callbackUrl?: string,
 ): Promise<string> {
   console.log('[GoodDollar] generateFaceVerifyLink: generating link')
   const sdk = await withTimeout(
-    createIdentitySDK(publicClient, walletClient),
+    createIdentitySDK(publicClient, walletClient, account),
     10000,
     'GoodDollar SDK initialization timed out'
   )
@@ -92,9 +94,10 @@ export interface IdentityExpiry {
 export async function createClaimSDK(
   publicClient: PublicClient,
   walletClient: WalletClient,
+  account: Address,
 ): Promise<ClaimSDK> {
-  const identitySDK = await IdentitySDK.init({ publicClient, walletClient, env: GD_ENV })
-  return ClaimSDK.init({ publicClient, walletClient, identitySDK, env: GD_ENV })
+  const identitySDK = await createIdentitySDK(publicClient, walletClient, account)
+  return new ClaimSDK({ account, publicClient, walletClient, identitySDK, env: GD_ENV })
 }
 
 export async function getIdentityExpiry(
@@ -105,7 +108,7 @@ export async function getIdentityExpiry(
   try {
     console.log('[GoodDollar] getIdentityExpiry: fetching for', address)
     const sdk = await withTimeout(
-      createIdentitySDK(publicClient, walletClient),
+      createIdentitySDK(publicClient, walletClient, address),
       10000,
       'GoodDollar SDK initialization timed out'
     )
