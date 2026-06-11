@@ -73,14 +73,6 @@ export default function ImpactBurst({ color, secondaryColor, size = 'md' }: Prop
         />
       ))}
 
-      {/* Central flash */}
-      <motion.div
-        className="absolute rounded-full"
-        style={{ width: 20, height: 20, background: `${color}cc` }}
-        initial={{ scale: 0.5, opacity: 1 }}
-        animate={{ scale: 0.1, opacity: 0 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-      />
     </div>
   )
 }

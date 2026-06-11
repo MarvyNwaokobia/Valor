@@ -13,6 +13,7 @@ import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
 import BattleScene from './BattleScene'
 import ImpactBurst from './ImpactBurst'
+import HitSpark from './HitSpark'
 import DamageNumber from './DamageNumber'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
@@ -563,8 +564,11 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
   // ── FIGHTING ────────────────────────────────────────────────────────────
   const shakeAnim = combatFeel.shakeLevel > 0
-    ? { x: combatFeel.shakeLevel >= 3 ? [-10, 10, -7, 7, -3, 3, 0] : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0] : [-3, 3, -2, 2, 0] }
-    : { x: 0 }
+    ? {
+        x: combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0] : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0] : [-3, 3, -2, 2, 0],
+        rotate: combatFeel.shakeLevel >= 3 ? [-0.7, 0.6, -0.5, 0.4, -0.2, 0.2, 0] : 0,
+      }
+    : { x: 0, rotate: 0 }
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden" style={{ background: '#04030c' }}>
@@ -618,19 +622,28 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 <DamageNumber key={e.id} {...e} />
               ))}
             </AnimatePresence>
+            {/* Edge-glow vignette — reacts from the screen edge instead of flooding it */}
             <AnimatePresence>
               {combatFeel.playerFlash && (
                 <motion.div key="player-flash" className="absolute inset-0"
-                  style={{ background: `${combatFeel.playerFlash}40` }}
-                  initial={{ opacity: 0 }} animate={{ opacity: [0, 0.9, 0] }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }} />
+                  style={{ background: `radial-gradient(circle at 0% 55%, ${combatFeel.playerFlash}45, transparent 65%)` }}
+                  initial={{ opacity: 0 }} animate={{ opacity: [0, 1, 0] }} exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }} />
               )}
             </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.playerBurst && (
-                <ImpactBurst key={`player-burst-${combatFeel.shakeKey}`} color={combatFeel.playerBurst} size="md" />
-              )}
-            </AnimatePresence>
+            {/* Impact anchor — near the player's chest, close to the center divider */}
+            <div className="absolute" style={{ left: '78%', top: '40%' }}>
+              <AnimatePresence>
+                {combatFeel.playerSpark && (
+                  <HitSpark key={`player-spark-${combatFeel.shakeKey}`} color={combatFeel.playerSpark.color} level={combatFeel.playerSpark.level} />
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {combatFeel.playerBurst && (
+                  <ImpactBurst key={`player-burst-${combatFeel.shakeKey}`} color={combatFeel.playerBurst} size="md" />
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
           {/* Bot DOM overlays — right half */}
@@ -640,19 +653,28 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 <DamageNumber key={e.id} {...e} />
               ))}
             </AnimatePresence>
+            {/* Edge-glow vignette — reacts from the screen edge instead of flooding it */}
             <AnimatePresence>
               {combatFeel.botFlash && (
                 <motion.div key="bot-flash" className="absolute inset-0"
-                  style={{ background: `${combatFeel.botFlash}40` }}
-                  initial={{ opacity: 0 }} animate={{ opacity: [0, 0.9, 0] }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }} />
+                  style={{ background: `radial-gradient(circle at 100% 55%, ${combatFeel.botFlash}45, transparent 65%)` }}
+                  initial={{ opacity: 0 }} animate={{ opacity: [0, 1, 0] }} exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }} />
               )}
             </AnimatePresence>
-            <AnimatePresence>
-              {combatFeel.botBurst && (
-                <ImpactBurst key={`bot-burst-${combatFeel.shakeKey}`} color={combatFeel.botBurst} size="md" />
-              )}
-            </AnimatePresence>
+            {/* Impact anchor — near the bot's chest, close to the center divider */}
+            <div className="absolute" style={{ left: '22%', top: '40%' }}>
+              <AnimatePresence>
+                {combatFeel.botSpark && (
+                  <HitSpark key={`bot-spark-${combatFeel.shakeKey}`} color={combatFeel.botSpark.color} level={combatFeel.botSpark.level} />
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {combatFeel.botBurst && (
+                  <ImpactBurst key={`bot-burst-${combatFeel.shakeKey}`} color={combatFeel.botBurst} size="md" />
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
           {/* VS badge */}
