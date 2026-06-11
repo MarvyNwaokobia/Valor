@@ -32,7 +32,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
         setTimeout(onVerified, 900)
       } else {
         console.log('[IdentityVerification] handleVerify: not whitelisted, retrieving face verify URL')
-        await getFaceVerifyUrl()
+        await getFaceVerifyUrl(walletAddress)
       }
     } catch (err) {
       console.error('[IdentityVerification] handleVerify encountered unexpected error:', err)

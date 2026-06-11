@@ -58,7 +58,7 @@ export function useGoodDollarClaim(
     setStatus('loading')
     setError(null)
     try {
-      const sdk = await createClaimSDK(publicClient, walletClient)
+      const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
       const walletStatus = await sdk.getWalletClaimStatus()
 
       if (walletStatus.status === 'can_claim') {
@@ -90,7 +90,7 @@ export function useGoodDollarClaim(
     setClaimStep('Confirm in your wallet')
 
     try {
-      const sdk = await createClaimSDK(publicClient, walletClient)
+      const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
 
       const receipt = await sdk.claim(() => {
         // SDK fires this before requesting a gas top-up tx
