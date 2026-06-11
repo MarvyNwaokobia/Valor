@@ -1,8 +1,10 @@
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer};
+use dashmap::DashMap;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 mod handlers;
 mod models;
@@ -10,12 +12,13 @@ mod services;
 mod utils;
 
 pub struct AppState {
-    pub db:             sqlx::PgPool,
-    pub rewards:        Option<services::rewards::RewardService>,
-    pub chain:          Option<services::chain::ChainWriter>,
-    pub battle_limiter: services::rate_limiter::RateLimiter,
-    pub rank_limiter:   services::rate_limiter::RateLimiter,
-    pub game_server:    services::game_server::GameServerHandle,
+    pub db:                sqlx::PgPool,
+    pub rewards:           Option<services::rewards::RewardService>,
+    pub chain:             Option<services::chain::ChainWriter>,
+    pub battle_limiter:    services::rate_limiter::RateLimiter,
+    pub rank_limiter:      services::rate_limiter::RateLimiter,
+    pub game_server:       services::game_server::GameServerHandle,
+    pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
 }
 
 #[tokio::main]
@@ -61,6 +64,12 @@ async fn main() -> anyhow::Result<()> {
     let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
+    // In-progress bot fights — keyed by session id, shared across all workers
+    // (an Arc, not a per-worker instance, so /round requests reach the
+    // session created by /start regardless of which worker handles them).
+    let bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>> =
+        std::sync::Arc::new(DashMap::new());
+
     // FRONTEND_ORIGIN: comma-separated list of allowed origins.
     // Defaults to production URL so deploys work without manual env var setup.
     // Always allows localhost for local dev.
@@ -97,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
                 rank_limiter:   services::rate_limiter::RateLimiter::new(2, 60),
                 game_server:    game_server.clone(),
+                bot_fight_sessions: bot_fight_sessions.clone(),
             }))
             .wrap(Logger::default())
             .wrap(cors)

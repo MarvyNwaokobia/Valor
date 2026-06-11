@@ -3,10 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import type { Player, BattleMove, Item } from '@/types'
+import type { CharacterClass } from '@/lib/classes'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
-export type BattlePhase = 'idle' | 'fighting' | 'saving' | 'result'
+export type BattlePhase = 'idle' | 'fighting' | 'result'
 
 export interface BattleRoundResult {
   round:      number
@@ -26,29 +27,6 @@ export interface BattleResultState {
   newRank:    Player['rank'] | null
   gAwarded:   number
   rounds:     BattleRoundResult[]
-}
-
-// Client-side damage preview for live HP bar animation during play.
-// The server re-runs the full simulation with its own bot moves — this is cosmetic only.
-function previewDamage(
-  attack: number,
-  defense: number,
-  isSpecial: boolean,
-  opponentDefending: boolean,
-): number {
-  const base     = isSpecial ? 40 : 20
-  const variance = base * 0.2 * (Math.random() * 2 - 1)
-  const statMod  = 1 + (attack - defense) * 0.01
-  const defMult  = opponentDefending ? 0.5 : 1
-  return Math.max(1, Math.round((base + variance) * statMod * defMult))
-}
-
-function generateBotPreviewStats(playerRank: Player['rank']): { attack: number; defense: number } {
-  const base: Record<Player['rank'], number> = {
-    Bronze: 10, Silver: 15, Gold: 20, Platinum: 25, Diamond: 30,
-  }
-  const variance = Math.floor(Math.random() * 5) - 2
-  return { attack: base[playerRank] + variance, defense: base[playerRank] + variance }
 }
 
 export function useBattle(player: Player, walletAddress: string) {
@@ -86,71 +64,88 @@ export function useBattle(player: Player, walletAddress: string) {
   const [specialUsed,   setSpecialUsed]   = useState(false)
   const [result,        setResult]        = useState<BattleResultState | null>(null)
   const [saveError,     setSaveError]     = useState<string | null>(null)
-  const [allMoves,      setAllMoves]      = useState<BattleMove[]>([])
-  const [botStats]                        = useState(() => generateBotPreviewStats(player.rank))
+  const [sessionId,     setSessionId]     = useState<string | null>(null)
+  const [botClass,      setBotClass]      = useState<CharacterClass | null>(null)
+  const [starting,      setStarting]      = useState(false)
+  const [submitting,    setSubmitting]    = useState(false)
 
-  function startBattle() {
-    setPhase('fighting')
-    setPlayerHp(100)
-    setBotHp(100)
-    setRound(1)
-    setLog([])
-    setSpecialUsed(false)
-    setResult(null)
+  async function startBattle() {
+    if (starting) return
+    setStarting(true)
     setSaveError(null)
-    setAllMoves([])
+    try {
+      const res = await fetch(`${API}/battles/bot/start`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ wallet: walletAddress }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as { error?: string }).error ?? `API error ${res.status}`)
+      }
+
+      const data = await res.json()
+
+      setSessionId(data.session_id)
+      setBotClass(data.bot_class as CharacterClass)
+      setPlayerHp(100)
+      setBotHp(100)
+      setRound(1)
+      setLog([])
+      setSpecialUsed(false)
+      setResult(null)
+      setPhase('fighting')
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to start battle')
+    } finally {
+      setStarting(false)
+    }
   }
 
   async function handleMove(move: BattleMove) {
-    if (phase !== 'fighting') return
+    if (phase !== 'fighting' || submitting) return
     if (move === 'special' && specialUsed) return
+    if (!sessionId) return
 
-    if (move === 'special') setSpecialUsed(true)
+    setSubmitting(true)
+    setSaveError(null)
 
-    // ── Client-side preview for live HP animation ────────────────────
-    // Bot move is a local preview — the real bot moves are generated server-side.
-    const botPreviewMove: BattleMove =
-      Math.random() < 0.5 ? 'attack' : Math.random() < 0.5 ? 'defend' : 'special'
+    try {
+      const res = await fetch(`${API}/battles/bot/round`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ session_id: sessionId, player_move: move }),
+      })
 
-    const playerDmg = previewDamage(effectiveAttack,  botStats.defense,  move === 'special',          botPreviewMove === 'defend')
-    const botDmg    = previewDamage(botStats.attack,  effectiveDefense,  botPreviewMove === 'special', move === 'defend')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        const msg = (err as { error?: string }).error ?? `API error ${res.status}`
+        // The server already marked special as used for a prior request whose
+        // response we may have lost — keep the client in sync either way.
+        if (msg === 'Special already used') setSpecialUsed(true)
+        throw new Error(msg)
+      }
 
-    const newBotHp    = Math.max(0, botHp    - playerDmg)
-    const newPlayerHp = Math.max(0, playerHp - botDmg)
+      const data = await res.json()
 
-    const roundEntry: BattleRoundResult = {
-      round, playerMove: move, botMove: botPreviewMove,
-      playerDmg, botDmg, playerHp: newPlayerHp, botHp: newBotHp,
-    }
+      const roundEntry: BattleRoundResult = {
+        round:      data.round,
+        playerMove: data.player_move as BattleMove,
+        botMove:    data.bot_move    as BattleMove,
+        playerDmg:  data.player_dmg,
+        botDmg:     data.bot_dmg,
+        playerHp:   data.player_hp,
+        botHp:      data.bot_hp,
+      }
 
-    const newLog   = [...log, roundEntry]
-    const newMoves = [...allMoves, move]
+      const newLog = [...log, roundEntry]
+      setLog(newLog)
+      setPlayerHp(data.player_hp)
+      setBotHp(data.bot_hp)
+      if (data.player_move === 'special') setSpecialUsed(true)
 
-    setLog(newLog)
-    setAllMoves(newMoves)
-    setPlayerHp(newPlayerHp)
-    setBotHp(newBotHp)
-
-    const isLastRound = round >= 5 || newBotHp <= 0 || newPlayerHp <= 0
-
-    if (isLastRound) {
-      setPhase('saving')
-      try {
-        // ── Server resolves the battle authoritatively ───────────────
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/battles/bot`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ wallet: walletAddress, player_moves: newMoves }),
-        })
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error((err as { error?: string }).error ?? `API error ${res.status}`)
-        }
-
-        const data = await res.json()
-
-        // Map snake_case API response → camelCase BattleResultState
+      if (data.is_final) {
         const finalResult: BattleResultState = {
           won:       data.won,
           xpAwarded: data.xp_awarded,
@@ -158,19 +153,7 @@ export function useBattle(player: Player, walletAddress: string) {
           rankedUp:  data.ranked_up,
           newRank:   data.new_rank ?? null,
           gAwarded:  data.g_awarded,
-          // Use server's authoritative round data, falling back to client preview log
-          rounds: (data.rounds as Array<{
-            round: number; player_move: string; bot_move: string
-            player_dmg: number; bot_dmg: number; player_hp: number; bot_hp: number
-          }>)?.map((r) => ({
-            round:      r.round,
-            playerMove: r.player_move as BattleMove,
-            botMove:    r.bot_move    as BattleMove,
-            playerDmg:  r.player_dmg,
-            botDmg:     r.bot_dmg,
-            playerHp:   r.player_hp,
-            botHp:      r.bot_hp,
-          })) ?? newLog,
+          rounds:    newLog,
         }
 
         // ── Sync player store from server response ───────────────────
@@ -194,23 +177,13 @@ export function useBattle(player: Player, walletAddress: string) {
 
         setResult(finalResult)
         setPhase('result')
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to save battle'
-        setSaveError(msg)
-        // Show a local result so the player isn't left on a blank screen
-        setResult({
-          won:      newPlayerHp >= newBotHp,
-          xpAwarded: 0,
-          newXp:    player.xp,
-          rankedUp: false,
-          newRank:  null,
-          gAwarded: 0,
-          rounds:   newLog,
-        })
-        setPhase('result')
+      } else {
+        setRound(data.round + 1)
       }
-    } else {
-      setRound((r) => r + 1)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to resolve round')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -218,6 +191,8 @@ export function useBattle(player: Player, walletAddress: string) {
     setPhase('idle')
     setResult(null)
     setSaveError(null)
+    setSessionId(null)
+    setBotClass(null)
   }
 
   return {
@@ -229,7 +204,9 @@ export function useBattle(player: Player, walletAddress: string) {
     specialUsed,
     result,
     saveError,
-    botStats,
+    botClass,
+    starting,
+    submitting,
     attackBoost,
     defenseBoost,
     hasXpBooster,
