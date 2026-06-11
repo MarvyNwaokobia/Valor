@@ -3,11 +3,12 @@ use chrono::Utc;
 use ethers::types::Address;
 use serde::Deserialize;
 use serde_json::json;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::models::player::Player;
-use crate::services::battle::{simulate_bot_fight_with_moves, simulate_async_fight};
+use crate::services::battle::{BotFightSession, RoundData, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
 
 fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
@@ -85,10 +86,18 @@ fn rank_g_reward(rank: &str) -> i64 {
     }
 }
 
+/// Sessions are abandoned (no /round call) after this long are dropped.
+const SESSION_TTL_SECS: u64 = 600;
+
 #[derive(Deserialize)]
-pub struct BotFightRequest {
-    pub wallet:       String,
-    pub player_moves: Vec<String>,
+pub struct StartBotFightRequest {
+    pub wallet: String,
+}
+
+#[derive(Deserialize)]
+pub struct BotFightRoundRequest {
+    pub session_id:   Uuid,
+    pub player_move:  String,
 }
 
 #[derive(Deserialize)]
@@ -97,10 +106,13 @@ pub struct ChallengeRequest {
     pub opponent_wallet: String,
 }
 
-pub async fn fight_bot(
+/// Starts a new bot fight session: validates the player, snapshots their
+/// item-boosted stats, picks the bot's class, and stores in-progress fight
+/// state server-side. The client then plays it out via `/battles/bot/round`.
+pub async fn start_bot_fight(
     state: web::Data<AppState>,
     req: HttpRequest,
-    body: web::Json<BotFightRequest>,
+    body: web::Json<StartBotFightRequest>,
 ) -> HttpResponse {
     // Rate limit: 10 bot fights per 60 seconds per IP
     let ip = req.connection_info().realip_remote_addr()
@@ -114,17 +126,6 @@ pub async fn fight_bot(
     // Validate wallet
     if !is_valid_wallet(&body.wallet) {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
-    }
-
-    // Validate moves: 1–5, all must be legal move names
-    if body.player_moves.is_empty() || body.player_moves.len() > 5 {
-        return HttpResponse::BadRequest().json(json!({"error": "Must submit 1–5 moves"}));
-    }
-    for m in &body.player_moves {
-        if !VALID_MOVES.contains(&m.as_str()) {
-            return HttpResponse::BadRequest()
-                .json(json!({"error": format!("Invalid move: {}", m)}));
-        }
     }
 
     let wallet = normalize_wallet(&body.wallet);
@@ -145,20 +146,117 @@ pub async fn fight_bot(
     let player = apply_item_boosts(&state.db, player).await;
     let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
 
-    // Server-authoritative simulation — bot moves are generated here, not by the client
-    let result = simulate_bot_fight_with_moves(&player, &body.player_moves);
+    // Sweep expired sessions opportunistically — no background task needed.
+    state.bot_fight_sessions.retain(|_, s| s.created_at.elapsed() < Duration::from_secs(SESSION_TTL_SECS));
+
+    let session = BotFightSession::new(wallet, &player, xp_multiplier);
+    let player_class = session.player_class;
+    let bot_class = session.bot_class;
+
+    let session_id = Uuid::new_v4();
+    state.bot_fight_sessions.insert(session_id, session);
+
+    HttpResponse::Ok().json(json!({
+        "session_id":   session_id,
+        "player_class": player_class,
+        "bot_class":    bot_class,
+    }))
+}
+
+/// Resolves one round of an in-progress bot fight. On the final round, persists
+/// the battle, awards XP/rank, and includes those results in the response.
+pub async fn bot_fight_round(
+    state: web::Data<AppState>,
+    body: web::Json<BotFightRoundRequest>,
+) -> HttpResponse {
+    if !VALID_MOVES.contains(&body.player_move.as_str()) {
+        return HttpResponse::BadRequest()
+            .json(json!({"error": format!("Invalid move: {}", body.player_move)}));
+    }
+
+    struct FinalizeData {
+        wallet:         String,
+        xp_multiplier:  i32,
+        challenger_won: bool,
+        xp_awarded:     i32,
+        rounds:         Vec<RoundData>,
+    }
+
+    let (round_response, finalize) = {
+        let mut session = match state.bot_fight_sessions.get_mut(&body.session_id) {
+            Some(s) => s,
+            None => return HttpResponse::NotFound()
+                .json(json!({"error": "Battle session not found or expired"})),
+        };
+
+        if session.created_at.elapsed() >= Duration::from_secs(SESSION_TTL_SECS) {
+            drop(session);
+            state.bot_fight_sessions.remove(&body.session_id);
+            return HttpResponse::NotFound()
+                .json(json!({"error": "Battle session not found or expired"}));
+        }
+
+        if body.player_move == "special" && session.player_special_used {
+            return HttpResponse::BadRequest().json(json!({"error": "Special already used"}));
+        }
+
+        let round_response = session.play_round(&body.player_move);
+        let finalize = if session.is_final() {
+            Some(FinalizeData {
+                wallet:         session.wallet.clone(),
+                xp_multiplier:  session.xp_multiplier,
+                challenger_won: session.challenger_won(),
+                xp_awarded:     session.xp_awarded(),
+                rounds:         session.rounds.clone(),
+            })
+        } else {
+            None
+        };
+        (round_response, finalize)
+    };
+
+    let Some(finalize) = finalize else {
+        return HttpResponse::Ok().json(json!({
+            "round":       round_response.round,
+            "player_move": round_response.player_move,
+            "bot_move":    round_response.bot_move,
+            "player_dmg":  round_response.player_dmg,
+            "bot_dmg":     round_response.bot_dmg,
+            "player_hp":   round_response.player_hp,
+            "bot_hp":      round_response.bot_hp,
+            "is_final":    false,
+        }));
+    };
+
+    state.bot_fight_sessions.remove(&body.session_id);
+
+    // Re-fetch the player so xp/wins/losses/rank reflect any changes since
+    // the fight started (the fight itself takes several rounds of input).
+    let player = sqlx::query_as::<_, crate::models::player::Player>(
+        "SELECT * FROM players WHERE wallet_address = $1",
+    )
+    .bind(&finalize.wallet)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(player) = player else {
+        return HttpResponse::InternalServerError().json(json!({"error": "Player not found"}));
+    };
+
     let now = Utc::now();
 
     // ── XP + rank-up logic ───────────────────────────────────────────
-    let xp_earned  = result.xp_awarded * xp_multiplier;
+    let xp_earned  = finalize.xp_awarded * finalize.xp_multiplier;
     let raw_new_xp = player.xp + xp_earned;
     let ranked_up  = raw_new_xp >= XP_PER_RANK;
     let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
     let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
     let g_awarded  = new_rank.map(rank_g_reward).unwrap_or(0);
 
-    let wins   = if result.challenger_won { player.wins + 1 } else { player.wins };
-    let losses = if !result.challenger_won { player.losses + 1 } else { player.losses };
+    let wins   = if finalize.challenger_won { player.wins + 1 } else { player.wins };
+    let losses = if !finalize.challenger_won { player.losses + 1 } else { player.losses };
 
     // ── Persist battle record ────────────────────────────────────────
     let battle_id = Uuid::new_v4();
@@ -169,9 +267,9 @@ pub async fn fight_bot(
          VALUES ($1, $2, 'bot', $3, $4, $5, 0, true, $6)",
     )
     .bind(battle_id)
-    .bind(&wallet)
-    .bind(if result.challenger_won { wallet.as_str() } else { "bot" })
-    .bind(serde_json::to_value(&result.rounds).unwrap_or_default())
+    .bind(&finalize.wallet)
+    .bind(if finalize.challenger_won { finalize.wallet.as_str() } else { "bot" })
+    .bind(serde_json::to_value(&finalize.rounds).unwrap_or_default())
     .bind(xp_earned)
     .bind(now)
     .execute(&state.db)
@@ -192,7 +290,7 @@ pub async fn fight_bot(
         .bind(rank)
         .bind(g_awarded)
         .bind(now)
-        .bind(&wallet)
+        .bind(&finalize.wallet)
         .execute(&state.db)
         .await;
     } else {
@@ -206,7 +304,7 @@ pub async fn fight_bot(
         .bind(wins)
         .bind(losses)
         .bind(now)
-        .bind(&wallet)
+        .bind(&finalize.wallet)
         .execute(&state.db)
         .await;
     }
@@ -214,8 +312,8 @@ pub async fn fight_bot(
     // Background chain write — non-blocking
     if let Some(chain) = state.chain.as_ref().cloned() {
         let battle_bytes = uuid_to_bytes32(battle_id);
-        let player_addr: Option<Address> = wallet.parse().ok();
-        let won = result.challenger_won;
+        let player_addr: Option<Address> = finalize.wallet.parse().ok();
+        let won = finalize.challenger_won;
         let xp_u8 = xp_earned.min(255) as u8;
         let db = state.db.clone();
         let battle_uuid = battle_id;
@@ -241,7 +339,7 @@ pub async fn fight_bot(
         // Record rank-up on-chain + enroll in GoodCollective pool
         if let Some(rank) = new_rank {
             let chain2 = state.chain.as_ref().cloned();
-            if let (Some(chain2), Ok(addr)) = (chain2, wallet.parse::<Address>()) {
+            if let (Some(chain2), Ok(addr)) = (chain2, finalize.wallet.parse::<Address>()) {
                 let rank_str = rank.to_string();
                 tokio::spawn(async move {
                     chain2.record_rank_up(addr, rank_str.clone()).await;
@@ -252,14 +350,21 @@ pub async fn fight_bot(
     }
 
     HttpResponse::Ok().json(json!({
-        "won":          result.challenger_won,
+        "round":        round_response.round,
+        "player_move":  round_response.player_move,
+        "bot_move":     round_response.bot_move,
+        "player_dmg":   round_response.player_dmg,
+        "bot_dmg":      round_response.bot_dmg,
+        "player_hp":    round_response.player_hp,
+        "bot_hp":       round_response.bot_hp,
+        "is_final":     true,
+        "won":          finalize.challenger_won,
         "xp_awarded":   xp_earned,
-        "xp_multiplier": xp_multiplier,
+        "xp_multiplier": finalize.xp_multiplier,
         "new_xp":       new_xp,
         "ranked_up":    ranked_up,
         "new_rank":     new_rank,
         "g_awarded":    g_awarded,
-        "rounds":       result.rounds_response,
         "battle_id":    battle_id,
     }))
 }
