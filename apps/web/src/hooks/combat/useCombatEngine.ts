@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import type { CombatState, HitEvent, Fighter } from '@/lib/combat/types'
+import type { CombatState, HitEvent, Fighter, CombatPhase } from '@/lib/combat/types'
 import type { CharacterClass } from '@/lib/classes'
 import {
   HIT_RANGE,
@@ -23,22 +23,43 @@ export interface DifficultyConfig {
   reactionMult: number
 }
 
+/** Lightweight snapshot for React HUD — only values the UI needs. */
+export interface HudSnapshot {
+  phase: CombatPhase
+  playerHp: number
+  playerMaxHp: number
+  playerStamina: number
+  playerMaxStamina: number
+  playerSpecialMeter: number
+  playerSpecialUsed: boolean
+  playerComboCount: number
+  playerState: string
+  botHp: number
+  botMaxHp: number
+  botStamina: number
+  botMaxStamina: number
+  botSpecialMeter: number
+  botState: string
+  elapsedMs: number
+  timeScale: number
+  playerHitsLanded: number
+  botHitsLanded: number
+  maxCombo: number
+}
+
 interface CombatEngineResult {
-  state: CombatState
-  /** Queued hit events for VFX/audio (consumed each frame) */
+  /** Lightweight HUD data — updates at throttled rate */
+  hud: HudSnapshot
+  /** Full state ref for synchronous reads (3D scene, VFX) */
+  stateRef: React.RefObject<CombatState>
+  /** Queued hit events for VFX/audio */
   hitEvents: HitEvent[]
-  /** Start a new fight */
   startFight: (playerClass: CharacterClass, botClass: CharacterClass, rank: string) => void
-  /** Called every frame from useFrame — drives the entire combat loop */
   tick: (deltaMs: number) => void
-  /** Get animation state for rendering */
   getPlayerAnim: () => { clip: string; speed: number }
   getBotAnim: () => { clip: string; speed: number }
-  /** Reset to idle */
   reset: () => void
-  /** Manually emit a combat action (for on-screen buttons) */
   emitAction: (action: import('@/lib/combat/types').CombatAction) => void
-  /** Whether the player won */
   playerWon: () => boolean
 }
 
@@ -57,24 +78,63 @@ function createInitialState(): CombatState {
   }
 }
 
+function snapshotHud(s: CombatState): HudSnapshot {
+  return {
+    phase: s.phase,
+    playerHp: s.player.hp,
+    playerMaxHp: s.player.maxHp,
+    playerStamina: s.player.stamina,
+    playerMaxStamina: s.player.maxStamina,
+    playerSpecialMeter: s.player.specialMeter,
+    playerSpecialUsed: s.player.specialUsed,
+    playerComboCount: s.player.comboCount,
+    playerState: s.player.state,
+    botHp: s.bot.hp,
+    botMaxHp: s.bot.maxHp,
+    botStamina: s.bot.stamina,
+    botMaxStamina: s.bot.maxStamina,
+    botSpecialMeter: s.bot.specialMeter,
+    botState: s.bot.state,
+    elapsedMs: s.elapsedMs,
+    timeScale: s.timeScale,
+    playerHitsLanded: s.playerHitsLanded,
+    botHitsLanded: s.botHitsLanded,
+    maxCombo: s.maxCombo,
+  }
+}
+
+const HUD_THROTTLE_MS = 66 // ~15fps for React renders
+
 export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): CombatEngineResult {
-  const [state, setState] = useState<CombatState>(createInitialState)
-  const stateRef = useRef<CombatState>(state)
+  const stateRef = useRef<CombatState>(createInitialState())
+  const [hud, setHud] = useState<HudSnapshot>(() => snapshotHud(stateRef.current))
   const hitEventsRef = useRef<HitEvent[]>([])
   const [hitEvents, setHitEvents] = useState<HitEvent[]>([])
   const introStartRef = useRef(0)
   const koTimeRef = useRef(0)
   const lastComboHitTime = useRef(0)
+  const lastHudFlush = useRef(0)
   const diffRef = useRef<DifficultyConfig | undefined>(difficulty)
   diffRef.current = difficulty
 
   const input = useInputSystem(stateRef.current.phase === 'fighting')
   const botAI = useBotAI(rank)
 
-  const flush = useCallback(() => {
-    setState({ ...stateRef.current })
-    setHitEvents([...hitEventsRef.current])
-    hitEventsRef.current = []
+  // Flush hit events immediately (they trigger VFX/audio),
+  // but throttle HUD updates to ~15fps.
+  const flushHits = useCallback(() => {
+    if (hitEventsRef.current.length > 0) {
+      setHitEvents([...hitEventsRef.current])
+      hitEventsRef.current = []
+    }
+  }, [])
+
+  const flushHud = useCallback((force?: boolean) => {
+    const now = performance.now()
+    if (force || now - lastHudFlush.current >= HUD_THROTTLE_MS) {
+      lastHudFlush.current = now
+      setHud(snapshotHud(stateRef.current))
+    }
   }, [])
 
   const startFight = useCallback((
@@ -86,7 +146,6 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
     s.player = createFighter('player', playerClass)
     s.bot = createFighter('bot', botClass)
 
-    // Apply boss difficulty: HP multiplier
     const diff = diffRef.current
     if (diff) {
       const bossHp = Math.round(s.bot.maxHp * diff.hpMult)
@@ -100,8 +159,8 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
     lastComboHitTime.current = 0
     stateRef.current = s
     botAI.init(botClass)
-    flush()
-  }, [botAI, flush])
+    flushHud(true)
+  }, [botAI, flushHud])
 
   const emitAction = useCallback((action: import('@/lib/combat/types').CombatAction) => {
     input.emit(action)
@@ -109,8 +168,8 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
 
   const reset = useCallback(() => {
     stateRef.current = createInitialState()
-    flush()
-  }, [flush])
+    flushHud(true)
+  }, [flushHud])
 
   const playerWon = useCallback(() => {
     const s = stateRef.current
@@ -129,29 +188,24 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
     if (s.phase === 'intro') {
       if (now - introStartRef.current >= INTRO_DURATION_MS) {
         s.phase = 'fighting'
+        flushHud(true)
       }
-      stateRef.current = s
-      flush()
       return
     }
 
-    // ── KO phase — wait then go to result ────────────────────────────────
+    // ── KO phase ─────────────────────────────────────────────────────────
     if (s.phase === 'ko') {
       if (now - koTimeRef.current >= KO_TO_RESULT_DELAY_MS) {
         s.phase = 'result'
         s.timeScale = 1.0
+        flushHud(true)
       }
-      stateRef.current = s
-      flush()
       return
     }
 
-    if (s.phase !== 'fighting') {
-      flush()
-      return
-    }
+    if (s.phase !== 'fighting') return
 
-    // ── Time scaling (slow-mo) ───────────────────────────────────────────
+    // ── Time scaling ─────────────────────────────────────────────────────
     if (now >= s.slowMoUntil) s.timeScale = 1.0
     const deltaMs = rawDeltaMs * s.timeScale
     s.elapsedMs += deltaMs
@@ -161,24 +215,18 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
       s.phase = 'ko'
       koTimeRef.current = now
       if (s.player.hp <= s.bot.hp && s.player.state !== 'dead') {
-        s.player.state = 'dead'
-        s.player.stateStartedAt = now
+        s.player.state = 'dead'; s.player.stateStartedAt = now
       }
       if (s.bot.hp <= s.player.hp && s.bot.state !== 'dead') {
-        s.bot.state = 'dead'
-        s.bot.stateStartedAt = now
+        s.bot.state = 'dead'; s.bot.stateStartedAt = now
       }
-      stateRef.current = s
-      flush()
+      flushHud(true)
       return
     }
 
     // ── Combo drop ───────────────────────────────────────────────────────
     if (s.player.comboCount > 0 && now - lastComboHitTime.current > COMBO_DROP_MS) {
       s.player.comboCount = 0
-    }
-    if (s.bot.comboCount > 0) {
-      // Bot combo resets handled similarly but bot has no explicit timer concern
     }
 
     // ── Player input ─────────────────────────────────────────────────────
@@ -202,6 +250,7 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
 
     // ── Hit detection ────────────────────────────────────────────────────
     const distance = Math.abs(s.player.positionX - s.bot.positionX)
+    let hadHit = false
 
     // Player hits bot
     if (isPlayerHitting(s.player, now) && distance <= HIT_RANGE && !s.player.hitConnected) {
@@ -211,6 +260,7 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
       s.playerHitsLanded++
       s.maxCombo = Math.max(s.maxCombo, s.player.comboCount)
       lastComboHitTime.current = now
+      hadHit = true
 
       const isKO = s.bot.hp <= 0
       hitEventsRef.current.push({
@@ -226,17 +276,13 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
         s.slowMoUntil = now + KO_SLOWMO_MS
         koTimeRef.current = now
       } else if (!hit.blocked) {
-        // Hit-stop: brief freeze on heavy/special impacts
         const moveId = s.player.currentMove!.id
         if (moveId === 'special') {
-          s.timeScale = 0.1
-          s.slowMoUntil = now + 180
+          s.timeScale = 0.1; s.slowMoUntil = now + 180
         } else if (moveId === 'heavy_attack') {
-          s.timeScale = 0.15
-          s.slowMoUntil = now + 100
+          s.timeScale = 0.15; s.slowMoUntil = now + 100
         } else if (s.player.comboCount >= 4) {
-          s.timeScale = 0.3
-          s.slowMoUntil = now + 80
+          s.timeScale = 0.3; s.slowMoUntil = now + 80
         }
       }
     }
@@ -244,13 +290,13 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
     // Bot hits player
     if (isPlayerHitting(s.bot, now) && distance <= HIT_RANGE && !s.bot.hitConnected) {
       const hit = resolveHit(s.bot, s.player, s.bot.currentMove!)
-      // Apply boss damage multiplier
       if (diffRef.current && hit.damage > 0) {
         hit.damage = Math.round(hit.damage * diffRef.current.damageMult)
       }
       s.player = applyHitToDefender(s.player, hit, s.bot.currentMove!.staggerMs, now)
       s.bot = applyHitToAttacker(s.bot, hit)
       s.botHitsLanded++
+      hadHit = true
 
       const isKO = s.player.hp <= 0
       hitEventsRef.current.push({
@@ -268,21 +314,24 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
       } else if (!hit.blocked) {
         const moveId = s.bot.currentMove!.id
         if (moveId === 'special') {
-          s.timeScale = 0.1
-          s.slowMoUntil = now + 180
+          s.timeScale = 0.1; s.slowMoUntil = now + 180
         } else if (moveId === 'heavy_attack') {
-          s.timeScale = 0.15
-          s.slowMoUntil = now + 100
+          s.timeScale = 0.15; s.slowMoUntil = now + 100
         }
       }
     }
 
-    stateRef.current = s
-    flush()
-  }, [input, botAI, flush])
+    // Flush hits immediately for VFX, throttle HUD
+    if (hadHit) {
+      flushHits()
+      flushHud(true) // HP changed — force immediate HUD update
+    } else {
+      flushHud() // throttled ~15fps
+    }
+  }, [input, botAI, flushHits, flushHud])
 
   return {
-    state, hitEvents, startFight, tick,
+    hud, stateRef, hitEvents, startFight, tick,
     getPlayerAnim, getBotAnim, reset, emitAction, playerWon,
   }
 }
