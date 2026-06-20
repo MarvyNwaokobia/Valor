@@ -22,6 +22,13 @@ export function useAudio() {
     playDefeat:       () => mgr.playDefeat(),
     playButtonTap:    () => mgr.playButtonTap(),
     playButtonConfirm:() => mgr.playButtonConfirm(),
+    playBlock:        () => mgr.playBlock(),
+    playDodge:        () => mgr.playDodge(),
+    playGuardBreak:   () => mgr.playGuardBreak(),
+    playComboHit:     (count: number) => mgr.playComboHit(count),
+    playKOImpact:     () => mgr.playKOImpact(),
+    startHeartbeat:   () => mgr.startHeartbeat(),
+    stopHeartbeat:    () => mgr.stopHeartbeat(),
     startAmbient:     () => mgr.startAmbient(),
     stopAmbient:      () => mgr.stopAmbient(),
   }
