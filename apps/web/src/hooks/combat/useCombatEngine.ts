@@ -17,6 +17,12 @@ import {
 import { useInputSystem } from './useInputSystem'
 import { useBotAI } from './useBotAI'
 
+export interface DifficultyConfig {
+  damageMult: number
+  hpMult: number
+  reactionMult: number
+}
+
 interface CombatEngineResult {
   state: CombatState
   /** Queued hit events for VFX/audio (consumed each frame) */
@@ -51,7 +57,7 @@ function createInitialState(): CombatState {
   }
 }
 
-export function useCombatEngine(rank: string): CombatEngineResult {
+export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): CombatEngineResult {
   const [state, setState] = useState<CombatState>(createInitialState)
   const stateRef = useRef<CombatState>(state)
   const hitEventsRef = useRef<HitEvent[]>([])
@@ -59,6 +65,8 @@ export function useCombatEngine(rank: string): CombatEngineResult {
   const introStartRef = useRef(0)
   const koTimeRef = useRef(0)
   const lastComboHitTime = useRef(0)
+  const diffRef = useRef<DifficultyConfig | undefined>(difficulty)
+  diffRef.current = difficulty
 
   const input = useInputSystem(stateRef.current.phase === 'fighting')
   const botAI = useBotAI(rank)
@@ -77,6 +85,15 @@ export function useCombatEngine(rank: string): CombatEngineResult {
     const s = createInitialState()
     s.player = createFighter('player', playerClass)
     s.bot = createFighter('bot', botClass)
+
+    // Apply boss difficulty: HP multiplier
+    const diff = diffRef.current
+    if (diff) {
+      const bossHp = Math.round(s.bot.maxHp * diff.hpMult)
+      s.bot.hp = bossHp
+      s.bot.maxHp = bossHp
+    }
+
     s.phase = 'intro'
     introStartRef.current = performance.now()
     koTimeRef.current = 0
@@ -227,6 +244,10 @@ export function useCombatEngine(rank: string): CombatEngineResult {
     // Bot hits player
     if (isPlayerHitting(s.bot, now) && distance <= HIT_RANGE && !s.bot.hitConnected) {
       const hit = resolveHit(s.bot, s.player, s.bot.currentMove!)
+      // Apply boss damage multiplier
+      if (diffRef.current && hit.damage > 0) {
+        hit.damage = Math.round(hit.damage * diffRef.current.damageMult)
+      }
       s.player = applyHitToDefender(s.player, hit, s.bot.currentMove!.staggerMs, now)
       s.bot = applyHitToAttacker(s.bot, hit)
       s.botHitsLanded++
