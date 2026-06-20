@@ -255,7 +255,7 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
     // Player hits bot
     if (isPlayerHitting(s.player, now) && distance <= HIT_RANGE && !s.player.hitConnected) {
       const hit = resolveHit(s.player, s.bot, s.player.currentMove!)
-      s.bot = applyHitToDefender(s.bot, hit, s.player.currentMove!.staggerMs, now)
+      s.bot = applyHitToDefender(s.bot, hit, s.player.currentMove!.staggerMs, now, s.player.currentMove!.id)
       s.player = applyHitToAttacker(s.player, hit)
       s.playerHitsLanded++
       s.maxCombo = Math.max(s.maxCombo, s.player.comboCount)
@@ -293,7 +293,7 @@ export function useCombatEngine(rank: string, difficulty?: DifficultyConfig): Co
       if (diffRef.current && hit.damage > 0) {
         hit.damage = Math.round(hit.damage * diffRef.current.damageMult)
       }
-      s.player = applyHitToDefender(s.player, hit, s.bot.currentMove!.staggerMs, now)
+      s.player = applyHitToDefender(s.player, hit, s.bot.currentMove!.staggerMs, now, s.bot.currentMove!.id)
       s.bot = applyHitToAttacker(s.bot, hit)
       s.botHitsLanded++
       hadHit = true
