@@ -37,16 +37,24 @@ export const GUARD_BREAK_THRESHOLD = 4
 export const GUARD_BREAK_STUN_MS = 800
 
 /** Hit range — max distance between fighters for a hit to connect */
-export const HIT_RANGE = 1.6
+export const HIT_RANGE = 2.4
 
 /** Resting distance between fighters (X axis) */
-export const FIGHTER_SPACING = 1.4
+export const FIGHTER_SPACING = 2.0
 
 /** Player base X position */
-export const PLAYER_BASE_X = -0.7
+export const PLAYER_BASE_X = -1.0
 
 /** Bot base X position */
-export const BOT_BASE_X = 0.7
+export const BOT_BASE_X = 1.0
+
+/** Knockback distance on hit (Three.js units) */
+export const KNOCKBACK_LIGHT = 0.15
+export const KNOCKBACK_HEAVY = 0.35
+export const KNOCKBACK_SPECIAL = 0.5
+
+/** Dodge travel distance (Three.js units) */
+export const DODGE_TRAVEL = 0.6
 
 /** Special meter gained per damage dealt */
 export const SPECIAL_METER_PER_DMG_DEALT = 1.5
