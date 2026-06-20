@@ -8,6 +8,7 @@ import {
   PLAYER_BASE_X, BOT_BASE_X,
   SPECIAL_METER_PER_DMG_DEALT, SPECIAL_METER_PER_DMG_TAKEN, SPECIAL_METER_THRESHOLD,
   COMBO_DAMAGE_BASE, COMBO_DAMAGE_INCREMENT, COMBO_DAMAGE_CAP,
+  KNOCKBACK_LIGHT, KNOCKBACK_HEAVY, KNOCKBACK_SPECIAL, DODGE_TRAVEL,
 } from '@/lib/combat/constants'
 
 export function createFighter(
@@ -157,10 +158,24 @@ export function applyHitToDefender(
   hit: HitResult,
   _staggerMs: number,
   now: number,
+  moveId?: string,
 ): Fighter {
   const d = { ...defender }
   d.hp = Math.max(0, d.hp - hit.damage)
   d.specialMeter = Math.min(100, d.specialMeter + hit.damage * SPECIAL_METER_PER_DMG_TAKEN)
+
+  // Knockback — push defender away from attacker
+  if (hit.damage > 0 && !d.invincible) {
+    const kb = moveId === 'special' ? KNOCKBACK_SPECIAL
+      : moveId === 'heavy_attack' ? KNOCKBACK_HEAVY
+      : KNOCKBACK_LIGHT
+    const kbDir = -d.facing // push away from attacker
+    d.positionX += kbDir * (hit.blocked ? kb * 0.4 : kb)
+    d.basePositionX += kbDir * (hit.blocked ? kb * 0.3 : kb * 0.6)
+    // Clamp to arena bounds
+    d.basePositionX = Math.max(-2.2, Math.min(2.2, d.basePositionX))
+    d.positionX = Math.max(-2.2, Math.min(2.2, d.positionX))
+  }
 
   if (d.hp <= 0) {
     d.state = 'dead'
@@ -264,7 +279,7 @@ export function tickFighter(fighter: Fighter, now: number, deltaMs: number): Fig
   if (f.state === 'dodging') {
     const dodgeProgress = Math.min(1, elapsed / DODGE_DURATION_MS)
     const dodgeCurve = Math.sin(dodgeProgress * Math.PI)
-    f.positionX = f.basePositionX - f.facing * 0.4 * dodgeCurve
+    f.positionX = f.basePositionX - f.facing * DODGE_TRAVEL * dodgeCurve
   }
 
   return f

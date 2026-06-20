@@ -277,6 +277,8 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
           playerAnimSpeed={playerAnim.speed}
           playerBlocking={h.playerState === 'blocking'}
           playerDead={h.playerState === 'dead'}
+          playerAttacking={h.playerState === 'light_attack' || h.playerState === 'heavy_attack' || h.playerState === 'special'}
+          playerHit={h.playerState === 'hit_stun'}
           botClass={botClass}
           botAccentColor={botAccent}
           botPositionX={sr.bot.positionX}
@@ -284,6 +286,8 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
           botAnimSpeed={botAnim.speed}
           botBlocking={h.botState === 'blocking'}
           botDead={h.botState === 'dead'}
+          botAttacking={h.botState === 'light_attack' || h.botState === 'heavy_attack' || h.botState === 'special'}
+          botHit={h.botState === 'hit_stun'}
           timeScale={h.timeScale}
         />
 
