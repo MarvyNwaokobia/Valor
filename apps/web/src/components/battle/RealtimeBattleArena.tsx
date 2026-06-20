@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, memo } from 'react'
 import { motion, AnimatePresence, useAnimation } from 'framer-motion'
 import { Sword, Shield, Zap, MoveRight } from 'lucide-react'
 import type { Player } from '@/types'
@@ -113,23 +113,23 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
   // ── Game loop ────────────────────────────────────────────────────────────
   useGameLoop((deltaMs) => {
     engine.tick(deltaMs)
-  }, started && engine.state.phase !== 'result')
+  }, started && engine.hud.phase !== 'result')
 
   // ── Dodge / block audio on state changes ─────────────────────────────────
-  const prevPlayerState = useRef(engine.state.player.state)
+  const prevPlayerState = useRef(engine.hud.playerState)
   useEffect(() => {
-    const cur = engine.state.player.state
+    const cur = engine.hud.playerState
     const prev = prevPlayerState.current
     if (cur !== prev) {
       if (cur === 'dodging') audio.playDodge()
       if (cur === 'blocking' && prev !== 'blocking') audio.playBlock()
     }
     prevPlayerState.current = cur
-  }, [engine.state.player.state])
+  }, [engine.hud.playerState])
 
   // ── Low HP heartbeat ─────────────────────────────────────────────────────
   useEffect(() => {
-    const hp = engine.state.player.hp
+    const hp = engine.hud.playerHp
     if (hp <= 25 && hp > 0 && !heartbeatActive.current) {
       heartbeatActive.current = true
       audio.startHeartbeat()
@@ -138,7 +138,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
       audio.stopHeartbeat()
     }
     prevPlayerHp.current = hp
-  }, [engine.state.player.hp])
+  }, [engine.hud.playerHp])
 
   // ── Process hit events → VFX + audio ─────────────────────────────────────
   useEffect(() => {
@@ -214,7 +214,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
   // ── Shake on hits — scaled by combo ──────────────────────────────────────
   useEffect(() => {
     if (combatFeel.shakeLevel === 0) return
-    const comboBoost = Math.min(engine.state.player.comboCount * 0.3, 2)
+    const comboBoost = Math.min(engine.hud.playerComboCount * 0.3, 2)
     const baseX = combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0]
       : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0]
       : [-3, 3, -2, 2, 0]
@@ -237,22 +237,23 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
 
   // ── Report result ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (engine.state.phase === 'result' && !resultReported.current) {
+    if (engine.hud.phase === 'result' && !resultReported.current) {
       resultReported.current = true
       audio.stopAmbient()
       audio.stopHeartbeat()
       onFinish(engine.playerWon(), {
-        hitsLanded: engine.state.playerHitsLanded,
-        maxCombo: engine.state.maxCombo,
-        elapsed: engine.state.elapsedMs,
+        hitsLanded: engine.hud.playerHitsLanded,
+        maxCombo: engine.hud.maxCombo,
+        elapsed: engine.hud.elapsedMs,
       })
     }
-  }, [engine.state.phase])
+  }, [engine.hud.phase])
 
   // ── Get animation state ──────────────────────────────────────────────────
   const playerAnim = engine.getPlayerAnim()
   const botAnim = engine.getBotAnim()
-  const s = engine.state
+  const h = engine.hud
+  const sr = engine.stateRef.current
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -271,19 +272,19 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
         <RealtimeBattleScene
           playerClass={playerClass}
           playerAccentColor={playerDef.accentColor}
-          playerPositionX={s.player.positionX}
+          playerPositionX={sr.player.positionX}
           playerAnimClip={playerAnim.clip}
           playerAnimSpeed={playerAnim.speed}
-          playerBlocking={s.player.state === 'blocking'}
-          playerDead={s.player.state === 'dead'}
+          playerBlocking={h.playerState === 'blocking'}
+          playerDead={h.playerState === 'dead'}
           botClass={botClass}
           botAccentColor={botAccent}
-          botPositionX={s.bot.positionX}
+          botPositionX={sr.bot.positionX}
           botAnimClip={botAnim.clip}
           botAnimSpeed={botAnim.speed}
-          botBlocking={s.bot.state === 'blocking'}
-          botDead={s.bot.state === 'dead'}
-          timeScale={s.timeScale}
+          botBlocking={h.botState === 'blocking'}
+          botDead={h.botState === 'dead'}
+          timeScale={h.timeScale}
         />
 
         {/* ── DOM overlays for VFX ── */}
@@ -362,17 +363,17 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
         ))}
 
         {/* Low HP blood vignette — enhanced with desaturation */}
-        {s.player.hp <= 30 && s.player.hp > 0 && (
+        {h.playerHp <= 30 && h.playerHp > 0 && (
           <>
             <motion.div className="absolute inset-0 pointer-events-none z-20"
               style={{
-                background: `radial-gradient(ellipse at center, transparent 30%, rgba(180,0,0,${0.15 + (1 - s.player.hp / 30) * 0.25}) 100%)`,
+                background: `radial-gradient(ellipse at center, transparent 30%, rgba(180,0,0,${0.15 + (1 - h.playerHp / 30) * 0.25}) 100%)`,
               }}
               animate={{ opacity: [0.6, 1, 0.6] }}
               transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
             />
             {/* Edge darkening at critical HP */}
-            {s.player.hp <= 15 && (
+            {h.playerHp <= 15 && (
               <motion.div className="absolute inset-0 pointer-events-none z-20"
                 style={{
                   background: 'radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.4) 100%)',
@@ -433,7 +434,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
 
       {/* ── KO overlay ── */}
       <AnimatePresence>
-        {s.phase === 'ko' && (
+        {h.phase === 'ko' && (
           <motion.div key="ko"
             className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -454,8 +455,8 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
 
       {/* ── Combo counter ── */}
       <AnimatePresence>
-        {s.player.comboCount >= 2 && s.phase === 'fighting' && (
-          <motion.div key={`combo-${s.player.comboCount}`}
+        {h.playerComboCount >= 2 && h.phase === 'fighting' && (
+          <motion.div key={`combo-${h.playerComboCount}`}
             className="absolute z-30 pointer-events-none"
             style={{ left: '8%', top: '35%' }}
             initial={{ scale: 1.5, opacity: 0 }}
@@ -464,7 +465,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
             transition={{ duration: 0.15 }}>
             <p className="font-display font-black text-amber-400"
               style={{ fontSize: 'clamp(1.5rem, 6vw, 3rem)', textShadow: '0 0 30px rgba(234,179,8,0.6)' }}>
-              {s.player.comboCount}×
+              {h.playerComboCount}×
             </p>
             <p className="font-black text-amber-400/60 uppercase tracking-widest"
               style={{ fontSize: '10px' }}>
@@ -475,7 +476,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
       </AnimatePresence>
 
       {/* ── HUD — Top bar ── */}
-      {s.phase === 'fighting' && (
+      {h.phase === 'fighting' && (
         <div className="absolute inset-x-0 top-0 z-30 px-3"
           style={{
             paddingTop: 'max(10px, env(safe-area-inset-top, 10px))',
@@ -488,18 +489,18 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
               name={player.character_name}
               classLabel={playerClass}
               color={playerDef.accentColor}
-              hp={s.player.hp}
-              maxHp={s.player.maxHp}
-              stamina={s.player.stamina}
-              maxStamina={s.player.maxStamina}
-              specialMeter={s.player.specialMeter}
+              hp={h.playerHp}
+              maxHp={h.playerMaxHp}
+              stamina={h.playerStamina}
+              maxStamina={h.playerMaxStamina}
+              specialMeter={h.playerSpecialMeter}
               side="left"
             />
 
             {/* Timer + Mute */}
             <div className="flex flex-col items-center pt-1 gap-1">
               <span className="font-display font-black text-white text-lg leading-none">
-                {Math.max(0, Math.ceil((60000 - s.elapsedMs) / 1000))}
+                {Math.max(0, Math.ceil((60000 - h.elapsedMs) / 1000))}
               </span>
               <span className="text-[7px] font-bold uppercase tracking-[0.25em] text-slate-600">TIME</span>
               <button
@@ -518,11 +519,11 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
               name={botDisplayName}
               classLabel={botClass}
               color={botAccent}
-              hp={s.bot.hp}
-              maxHp={s.bot.maxHp}
-              stamina={s.bot.stamina}
-              maxStamina={s.bot.maxStamina}
-              specialMeter={s.bot.specialMeter}
+              hp={h.botHp}
+              maxHp={h.botMaxHp}
+              stamina={h.botStamina}
+              maxStamina={h.botMaxStamina}
+              specialMeter={h.botSpecialMeter}
               side="right"
             />
           </div>
@@ -530,7 +531,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
       )}
 
       {/* ── On-screen controls (mobile + desktop) ── */}
-      {s.phase === 'fighting' && (
+      {h.phase === 'fighting' && (
         <div className="absolute inset-x-0 bottom-0 z-30 px-3"
           style={{
             paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
@@ -578,15 +579,15 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
               icon={<MoveRight size={20} />}
               label="Dodge"
               color="#22c55e"
-              disabled={s.player.stamina < 20}
+              disabled={h.playerStamina < 20}
               onPress={() => engine.emitAction('dodge')}
             />
             <ActionButton
               icon={<Zap size={20} />}
               label="Special"
               color="#8b5cf6"
-              disabled={s.player.specialUsed || s.player.specialMeter < SPECIAL_METER_THRESHOLD}
-              glow={!s.player.specialUsed && s.player.specialMeter >= SPECIAL_METER_THRESHOLD}
+              disabled={h.playerSpecialUsed || h.playerSpecialMeter < SPECIAL_METER_THRESHOLD}
+              glow={!h.playerSpecialUsed && h.playerSpecialMeter >= SPECIAL_METER_THRESHOLD}
               onPress={() => engine.emitAction('special')}
             />
           </div>
@@ -598,7 +599,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-function FighterHUD({ name, classLabel, color, hp, maxHp, stamina, maxStamina, specialMeter, side }: {
+const FighterHUD = memo(function FighterHUD({ name, classLabel, color, hp, maxHp, stamina, maxStamina, specialMeter, side }: {
   name: string; classLabel: string; color: string
   hp: number; maxHp: number; stamina: number; maxStamina: number
   specialMeter: number; side: 'left' | 'right'
@@ -667,9 +668,9 @@ function FighterHUD({ name, classLabel, color, hp, maxHp, stamina, maxStamina, s
       </div>
     </div>
   )
-}
+})
 
-function ActionButton({ icon, label, color, disabled, glow, onPress, onRelease }: {
+const ActionButton = memo(function ActionButton({ icon, label, color, disabled, glow, onPress, onRelease }: {
   icon: React.ReactNode; label: string; color: string
   disabled?: boolean; glow?: boolean
   onPress: () => void; onRelease?: () => void
@@ -699,4 +700,4 @@ function ActionButton({ icon, label, color, disabled, glow, onPress, onRelease }
       <span className="relative z-10 font-black text-white" style={{ fontSize: 8 }}>{label}</span>
     </button>
   )
-}
+})
