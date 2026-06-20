@@ -208,6 +208,19 @@ export function useCombatEngine(rank: string): CombatEngineResult {
         s.timeScale = KO_SLOWMO_SCALE
         s.slowMoUntil = now + KO_SLOWMO_MS
         koTimeRef.current = now
+      } else if (!hit.blocked) {
+        // Hit-stop: brief freeze on heavy/special impacts
+        const moveId = s.player.currentMove!.id
+        if (moveId === 'special') {
+          s.timeScale = 0.1
+          s.slowMoUntil = now + 180
+        } else if (moveId === 'heavy_attack') {
+          s.timeScale = 0.15
+          s.slowMoUntil = now + 100
+        } else if (s.player.comboCount >= 4) {
+          s.timeScale = 0.3
+          s.slowMoUntil = now + 80
+        }
       }
     }
 
@@ -231,6 +244,15 @@ export function useCombatEngine(rank: string): CombatEngineResult {
         s.timeScale = KO_SLOWMO_SCALE
         s.slowMoUntil = now + KO_SLOWMO_MS
         koTimeRef.current = now
+      } else if (!hit.blocked) {
+        const moveId = s.bot.currentMove!.id
+        if (moveId === 'special') {
+          s.timeScale = 0.1
+          s.slowMoUntil = now + 180
+        } else if (moveId === 'heavy_attack') {
+          s.timeScale = 0.15
+          s.slowMoUntil = now + 100
+        }
       }
     }
 

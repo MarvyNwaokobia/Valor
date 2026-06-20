@@ -14,6 +14,9 @@ import RealtimeBattleScene from './RealtimeBattleScene'
 import ImpactBurst from './ImpactBurst'
 import HitSpark from './HitSpark'
 import DamageNumber from './DamageNumber'
+import SpeedLines from './SpeedLines'
+import GroundShockwave from './GroundShockwave'
+import ScreenFlash from './ScreenFlash'
 
 interface Props {
   player: Player
@@ -55,8 +58,9 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
 
   const engine = useCombatEngine(player.rank)
   const combatFeel = useCombatFeel()
-  const { playHit, playSpecial, playVictory, playDefeat, startAmbient, stopAmbient } = useAudio()
+  const audio = useAudio()
   const shakeControls = useAnimation()
+  const camControls = useAnimation()
 
   const [dmgEvents, setDmgEvents] = useState<DmgEvent[]>([])
   const dmgCounter = useRef(0)
@@ -64,20 +68,50 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
   const [showIntro, setShowIntro] = useState(true)
   const resultReported = useRef(false)
 
+  // ── VFX state ─────────────────────────────────────────────────────────
+  interface VfxFlash { id: number; color: string; intensity: 'light' | 'heavy' | 'ko' }
+  interface VfxSpeedLine { id: number; color: string; direction: 'left' | 'right'; intensity: 'light' | 'heavy' | 'special' }
+  interface VfxShockwave { id: number; color: string; size: 'small' | 'medium' | 'large'; side: 'player' | 'bot' }
+
+  const [flashes, setFlashes] = useState<VfxFlash[]>([])
+  const [speedLines, setSpeedLines] = useState<VfxSpeedLine[]>([])
+  const [shockwaves, setShockwaves] = useState<VfxShockwave[]>([])
+  const vfxCounter = useRef(0)
+
+  const prevPlayerHp = useRef(100)
+  const heartbeatActive = useRef(false)
+
   // ── Start fight on mount ─────────────────────────────────────────────────
   useEffect(() => {
     engine.startFight(playerClass, botClass, player.rank)
-    startAmbient()
+    audio.startAmbient()
     setStarted(true)
 
     const introTimer = setTimeout(() => setShowIntro(false), 2000)
-    return () => { clearTimeout(introTimer); stopAmbient() }
+    return () => {
+      clearTimeout(introTimer)
+      audio.stopAmbient()
+      audio.stopHeartbeat()
+    }
   }, [])
 
   // ── Game loop ────────────────────────────────────────────────────────────
   useGameLoop((deltaMs) => {
     engine.tick(deltaMs)
   }, started && engine.state.phase !== 'result')
+
+  // ── Low HP heartbeat ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const hp = engine.state.player.hp
+    if (hp <= 25 && hp > 0 && !heartbeatActive.current) {
+      heartbeatActive.current = true
+      audio.startHeartbeat()
+    } else if ((hp > 25 || hp <= 0) && heartbeatActive.current) {
+      heartbeatActive.current = false
+      audio.stopHeartbeat()
+    }
+    prevPlayerHp.current = hp
+  }, [engine.state.player.hp])
 
   // ── Process hit events → VFX + audio ─────────────────────────────────────
   useEffect(() => {
@@ -86,41 +120,78 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
     for (const hit of engine.hitEvents) {
       const attackerColor = hit.attacker === 'player' ? playerDef.accentColor : botDef.accentColor
       const defenderSide = hit.defender
+      const isHeavy = hit.move.id === 'heavy_attack'
+      const isSpecial = hit.move.id === 'special'
 
-      // Combat feel
-      combatFeel.triggerHit(defenderSide, hit.damage, attackerColor, hit.move.id === 'special')
+      // Combat feel — scaled up for heavy/special
+      combatFeel.triggerHit(defenderSide, isSpecial ? hit.damage * 2 : hit.damage, attackerColor, isSpecial)
 
       // Damage number
       if (hit.damage > 0) {
         const id = ++dmgCounter.current
         setDmgEvents(prev => [...prev, {
-          id, value: hit.damage,
-          isSpecial: hit.move.id === 'special',
-          side: defenderSide,
+          id, value: hit.damage, isSpecial, side: defenderSide,
         }])
         setTimeout(() => setDmgEvents(prev => prev.filter(e => e.id !== id)), 700)
       }
 
-      // Audio
-      playHit(hit.attacker === 'player' ? playerClass : botClass, hit.damage)
-      if (hit.move.id === 'special') {
-        playSpecial(hit.attacker === 'player' ? playerClass : botClass)
+      // Audio — differentiated by move type
+      if (hit.blocked) {
+        audio.playBlock()
+      } else if (hit.comboCount >= 2) {
+        audio.playComboHit(hit.comboCount)
+      } else {
+        audio.playHit(hit.attacker === 'player' ? playerClass : botClass, hit.damage)
+      }
+
+      if (isSpecial) {
+        audio.playSpecial(hit.attacker === 'player' ? playerClass : botClass)
+      }
+
+      // Speed lines on attacks
+      if (!hit.blocked && hit.damage > 0) {
+        const slId = ++vfxCounter.current
+        const slDir = hit.attacker === 'player' ? 'right' : 'left'
+        const slIntensity = isSpecial ? 'special' : isHeavy ? 'heavy' : 'light'
+        setSpeedLines(prev => [...prev, { id: slId, color: attackerColor, direction: slDir as 'left' | 'right', intensity: slIntensity as 'light' | 'heavy' | 'special' }])
+        setTimeout(() => setSpeedLines(prev => prev.filter(e => e.id !== slId)), 300)
+      }
+
+      // Ground shockwave on heavy + special
+      if ((isHeavy || isSpecial) && !hit.blocked && hit.damage > 0) {
+        const swId = ++vfxCounter.current
+        const swSize = isSpecial ? 'large' : 'medium'
+        setShockwaves(prev => [...prev, { id: swId, color: attackerColor, size: swSize as 'small' | 'medium' | 'large', side: defenderSide }])
+        setTimeout(() => setShockwaves(prev => prev.filter(e => e.id !== swId)), 500)
+      }
+
+      // Screen flash on special and KO
+      if (isSpecial || hit.isKO) {
+        const fId = ++vfxCounter.current
+        const fIntensity = hit.isKO ? 'ko' : 'heavy'
+        setFlashes(prev => [...prev, { id: fId, color: hit.isKO ? '#ffffff' : attackerColor, intensity: fIntensity as 'light' | 'heavy' | 'ko' }])
+        setTimeout(() => setFlashes(prev => prev.filter(e => e.id !== fId)), 600)
       }
 
       // KO
       if (hit.isKO) {
-        if (hit.defender === 'bot') playVictory()
-        else playDefeat()
+        audio.playKOImpact()
+        setTimeout(() => {
+          if (hit.defender === 'bot') audio.playVictory()
+          else audio.playDefeat()
+        }, 400)
       }
     }
   }, [engine.hitEvents])
 
-  // ── Shake on hits ────────────────────────────────────────────────────────
+  // ── Shake on hits — scaled by combo ──────────────────────────────────────
   useEffect(() => {
     if (combatFeel.shakeLevel === 0) return
-    const x = combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0]
+    const comboBoost = Math.min(engine.state.player.comboCount * 0.3, 2)
+    const baseX = combatFeel.shakeLevel >= 3 ? [-12, 11, -8, 8, -4, 4, 0]
       : combatFeel.shakeLevel >= 2 ? [-6, 6, -4, 4, 0]
       : [-3, 3, -2, 2, 0]
+    const x = baseX.map(v => Math.round(v * (1 + comboBoost)))
     const rotate = combatFeel.shakeLevel >= 3 ? [-0.7, 0.6, -0.5, 0.4, -0.2, 0.2, 0] : 0
     shakeControls.start({
       x, rotate,
@@ -128,11 +199,21 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
     })
   }, [combatFeel.shakeKey])
 
+  // ── Camera zoom on special ───────────────────────────────────────────────
+  useEffect(() => {
+    if (combatFeel.specialCam === 0) return
+    camControls.start({
+      scale: [1, 1.08, 1.03, 1],
+      transition: { duration: 0.6, ease: 'easeInOut' },
+    })
+  }, [combatFeel.specialCam])
+
   // ── Report result ────────────────────────────────────────────────────────
   useEffect(() => {
     if (engine.state.phase === 'result' && !resultReported.current) {
       resultReported.current = true
-      stopAmbient()
+      audio.stopAmbient()
+      audio.stopHeartbeat()
       onFinish(engine.playerWon(), {
         hitsLanded: engine.state.playerHitsLanded,
         maxCombo: engine.state.maxCombo,
@@ -150,8 +231,16 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
   return (
     <div className="fixed inset-0 z-50 overflow-hidden" style={{ background: '#04030c' }}>
 
+      {/* ── Screen flashes ── */}
+      <AnimatePresence>
+        {flashes.map(f => (
+          <ScreenFlash key={f.id} color={f.color} intensity={f.intensity} />
+        ))}
+      </AnimatePresence>
+
       {/* ── 3D Scene ── */}
       <motion.div animate={shakeControls} className="absolute inset-0">
+       <motion.div animate={camControls} className="absolute inset-0">
         <RealtimeBattleScene
           playerClass={playerClass}
           playerAccentColor={playerDef.accentColor}
@@ -227,16 +316,47 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
           </div>
         </div>
 
-        {/* Low HP blood vignette */}
-        {s.player.hp <= 30 && s.player.hp > 0 && (
-          <motion.div className="absolute inset-0 pointer-events-none z-20"
+        {/* Speed lines */}
+        <AnimatePresence>
+          {speedLines.map(sl => (
+            <SpeedLines key={sl.id} color={sl.color} direction={sl.direction} intensity={sl.intensity} />
+          ))}
+        </AnimatePresence>
+
+        {/* Ground shockwaves */}
+        {shockwaves.map(sw => (
+          <div key={sw.id} className="absolute z-15 pointer-events-none"
             style={{
-              background: 'radial-gradient(ellipse at center, transparent 40%, rgba(200,0,0,0.3) 100%)',
-            }}
-            animate={{ opacity: [0.5, 0.8, 0.5] }}
-            transition={{ duration: 1.2, repeat: Infinity }}
-          />
+              left: sw.side === 'bot' ? '62%' : '38%',
+              top: '65%',
+            }}>
+            <GroundShockwave color={sw.color} size={sw.size} />
+          </div>
+        ))}
+
+        {/* Low HP blood vignette — enhanced with desaturation */}
+        {s.player.hp <= 30 && s.player.hp > 0 && (
+          <>
+            <motion.div className="absolute inset-0 pointer-events-none z-20"
+              style={{
+                background: `radial-gradient(ellipse at center, transparent 30%, rgba(180,0,0,${0.15 + (1 - s.player.hp / 30) * 0.25}) 100%)`,
+              }}
+              animate={{ opacity: [0.6, 1, 0.6] }}
+              transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            {/* Edge darkening at critical HP */}
+            {s.player.hp <= 15 && (
+              <motion.div className="absolute inset-0 pointer-events-none z-20"
+                style={{
+                  background: 'radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.4) 100%)',
+                }}
+                animate={{ opacity: [0.5, 0.8, 0.5] }}
+                transition={{ duration: 0.6, repeat: Infinity }}
+              />
+            )}
+          </>
         )}
+       </motion.div>
       </motion.div>
 
       {/* ── Intro overlay ── */}
