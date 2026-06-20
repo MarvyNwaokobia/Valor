@@ -250,10 +250,7 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
   }, [engine.hud.phase])
 
   // ── Get animation state ──────────────────────────────────────────────────
-  const playerAnim = engine.getPlayerAnim()
-  const botAnim = engine.getBotAnim()
   const h = engine.hud
-  const sr = engine.stateRef.current
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -272,23 +269,9 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
         <RealtimeBattleScene
           playerClass={playerClass}
           playerAccentColor={playerDef.accentColor}
-          playerPositionX={sr.player.positionX}
-          playerAnimClip={playerAnim.clip}
-          playerAnimSpeed={playerAnim.speed}
-          playerBlocking={h.playerState === 'blocking'}
-          playerDead={h.playerState === 'dead'}
-          playerAttacking={h.playerState === 'light_attack' || h.playerState === 'heavy_attack' || h.playerState === 'special'}
-          playerHit={h.playerState === 'hit_stun'}
           botClass={botClass}
           botAccentColor={botAccent}
-          botPositionX={sr.bot.positionX}
-          botAnimClip={botAnim.clip}
-          botAnimSpeed={botAnim.speed}
-          botBlocking={h.botState === 'blocking'}
-          botDead={h.botState === 'dead'}
-          botAttacking={h.botState === 'light_attack' || h.botState === 'heavy_attack' || h.botState === 'special'}
-          botHit={h.botState === 'hit_stun'}
-          timeScale={h.timeScale}
+          stateRef={engine.stateRef}
         />
 
         {/* ── DOM overlays for VFX ── */}

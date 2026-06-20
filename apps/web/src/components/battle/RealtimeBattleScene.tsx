@@ -1,41 +1,44 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useRef } from 'react'
+import { Suspense, useMemo, useRef } from 'react'
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { useGLTF, useAnimations } from '@react-three/drei'
 import { SkeletonUtils } from 'three-stdlib'
 import * as THREE from 'three'
 import { CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
+import type { CombatState } from '@/lib/combat/types'
+import { getFighterAnim } from '@/hooks/combat/useFighterState'
 
-// ── Camera: tracks fighters, zooms on close combat, dramatic angles ──────────
+// ── Camera: tracks fighters, zooms during attacks ────────────────────────────
 
-function DynamicCamera({ playerX, botX, timeScale, playerAttacking, botAttacking }: {
-  playerX: number; botX: number; timeScale: number
-  playerAttacking: boolean; botAttacking: boolean
-}) {
+function DynamicCamera({ stateRef }: { stateRef: React.RefObject<CombatState> }) {
   const { camera } = useThree()
   const posRef = useRef(new THREE.Vector3(0, 1.1, 3.0))
   const lookRef = useRef(new THREE.Vector3(0, 0.9, 0))
 
   useFrame((_, delta) => {
+    const s = stateRef.current
+    if (!s) return
+    const playerX = s.player.positionX
+    const botX = s.bot.positionX
     const midX = (playerX + botX) / 2
     const spread = Math.abs(botX - playerX)
 
-    // Base distance scales with fighter spread
-    let baseZ = 2.4 + Math.max(0, spread - 1.0) * 0.6
+    const pAtk = s.player.state === 'light_attack' || s.player.state === 'heavy_attack' || s.player.state === 'special'
+    const bAtk = s.bot.state === 'light_attack' || s.bot.state === 'heavy_attack' || s.bot.state === 'special'
+
+    let baseZ = 2.4 + Math.max(0, spread - 1.0) * 0.5
     let baseY = 1.0
     let lookY = 0.9
 
-    // Zoom in during attacks for visceral close-up feel
-    if (playerAttacking || botAttacking) {
-      baseZ -= 0.4
+    if (pAtk || bAtk) {
+      baseZ -= 0.5
       baseY = 0.85
       lookY = 0.95
     }
 
-    // During slow-mo, pull camera slightly to the side for dramatic angle
-    if (timeScale < 0.5) {
+    if (s.timeScale < 0.5) {
       baseZ -= 0.3
       baseY = 0.75
     }
@@ -43,7 +46,7 @@ function DynamicCamera({ playerX, botX, timeScale, playerAttacking, botAttacking
     const target = new THREE.Vector3(midX * 0.35, baseY, baseZ)
     const look = new THREE.Vector3(midX * 0.25, lookY, 0)
 
-    const lerpSpeed = Math.min(1, delta * (timeScale < 0.5 ? 2 : 6))
+    const lerpSpeed = Math.min(1, delta * (s.timeScale < 0.5 ? 2 : 6))
     posRef.current.lerp(target, lerpSpeed)
     lookRef.current.lerp(look, lerpSpeed)
 
@@ -54,22 +57,22 @@ function DynamicCamera({ playerX, botX, timeScale, playerAttacking, botAttacking
   return null
 }
 
-// ── Floating arena particles ─────────────────────────────────────────────────
+// ── Floating particles ───────────────────────────────────────────────────────
 
-function ArenaParticles({ color }: { color: string }) {
+function ArenaParticles() {
   const pointsRef = useRef<THREE.Points>(null!)
-  const count = 60
+  const count = 50
 
   const [positions, velocities] = useMemo(() => {
     const pos = new Float32Array(count * 3)
     const vel = new Float32Array(count * 3)
     for (let i = 0; i < count; i++) {
       pos[i * 3] = (Math.random() - 0.5) * 8
-      pos[i * 3 + 1] = Math.random() * 4
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 6
-      vel[i * 3] = (Math.random() - 0.5) * 0.003
-      vel[i * 3 + 1] = 0.002 + Math.random() * 0.005
-      vel[i * 3 + 2] = (Math.random() - 0.5) * 0.002
+      pos[i * 3 + 1] = Math.random() * 3.5
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 5
+      vel[i * 3] = (Math.random() - 0.5) * 0.002
+      vel[i * 3 + 1] = 0.002 + Math.random() * 0.004
+      vel[i * 3 + 2] = (Math.random() - 0.5) * 0.001
     }
     return [pos, vel]
   }, [])
@@ -81,7 +84,7 @@ function ArenaParticles({ color }: { color: string }) {
       pos.array[i * 3] += velocities[i * 3]
       pos.array[i * 3 + 1] += velocities[i * 3 + 1]
       pos.array[i * 3 + 2] += velocities[i * 3 + 2]
-      if (pos.array[i * 3 + 1] > 4) {
+      if (pos.array[i * 3 + 1] > 3.5) {
         pos.array[i * 3 + 1] = 0
         pos.array[i * 3] = (Math.random() - 0.5) * 8
       }
@@ -94,144 +97,107 @@ function ArenaParticles({ color }: { color: string }) {
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
-      <pointsMaterial color={color} size={0.03} transparent opacity={0.4} depthWrite={false} />
+      <pointsMaterial color="#a78bfa" size={0.025} transparent opacity={0.35} depthWrite={false} />
     </points>
   )
 }
 
-// ── Ground rune circle ───────────────────────────────────────────────────────
+// ── Rotating rune circle ─────────────────────────────────────────────────────
 
-function RuneCircle({ color, positionX }: { color: string; positionX: number }) {
+function RuneCircle({ color, side, stateRef }: {
+  color: string; side: 'player' | 'bot'; stateRef: React.RefObject<CombatState>
+}) {
   const ref = useRef<THREE.Mesh>(null!)
 
   useFrame((state) => {
-    if (!ref.current) return
-    ref.current.rotation.z = state.clock.elapsedTime * 0.15
-    ref.current.position.x = positionX
+    if (!ref.current || !stateRef.current) return
+    const fighter = side === 'player' ? stateRef.current.player : stateRef.current.bot
+    ref.current.position.x = fighter.positionX
+    ref.current.rotation.z = state.clock.elapsedTime * 0.2
   })
 
   return (
-    <mesh ref={ref} rotation-x={-Math.PI / 2} position={[positionX, 0.003, 0]}>
-      <ringGeometry args={[0.6, 0.65, 32]} />
-      <meshBasicMaterial color={color} transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
+    <mesh ref={ref} rotation-x={-Math.PI / 2} position={[0, 0.003, 0]}>
+      <ringGeometry args={[0.55, 0.6, 32]} />
+      <meshBasicMaterial color={color} transparent opacity={0.18} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
   )
 }
 
-// ── Impact flash — placed at hit position in 3D space ────────────────────────
+// ── Arena ─────────────────────────────────────────────────────────────────────
 
-// ── Arena environment ────────────────────────────────────────────────────────
-
-function Arena({ playerColor, botColor }: { playerColor: string; botColor: string }) {
+function Arena({ playerColor, botColor, stateRef }: {
+  playerColor: string; botColor: string; stateRef: React.RefObject<CombatState>
+}) {
   const pColor = useMemo(() => new THREE.Color(playerColor), [playerColor])
   const bColor = useMemo(() => new THREE.Color(botColor), [botColor])
 
   return (
     <group>
-      {/* Main floor */}
       <mesh rotation-x={-Math.PI / 2} position={[0, -0.005, 0]}>
         <planeGeometry args={[24, 14]} />
         <meshStandardMaterial color="#060410" roughness={0.85} metalness={0.15} />
       </mesh>
 
-      {/* Floor center glow line */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.002, 0]}>
-        <planeGeometry args={[0.01, 3.5]} />
-        <meshBasicMaterial color="#eab308" transparent opacity={0.3} depthWrite={false} />
+        <planeGeometry args={[0.008, 3.5]} />
+        <meshBasicMaterial color="#eab308" transparent opacity={0.25} depthWrite={false} />
       </mesh>
 
-      {/* Player ground glow */}
-      <mesh rotation-x={-Math.PI / 2} position={[-1.0, 0.001, 0]}>
-        <circleGeometry args={[1.2, 32]} />
-        <meshBasicMaterial color={pColor} transparent opacity={0.06} depthWrite={false} />
-      </mesh>
-
-      {/* Bot ground glow */}
-      <mesh rotation-x={-Math.PI / 2} position={[1.0, 0.001, 0]}>
-        <circleGeometry args={[1.2, 32]} />
-        <meshBasicMaterial color={bColor} transparent opacity={0.06} depthWrite={false} />
-      </mesh>
-
-      {/* Edge trim lines */}
       {([-2.8, 2.8] as const).map((x, i) => (
         <mesh key={`edge-${i}`} rotation-x={-Math.PI / 2} position={[x, 0.003, 0]}>
-          <planeGeometry args={[0.01, 4]} />
-          <meshBasicMaterial color={x < 0 ? pColor : bColor} transparent opacity={0.35} depthWrite={false} />
+          <planeGeometry args={[0.008, 4]} />
+          <meshBasicMaterial color={x < 0 ? pColor : bColor} transparent opacity={0.3} depthWrite={false} />
         </mesh>
       ))}
 
-      {/* Back wall */}
       <mesh position={[0, 3, -6]}>
         <planeGeometry args={[40, 12]} />
         <meshStandardMaterial color="#020108" roughness={1} metalness={0} />
       </mesh>
 
-      {/* Pillars */}
       {([-4.5, 4.5] as const).map((x, i) => (
         <group key={`pillar-${i}`} position={[x, 2, -4]}>
           <mesh>
-            <boxGeometry args={[0.3, 5, 0.3]} />
+            <boxGeometry args={[0.28, 5, 0.28]} />
             <meshStandardMaterial color="#0d0b1e" roughness={0.9} metalness={0.1} />
           </mesh>
-          <mesh position={[0, 2.6, 0]}>
-            <boxGeometry args={[0.45, 0.15, 0.45]} />
-            <meshStandardMaterial color="#161228" roughness={0.85} metalness={0.15} />
-          </mesh>
-          {/* Pillar glow */}
-          <pointLight
-            position={[0, -1, 0.3]}
-            intensity={0.8}
-            color={x < 0 ? playerColor : botColor}
-            distance={3}
-            decay={2}
-          />
+          <pointLight position={[0, -1, 0.3]} intensity={0.6} color={x < 0 ? playerColor : botColor} distance={3} decay={2} />
         </group>
       ))}
 
-      {/* Mid pillars */}
       {([-3, 3] as const).map((x, i) => (
         <group key={`mid-${i}`} position={[x, 1.8, -2.5]}>
           <mesh>
-            <boxGeometry args={[0.18, 4, 0.18]} />
+            <boxGeometry args={[0.16, 4, 0.16]} />
             <meshStandardMaterial color="#0a0818" roughness={0.9} metalness={0.1} />
           </mesh>
         </group>
       ))}
 
-      {/* Rune circles under fighters */}
-      <RuneCircle color={playerColor} positionX={-1.0} />
-      <RuneCircle color={botColor} positionX={1.0} />
-
-      {/* Atmospheric particles */}
-      <ArenaParticles color="#8b5cf620" />
+      <RuneCircle color={playerColor} side="player" stateRef={stateRef} />
+      <RuneCircle color={botColor} side="bot" stateRef={stateRef} />
+      <ArenaParticles />
     </group>
   )
 }
 
-// ── Fighter with hit flash and attack glow ───────────────────────────────────
+// ── Fighter: reads position + animation from stateRef every frame ────────────
 
-interface RealtimeFighterProps {
+interface FighterProps {
   glbPath: string
   accentColor: string
-  animClip: string
-  animSpeed: number
-  positionX: number
   rotationY: number
-  timeScale: number
-  isBlocking: boolean
-  isDead: boolean
-  isAttacking: boolean
-  isHit: boolean
+  side: 'player' | 'bot'
+  stateRef: React.RefObject<CombatState>
 }
 
-function RealtimeFighter({
-  glbPath, accentColor, animClip, animSpeed, positionX, rotationY,
-  timeScale, isBlocking, isAttacking, isHit,
-}: RealtimeFighterProps) {
+function RealtimeFighter({ glbPath, accentColor, rotationY, side, stateRef }: FighterProps) {
   const group = useRef<THREE.Group>(null!)
-  const xRef = useRef(positionX)
-  const prevClip = useRef(animClip)
+  const xRef = useRef(side === 'player' ? -1.0 : 1.0)
+  const currentClip = useRef('idle')
   const hitFlashRef = useRef(0)
+  const prevState = useRef('idle')
   const attackGlowRef = useRef(0)
   const glowLightRef = useRef<THREE.PointLight>(null!)
   const { scene: rawScene, animations } = useGLTF(glbPath)
@@ -239,68 +205,67 @@ function RealtimeFighter({
   const scene = useMemo(() => SkeletonUtils.clone(rawScene), [rawScene])
   const { actions, mixer } = useAnimations(animations, group)
 
-  useEffect(() => {
-    const target = actions[animClip] ?? Object.values(actions)[0]
+  function playClip(clipName: string) {
+    if (currentClip.current === clipName) return
+    const target = actions[clipName] ?? actions['idle'] ?? Object.values(actions)[0]
     if (!target) return
-
-    if (prevClip.current !== animClip) {
-      Object.values(actions).forEach(a => { if (a !== target) a?.fadeOut(0.12) })
-      target.reset().fadeIn(0.1).play()
-      prevClip.current = animClip
-    } else if (!target.isRunning()) {
-      target.reset().fadeIn(0.1).play()
-    }
-  }, [animClip, actions])
-
-  useEffect(() => {
-    if (!mixer) return
-    mixer.timeScale = animSpeed * timeScale
-  }, [animSpeed, timeScale, mixer])
-
-  // Trigger flash on hit
-  useEffect(() => {
-    if (isHit) hitFlashRef.current = 1
-  }, [isHit])
+    Object.values(actions).forEach(a => { if (a !== target) a?.fadeOut(0.1) })
+    target.reset().fadeIn(0.08).play()
+    currentClip.current = clipName
+  }
 
   useFrame((_, delta) => {
-    if (!group.current) return
+    if (!group.current || !stateRef.current) return
+    const fighter = side === 'player' ? stateRef.current.player : stateRef.current.bot
+    const timeScale = stateRef.current.timeScale
 
-    // Smooth position with faster tracking for responsiveness
-    const lerpSpeed = Math.min(1, delta * 16)
-    xRef.current += (positionX - xRef.current) * lerpSpeed
+    // Read animation directly from fighter state — every frame, no React delay
+    const anim = getFighterAnim(fighter)
+    playClip(anim.clip)
+
+    if (mixer) mixer.timeScale = anim.speed * timeScale
+
+    // Smooth position tracking at 60fps
+    const lerpSpeed = Math.min(1, delta * 14)
+    xRef.current += (fighter.positionX - xRef.current) * lerpSpeed
     group.current.position.x = xRef.current
 
     // Blocking lean
-    const leanTarget = isBlocking ? -0.12 * Math.sign(rotationY) : 0
+    const isBlocking = fighter.state === 'blocking'
+    const leanTarget = isBlocking ? -0.1 * Math.sign(rotationY) : 0
     group.current.rotation.z = THREE.MathUtils.lerp(group.current.rotation.z, leanTarget, lerpSpeed)
 
-    // Hit flash — make character flash white briefly
+    // Hit flash — white emissive burst
+    const isHit = fighter.state === 'hit_stun'
+    if (isHit && prevState.current !== 'hit_stun') {
+      hitFlashRef.current = 1.0
+    }
+    prevState.current = fighter.state
+
     if (hitFlashRef.current > 0) {
-      hitFlashRef.current = Math.max(0, hitFlashRef.current - delta * 6)
+      hitFlashRef.current = Math.max(0, hitFlashRef.current - delta * 8)
       scene.traverse((child) => {
         if (child instanceof THREE.Mesh && child.material) {
           const mat = child.material as THREE.MeshStandardMaterial
-          if (mat.emissive) {
-            mat.emissive.setScalar(hitFlashRef.current * 0.8)
-          }
+          if (mat.emissive) mat.emissive.setScalar(hitFlashRef.current * 0.6)
         }
       })
     }
 
-    // Attack glow — intensify accent light during attacks
+    // Attack glow
+    const isAttacking = fighter.state === 'light_attack' || fighter.state === 'heavy_attack' || fighter.state === 'special'
     attackGlowRef.current += ((isAttacking ? 1 : 0) - attackGlowRef.current) * Math.min(1, delta * 12)
     if (glowLightRef.current) {
-      glowLightRef.current.intensity = 6 + attackGlowRef.current * 12
+      glowLightRef.current.intensity = 5 + attackGlowRef.current * 14
     }
   })
 
   return (
-    <group ref={group} position={[positionX, 0, 0]} rotation={[0, rotationY, 0]}>
+    <group ref={group} position={[side === 'player' ? -1.0 : 1.0, 0, 0]} rotation={[0, rotationY, 0]}>
       <primitive object={scene} dispose={null} />
-      <pointLight ref={glowLightRef} position={[0, 1.5, 1.0]} intensity={6} color={accentColor} distance={9} decay={2} />
-      <pointLight position={[0, 2.5, 0]} intensity={2.5} color="#ffffff" distance={6} decay={2} />
-      {/* Ground accent light — stronger during attacks */}
-      <pointLight position={[0, 0.1, 0.5]} intensity={3} color={accentColor} distance={3} decay={2} />
+      <pointLight ref={glowLightRef} position={[0, 1.5, 1.0]} intensity={5} color={accentColor} distance={9} decay={2} />
+      <pointLight position={[0, 2.5, 0]} intensity={2} color="#ffffff" distance={6} decay={2} />
+      <pointLight position={[0, 0.1, 0.5]} intensity={2.5} color={accentColor} distance={3} decay={2} />
     </group>
   )
 }
@@ -310,31 +275,15 @@ function RealtimeFighter({
 export interface RealtimeBattleSceneProps {
   playerClass: CharacterClass
   playerAccentColor: string
-  playerPositionX: number
-  playerAnimClip: string
-  playerAnimSpeed: number
-  playerBlocking: boolean
-  playerDead: boolean
-  playerAttacking: boolean
-  playerHit: boolean
   botClass: CharacterClass
   botAccentColor: string
-  botPositionX: number
-  botAnimClip: string
-  botAnimSpeed: number
-  botBlocking: boolean
-  botDead: boolean
-  botAttacking: boolean
-  botHit: boolean
-  timeScale: number
+  stateRef: React.RefObject<CombatState>
 }
 
 export default function RealtimeBattleScene({
-  playerClass, playerAccentColor, playerPositionX, playerAnimClip, playerAnimSpeed,
-  playerBlocking, playerDead, playerAttacking, playerHit,
-  botClass, botAccentColor, botPositionX, botAnimClip, botAnimSpeed,
-  botBlocking, botDead, botAttacking, botHit,
-  timeScale,
+  playerClass, playerAccentColor,
+  botClass, botAccentColor,
+  stateRef,
 }: RealtimeBattleSceneProps) {
   return (
     <Canvas
@@ -344,17 +293,10 @@ export default function RealtimeBattleScene({
       style={{ background: '#04030c', width: '100%', height: '100%' }}
       performance={{ min: 0.5 }}
     >
-      <DynamicCamera
-        playerX={playerPositionX}
-        botX={botPositionX}
-        timeScale={timeScale}
-        playerAttacking={playerAttacking}
-        botAttacking={botAttacking}
-      />
+      <DynamicCamera stateRef={stateRef} />
 
       <fog attach="fog" args={['#04030c', 6, 16]} />
 
-      {/* Lighting — more dramatic, higher contrast */}
       <ambientLight intensity={0.35} color="#0d0820" />
       <directionalLight position={[0, 3, 5]} intensity={3.5} color="#f5f0ff" />
       <directionalLight position={[2, 6, 3]} intensity={1.8} color="#ffffff" />
@@ -362,36 +304,24 @@ export default function RealtimeBattleScene({
       <directionalLight position={[0, 3, -5]} intensity={1.8} color="#2a18ff" />
       <pointLight position={[0, 0.05, 0.5]} intensity={1.2} color="#18083a" distance={5} decay={2} />
 
-      <Arena playerColor={playerAccentColor} botColor={botAccentColor} />
+      <Arena playerColor={playerAccentColor} botColor={botAccentColor} stateRef={stateRef} />
 
       <Suspense fallback={null}>
         <RealtimeFighter
           key={`player-${playerClass}`}
           glbPath={CHARACTER_GLB[playerClass]}
           accentColor={playerAccentColor}
-          animClip={playerAnimClip}
-          animSpeed={playerAnimSpeed}
-          positionX={playerPositionX}
           rotationY={Math.PI / 2}
-          timeScale={timeScale}
-          isBlocking={playerBlocking}
-          isDead={playerDead}
-          isAttacking={playerAttacking}
-          isHit={playerHit}
+          side="player"
+          stateRef={stateRef}
         />
         <RealtimeFighter
           key={`bot-${botClass}`}
           glbPath={CHARACTER_GLB[botClass]}
           accentColor={botAccentColor}
-          animClip={botAnimClip}
-          animSpeed={botAnimSpeed}
-          positionX={botPositionX}
           rotationY={-Math.PI / 2}
-          timeScale={timeScale}
-          isBlocking={botBlocking}
-          isDead={botDead}
-          isAttacking={botAttacking}
-          isHit={botHit}
+          side="bot"
+          stateRef={stateRef}
         />
       </Suspense>
     </Canvas>
