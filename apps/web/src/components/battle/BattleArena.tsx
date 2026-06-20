@@ -565,6 +565,14 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         player={player}
         walletAddress={walletAddress}
         botClass={bossCls}
+        bossConfig={{
+          name: activeChapter.boss.name,
+          title: activeChapter.boss.title,
+          damageMult: activeChapter.boss.damageMult,
+          hpMult: activeChapter.boss.hpMult,
+          reactionMult: activeChapter.boss.reactionMult,
+          accentColor: activeChapter.boss.accentColor,
+        }}
         onFinish={handleCampaignFightFinish}
       />
     )
