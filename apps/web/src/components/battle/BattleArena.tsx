@@ -12,6 +12,7 @@ import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
 import BattleScene from './BattleScene'
+import RealtimeBattleArena from './RealtimeBattleArena'
 import ImpactBurst from './ImpactBurst'
 import HitSpark from './HitSpark'
 import DamageNumber from './DamageNumber'
@@ -20,6 +21,7 @@ import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
+import type { Rank } from '@/types/database'
 import RankAura from '@/components/ui/RankAura'
 import { XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -63,14 +65,100 @@ function roundNarrative(
 }
 
 
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+
 export default function BattleArena({ player, walletAddress, challengeTarget }: Props) {
   const router = useRouter()
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
 
-  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, botClass, starting, submitting,
-    startBattle, handleMove, reset,
+  // ── Real-time bot fight state ───────────────────────────────────────────
+  const [realtimeMode,      setRealtimeMode]      = useState(false)
+  const [realtimeBotClass,  setRealtimeBotClass]  = useState<CharacterClass | null>(null)
+  const [realtimeSessionId, setRealtimeSessionId] = useState<string | null>(null)
+  const [realtimeStarting,  setRealtimeStarting]  = useState(false)
+
+  async function startRealtimeBattle() {
+    if (realtimeStarting) return
+    setRealtimeStarting(true)
+    try {
+      const res = await fetch(`${API}/battles/bot/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet: walletAddress }),
+      })
+      if (!res.ok) throw new Error('Failed to start battle')
+      const data = await res.json()
+      setRealtimeSessionId(data.session_id)
+      setRealtimeBotClass(data.bot_class as CharacterClass)
+      setRealtimeMode(true)
+    } catch (err) {
+      console.error('Failed to start realtime battle:', err)
+    } finally {
+      setRealtimeStarting(false)
+    }
+  }
+
+  async function handleRealtimeFinish(won: boolean, stats: { hitsLanded: number; maxCombo: number; elapsed: number }) {
+    // Submit result to server
+    try {
+      const res = await fetch(`${API}/battles/bot/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: realtimeSessionId,
+          player_won: won,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const { updatePlayer } = await import('@/stores/usePlayerStore').then(m => ({ updatePlayer: m.usePlayerStore.getState().updatePlayer }))
+        const storeUpdates: Partial<Player> = {
+          xp: data.new_xp,
+          wins: won ? player.wins + 1 : player.wins,
+          losses: won ? player.losses : player.losses + 1,
+          decay_status: 'none',
+        }
+        if (data.ranked_up && data.new_rank) {
+          storeUpdates.rank = data.new_rank
+          storeUpdates.g_earned_lifetime = player.g_earned_lifetime + data.g_awarded
+        }
+        updatePlayer(storeUpdates)
+
+        setRealtimeResult({
+          won,
+          xpAwarded: data.xp_awarded,
+          newXp: data.new_xp,
+          rankedUp: data.ranked_up,
+          newRank: data.new_rank ?? null,
+          gAwarded: data.g_awarded ?? 0,
+          hitsLanded: stats.hitsLanded,
+          maxCombo: stats.maxCombo,
+          elapsed: stats.elapsed,
+        })
+      }
+    } catch (err) {
+      console.error('Failed to submit battle result:', err)
+      // Show result anyway even if API fails
+      setRealtimeResult({
+        won, xpAwarded: won ? 100 : 30, newXp: player.xp + (won ? 100 : 30),
+        rankedUp: false, newRank: null, gAwarded: 0,
+        hitsLanded: stats.hitsLanded, maxCombo: stats.maxCombo, elapsed: stats.elapsed,
+      })
+    }
+    setRealtimeMode(false)
+  }
+
+  interface RealtimeResult {
+    won: boolean; xpAwarded: number; newXp: number; rankedUp: boolean
+    newRank: string | null; gAwarded: number
+    hitsLanded: number; maxCombo: number; elapsed: number
+  }
+  const [realtimeResult, setRealtimeResult] = useState<RealtimeResult | null>(null)
+
+  const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, botClass, submitting,
+    handleMove, reset,
     attackBoost, defenseBoost, hasXpBooster, effectiveAttack, effectiveDefense } =
     useBattle(player, walletAddress)
 
@@ -251,6 +339,138 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     } finally { setRewardClaiming(false) }
   }
 
+  // ── REALTIME BOT FIGHT ──────────────────────────────────────────────────
+  if (realtimeMode && realtimeBotClass) {
+    return (
+      <RealtimeBattleArena
+        player={player}
+        walletAddress={walletAddress}
+        botClass={realtimeBotClass}
+        onFinish={handleRealtimeFinish}
+        onBack={() => { setRealtimeMode(false); setRealtimeBotClass(null) }}
+      />
+    )
+  }
+
+  // ── REALTIME RESULT ────────────────────────────────────────────────────
+  if (realtimeResult) {
+    const resultColor = realtimeResult.won ? '#eab308' : '#ef4444'
+    return (
+      <motion.div className="fixed inset-0 z-50 overflow-y-auto"
+        style={{ background: '#04030c' }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}
+      >
+        <div className="fixed inset-0 pointer-events-none">
+          <div style={{
+            background: realtimeResult.won
+              ? 'radial-gradient(ellipse 90% 60% at 50% 30%, rgba(234,179,8,0.12), transparent), radial-gradient(ellipse 110% 60% at 50% 110%, rgba(60,10,80,0.6), transparent)'
+              : 'radial-gradient(ellipse 90% 60% at 50% 30%, rgba(239,68,68,0.08), transparent), radial-gradient(ellipse 110% 60% at 50% 110%, rgba(60,10,80,0.6), transparent)',
+          }} className="absolute inset-0" />
+        </div>
+
+        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-10"
+          style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom, 32px))' }}>
+
+          <motion.div className="text-center"
+            initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 200, damping: 16, delay: 0.1 }}>
+            <p className="font-display font-black uppercase tracking-[0.18em] text-white"
+              style={{ fontSize: 'clamp(0.9rem, 3.5vw, 1.2rem)', opacity: 0.6, marginBottom: 4 }}>
+              {player.character_name}
+            </p>
+            <h1 className="font-display font-black leading-none"
+              style={{
+                fontSize: 'clamp(4rem, 16vw, 7rem)',
+                color: resultColor,
+                letterSpacing: '0.04em',
+                textShadow: `0 0 80px ${resultColor}60, 0 0 160px ${resultColor}30`,
+              }}>
+              {realtimeResult.won ? 'VICTORY!' : 'DEFEAT'}
+            </h1>
+            <motion.p className="font-black mt-3" style={{ fontSize: 'clamp(1.3rem, 5vw, 1.8rem)', color: resultColor }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}>
+              +{realtimeResult.xpAwarded} XP
+            </motion.p>
+          </motion.div>
+
+          {/* Fight stats */}
+          <motion.div className="flex gap-6 justify-center"
+            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+            <div className="text-center">
+              <p className="font-black text-white text-xl">{realtimeResult.hitsLanded}</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Hits</p>
+            </div>
+            <div className="text-center">
+              <p className="font-black text-amber-400 text-xl">{realtimeResult.maxCombo}×</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Max Combo</p>
+            </div>
+            <div className="text-center">
+              <p className="font-black text-white text-xl">{Math.ceil(realtimeResult.elapsed / 1000)}s</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Time</p>
+            </div>
+          </motion.div>
+
+          {/* XP progress */}
+          <motion.div className="w-full max-w-xs"
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
+            <XpMeter xp={realtimeResult.newXp} max={XP_PER_RANK} rank={(realtimeResult.newRank ?? player.rank) as Rank} />
+          </motion.div>
+
+          {/* Rank up banner */}
+          {realtimeResult.rankedUp && realtimeResult.newRank && (
+            <motion.div className="w-full max-w-xs rounded-2xl p-4 text-center"
+              style={{
+                background: `${RANK_DEFINITIONS[realtimeResult.newRank as Rank]?.badgeBg ?? 'rgba(234,179,8,0.08)'}`,
+                border: `1px solid ${RANK_DEFINITIONS[realtimeResult.newRank as Rank]?.color ?? '#eab308'}50`,
+                boxShadow: RANK_DEFINITIONS[realtimeResult.newRank as Rank]?.glow,
+              }}
+              initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.55, type: 'spring', stiffness: 200, damping: 14 }}>
+              <RankAura rank={realtimeResult.newRank as Rank} mode="badge">
+                <p className="font-display font-black text-lg"
+                  style={{ color: RANK_DEFINITIONS[realtimeResult.newRank as Rank]?.color ?? '#eab308' }}>
+                  ✦ RANK UP → {realtimeResult.newRank}
+                </p>
+              </RankAura>
+              <p className="text-slate-400 text-xs mt-1">{formatGDollarNumber(realtimeResult.gAwarded)} G$ earned</p>
+            </motion.div>
+          )}
+
+          <motion.button onClick={() => {
+              setRealtimeResult(null)
+              startRealtimeBattle()
+            }}
+            className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
+            style={{
+              fontSize: 'clamp(14px, 3.5vw, 18px)',
+              background: 'linear-gradient(135deg, #fde047 0%, #eab308 50%, #b45309 100%)',
+              boxShadow: '0 0 40px rgba(234,179,8,0.4)',
+            }}
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, type: 'spring', stiffness: 180, damping: 14 }}
+            whileTap={{ scale: 0.97 }}>
+            Fight Again
+          </motion.button>
+
+          <motion.button
+            onClick={() => { setRealtimeResult(null); router.push('/') }}
+            className="w-full py-3 font-display font-black uppercase tracking-[0.2em] rounded-xl border transition-colors"
+            style={{
+              fontSize: 'clamp(11px, 2.5vw, 13px)',
+              color: 'rgba(148,163,184,0.7)',
+              borderColor: 'rgba(42,42,58,0.6)',
+              background: 'transparent',
+            }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.7 }}
+            whileHover={{ color: '#fff', borderColor: 'rgba(148,163,184,0.4)' }}
+            whileTap={{ scale: 0.97 }}>
+            ← Return Home
+          </motion.button>
+        </div>
+      </motion.div>
+    )
+  }
+
   // ── LIVE PVP ────────────────────────────────────────────────────────────
   if (phase === 'idle' && showChallenge) {
     return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
@@ -324,9 +544,9 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           <motion.button onClick={() => {
               const el = document.documentElement
               if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
-              startBattle()
+              startRealtimeBattle()
             }}
-            disabled={starting}
+            disabled={realtimeStarting}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all disabled:opacity-60 disabled:pointer-events-none"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
             whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -344,7 +564,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               <div>
                 <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Fight a Bot</p>
                 <p className="text-slate-500 text-sm mt-0.5">
-                  {starting ? 'Finding an opponent...' : '5-round battle · Scales to your rank · Instant result'}
+                  {realtimeStarting ? 'Finding an opponent...' : 'Real-time combat · Combos · Dodge · Block · Special'}
                 </p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
