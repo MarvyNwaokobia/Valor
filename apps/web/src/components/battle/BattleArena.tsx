@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useAnimation } from 'framer-motion'
-import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords } from 'lucide-react'
+import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords, BookOpen } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
@@ -25,6 +25,10 @@ import type { Rank } from '@/types/database'
 import RankAura from '@/components/ui/RankAura'
 import { XP_PER_RANK } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
+import CampaignSelect from '@/components/campaign/CampaignSelect'
+import PreFightNarrative from '@/components/campaign/PreFightNarrative'
+import type { Chapter } from '@/lib/campaign'
+import { useCampaignStore } from '@/stores/useCampaignStore'
 
 interface Props { player: Player; walletAddress: string; challengeTarget?: string }
 
@@ -72,6 +76,72 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
+
+  // ── Campaign state ─────────────────────────────────────────────────────
+  const [showCampaign,       setShowCampaign]       = useState(false)
+  const [activeChapter,      setActiveChapter]      = useState<Chapter | null>(null)
+  const [showNarrative,      setShowNarrative]      = useState(false)
+  const [campaignFighting,   setCampaignFighting]   = useState(false)
+  const completeChapter = useCampaignStore(s => s.completeChapter)
+
+  function handleCampaignChapterSelect(chapter: Chapter) {
+    setActiveChapter(chapter)
+    setShowNarrative(true)
+  }
+
+
+  async function handleCampaignFightFinish(won: boolean, stats: { hitsLanded: number; maxCombo: number; elapsed: number }) {
+    setCampaignFighting(false)
+    if (won && activeChapter) {
+      completeChapter(activeChapter.id, {
+        hitsLanded: stats.hitsLanded,
+        maxCombo: stats.maxCombo,
+        timeMs: stats.elapsed,
+      })
+    }
+    // Submit to API for XP
+    try {
+      if (realtimeSessionId) {
+        await fetch(`${API}/battles/bot/finish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: realtimeSessionId, player_won: won }),
+        })
+      }
+    } catch { /* non-critical */ }
+
+    // Show campaign result
+    const chapter = activeChapter
+    setCampaignResult({
+      won,
+      chapter: chapter!,
+      hitsLanded: stats.hitsLanded,
+      maxCombo: stats.maxCombo,
+      elapsed: stats.elapsed,
+    })
+  }
+
+  interface CampaignResult {
+    won: boolean; chapter: Chapter; hitsLanded: number; maxCombo: number; elapsed: number
+  }
+  const [campaignResult, setCampaignResult] = useState<CampaignResult | null>(null)
+
+  // Start a campaign fight by creating a server session, then rendering the arena
+  async function startCampaignFight() {
+    if (!activeChapter) return
+    try {
+      const res = await fetch(`${API}/battles/bot/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet: walletAddress }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setRealtimeSessionId(data.session_id)
+      }
+    } catch { /* fight will work without server session */ }
+    setCampaignFighting(true)
+  }
 
   // ── Real-time bot fight state ───────────────────────────────────────────
   const [realtimeMode,      setRealtimeMode]      = useState(false)
@@ -471,6 +541,162 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
     )
   }
 
+  // ── CAMPAIGN: Narrative ──────────────────────────────────────────────────
+  if (showNarrative && activeChapter) {
+    return (
+      <PreFightNarrative
+        chapter={activeChapter}
+        onReady={() => {
+          setShowNarrative(false)
+          startCampaignFight()
+        }}
+      />
+    )
+  }
+
+  // ── CAMPAIGN: Fighting ─────────────────────────────────────────────────
+  if (campaignFighting && activeChapter) {
+    // The Mirror boss matches the player's class
+    const bossCls = activeChapter.boss.id === 'mirror'
+      ? (player.character_class as CharacterClass)
+      : activeChapter.boss.characterClass
+    return (
+      <RealtimeBattleArena
+        player={player}
+        walletAddress={walletAddress}
+        botClass={bossCls}
+        onFinish={handleCampaignFightFinish}
+      />
+    )
+  }
+
+  // ── CAMPAIGN: Result ───────────────────────────────────────────────────
+  if (campaignResult) {
+    const ch = campaignResult.chapter
+    const bossColor = ch.boss.accentColor
+    const won = campaignResult.won
+    return (
+      <motion.div className="fixed inset-0 z-50 overflow-y-auto"
+        style={{ background: '#04030c' }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+        <div className="fixed inset-0 pointer-events-none">
+          <div style={{
+            background: won
+              ? `radial-gradient(ellipse 90% 60% at 50% 30%, ${bossColor}15, transparent)`
+              : 'radial-gradient(ellipse 90% 60% at 50% 30%, rgba(239,68,68,0.08), transparent)',
+          }} className="absolute inset-0" />
+        </div>
+
+        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-10"
+          style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom, 32px))' }}>
+
+          <motion.div className="text-center"
+            initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 200, damping: 16, delay: 0.1 }}>
+            <p className="text-[10px] font-black uppercase tracking-[0.4em]"
+              style={{ color: `${bossColor}80` }}>
+              Chapter {ch.number} — {ch.title}
+            </p>
+            <h1 className="font-display font-black leading-none mt-2"
+              style={{
+                fontSize: 'clamp(3rem, 12vw, 5rem)',
+                color: won ? '#eab308' : '#ef4444',
+                textShadow: `0 0 60px ${won ? '#eab30860' : '#ef444460'}`,
+              }}>
+              {won ? 'VICTORY' : 'DEFEATED'}
+            </h1>
+          </motion.div>
+
+          {/* Boss quote */}
+          <motion.div className="max-w-sm text-center"
+            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
+            <p className="text-slate-400 italic text-sm leading-relaxed">
+              &ldquo;{won ? ch.victoryLine : ch.defeatLine}&rdquo;
+            </p>
+            <p className="text-[9px] mt-1 font-black uppercase tracking-wider"
+              style={{ color: bossColor }}>
+              — {ch.boss.name}, {ch.boss.title}
+            </p>
+          </motion.div>
+
+          {/* Stats */}
+          <motion.div className="flex gap-6 justify-center"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>
+            <div className="text-center">
+              <p className="font-black text-white text-xl">{campaignResult.hitsLanded}</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Hits</p>
+            </div>
+            <div className="text-center">
+              <p className="font-black text-amber-400 text-xl">{campaignResult.maxCombo}x</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Max Combo</p>
+            </div>
+            <div className="text-center">
+              <p className="font-black text-white text-xl">{Math.ceil(campaignResult.elapsed / 1000)}s</p>
+              <p className="text-[8px] text-slate-500 uppercase tracking-wider">Time</p>
+            </div>
+          </motion.div>
+
+          {/* Retry / Continue */}
+          {won ? (
+            <motion.button onClick={() => {
+                setCampaignResult(null)
+                setActiveChapter(null)
+              }}
+              className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
+              style={{
+                fontSize: 'clamp(14px, 3.5vw, 18px)',
+                background: `linear-gradient(135deg, #fde047 0%, #eab308 50%, #b45309 100%)`,
+                boxShadow: '0 0 40px rgba(234,179,8,0.4)',
+              }}
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.55 }}
+              whileTap={{ scale: 0.97 }}>
+              Continue Campaign
+            </motion.button>
+          ) : (
+            <motion.button onClick={() => {
+                setCampaignResult(null)
+                setShowNarrative(false)
+                startCampaignFight()
+              }}
+              className="w-full clip-angled py-5 font-display font-black text-black uppercase tracking-[0.2em]"
+              style={{
+                fontSize: 'clamp(14px, 3.5vw, 18px)',
+                background: `linear-gradient(135deg, ${bossColor}dd, ${bossColor})`,
+                boxShadow: `0 0 40px ${bossColor}40`,
+              }}
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.55 }}
+              whileTap={{ scale: 0.97 }}>
+              Try Again
+            </motion.button>
+          )}
+
+          <motion.button
+            onClick={() => { setCampaignResult(null); setActiveChapter(null); setShowCampaign(true) }}
+            className="w-full py-3 font-display font-black uppercase tracking-[0.2em] rounded-xl border"
+            style={{ fontSize: 'clamp(11px, 2.5vw, 13px)', color: 'rgba(148,163,184,0.7)', borderColor: 'rgba(42,42,58,0.6)' }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.65 }}
+            whileTap={{ scale: 0.97 }}>
+            ← Back to Chapters
+          </motion.button>
+        </div>
+      </motion.div>
+    )
+  }
+
+  // ── CAMPAIGN: Chapter Select ───────────────────────────────────────────
+  if (showCampaign) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <CampaignSelect
+          onSelectChapter={handleCampaignChapterSelect}
+          onBack={() => setShowCampaign(false)}
+        />
+      </div>
+    )
+  }
+
   // ── LIVE PVP ────────────────────────────────────────────────────────────
   if (phase === 'idle' && showChallenge) {
     return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
@@ -624,6 +850,30 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               <div>
                 <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Challenge a Warrior</p>
                 <p className="text-slate-500 text-sm mt-0.5">Search by name · Async duel · Share invite link</p>
+              </div>
+              <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
+            </div>
+          </motion.button>
+
+          {/* Story Campaign */}
+          <motion.button onClick={() => setShowCampaign(true)}
+            className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
+            style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
+            whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
+          >
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(168,85,247,0.07), transparent)' }} />
+            <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ background: '#a855f7' }} />
+            <div className="flex items-center gap-5 relative z-10">
+              <div className="w-14 h-14 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.2)' }}>
+                <BookOpen size={28} style={{ color: '#a855f7' }} strokeWidth={1.5} />
+              </div>
+              <div>
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Story Campaign</p>
+                <p className="text-slate-500 text-sm mt-0.5">5 boss chapters · Narrative · Escalating difficulty</p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />
             </div>
