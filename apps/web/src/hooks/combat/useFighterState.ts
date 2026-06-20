@@ -284,9 +284,9 @@ export function getFighterAnim(fighter: Fighter): { clip: string; speed: number 
         speed: fighter.currentMove?.animSpeed ?? 1.0,
       }
     case 'dodging':
-      return { clip: 'idle', speed: 1.5 }
+      return { clip: 'dodge', speed: 1.2 }
     case 'blocking':
-      return { clip: 'idle', speed: 0.3 }
+      return { clip: 'block', speed: 0.5 }
     default:
       return { clip: 'idle', speed: 1.0 }
   }
