@@ -115,6 +115,18 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
     engine.tick(deltaMs)
   }, started && engine.state.phase !== 'result')
 
+  // ── Dodge / block audio on state changes ─────────────────────────────────
+  const prevPlayerState = useRef(engine.state.player.state)
+  useEffect(() => {
+    const cur = engine.state.player.state
+    const prev = prevPlayerState.current
+    if (cur !== prev) {
+      if (cur === 'dodging') audio.playDodge()
+      if (cur === 'blocking' && prev !== 'blocking') audio.playBlock()
+    }
+    prevPlayerState.current = cur
+  }, [engine.state.player.state])
+
   // ── Low HP heartbeat ─────────────────────────────────────────────────────
   useEffect(() => {
     const hp = engine.state.player.hp
