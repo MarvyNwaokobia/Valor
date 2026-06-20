@@ -496,12 +496,21 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
               side="left"
             />
 
-            {/* Timer */}
-            <div className="flex flex-col items-center pt-1">
+            {/* Timer + Mute */}
+            <div className="flex flex-col items-center pt-1 gap-1">
               <span className="font-display font-black text-white text-lg leading-none">
                 {Math.max(0, Math.ceil((60000 - s.elapsedMs) / 1000))}
               </span>
               <span className="text-[7px] font-bold uppercase tracking-[0.25em] text-slate-600">TIME</span>
+              <button
+                onClick={audio.toggleMute}
+                className="mt-0.5 text-[8px] font-bold px-2 py-0.5 rounded transition-colors"
+                style={{
+                  background: audio.muted ? 'rgba(239,68,68,0.15)' : 'rgba(42,42,58,0.5)',
+                  color: audio.muted ? '#ef4444' : '#64748b',
+                }}>
+                {audio.muted ? 'MUTED' : 'SOUND'}
+              </button>
             </div>
 
             {/* Bot HP + Stamina + Special */}
@@ -544,8 +553,8 @@ export default function RealtimeBattleArena({ player, botClass, bossConfig, onFi
             ))}
           </div>
 
-          {/* Touch buttons */}
-          <div className="grid grid-cols-5 gap-1.5 lg:hidden">
+          {/* Touch buttons — tall for thumb reach */}
+          <div className="grid grid-cols-5 gap-2 lg:hidden">
             <ActionButton
               icon={<Sword size={20} />}
               label="Attack"
@@ -671,7 +680,8 @@ function ActionButton({ icon, label, color, disabled, glow, onPress, onRelease }
       onPointerUp={(e) => { e.preventDefault(); onRelease?.() }}
       onPointerLeave={() => { onRelease?.() }}
       disabled={disabled}
-      className="relative flex flex-col items-center gap-1 py-3 rounded-xl border overflow-hidden active:scale-95 transition-transform"
+      className="relative flex flex-col items-center justify-center gap-1.5 py-4 rounded-xl border overflow-hidden active:scale-95 transition-transform"
+      aria-label={label}
       style={{
         background: disabled ? 'rgba(8,8,14,0.4)' : 'rgba(6,5,16,0.9)',
         borderColor: disabled ? 'rgba(42,42,58,0.3)' : `${color}45`,
