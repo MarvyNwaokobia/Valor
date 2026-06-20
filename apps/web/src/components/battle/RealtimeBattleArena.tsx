@@ -17,11 +17,20 @@ import DamageNumber from './DamageNumber'
 import SpeedLines from './SpeedLines'
 import GroundShockwave from './GroundShockwave'
 import ScreenFlash from './ScreenFlash'
+export interface BossConfig {
+  name: string
+  title: string
+  damageMult: number
+  hpMult: number
+  reactionMult: number
+  accentColor: string
+}
 
 interface Props {
   player: Player
   walletAddress?: string
   botClass: CharacterClass
+  bossConfig?: BossConfig
   onFinish: (won: boolean, stats: { hitsLanded: number; maxCombo: number; elapsed: number }) => void
   onBack?: () => void
 }
@@ -51,12 +60,18 @@ function useGameLoop(callback: (deltaMs: number) => void, active: boolean) {
 
 interface DmgEvent { id: number; value: number; isSpecial: boolean; side: 'player' | 'bot' }
 
-export default function RealtimeBattleArena({ player, botClass, onFinish }: Props) {
+export default function RealtimeBattleArena({ player, botClass, bossConfig, onFinish }: Props) {
   const playerClass = (player.character_class as CharacterClass) ?? 'Berserker'
   const playerDef = CLASS_DEFINITIONS[playerClass] ?? CLASS_DEFINITIONS.Berserker
   const botDef = CLASS_DEFINITIONS[botClass]
+  const botDisplayName = bossConfig ? `${bossConfig.name}` : `Bot ${botClass}`
+  const botAccent = bossConfig?.accentColor ?? botDef.accentColor
 
-  const engine = useCombatEngine(player.rank)
+  const engine = useCombatEngine(player.rank, bossConfig ? {
+    damageMult: bossConfig.damageMult,
+    hpMult: bossConfig.hpMult,
+    reactionMult: bossConfig.reactionMult,
+  } : undefined)
   const combatFeel = useCombatFeel()
   const audio = useAudio()
   const shakeControls = useAnimation()
@@ -118,7 +133,7 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
     if (engine.hitEvents.length === 0) return
 
     for (const hit of engine.hitEvents) {
-      const attackerColor = hit.attacker === 'player' ? playerDef.accentColor : botDef.accentColor
+      const attackerColor = hit.attacker === 'player' ? playerDef.accentColor : botAccent
       const defenderSide = hit.defender
       const isHeavy = hit.move.id === 'heavy_attack'
       const isSpecial = hit.move.id === 'special'
@@ -250,7 +265,7 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
           playerBlocking={s.player.state === 'blocking'}
           playerDead={s.player.state === 'dead'}
           botClass={botClass}
-          botAccentColor={botDef.accentColor}
+          botAccentColor={botAccent}
           botPositionX={s.bot.positionX}
           botAnimClip={botAnim.clip}
           botAnimSpeed={botAnim.speed}
@@ -382,10 +397,10 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
               <span className="font-display font-black text-slate-600"
                 style={{ fontSize: 'clamp(1rem, 3.5vw, 1.5rem)' }}>VS</span>
               <motion.span className="font-display font-black"
-                style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', color: botDef.accentColor }}
+                style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.8rem)', color: botAccent }}
                 initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.45 }}>
-                Bot {botClass}
+                {botDisplayName}
               </motion.span>
             </div>
             <motion.h2 className="font-display font-black tracking-widest mt-4"
@@ -479,9 +494,9 @@ export default function RealtimeBattleArena({ player, botClass, onFinish }: Prop
 
             {/* Bot HP + Stamina + Special */}
             <FighterHUD
-              name={`Bot ${botClass}`}
+              name={botDisplayName}
               classLabel={botClass}
-              color={botDef.accentColor}
+              color={botAccent}
               hp={s.bot.hp}
               maxHp={s.bot.maxHp}
               stamina={s.bot.stamina}
