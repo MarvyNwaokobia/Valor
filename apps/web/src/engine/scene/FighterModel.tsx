@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import * as THREE from 'three';
-import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { AnimationStateMachine, CLASS_ANIMATIONS } from '../animation';
 import type { CharacterState } from '../character';
 
 interface FighterModelProps {
@@ -28,11 +29,11 @@ function FallbackFighter({ state, accent }: { state: CharacterState; accent: str
 
   useFrame(() => {
     if (!groupRef.current) return;
-    groupRef.current.position.lerp(state.position, 0.15);
+    groupRef.current.position.copy(state.position);
     const targetQuat = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0), state.rotation
     );
-    groupRef.current.quaternion.slerp(targetQuat, 0.12);
+    groupRef.current.quaternion.slerp(targetQuat, 0.15);
   });
 
   return (
@@ -41,8 +42,8 @@ function FallbackFighter({ state, accent }: { state: CharacterState; accent: str
         <capsuleGeometry args={[0.3, 1, 8, 16]} />
         <meshStandardMaterial color={accent} roughness={0.4} metalness={0.3} />
       </mesh>
-      <mesh position={[0, 0.2, 0]} castShadow>
-        <sphereGeometry args={[0.15, 8, 8]} />
+      <mesh position={[0, 1.7, 0]} castShadow>
+        <sphereGeometry args={[0.2, 12, 12]} />
         <meshStandardMaterial color={accent} roughness={0.5} />
       </mesh>
       <pointLight color={accent} intensity={1.5} distance={4} position={[0, 1.5, 0]} />
@@ -60,7 +61,7 @@ function GLTFModel({
   const { scene, animations } = useGLTF(MODEL_PATH);
 
   const clonedScene = useMemo(() => {
-    const clone = scene.clone(true);
+    const clone = SkeletonUtils.clone(scene);
     clone.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
@@ -89,12 +90,12 @@ function GLTFModel({
 
   useFrame((_, dt) => {
     if (!groupRef.current) return;
-    groupRef.current.position.lerp(state.position, 0.15);
+    groupRef.current.position.copy(state.position);
     groupRef.current.scale.setScalar(MODEL_SCALE);
     const targetQuat = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0), state.rotation
     );
-    groupRef.current.quaternion.slerp(targetQuat, 0.12);
+    groupRef.current.quaternion.slerp(targetQuat, 0.15);
     animMachine.update(dt);
   });
 
@@ -128,15 +129,8 @@ class ErrorCatcher extends React.Component<
   { hasError: boolean }
 > {
   state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch() {
-    this.props.onError();
-  }
-
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch() { this.props.onError(); }
   render() {
     if (this.state.hasError) return null;
     return this.props.children;
