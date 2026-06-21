@@ -82,6 +82,7 @@ export function FighterModel({
     }
 
     groupRef.current.position.copy(state.position);
+    groupRef.current.position.y = Math.max(0, groupRef.current.position.y);
 
     const targetQuat = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0),
