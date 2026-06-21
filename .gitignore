@@ -1,8 +1,10 @@
 # Design spec — never commit
 valor-design.html
 
-# Raw Mixamo FBX downloads — large binaries, convert to GLB before committing
-apps/web/public/characters/raw/
+# Raw Mixamo FBX subdirectories (per-character source files)
+apps/web/public/characters/raw/berserker/
+apps/web/public/characters/raw/phantom/
+apps/web/public/characters/raw/sentinel/
 
 # Sketchfab zip archives (keep extracted gltf/glb, not zips)
 apps/web/public/models/**/*.zip
