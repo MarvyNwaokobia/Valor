@@ -77,11 +77,14 @@ export class AnimationStateMachine {
 
   init(mixer: THREE.AnimationMixer, clips: THREE.AnimationClip[]) {
     this.mixer = mixer;
+    mixer.stopAllAction();
+    this.activeAction = null;
+    this.currentState = AnimState.Idle;
     this.clips.clear();
     for (const clip of clips) {
       this.clips.set(clip.name, clip);
     }
-    this.transition(AnimState.Idle);
+    this.transition(AnimState.Idle, true);
   }
 
   get state(): AnimState {
