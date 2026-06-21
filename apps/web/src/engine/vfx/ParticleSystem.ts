@@ -49,11 +49,11 @@ export class ParticleSystem {
     this.geometry.setAttribute('size', new THREE.BufferAttribute(this.sizeArray, 1));
 
     this.material = new THREE.PointsMaterial({
-      size: 0.1,
+      size: 0.15,
       vertexColors: true,
       transparent: true,
-      opacity: 0.9,
-      blending: THREE.AdditiveBlending,
+      opacity: 0.95,
+      blending: THREE.NormalBlending,
       depthWrite: false,
       sizeAttenuation: true,
     });
@@ -103,14 +103,26 @@ export class ParticleSystem {
     this.emit({
       position,
       direction,
-      count: Math.floor(8 + intensity * 12),
-      speed: [2, 6],
-      spread: 0.8,
-      life: [0.3, 0.8],
-      size: [0.03, 0.08],
-      color: '#cc0000',
-      gravity: -12,
-      drag: 0.95,
+      count: Math.floor(12 + intensity * 18),
+      speed: [3, 8],
+      spread: 0.6,
+      life: [0.2, 0.6],
+      size: [0.05, 0.14],
+      color: '#990000',
+      gravity: -18,
+      drag: 0.92,
+    });
+    this.emit({
+      position,
+      direction: new THREE.Vector3(0, -1, 0),
+      count: Math.floor(4 + intensity * 6),
+      speed: [0.5, 2],
+      spread: 1.5,
+      life: [0.4, 1.0],
+      size: [0.08, 0.2],
+      color: '#660000',
+      gravity: -25,
+      drag: 0.88,
     });
   }
 
@@ -118,14 +130,14 @@ export class ParticleSystem {
     this.emit({
       position,
       direction,
-      count: Math.floor(6 + intensity * 10),
-      speed: [4, 10],
-      spread: 1.2,
-      life: [0.1, 0.4],
-      size: [0.02, 0.05],
-      color: '#ffaa22',
-      gravity: -5,
-      drag: 0.9,
+      count: Math.floor(8 + intensity * 14),
+      speed: [5, 12],
+      spread: 0.8,
+      life: [0.05, 0.25],
+      size: [0.03, 0.07],
+      color: '#ffcc44',
+      gravity: -8,
+      drag: 0.88,
     });
   }
 
