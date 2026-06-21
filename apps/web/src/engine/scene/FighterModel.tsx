@@ -1,13 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useEffect, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
-import { loadMixamoAnimations, applyMixamoToMixer } from '../animation/MixamoLoader';
+import { loadMixamoAnimations, getMixamoClips } from '../animation/MixamoLoader';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -35,8 +35,9 @@ export function FighterModel({
   accent,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const initRef = useRef(false);
-  const [mixamoReady, setMixamoReady] = useState(false);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const initDone = useRef(false);
+  const mixamoApplied = useRef(false);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
 
@@ -51,36 +52,40 @@ export function FighterModel({
     return clone;
   }, [scene]);
 
-  useEffect(() => {
-    loadMixamoAnimations().then(() => setMixamoReady(true));
-  }, []);
+  // Start loading Mixamo animations immediately
+  useMemo(() => { loadMixamoAnimations(); }, []);
 
   const accentColor = accent ?? CLASS_ACCENTS[classId] ?? '#ffffff';
 
   useFrame((_, dt) => {
     if (!groupRef.current) return;
 
-    if (!initRef.current && groupRef.current.children.length > 0) {
-      initRef.current = true;
+    // First init: create mixer with GLB clips
+    if (!initDone.current && groupRef.current.children.length > 0) {
+      initDone.current = true;
       const mixer = new THREE.AnimationMixer(groupRef.current);
-      const allClips = applyMixamoToMixer(mixer, animations);
-      animMachine.init(mixer, allClips);
-      console.log(`[Fighter:${classId}] Initialized with ${allClips.length} clips: ${allClips.map(c => c.name).join(', ')}`);
+      mixerRef.current = mixer;
+      animMachine.init(mixer, animations);
+      console.log(`[Fighter:${classId}] Init with ${animations.length} GLB clips`);
     }
 
-    if (mixamoReady && initRef.current) {
-      const mixer = (animMachine as any).mixer as THREE.AnimationMixer | null;
-      if (mixer) {
-        const allClips = applyMixamoToMixer(mixer, animations);
-        const currentClipCount = (animMachine as any).clips?.size ?? 0;
-        if (allClips.length > currentClipCount) {
-          animMachine.init(mixer, allClips);
-          console.log(`[Fighter:${classId}] Reinit with Mixamo: ${allClips.length} clips`);
-          setMixamoReady(false);
+    // Reinit when Mixamo clips are ready (check every frame via ref, not state)
+    if (initDone.current && !mixamoApplied.current && mixerRef.current) {
+      const mixamoClips = getMixamoClips();
+      if (mixamoClips.size > 0) {
+        mixamoApplied.current = true;
+        const allClips = [...animations];
+        for (const [name, clip] of mixamoClips) {
+          if (!allClips.find(c => c.name === name)) {
+            allClips.push(clip);
+          }
         }
+        animMachine.init(mixerRef.current, allClips);
+        console.log(`[Fighter:${classId}] Reinit with ${allClips.length} clips (${mixamoClips.size} from Mixamo)`);
       }
     }
 
+    // Update position
     groupRef.current.position.copy(state.position);
     groupRef.current.position.y = Math.max(0, groupRef.current.position.y);
 
