@@ -6,26 +6,38 @@ import { Action, getInputSystem } from './InputSystem';
 interface TouchButtonProps {
   action: Action;
   label: string;
+  icon?: string;
   className?: string;
 }
 
-function TouchButton({ action, label, className = '' }: TouchButtonProps) {
+function TouchButton({ action, label, icon, className = '' }: TouchButtonProps) {
   const input = getInputSystem();
 
   return (
     <button
-      className={`select-none touch-none rounded-full font-bold text-white active:scale-90 transition-transform ${className}`}
+      className={`select-none touch-none rounded-full font-bold text-white active:scale-90 active:brightness-150 transition-all flex flex-col items-center justify-center ${className}`}
       onTouchStart={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         input.triggerAction(action);
       }}
       onTouchEnd={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        input.releaseAction(action);
+      }}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        input.triggerAction(action);
+      }}
+      onMouseUp={(e) => {
         e.preventDefault();
         input.releaseAction(action);
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {label}
+      {icon && <span className="text-lg leading-none">{icon}</span>}
+      <span className="text-[9px] uppercase tracking-wide leading-none mt-0.5">{label}</span>
     </button>
   );
 }
@@ -53,9 +65,7 @@ export function TouchControls() {
         dx = (dx / dist) * radius;
         dy = (dy / dist) * radius;
       }
-      const nx = dx / radius;
-      const ny = dy / radius;
-      input.setStick(nx, ny);
+      input.setStick(dx / radius, dy / radius);
       if (knobRef.current) {
         knobRef.current.style.transform = `translate(${dx}px, ${-dy}px)`;
       }
@@ -64,9 +74,7 @@ export function TouchControls() {
     const reset = () => {
       input.setStick(0, 0);
       touchIdRef.current = null;
-      if (knobRef.current) {
-        knobRef.current.style.transform = 'translate(0,0)';
-      }
+      if (knobRef.current) knobRef.current.style.transform = 'translate(0,0)';
     };
 
     const onTouchStart = (e: TouchEvent) => {
@@ -112,51 +120,52 @@ export function TouchControls() {
       {/* Virtual Joystick — bottom left */}
       <div
         ref={stickRef}
-        className="pointer-events-auto absolute bottom-20 left-8 w-32 h-32 rounded-full bg-white/10 border border-white/20 flex items-center justify-center"
+        className="pointer-events-auto absolute bottom-20 left-6 w-28 h-28 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center"
       >
         <div
           ref={knobRef}
-          className="w-14 h-14 rounded-full bg-white/30 border border-white/40 transition-none"
+          className="w-12 h-12 rounded-full bg-white/30 border-2 border-white/50 transition-none"
         />
+      </div>
+      <div className="absolute bottom-8 left-10 text-[10px] text-white/30 uppercase tracking-wider">
+        Move
       </div>
 
       {/* Action Buttons — bottom right */}
-      <div className="pointer-events-auto absolute bottom-16 right-6 flex flex-col items-center gap-2">
+      <div className="pointer-events-auto absolute bottom-14 right-4 flex flex-col items-center gap-2">
         <TouchButton
           action={Action.HeavyAttack}
-          label="H"
-          className="w-14 h-14 bg-orange-600/70 text-lg"
+          icon="💥"
+          label="Heavy"
+          className="w-14 h-14 bg-orange-600/80 border border-orange-400/40"
         />
         <div className="flex gap-2">
           <TouchButton
             action={Action.Block}
-            label="B"
-            className="w-12 h-12 bg-blue-600/70 text-sm"
+            icon="🛡️"
+            label="Block"
+            className="w-13 h-13 bg-blue-600/80 border border-blue-400/40"
           />
           <TouchButton
             action={Action.LightAttack}
-            label="A"
-            className="w-16 h-16 bg-red-600/70 text-xl"
+            icon="⚔️"
+            label="Attack"
+            className="w-16 h-16 bg-red-600/80 border-2 border-red-400/50"
           />
           <TouchButton
             action={Action.Dodge}
-            label="D"
-            className="w-12 h-12 bg-green-600/70 text-sm"
+            icon="💨"
+            label="Dodge"
+            className="w-13 h-13 bg-green-600/80 border border-green-400/40"
           />
         </div>
         <TouchButton
           action={Action.Special}
-          label="S"
-          className="w-14 h-14 bg-purple-600/70 text-lg"
+          icon="⚡"
+          label="Special"
+          className="w-14 h-14 bg-purple-600/80 border border-purple-400/40"
         />
       </div>
-
-      {/* Lock-on — top right */}
-      <TouchButton
-        action={Action.LockOn}
-        label="🎯"
-        className="pointer-events-auto absolute top-20 right-6 w-10 h-10 bg-white/10 text-sm"
-      />
     </div>
   );
 }
