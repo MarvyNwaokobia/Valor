@@ -269,9 +269,19 @@ function BattleWorld({
     });
   }, [enemyController, hitboxSystem, enemyAnimMachine, combatAudio, enemyClass]);
 
+  const frameCountRef = useRef(0);
+
   useFrame((_, dt) => {
     const clampedDt = Math.min(dt, 0.05);
+    frameCountRef.current++;
     if (battleEndedRef.current && playerController.state.isDead && enemyController.state.isDead) return;
+
+    if (frameCountRef.current % 120 === 1) {
+      const ps = playerController.state;
+      const es = enemyController.state;
+      const dist = ps.position.distanceTo(es.position);
+      console.log(`[F${frameCountRef.current}] P:${ps.health}hp pos(${ps.position.x.toFixed(1)},${ps.position.z.toFixed(1)}) atk=${ps.isAttacking} | E:${es.health}hp pos(${es.position.x.toFixed(1)},${es.position.z.toFixed(1)}) atk=${es.isAttacking} | dist=${dist.toFixed(1)} | AI=${enemyAI.currentState}`);
+    }
 
     // --- Input ---
     const lockOn = input.getAction(Action.LockOn);
