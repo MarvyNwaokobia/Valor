@@ -62,10 +62,26 @@ export function FighterModel({
 
     if (!initRef.current && groupRef.current.children.length > 0) {
       initRef.current = true;
+      const clipNames = animations.map((a) => a.name);
+      console.log(`[Fighter:${classId}] Clip names:`, clipNames.slice(0, 10).join(', '), clipNames.length > 10 ? `... (${clipNames.length} total)` : '');
+
       const mixer = new THREE.AnimationMixer(groupRef.current);
       mixerRef.current = mixer;
       animMachine.init(mixer, animations);
-      console.log(`[Fighter:${classId}] Mixer initialized, ${animations.length} clips loaded`);
+
+      const idleClip = animations.find((a) => a.name === '0Idle');
+      if (idleClip) {
+        const action = mixer.clipAction(idleClip);
+        action.reset().play();
+        console.log(`[Fighter:${classId}] Force-playing idle animation`);
+      } else {
+        console.warn(`[Fighter:${classId}] No '0Idle' clip found! Available:`, clipNames);
+        if (animations.length > 0) {
+          const fallback = mixer.clipAction(animations[0]);
+          fallback.reset().play();
+          console.log(`[Fighter:${classId}] Playing fallback: ${animations[0].name}`);
+        }
+      }
     }
 
     groupRef.current.position.copy(state.position);
