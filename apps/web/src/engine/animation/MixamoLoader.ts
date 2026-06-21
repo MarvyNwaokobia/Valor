@@ -21,6 +21,19 @@ const MIXAMO_ANIMS: Record<string, { path: string; state: AnimState }> = {
 const loadedClips: Map<string, THREE.AnimationClip> = new Map();
 let loadingPromise: Promise<void> | null = null;
 
+function retargetClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  for (const track of clip.tracks) {
+    // FBX exports: "mixamorigHips.position"
+    // GLB expects: "mixamorig:Hips.position"
+    track.name = track.name.replace(/^mixamorig(\w)/, (_, first) => {
+      return 'mixamorig:' + first.toUpperCase();
+    });
+    // Handle nested bones: "mixamorigLeftForeArm" → "mixamorig:LeftForeArm"
+    // The regex above handles this since it captures the first char after "mixamorig"
+  }
+  return clip;
+}
+
 export async function loadMixamoAnimations(): Promise<Map<string, THREE.AnimationClip>> {
   if (loadedClips.size > 0) return loadedClips;
   if (loadingPromise) {
@@ -34,12 +47,12 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
 
     console.log(`[MixamoLoader] Loading ${entries.length} animations...`);
 
-    const results = await Promise.allSettled(
+    await Promise.allSettled(
       entries.map(async ([key, { path, state }]) => {
         try {
           const group = await loader.loadAsync(path);
           if (group.animations.length > 0) {
-            const clip = group.animations[0];
+            const clip = retargetClip(group.animations[0]);
             clip.name = state;
             loadedClips.set(state, clip);
           }
@@ -50,6 +63,10 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
     );
 
     console.log(`[MixamoLoader] Loaded ${loadedClips.size}/${entries.length} animations`);
+    const sampleClip = loadedClips.values().next().value;
+    if (sampleClip) {
+      console.log(`[MixamoLoader] Sample track names: ${sampleClip.tracks.slice(0, 3).map((t: any) => t.name).join(', ')}`);
+    }
   })();
 
   await loadingPromise;
