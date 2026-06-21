@@ -21,7 +21,7 @@ const MODEL_PATHS: Record<string, string> = {
   phantom: '/characters/glb/phantom.glb',
 };
 
-const MODEL_SCALE = 0.01;
+const MODEL_SCALE = 1;
 
 const CLASS_ACCENTS: Record<string, string> = {
   berserker: '#ef4444',
