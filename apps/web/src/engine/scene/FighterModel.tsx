@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
+import { loadMixamoAnimations, applyMixamoToMixer } from '../animation/MixamoLoader';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -21,8 +22,6 @@ const MODEL_PATHS: Record<string, string> = {
   phantom: '/characters/glb/phantom.glb',
 };
 
-const MODEL_SCALE = 1;
-
 const CLASS_ACCENTS: Record<string, string> = {
   berserker: '#ef4444',
   sentinel: '#3b82f6',
@@ -36,8 +35,8 @@ export function FighterModel({
   accent,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const initRef = useRef(false);
+  const [mixamoReady, setMixamoReady] = useState(false);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
 
@@ -52,6 +51,10 @@ export function FighterModel({
     return clone;
   }, [scene]);
 
+  useEffect(() => {
+    loadMixamoAnimations().then(() => setMixamoReady(true));
+  }, []);
+
   const accentColor = accent ?? CLASS_ACCENTS[classId] ?? '#ffffff';
 
   useFrame((_, dt) => {
@@ -60,13 +63,25 @@ export function FighterModel({
     if (!initRef.current && groupRef.current.children.length > 0) {
       initRef.current = true;
       const mixer = new THREE.AnimationMixer(groupRef.current);
-      mixerRef.current = mixer;
-      animMachine.init(mixer, animations);
-      console.log(`[Fighter:${classId}] Loaded ${animations.length} anims: ${animations.map(a => a.name).join(', ')}`);
+      const allClips = applyMixamoToMixer(mixer, animations);
+      animMachine.init(mixer, allClips);
+      console.log(`[Fighter:${classId}] Initialized with ${allClips.length} clips: ${allClips.map(c => c.name).join(', ')}`);
+    }
+
+    if (mixamoReady && initRef.current) {
+      const mixer = (animMachine as any).mixer as THREE.AnimationMixer | null;
+      if (mixer) {
+        const allClips = applyMixamoToMixer(mixer, animations);
+        const currentClipCount = (animMachine as any).clips?.size ?? 0;
+        if (allClips.length > currentClipCount) {
+          animMachine.init(mixer, allClips);
+          console.log(`[Fighter:${classId}] Reinit with Mixamo: ${allClips.length} clips`);
+          setMixamoReady(false);
+        }
+      }
     }
 
     groupRef.current.position.copy(state.position);
-    groupRef.current.scale.setScalar(MODEL_SCALE);
 
     const targetQuat = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0),
