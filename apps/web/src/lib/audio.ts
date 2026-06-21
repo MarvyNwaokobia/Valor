@@ -88,78 +88,6 @@ function synthWhoosh(freq: number) {
   ns.start(now)
 }
 
-function synthBladeSwing(weight: 'heavy' | 'medium' | 'light') {
-  const ctx = getCtx(); if (!ctx) return
-  const now = ctx.currentTime
-  const dur = weight === 'heavy' ? 0.16 : weight === 'medium' ? 0.11 : 0.08
-  const bufLen = Math.floor(ctx.sampleRate * dur)
-  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
-  const data = buf.getChannelData(0)
-  for (let i = 0; i < bufLen; i++) {
-    const fade = 1 - i / bufLen
-    data[i] = (Math.random() * 2 - 1) * fade
-  }
-  const ns = ctx.createBufferSource()
-  const nf = ctx.createBiquadFilter()
-  const ng = ctx.createGain()
-  nf.type = 'bandpass'
-  nf.frequency.setValueAtTime(weight === 'heavy' ? 480 : 900, now)
-  nf.frequency.exponentialRampToValueAtTime(weight === 'heavy' ? 1800 : 3200, now + dur)
-  nf.Q.value = weight === 'heavy' ? 0.8 : 1.4
-  ns.buffer = buf
-  ng.gain.setValueAtTime(0, now)
-  ng.gain.linearRampToValueAtTime(weight === 'heavy' ? 0.34 : 0.22, now + 0.012)
-  ng.gain.exponentialRampToValueAtTime(0.001, now + dur)
-  ns.connect(nf); nf.connect(ng); ng.connect(ctx.destination)
-  ns.start(now)
-}
-
-function synthBlock() {
-  const ctx = getCtx(); if (!ctx) return
-  const now = ctx.currentTime
-  ;[420, 880, 1440].forEach((freq, i) => {
-    const osc = ctx.createOscillator()
-    const g = ctx.createGain()
-    osc.type = i === 0 ? 'square' : 'triangle'
-    osc.frequency.value = freq
-    g.gain.setValueAtTime(0, now)
-    g.gain.linearRampToValueAtTime(i === 0 ? 0.18 : 0.1, now + 0.004)
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.14 + i * 0.025)
-    osc.connect(g); g.connect(ctx.destination)
-    osc.start(now); osc.stop(now + 0.22)
-  })
-}
-
-let ambientNodes: { osc: OscillatorNode; gain: GainNode }[] = []
-
-function startSynthAmbient() {
-  const ctx = getCtx(); if (!ctx || ambientNodes.length > 0) return
-  const now = ctx.currentTime
-  ambientNodes = [55, 82].map((freq, i) => {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = i === 0 ? 'sawtooth' : 'triangle'
-    osc.frequency.value = freq
-    gain.gain.setValueAtTime(0, now)
-    gain.gain.linearRampToValueAtTime(i === 0 ? 0.018 : 0.012, now + 0.6)
-    osc.connect(gain); gain.connect(ctx.destination)
-    osc.start(now)
-    return { osc, gain }
-  })
-}
-
-function stopSynthAmbient() {
-  const ctx = getCtx(); if (!ctx) return
-  const now = ctx.currentTime
-  ambientNodes.forEach(({ osc, gain }) => {
-    gain.gain.cancelScheduledValues(now)
-    gain.gain.setValueAtTime(gain.gain.value, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
-    osc.stop(now + 0.3)
-  })
-  ambientNodes = []
-}
-
 function synthButtonTap() {
   const ctx = getCtx(); if (!ctx) return
   const now    = ctx.currentTime
@@ -242,9 +170,6 @@ const SOUND_PATHS = {
   arena:            '/sounds/arena-ambient.ogg',
   buttonTap:        '/sounds/button-tap.ogg',
   buttonConfirm:    '/sounds/button-confirm.ogg',
-  swingLight:        '/sounds/swing-light.ogg',
-  swingHeavy:        '/sounds/swing-heavy.ogg',
-  block:             '/sounds/block.ogg',
 } as const
 
 type SoundKey = keyof typeof SOUND_PATHS
@@ -310,19 +235,6 @@ class AudioManager {
     else { synthHit('heavy'); setTimeout(() => synthHit('heavy'), 60) }
   }
 
-  playSwing(isSpecial = false) {
-    if (this.muted) return
-    const key: SoundKey = isSpecial ? 'swingHeavy' : 'swingLight'
-    if (this.loaded.has(key)) { this.play(key); return }
-    synthBladeSwing(isSpecial ? 'heavy' : 'medium')
-  }
-
-  playBlock() {
-    if (this.muted) return
-    if (this.loaded.has('block')) { this.play('block'); return }
-    synthBlock()
-  }
-
   playVictory() {
     if (this.muted) return
     if (this.loaded.has('victory')) { this.play('victory'); return }
@@ -348,14 +260,12 @@ class AudioManager {
   }
 
   startAmbient() {
-    if (this.muted) return
-    if (this.loaded.has('arena')) this.sounds.get('arena')?.play()
-    else startSynthAmbient()
+    if (!this.loaded.has('arena') || this.muted) return
+    this.sounds.get('arena')?.play()
   }
 
   stopAmbient() {
     this.sounds.get('arena')?.pause()
-    stopSynthAmbient()
   }
 }
 

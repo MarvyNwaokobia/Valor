@@ -23,8 +23,8 @@ export interface ClassDefinition {
 /** GLB paths for 3D character models (output of scripts/fbx_to_glb.py) */
 export const CHARACTER_GLB: Record<CharacterClass, string> = {
   Berserker: '/characters/glb/berserker.glb',
-  Sentinel:  '/characters/glb/sentinel.glb',
-  Phantom:   '/characters/glb/phantom.glb',
+  Sentinel:  '/characters/glb/phantom.glb',
+  Phantom:   '/characters/glb/sentinel.glb',
 }
 
 /** Fallback portrait images (used until GLBs are ready) */
@@ -41,12 +41,6 @@ export const CHARACTER_IMAGES: Record<CharacterClass, { male: string; female: st
     male:   '/characters/classes/phantom-male.jpg',
     female: '/characters/classes/phantom-female.jpg',
   },
-}
-
-export const ILLUSTRATED_CLASS_ART: Record<CharacterClass, string> = {
-  Berserker: '/characters/Valor Characters/Characters/berserkers male-nobackground.png',
-  Sentinel:  '/characters/Valor Characters/Characters/Sentinel female-no background.png',
-  Phantom:   '/characters/Valor Characters/Characters/Phanthom male-no background.png',
 }
 
 export const CLASS_DEFINITIONS: Record<CharacterClass, ClassDefinition> = {

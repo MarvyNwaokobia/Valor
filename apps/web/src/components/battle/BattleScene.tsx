@@ -145,19 +145,10 @@ function FightCharacter({
   // Smooth lunge — character moves toward opponent while attacking
   useFrame((_, delta) => {
     if (!group.current) return
-    const targetX = animationName === 'attack'
-      ? positionX + lungeDir * 0.24
-      : animationName === 'hit'
-        ? positionX - lungeDir * 0.16
-        : positionX
+    const targetX = animationName === 'attack' ? positionX + lungeDir * 0.2 : positionX
     const factor  = Math.min(1, delta * 11)
     xRef.current += (targetX - xRef.current) * factor
     group.current.position.x = xRef.current
-    group.current.rotation.z = THREE.MathUtils.lerp(
-      group.current.rotation.z,
-      animationName === 'hit' ? -lungeDir * 0.08 : 0,
-      factor,
-    )
   })
 
   return (

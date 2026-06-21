@@ -3,7 +3,6 @@ use actix_web::{middleware::Logger, web, App, HttpServer};
 use dashmap::DashMap;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
@@ -16,8 +15,8 @@ pub struct AppState {
     pub db:                sqlx::PgPool,
     pub rewards:           Option<services::rewards::RewardService>,
     pub chain:             Option<services::chain::ChainWriter>,
-    pub battle_limiter:    Arc<services::rate_limiter::RateLimiter>,
-    pub rank_limiter:      Arc<services::rate_limiter::RateLimiter>,
+    pub battle_limiter:    services::rate_limiter::RateLimiter,
+    pub rank_limiter:      services::rate_limiter::RateLimiter,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
 }
@@ -61,8 +60,8 @@ async fn main() -> anyhow::Result<()> {
     // Rate limiters — shared across all workers via AppState (DashMap is Send + Sync)
     // battle_limiter: 10 requests / 60s per IP
     // rank_limiter:   2 requests / 60s per IP
-    let battle_limiter = Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
-    let rank_limiter   = Arc::new(services::rate_limiter::RateLimiter::new(2, 60));
+    let battle_limiter = services::rate_limiter::RateLimiter::new(10, 60);
+    let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
     // In-progress bot fights — keyed by session id, shared across all workers
@@ -104,8 +103,8 @@ async fn main() -> anyhow::Result<()> {
                 db:             db.clone(),
                 rewards:        rewards.clone(),
                 chain:          chain.clone(),
-                battle_limiter: battle_limiter.clone(),
-                rank_limiter:   rank_limiter.clone(),
+                battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
+                rank_limiter:   services::rate_limiter::RateLimiter::new(2, 60),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
             }))

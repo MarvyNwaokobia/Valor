@@ -1,12 +1,9 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_ws::Message;
 use futures_util::StreamExt as _;
-use serde_json::json;
 use serde::Deserialize;
 use crate::AppState;
-use crate::models::player::Player;
 use crate::services::game_server::{ClientEntry, ServerMsg};
-use crate::utils::{is_valid_wallet, normalize_wallet};
 
 #[derive(Deserialize)]
 struct QueueMsg {
@@ -73,40 +70,14 @@ pub async fn battle_ws(
                     };
                     match parsed {
                         ClientMsg::Queue(q) => {
-                            if !is_valid_wallet(&q.wallet) {
-                                let _ = client_tx.send(json!({
-                                    "type": "error",
-                                    "message": "Invalid wallet address"
-                                }).to_string());
-                                continue;
-                            }
-
-                            let normalized_wallet = normalize_wallet(&q.wallet);
-                            let player = sqlx::query_as::<_, Player>(
-                                "SELECT * FROM players WHERE wallet_address = $1",
-                            )
-                            .bind(&normalized_wallet)
-                            .fetch_optional(&state.db)
-                            .await
-                            .ok()
-                            .flatten();
-
-                            let Some(player) = player else {
-                                let _ = client_tx.send(json!({
-                                    "type": "error",
-                                    "message": "Player not found"
-                                }).to_string());
-                                continue;
-                            };
-
-                            wallet = Some(normalized_wallet.clone());
+                            wallet = Some(q.wallet.clone());
                             let entry = ClientEntry {
-                                wallet:       normalized_wallet,
-                                name:         player.character_name,
-                                player_class: player.character_class.unwrap_or_else(|| "Berserker".into()),
-                                attack:       player.attack_stat,
-                                defense:      player.defense_stat,
-                                speed:        player.speed_stat,
+                                wallet:       q.wallet,
+                                name:         q.name,
+                                player_class: q.player_class,
+                                attack:       q.attack,
+                                defense:      q.defense,
+                                speed:        q.speed,
                                 tx:           client_tx.clone(),
                             };
                             let _ = server_tx.send(ServerMsg::Join(entry));
@@ -149,3 +120,4 @@ pub async fn battle_ws(
 
     Ok(response)
 }
+
