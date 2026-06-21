@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
 import { usePrivy } from '@privy-io/react-auth'
-import { Swords, ShoppingBag, Trophy, ChevronRight, Zap } from 'lucide-react'
+import { Swords, ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LandingPage from '@/components/landing/LandingPage'
@@ -22,7 +22,8 @@ const CLASS_SOLO: Record<string, string> = {
 }
 
 const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [
-  { to: '/battle',      Icon: Swords,      label: 'Battle',      desc: 'Fight bots · Earn XP · Claim G$',          color: '#ef4444' },
+  { to: '/fight',       Icon: Flame,       label: 'Fight',       desc: 'Real-time 3D combat · Full VFX',           color: '#ff4422' },
+  { to: '/battle',      Icon: Swords,      label: 'Classic',     desc: 'Turn-based battles · Earn XP · Claim G$',  color: '#ef4444' },
   { to: '/marketplace', Icon: ShoppingBag, label: 'Armoury',     desc: 'Weapons · Shields · Boosters',             color: '#eab308' },
   { to: '/leaderboard', Icon: Trophy,      label: 'War Board',   desc: 'Top 50 warriors ranked by tier',           color: '#3b82f6' },
 ]
@@ -198,7 +199,7 @@ export default function HomePage() {
         </motion.div>
 
         {/* Action cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">
           {ACTIONS.map(({ to, Icon, label, desc, color }, i) => (
             <motion.div
               key={to}
