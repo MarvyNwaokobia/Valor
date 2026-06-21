@@ -1,0 +1,8 @@
+Model Information:
+* title:	Lowpoly Angel Knight
+* source:	https://sketchfab.com/3d-models/lowpoly-angel-knight-73e79f69098a47aa80d261f1202a8476
+* author:	Leonardo Carvalho (https://sketchfab.com/livrosparacriancas)
+
+Model License:
+* license type:	SKETCHFAB Standard (https://sketchfab.com/licenses)
+* requirements:	Under basic restrictions, use worldwide, on all types of media, commercially or not, and in all types of derivative works
