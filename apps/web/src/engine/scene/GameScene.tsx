@@ -59,6 +59,12 @@ function BattleWorld({
 
   const input = useMemo(() => getInputSystem(), []);
 
+  useEffect(() => {
+    const cleanup = input.attach(window);
+    console.log('[GameScene] Keyboard input attached');
+    return cleanup;
+  }, [input]);
+
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
   const playerController = useMemo(
@@ -70,14 +76,13 @@ function BattleWorld({
     []
   );
 
-  // All classes use the berserker GLTF model, so force berserker animation map
   const playerAnimMachine = useMemo(
-    () => new AnimationStateMachine(CLASS_ANIMATIONS['berserker']),
-    []
+    () => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]),
+    [playerClass]
   );
   const enemyAnimMachine = useMemo(
-    () => new AnimationStateMachine(CLASS_ANIMATIONS['berserker']),
-    []
+    () => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]),
+    [enemyClass]
   );
 
   const hitboxSystem = useMemo(() => new HitboxSystem(), []);

@@ -35,67 +35,30 @@ export interface AnimationMap {
   [state: string]: AnimStateConfig;
 }
 
-const BERSERKER_ANIMS: AnimationMap = {
-  [AnimState.Idle]: { clip: '0Idle', loop: true, speed: 1, fadeIn: 0.2, fadeOut: 0.2, canInterrupt: true },
-  [AnimState.Walk]: { clip: 'walk', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.Run]: { clip: 'running', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: 'punch', loop: false, speed: 1.3, fadeIn: 0.08, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: 'hardhitpunch', loop: false, speed: 1, fadeIn: 0.08, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]: { clip: 'fireslam', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Block]: { clip: 'fight.idle', loop: true, speed: 1, fadeIn: 0.1, fadeOut: 0.1, canInterrupt: true },
-  [AnimState.BlockHit]: { clip: 'bump', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Block },
-  [AnimState.Dodge]: { clip: 'running', loop: false, speed: 2, fadeIn: 0.05, fadeOut: 0.15, duration: 0.3, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]: { clip: 'hitcenter', loop: false, speed: 1.4, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]: { clip: 'bump', loop: false, speed: 1, fadeIn: 0.05, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Knockdown]: { clip: 'onground', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.GetUp },
-  [AnimState.GetUp]: { clip: 'groundtostand', loop: false, speed: 1, fadeIn: 0.15, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+// All three Valor GLBs share the same clip names: idle, attack, hit, death
+const VALOR_ANIMS: AnimationMap = {
+  [AnimState.Idle]: { clip: 'idle', loop: true, speed: 1, fadeIn: 0.2, fadeOut: 0.2, canInterrupt: true },
+  [AnimState.Walk]: { clip: 'idle', loop: true, speed: 1.3, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
+  [AnimState.Run]: { clip: 'idle', loop: true, speed: 1.5, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
+  [AnimState.LightAttack]: { clip: 'attack', loop: false, speed: 1.4, fadeIn: 0.08, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HeavyAttack]: { clip: 'attack', loop: false, speed: 0.8, fadeIn: 0.08, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Special]: { clip: 'attack', loop: false, speed: 0.6, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Block]: { clip: 'idle', loop: true, speed: 0.5, fadeIn: 0.1, fadeOut: 0.1, canInterrupt: true },
+  [AnimState.BlockHit]: { clip: 'hit', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Dodge]: { clip: 'idle', loop: false, speed: 2, fadeIn: 0.05, fadeOut: 0.15, duration: 0.3, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]: { clip: 'hit', loop: false, speed: 1.4, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]: { clip: 'hit', loop: false, speed: 1, fadeIn: 0.05, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Knockdown]: { clip: 'hit', loop: false, speed: 0.8, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.GetUp]: { clip: 'idle', loop: false, speed: 1, fadeIn: 0.15, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]: { clip: 'death', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0, canInterrupt: false },
-  [AnimState.Victory]: { clip: 'willbow', loop: false, speed: 1, fadeIn: 0.2, fadeOut: 0, canInterrupt: false },
-  [AnimState.Intro]: { clip: 'willfight', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-};
-
-const SENTINEL_ANIMS: AnimationMap = {
-  [AnimState.Idle]: { clip: 'root|Stand_Idle', loop: true, speed: 1, fadeIn: 0.2, fadeOut: 0.2, canInterrupt: true },
-  [AnimState.Walk]: { clip: 'root|Stand_Walk', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.Run]: { clip: 'root|Stand_Run', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: 'root|Float_Attack_1.1', loop: false, speed: 1.2, fadeIn: 0.08, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: 'root|Float_Attack_2.1', loop: false, speed: 1, fadeIn: 0.08, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]: { clip: 'root|Float_Spell', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Block]: { clip: 'root|Float_Blocking_Idle', loop: true, speed: 1, fadeIn: 0.1, fadeOut: 0.1, canInterrupt: true },
-  [AnimState.BlockHit]: { clip: 'root|Float_Block_1', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Block },
-  [AnimState.Dodge]: { clip: 'root|Stand_Dash_Back', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]: { clip: 'root|Float_Damage_1', loop: false, speed: 1.4, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]: { clip: 'root|Float_Damage_2', loop: false, speed: 1, fadeIn: 0.05, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Knockdown]: { clip: 'root|Float_Death_1', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.GetUp },
-  [AnimState.GetUp]: { clip: 'root|Float_Death_1.2', loop: false, speed: 1, fadeIn: 0.15, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Death]: { clip: 'root|Stand_Death', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0, canInterrupt: false },
-  [AnimState.Victory]: { clip: 'root|Stand_Power_Up', loop: false, speed: 1, fadeIn: 0.2, fadeOut: 0, canInterrupt: false },
-  [AnimState.Intro]: { clip: 'root|Stand_Run_Starting', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-};
-
-const PHANTOM_ANIMS: AnimationMap = {
-  [AnimState.Idle]: { clip: 'Battle_Idle', loop: true, speed: 1, fadeIn: 0.2, fadeOut: 0.2, canInterrupt: true },
-  [AnimState.Walk]: { clip: 'Walk', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.Run]: { clip: 'Run', loop: true, speed: 1, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: 'Combo_01', loop: false, speed: 1.3, fadeIn: 0.08, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: 'Combo_03', loop: false, speed: 1, fadeIn: 0.08, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]: { clip: 'Skill_01', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Block]: { clip: 'Guard', loop: true, speed: 1, fadeIn: 0.1, fadeOut: 0.1, canInterrupt: true },
-  [AnimState.BlockHit]: { clip: 'Guard_Damage', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Block },
-  [AnimState.Dodge]: { clip: 'Roll', loop: false, speed: 1.5, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]: { clip: 'Damage_A', loop: false, speed: 1.4, fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]: { clip: 'Damage_C', loop: false, speed: 1, fadeIn: 0.05, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Knockdown]: { clip: 'Knockdown', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.GetUp },
-  [AnimState.GetUp]: { clip: 'KD_Recovery', loop: false, speed: 1, fadeIn: 0.15, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Death]: { clip: 'Dead_A', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0, canInterrupt: false },
-  [AnimState.Victory]: { clip: 'Stage_Win', loop: false, speed: 1, fadeIn: 0.2, fadeOut: 0, canInterrupt: false },
-  [AnimState.Intro]: { clip: 'Tag_In', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Victory]: { clip: 'idle', loop: true, speed: 0.5, fadeIn: 0.2, fadeOut: 0, canInterrupt: false },
+  [AnimState.Intro]: { clip: 'idle', loop: false, speed: 1, fadeIn: 0.1, fadeOut: 0.2, canInterrupt: false, nextState: AnimState.Idle },
 };
 
 export const CLASS_ANIMATIONS: Record<string, AnimationMap> = {
-  berserker: BERSERKER_ANIMS,
-  sentinel: SENTINEL_ANIMS,
-  phantom: PHANTOM_ANIMS,
+  berserker: VALOR_ANIMS,
+  sentinel: VALOR_ANIMS,
+  phantom: VALOR_ANIMS,
 };
 
 export class AnimationStateMachine {
