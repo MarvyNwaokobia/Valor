@@ -5,6 +5,7 @@ use uuid::Uuid;
 use serde_json::json;
 use rand::Rng;
 use sqlx::PgPool;
+use crate::models::player::Player;
 
 // ── Public handle — cheaply cloneable, passed into AppState ──────────────────
 
@@ -377,64 +378,82 @@ impl GameServer {
             .execute(&db)
             .await;
 
-            // Update XP + wins/losses for both players
-            let _ = sqlx::query(
-                "UPDATE players
-                 SET xp      = xp + $1,
-                     wins    = wins + $2,
-                     losses  = losses + $3,
-                     last_active  = $4,
-                     decay_status = 'none'
-                 WHERE wallet_address = $5",
-            )
-            .bind(xp_p1)
-            .bind(if p1_won { 1_i32 } else { 0_i32 })
-            .bind(if p1_won { 0_i32 } else { 1_i32 })
-            .bind(now)
-            .bind(&p1_wallet)
-            .execute(&db)
-            .await;
-
-            let _ = sqlx::query(
-                "UPDATE players
-                 SET xp      = xp + $1,
-                     wins    = wins + $2,
-                     losses  = losses + $3,
-                     last_active  = $4,
-                     decay_status = 'none'
-                 WHERE wallet_address = $5",
-            )
-            .bind(xp_p2)
-            .bind(if p1_won { 0_i32 } else { 1_i32 })
-            .bind(if p1_won { 1_i32 } else { 0_i32 })
-            .bind(now)
-            .bind(&p2_wallet)
-            .execute(&db)
-            .await;
-
-            // Rank up if XP threshold crossed (1000 XP per rank)
-            for wallet in [&p1_wallet, &p2_wallet] {
-                let _ = sqlx::query(
-                    "UPDATE players
-                     SET rank = CASE
-                       WHEN xp >= 4000 AND rank != 'Diamond'  THEN 'Diamond'
-                       WHEN xp >= 3000 AND rank = 'Platinum'  THEN 'Diamond'
-                       WHEN xp >= 2000 AND rank = 'Gold'      THEN 'Platinum'
-                       WHEN xp >= 1000 AND rank = 'Silver'    THEN 'Gold'
-                       WHEN xp >= 500  AND rank = 'Bronze'    THEN 'Silver'
-                       ELSE rank
-                     END
-                     WHERE wallet_address = $1",
-                )
-                .bind(wallet)
-                .execute(&db)
-                .await;
-            }
+            award_live_player(&db, &p1_wallet, xp_p1, p1_won, now).await;
+            award_live_player(&db, &p2_wallet, xp_p2, !p1_won, now).await;
         });
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const XP_PER_RANK: i32 = 1000;
+
+fn next_rank(rank: &str) -> Option<&'static str> {
+    match rank {
+        "Bronze"   => Some("Silver"),
+        "Silver"   => Some("Gold"),
+        "Gold"     => Some("Platinum"),
+        "Platinum" => Some("Diamond"),
+        _          => None,
+    }
+}
+
+async fn award_live_player(
+    db: &PgPool,
+    wallet: &str,
+    xp_earned: i32,
+    won: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let player = sqlx::query_as::<_, Player>(
+        "SELECT * FROM players WHERE wallet_address = $1",
+    )
+    .bind(wallet)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(player) = player else { return };
+
+    let raw_new_xp = player.xp + xp_earned;
+    let ranked_up = raw_new_xp >= XP_PER_RANK;
+    let new_xp = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
+    let new_rank = if ranked_up { next_rank(&player.rank) } else { None };
+    let wins = if won { player.wins + 1 } else { player.wins };
+    let losses = if won { player.losses } else { player.losses + 1 };
+
+    if let Some(rank) = new_rank {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3, rank = $4,
+                 last_active = $5, decay_status = 'none'
+             WHERE wallet_address = $6",
+        )
+        .bind(new_xp)
+        .bind(wins)
+        .bind(losses)
+        .bind(rank)
+        .bind(now)
+        .bind(wallet)
+        .execute(db)
+        .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3,
+                 last_active = $4, decay_status = 'none'
+             WHERE wallet_address = $5",
+        )
+        .bind(new_xp)
+        .bind(wins)
+        .bind(losses)
+        .bind(now)
+        .bind(wallet)
+        .execute(db)
+        .await;
+    }
+}
 
 fn send(tx: &UnboundedSender<String>, val: serde_json::Value) {
     let _ = tx.send(val.to_string());
