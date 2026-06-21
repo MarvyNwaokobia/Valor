@@ -489,16 +489,16 @@ export function GameScene(props: GameSceneProps) {
     <div className="w-full h-full relative">
       <Canvas
         shadows
-        camera={{ fov: 55, near: 0.1, far: 200, position: [0, 3.5, 6] }}
+        camera={{ fov: 50, near: 0.1, far: 200, position: [0, 3, 8] }}
         gl={{
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.1,
+          toneMappingExposure: 1.6,
         }}
         className="w-full h-full"
       >
-        <color attach="background" args={['#0a0a0f']} />
-        <fog attach="fog" args={['#0a0a0f', 20, 50]} />
+        <color attach="background" args={['#12111a']} />
+        <fog attach="fog" args={['#12111a', 25, 60]} />
         <Suspense fallback={<LoadingScreen />}>
           <BattleWorld
             {...props}
