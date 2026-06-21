@@ -59,10 +59,30 @@ function BattleWorld({
   onPlayerStateUpdate,
   onEnemyStateUpdate,
   onBattleEnd,
-}: GameSceneProps & { difficulty: AIDifficulty }) {
+  onReady,
+  combatActive = false,
+}: GameSceneProps & { difficulty: AIDifficulty; onReady?: () => void; combatActive?: boolean }) {
   const { camera } = useThree();
   const perspCamera = camera as THREE.PerspectiveCamera;
   const battleEndedRef = useRef(false);
+  const combatActiveRef = useRef(false);
+  combatActiveRef.current = combatActive;
+  const readyFired = useRef(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!readyFired.current) {
+        readyFired.current = true;
+        onReady?.();
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [onReady]);
+
+  const activateCombat = useCallback(() => {
+    combatActiveRef.current = true;
+    console.log('[BattleWorld] Combat activated!');
+  }, []);
 
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
@@ -212,10 +232,17 @@ function BattleWorld({
       console.log(`[F${frameCountRef.current}] P:${ps.health}hp atk=${ps.isAttacking} stag=${ps.isStaggered} | E:${es.health}hp atk=${es.isAttacking} | dist=${dist.toFixed(1)} | AI=${enemyAI.currentState}`);
     }
 
+    // --- Wait for combat to start ---
+    const ps = playerController.state;
+    if (!combatActiveRef.current) {
+      battleCamera.update(clampedDt, ps.position, enemyController.state.position);
+      input.update();
+      return;
+    }
+
     // --- Player input ---
     const move = input.moveAxis;
     const isMoving = Math.abs(move.x) > 0.1 || Math.abs(move.y) > 0.1;
-    const ps = playerController.state;
 
     if (!ps.isDead) {
       playerController.update(clampedDt, input, battleCamera.cameraYaw);
@@ -347,6 +374,10 @@ export function GameScene(props: GameSceneProps) {
   const [enemyMaxHP, setEnemyMaxHP] = useState(100);
   const [combo, setCombo] = useState<ComboState | null>(null);
   const [battleResult, setBattleResult] = useState<'player' | 'enemy' | null>(null);
+  const [countdown, setCountdown] = useState<number | 'FIGHT' | null>(null);
+  const [sceneReady, setSceneReady] = useState(false);
+  const combatStartedRef = useRef(false);
+  const battleWorldRef = useRef<{ startCombat: () => void }>();
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
@@ -356,7 +387,19 @@ export function GameScene(props: GameSceneProps) {
     inputAttached.current = true;
     const input = getInputSystem();
     input.attach(window);
-    console.log('[GameScene] Input attached');
+  }, []);
+
+  const startCountdown = useCallback(() => {
+    if (combatStartedRef.current) return;
+    setSceneReady(true);
+    setCountdown(3);
+    setTimeout(() => setCountdown(2), 1000);
+    setTimeout(() => setCountdown(1), 2000);
+    setTimeout(() => {
+      setCountdown('FIGHT');
+      combatStartedRef.current = true;
+    }, 3000);
+    setTimeout(() => setCountdown(null), 3800);
   }, []);
 
   return (
@@ -373,11 +416,13 @@ export function GameScene(props: GameSceneProps) {
           <BattleWorld
             {...props}
             difficulty={difficulty}
+            combatActive={combatStartedRef.current}
             onDamageEvent={props.onDamageEvent}
             onComboUpdate={setCombo}
             onPlayerStateUpdate={(h, mh, s, sm) => { setPlayerHP(h); setPlayerMaxHP(mh); setPlayerStamina(s); setPlayerStaminaMax(sm); }}
             onEnemyStateUpdate={(h, mh) => { setEnemyHP(h); setEnemyMaxHP(mh); }}
             onBattleEnd={(w) => { setBattleResult(w); props.onBattleEnd?.(w); }}
+            onReady={startCountdown}
           />
         </Suspense>
       </Canvas>
@@ -433,6 +478,35 @@ export function GameScene(props: GameSceneProps) {
           ))}
         </div>
       </div>
+
+      {/* Countdown overlay */}
+      {countdown !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="text-center">
+            {typeof countdown === 'number' ? (
+              <div className="text-8xl md:text-9xl font-black text-white drop-shadow-[0_0_30px_rgba(255,255,255,0.5)] animate-pulse">
+                {countdown}
+              </div>
+            ) : (
+              <div className="text-7xl md:text-8xl font-black text-yellow-400 drop-shadow-[0_0_40px_rgba(250,204,21,0.6)]">
+                FIGHT!
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VS intro before countdown */}
+      {!sceneReady && !battleResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 pointer-events-none">
+          <div className="text-center">
+            <div className="text-2xl md:text-3xl font-black text-white/80 mb-2">Loading Arena...</div>
+            <div className="w-32 h-1 bg-white/10 rounded-full mx-auto overflow-hidden">
+              <div className="h-full bg-white/50 rounded-full animate-pulse w-2/3" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {battleResult && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 pointer-events-auto">
