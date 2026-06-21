@@ -105,7 +105,19 @@ export class AnimationStateMachine {
     const config = this.animMap[newState];
     if (!config) return;
 
-    const clip = this.clips.get(config.clip);
+    let clip = this.clips.get(config.clip);
+    // Fallback: if Mixamo clip not loaded yet, try GLB's generic clips
+    if (!clip) {
+      const fallbacks: Record<string, string> = {
+        walk: 'idle', run: 'idle',
+        lightAttack: 'attack', heavyAttack: 'attack', special: 'attack',
+        block: 'idle', dodge: 'idle',
+        hitLight: 'hit', hitHeavy: 'hit', knockdown: 'hit',
+        getUp: 'idle', victory: 'idle',
+      };
+      const fb = fallbacks[config.clip];
+      if (fb) clip = this.clips.get(fb);
+    }
     if (!clip) return;
 
     const prevState = this.currentState;
