@@ -163,6 +163,7 @@ function BattleWorld({
 
       if (event.killed && !battleEndedRef.current) {
         battleEndedRef.current = true;
+        combatActiveRef.current = false;
         const winner = event.defenderId === 'enemy' ? 'player' : 'enemy';
         if (event.defenderId === 'enemy') {
           enemyAnimMachine.transition(AnimState.Death, true);
@@ -170,6 +171,7 @@ function BattleWorld({
           playerAnimMachine.transition(AnimState.Death, true);
         }
         particles.emitKillBurst(event.hitPosition, CLASS_ACCENTS[winner === 'player' ? playerClass : enemyClass]);
+        combatAudio.stopAll();
         setTimeout(() => {
           if (winner === 'player') combatAudio.playVictoryFanfare();
           else combatAudio.playDefeatMelody();
