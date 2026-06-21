@@ -334,30 +334,25 @@ pub fn simulate_async_fight(challenger: &Player, opponent: &Player) -> AsyncFigh
     let mut c_special = false;
     let mut o_special = false;
     let mut rounds = Vec::new();
-    let challenger_class = CharacterClass::from_db(challenger.character_class.as_deref());
-    let opponent_class = CharacterClass::from_db(opponent.character_class.as_deref());
 
     for round in 1..=BATTLE_ROUNDS {
-        let (c_move, cs, _) = pick_move(&mut rng, c_special);
-        let (o_move, os, _) = pick_move(&mut rng, o_special);
+        let (c_move, cs, cd) = pick_move(&mut rng, c_special);
+        let (o_move, os, od) = pick_move(&mut rng, o_special);
         c_special = c_special || cs;
         o_special = o_special || os;
 
-        let outcome = resolve_round(
-            &c_move, challenger_class, challenger.attack_stat, challenger.defense_stat, c_hp,
-            &o_move, opponent_class, opponent.attack_stat, opponent.defense_stat, o_hp,
-            |atk, def, base, ignore_def, mult| calc_damage_v2(atk, def, base, ignore_def, mult, &mut rng),
-        );
+        let c_dmg = calc_damage_v2(challenger.attack_stat, opponent.defense_stat, if cs { 40.0 } else { 20.0 }, false, if od { 0.5 } else { 1.0 }, &mut rng);
+        let o_dmg = calc_damage_v2(opponent.attack_stat, challenger.defense_stat, if os { 40.0 } else { 20.0 }, false, if cd { 0.5 } else { 1.0 }, &mut rng);
 
-        c_hp = outcome.new_player_hp;
-        o_hp = outcome.new_bot_hp;
+        o_hp = (o_hp - c_dmg).max(0);
+        c_hp = (c_hp - o_dmg).max(0);
 
         rounds.push(RoundData {
             round,
             challenger_move: c_move,
             opponent_move: o_move,
-            challenger_damage: outcome.player_dmg,
-            opponent_damage: outcome.bot_dmg,
+            challenger_damage: c_dmg,
+            opponent_damage: o_dmg,
             challenger_hp: c_hp,
             opponent_hp: o_hp,
         });

@@ -11,13 +11,10 @@ import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
-import IllustratedBattleScene from './IllustratedBattleScene'
+import BattleScene from './BattleScene'
 import ImpactBurst from './ImpactBurst'
 import HitSpark from './HitSpark'
 import DamageNumber from './DamageNumber'
-import WeaponTrail from './WeaponTrail'
-import CombatOverlay from './CombatOverlay'
-import ComboCounter from './ComboCounter'
 import XpMeter from '@/components/player-card/XpMeter'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
@@ -135,7 +132,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   }, [phase])
 
   // ── Audio + combat feel ──────────────────────────────────────────────────
-  const { playHit, playSpecial, playSwing, playBlock, playVictory, playDefeat, startAmbient, stopAmbient } = useAudio()
+  const { playHit, playSpecial, playVictory, playDefeat, startAmbient, stopAmbient } = useAudio()
   const combatFeel = useCombatFeel()
 
   // Imperative shake/camera-punch controls — replay on every hit WITHOUT
@@ -143,9 +140,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   // recreates the WebGL context, causing a black flash on every round).
   const shakeControls = useAnimation()
   const camControls = useAnimation()
-  const [playerTrail, setPlayerTrail] = useState(false)
-  const [botTrail, setBotTrail] = useState(false)
-  const [comboCount, setComboCount] = useState(0)
 
   useEffect(() => {
     if (combatFeel.shakeLevel === 0) return
@@ -159,11 +153,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
   useEffect(() => {
     if (combatFeel.specialCam === 0) return
-    camControls.start({
-      scale: [1, 1.075, 1.025, 1],
-      x: [0, playerAnim === 'attack' ? -10 : 10, 0],
-      transition: { duration: 0.55, ease: 'easeInOut' },
-    })
+    camControls.start({ scale: [1, 1.055, 1.02, 1], transition: { duration: 0.5, ease: 'easeInOut' } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combatFeel.specialCam])
 
@@ -180,12 +170,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
 
     const playerAction = entry.playerMove === 'attack' || entry.playerMove === 'special' ? 'attack' : 'idle'
     setPlayerAnim(playerAction)
-    if (playerAction === 'attack') {
-      playSwing(entry.playerMove === 'special')
-      setPlayerTrail(true)
-      const trailTimer = setTimeout(() => setPlayerTrail(false), entry.playerMove === 'special' ? 380 : 260)
-      timers.current.push(trailTimer)
-    }
 
     setIsRoundAnimating(true)
 
@@ -194,24 +178,13 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       if (entry.playerDmg > 0) {
         combatFeel.triggerHit('bot', entry.playerDmg, def.accentColor, entry.playerMove === 'special')
         spawnDmgNumber(entry.playerDmg, 'bot', entry.playerMove === 'special')
-        setComboCount(c => c + 1)
         playHit(player.character_class as string, entry.playerDmg)
         if (entry.playerMove === 'special') playSpecial(player.character_class as string)
-      } else if (entry.playerMove !== 'defend' && entry.botMove === 'defend') {
-        combatFeel.triggerBlock('bot', botDef.accentColor)
-        playBlock()
-        setComboCount(0)
       }
     }, 280) // pulled from 320ms — hits when lunge peaks
 
     const t2 = setTimeout(() => {
       setBotAnim(entry.botMove === 'attack' || entry.botMove === 'special' ? 'attack' : 'idle')
-      if (entry.botMove === 'attack' || entry.botMove === 'special') {
-        playSwing(entry.botMove === 'special')
-        setBotTrail(true)
-        const trailTimer = setTimeout(() => setBotTrail(false), entry.botMove === 'special' ? 380 : 260)
-        timers.current.push(trailTimer)
-      }
     }, 680)
 
     const t3 = setTimeout(() => {
@@ -219,20 +192,14 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       if (entry.botDmg > 0) {
         combatFeel.triggerHit('player', entry.botDmg, botDef.accentColor, entry.botMove === 'special')
         spawnDmgNumber(entry.botDmg, 'player', entry.botMove === 'special')
-        setComboCount(0)
         playHit(botDef.id, entry.botDmg)
         if (entry.botMove === 'special') playSpecial(botDef.id)
-      } else if (entry.botMove !== 'defend' && entry.playerMove === 'defend') {
-        combatFeel.triggerBlock('player', def.accentColor)
-        playBlock()
       }
     }, 920)
 
     const t4 = setTimeout(() => {
       setPlayerAnim('idle')
       setBotAnim('idle')
-      setPlayerTrail(false)
-      setBotTrail(false)
       setIsRoundAnimating(false)
     }, 1400)
     timers.current = [t1, t2, t3, t4]
@@ -250,9 +217,6 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
       setShowFightCall(false)
       setIsRoundAnimating(false)
       setDmgEvents([])
-      setPlayerTrail(false)
-      setBotTrail(false)
-      setComboCount(0)
       combatFeel.reset()
     }
   }, [phase])
@@ -650,20 +614,17 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         >
           {/* Canvas */}
           <div className="absolute inset-0">
-            <IllustratedBattleScene
+            <BattleScene
               playerClass={player.character_class as CharacterClass}
               playerAnim={playerAnim}
+              playerPaused={combatFeel.hitStopMs > 0 && playerAnim === 'hit'}
               playerAccentColor={def.accentColor}
               botClass={botDef.id}
               botAnim={botAnim}
+              botPaused={combatFeel.hitStopMs > 0 && botAnim === 'hit'}
               botAccentColor={botDef.accentColor}
             />
           </div>
-
-          <WeaponTrail active={playerTrail} side="player" color={def.accentColor} special={playerAnim === 'attack' && log.at(-1)?.playerMove === 'special'} />
-          <WeaponTrail active={botTrail} side="bot" color={botDef.accentColor} special={botAnim === 'attack' && log.at(-1)?.botMove === 'special'} />
-          <CombatOverlay color={combatFeel.overlayColor} intensity={combatFeel.overlayIntensity} side={combatFeel.overlaySide} />
-          <ComboCounter count={comboCount} color={def.accentColor} />
 
           {/* Player DOM overlays — left half */}
           <div className="absolute left-0 top-0 bottom-0 w-1/2 pointer-events-none z-10">
@@ -775,11 +736,10 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 <h2 className="font-display font-black tracking-widest"
                   style={{
                     fontSize: 'clamp(3.5rem, 12vw, 6rem)',
-                    color: '#f8d58a',
-                    WebkitTextStroke: '1px rgba(88,44,12,0.9)',
-                    textShadow: `0 2px 0 #8a4b12, 0 0 40px ${def.accentColor}, 0 0 100px rgba(245,188,85,0.55)`,
+                    color: def.accentColor,
+                    textShadow: `0 0 60px ${def.accentColor}, 0 0 100px ${def.accentColor}60`,
                   }}>
-                  VALOR FIGHT!
+                  FIGHT
                 </h2>
               </motion.div>
             )}
@@ -895,29 +855,19 @@ function ArenaPlayerCard({ name, hp, classLabel, color, side, lastMove, lastDmgD
 
   return (
     <div className={`flex flex-col gap-1 ${side === 'right' ? 'items-end' : 'items-start'}`}
-      style={{
-        minWidth: 128,
-        maxWidth: 174,
-        padding: '7px 9px',
-        background: 'linear-gradient(180deg, rgba(46,25,12,0.88), rgba(12,7,18,0.82))',
-        border: '1px solid rgba(245, 188, 85, 0.42)',
-        boxShadow: `0 0 20px ${color}24, inset 0 0 12px rgba(255,214,128,0.08)`,
-        clipPath: side === 'right'
-          ? 'polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 8px 50%)'
-          : 'polygon(10px 0, 100% 0, calc(100% - 8px) 50%, 100% 100%, 10px 100%, 0 50%)',
-      }}>
+      style={{ minWidth: 110, maxWidth: 150 }}>
       <div className={`flex items-center gap-1.5 ${side === 'right' ? 'flex-row-reverse' : ''}`}>
         <div className="w-7 h-7 rounded-full border flex items-center justify-center shrink-0 font-black text-xs"
-          style={{ borderColor: 'rgba(245,188,85,0.7)', background: `radial-gradient(circle, ${color}36, rgba(0,0,0,0.62))`, color, boxShadow: `0 0 12px ${color}55` }}>
+          style={{ borderColor: `${color}60`, background: `${color}18`, color }}>
           ⚔
         </div>
         <div className={side === 'right' ? 'text-right' : ''}>
-          <p className="font-display font-black leading-none" style={{ fontSize: 11, color: '#fff7df', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{name}</p>
-          <p className="font-bold uppercase" style={{ fontSize: 7, letterSpacing: '0.18em', color: '#f8d58a' }}>{classLabel}</p>
+          <p className="font-black text-white leading-none" style={{ fontSize: 10 }}>{name}</p>
+          <p className="font-bold uppercase" style={{ fontSize: 7, letterSpacing: '0.18em', color }}>{classLabel}</p>
         </div>
       </div>
       <div className="h-1.5 rounded-full overflow-hidden w-full"
-        style={{ background: 'rgba(10,5,8,0.82)', border: '1px solid rgba(245,188,85,0.16)' }}>
+        style={{ background: 'rgba(42,42,58,0.7)' }}>
         <motion.div className="h-full rounded-full"
           style={{
             background: `linear-gradient(90deg, ${hpColor}90, ${hpColor})`,
