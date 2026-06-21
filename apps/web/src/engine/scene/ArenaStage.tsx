@@ -15,10 +15,10 @@ const STAGE_PATHS: Record<StageId, string> = {
 };
 
 const STAGE_COLORS: Record<StageId, { floor: string; accent: string; glow: string }> = {
-  lava_arena: { floor: '#1a0800', accent: '#ff4400', glow: '#ff6622' },
-  scifi_stage: { floor: '#0a0020', accent: '#6644ff', glow: '#8866ff' },
-  battle_arena: { floor: '#0a1525', accent: '#4488ff', glow: '#aaccff' },
-  rpg_environment: { floor: '#1a2a10', accent: '#88aa44', glow: '#aacc66' },
+  lava_arena: { floor: '#3a2215', accent: '#ff6633', glow: '#ff8844' },
+  scifi_stage: { floor: '#1a1535', accent: '#8866ff', glow: '#aa88ff' },
+  battle_arena: { floor: '#152535', accent: '#5599ff', glow: '#aaddff' },
+  rpg_environment: { floor: '#253520', accent: '#99bb55', glow: '#bbdd77' },
 };
 
 interface ArenaStageProps {

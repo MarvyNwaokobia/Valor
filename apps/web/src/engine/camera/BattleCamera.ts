@@ -13,14 +13,14 @@ export interface CameraConfig {
 }
 
 const DEFAULT_CONFIG: CameraConfig = {
-  followDistance: 8,
-  followHeight: 4,
+  followDistance: 6,
+  followHeight: 3,
   lookAheadDistance: 2,
-  smoothSpeed: 4,
-  lockOnDistance: 12,
-  lockOnHeight: 4,
-  fovDefault: 60,
-  fovCombat: 50,
+  smoothSpeed: 5,
+  lockOnDistance: 8,
+  lockOnHeight: 3,
+  fovDefault: 55,
+  fovCombat: 48,
   shakeDecay: 8,
 };
 
