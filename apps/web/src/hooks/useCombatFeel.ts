@@ -15,9 +15,6 @@ interface CombatState {
   botBurst:    string | null
   playerSpark: SparkInfo | null
   botSpark:    SparkInfo | null
-  overlayColor: string | null
-  overlayIntensity: 'critical' | 'ultimate' | null
-  overlaySide: 'player' | 'bot' | null
   specialCam:  number
   hitStopMs:   number
 }
@@ -31,9 +28,6 @@ const INIT: CombatState = {
   botBurst:    null,
   playerSpark: null,
   botSpark:    null,
-  overlayColor: null,
-  overlayIntensity: null,
-  overlaySide: null,
   specialCam:  0,
   hitStopMs:   0,
 }
@@ -56,9 +50,8 @@ export function useCombatFeel() {
     if (reducedMotion.current) return
 
     const level: ShakeLevel = damage >= 16 ? 3 : damage >= 9 ? 2 : 1
-    const stopMs = isSpecial ? 155 : level === 3 ? 130 : level === 2 ? 80 : 45
+    const stopMs = level === 3 ? 130 : level === 2 ? 80 : 45
     const spark: SparkInfo = { color: attackerColor, level }
-    const overlayIntensity = isSpecial ? 'ultimate' : level === 3 ? 'critical' : null
 
     setFx(s => ({
       ...s,
@@ -71,9 +64,6 @@ export function useCombatFeel() {
       botBurst:    hitSide === 'bot'    ? attackerColor : null,
       playerSpark: hitSide === 'player' ? spark : null,
       botSpark:    hitSide === 'bot'    ? spark : null,
-      overlayColor: overlayIntensity ? attackerColor : null,
-      overlayIntensity,
-      overlaySide: overlayIntensity ? hitSide : null,
       specialCam:  isSpecial ? s.specialCam + 1 : s.specialCam,
     }))
 
@@ -81,48 +71,13 @@ export function useCombatFeel() {
     setTimeout(() => setFx(s => ({ ...s, hitStopMs: 0 })), stopMs)
     // Flash + spark clear at 260ms
     setTimeout(() => setFx(s => ({
-      ...s,
-      playerFlash: null,
-      botFlash: null,
-      playerSpark: null,
-      botSpark: null,
-      overlayColor: null,
-      overlayIntensity: null,
-      overlaySide: null,
-      shakeLevel: 0,
+      ...s, playerFlash: null, botFlash: null, playerSpark: null, botSpark: null, shakeLevel: 0,
     })), 260)
     // Burst particles stay for 500ms
     setTimeout(() => setFx(s => ({ ...s, playerBurst: null, botBurst: null })), 500)
   }, [])
 
-  const triggerBlock = useCallback((
-    blockSide: 'player' | 'bot',
-    color: string,
-  ) => {
-    if (reducedMotion.current) return
-    const spark: SparkInfo = { color, level: 1 }
-    setFx(s => ({
-      ...s,
-      shakeKey: s.shakeKey + 1,
-      shakeLevel: 1,
-      hitStopMs: 45,
-      playerFlash: blockSide === 'player' ? color : null,
-      botFlash: blockSide === 'bot' ? color : null,
-      playerSpark: blockSide === 'player' ? spark : null,
-      botSpark: blockSide === 'bot' ? spark : null,
-    }))
-    setTimeout(() => setFx(s => ({ ...s, hitStopMs: 0 })), 45)
-    setTimeout(() => setFx(s => ({
-      ...s,
-      playerFlash: null,
-      botFlash: null,
-      playerSpark: null,
-      botSpark: null,
-      shakeLevel: 0,
-    })), 190)
-  }, [])
-
   const reset = useCallback(() => setFx(INIT), [])
 
-  return { ...fx, triggerHit, triggerBlock, reset }
+  return { ...fx, triggerHit, reset }
 }

@@ -33,10 +33,17 @@ export default function ProfilePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const inventory    = usePlayerStore(s => s.inventory)
 
-  const charClass  = (player?.character_class ?? 'Berserker') as CharacterClass
+  if (!ready) return <LoadingScreen />
+  if (!authenticated || !address) { router.replace('/'); return null }
+  // No cache and sync not done yet — brief wait
+  if (!player && !playerSynced) return <LoadingScreen />
+  // Sync done, confirmed no player — let home page route them
+  if (!player) { router.replace('/'); return null }
+
+  const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
-  const xpProgress = ((player?.xp ?? 0) / XP_PER_RANK) * 100
-  const { formatted: gBalanceFormatted } = useGBalance((address ?? '0x0000000000000000000000000000000000000000') as `0x${string}`)
+  const xpProgress = (player.xp / XP_PER_RANK) * 100
+  const { formatted: gBalanceFormatted } = useGBalance(address as `0x${string}`)
   const [showUsernameModal, setShowUsernameModal] = useState(false)
 
   const itemIds = inventory.map(i => i.item_id)
@@ -52,13 +59,6 @@ export default function ProfilePage() {
     enabled: itemIds.length > 0,
     staleTime: 60_000,
   })
-
-  if (!ready) return <LoadingScreen />
-  if (!authenticated || !address) { router.replace('/'); return null }
-  // No cache and sync not done yet — brief wait
-  if (!player && !playerSynced) return <LoadingScreen />
-  // Sync done, confirmed no player — let home page route them
-  if (!player) { router.replace('/'); return null }
   const itemMap      = new Map(items.map(i => [i.id, i]))
   const equipped     = inventory.filter(i => i.equipped).map(i => itemMap.get(i.item_id)).filter(Boolean) as Item[]
   const attackBoost  = equipped.filter(i => i.category === 'weapon').reduce((s, i) => s + i.stat_boost, 0)
