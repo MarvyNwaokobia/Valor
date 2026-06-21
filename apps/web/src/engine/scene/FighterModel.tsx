@@ -66,7 +66,12 @@ export function FighterModel({
       const mixer = new THREE.AnimationMixer(groupRef.current);
       mixerRef.current = mixer;
       animMachine.init(mixer, animations);
-      console.log(`[Fighter:${classId}] Init with ${animations.length} GLB clips`);
+
+      const boneNames: string[] = [];
+      groupRef.current.traverse((child) => {
+        if ((child as THREE.Bone).isBone) boneNames.push(child.name);
+      });
+      console.log(`[Fighter:${classId}] Init with ${animations.length} GLB clips, bones: ${boneNames.slice(0, 5).join(', ')}...`);
     }
 
     // Reinit when Mixamo clips are ready (check every frame via ref, not state)
@@ -93,7 +98,8 @@ export function FighterModel({
       new THREE.Vector3(0, 1, 0),
       state.rotation
     );
-    groupRef.current.quaternion.slerp(targetQuat, 0.15);
+    const rotLerp = 1 - Math.exp(-12 * dt);
+    groupRef.current.quaternion.slerp(targetQuat, rotLerp);
 
     animMachine.update(dt);
   });
