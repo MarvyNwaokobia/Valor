@@ -41,11 +41,22 @@ const extraClips: Map<string, THREE.AnimationClip> = new Map();
 let loadingPromise: Promise<void> | null = null;
 
 function retargetClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  // Rename bones: mixamorigHips → mixamorig:Hips
   for (const track of clip.tracks) {
     track.name = track.name.replace(/^mixamorig(\w)/, (_, first) => {
       return 'mixamorig:' + first.toUpperCase();
     });
   }
+
+  // Remove root motion — Hips position track causes characters to
+  // float, sink, and slide. Game controls position, not animation.
+  clip.tracks = clip.tracks.filter(track => {
+    if (track.name.includes('Hips') && track.name.includes('position')) {
+      return false;
+    }
+    return true;
+  });
+
   return clip;
 }
 
