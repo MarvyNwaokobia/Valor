@@ -1,0 +1,11 @@
+Model Information:
+* title:	Mai Shiranui - KOF All Stars
+* source:	https://sketchfab.com/3d-models/mai-shiranui-kof-all-stars-5ca7261886004ace87b86922ebc8ce69
+* author:	yASIN (https://sketchfab.com/0xo)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Mai Shiranui - KOF All Stars" (https://sketchfab.com/3d-models/mai-shiranui-kof-all-stars-5ca7261886004ace87b86922ebc8ce69) by yASIN (https://sketchfab.com/0xo) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
