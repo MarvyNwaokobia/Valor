@@ -59,12 +59,6 @@ function BattleWorld({
 
   const input = useMemo(() => getInputSystem(), []);
 
-  useEffect(() => {
-    const cleanup = input.attach(window);
-    console.log('[GameScene] Keyboard input attached');
-    return cleanup;
-  }, [input]);
-
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
   const playerController = useMemo(
@@ -319,6 +313,12 @@ function BattleWorld({
     const lightAtk = input.getAction(Action.LightAttack);
     const heavyAtk = input.getAction(Action.HeavyAttack);
     const special = input.getAction(Action.Special);
+    const dodge = input.getAction(Action.Dodge);
+    const block = input.getAction(Action.Block);
+
+    if (lightAtk.justPressed || heavyAtk.justPressed || special.justPressed || dodge.justPressed) {
+      console.log(`[INPUT] Attack pressed! L=${lightAtk.justPressed} H=${heavyAtk.justPressed} S=${special.justPressed} D=${dodge.justPressed} move=${move.x.toFixed(1)},${move.y.toFixed(1)}`);
+    }
 
     if (lightAtk.justPressed) startPlayerAttack(AnimState.LightAttack);
     if (heavyAtk.justPressed) startPlayerAttack(AnimState.HeavyAttack);
@@ -484,6 +484,24 @@ export function GameScene(props: GameSceneProps) {
   const [lastDamage, setLastDamage] = useState<DamageEvent | null>(null);
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
+
+  useEffect(() => {
+    const input = getInputSystem();
+    const cleanup = input.attach(window);
+    console.log('[GameScene:DOM] Keyboard input attached to window');
+
+    const debugHandler = (e: KeyboardEvent) => {
+      console.log(`[KEY] ${e.type}: ${e.code}`);
+    };
+    window.addEventListener('keydown', debugHandler);
+    window.addEventListener('keyup', debugHandler);
+
+    return () => {
+      cleanup();
+      window.removeEventListener('keydown', debugHandler);
+      window.removeEventListener('keyup', debugHandler);
+    };
+  }, []);
 
   return (
     <div className="w-full h-full relative">
