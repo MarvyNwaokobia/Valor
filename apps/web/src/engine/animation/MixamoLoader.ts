@@ -40,12 +40,15 @@ const loadedClips: Map<string, THREE.AnimationClip> = new Map();
 const extraClips: Map<string, THREE.AnimationClip> = new Map();
 let loadingPromise: Promise<void> | null = null;
 
-function retargetClip(clip: THREE.AnimationClip): THREE.AnimationClip {
-  // Rename bones: mixamorigHips → mixamorig:Hips
+function retargetClip(clip: THREE.AnimationClip, glbBonePrefix?: string): THREE.AnimationClip {
   for (const track of clip.tracks) {
-    track.name = track.name.replace(/^mixamorig(\w)/, (_, first) => {
-      return 'mixamorig:' + first.toUpperCase();
-    });
+    // Handle all Mixamo bone name variants:
+    // mixamorigHips → mixamorig:Hips
+    // mixamorig1Hips → mixamorig:Hips
+    // mixamorig:Hips stays as-is
+    track.name = track.name
+      .replace(/^mixamorig\d*(\w)/, (_, first) => 'mixamorig:' + first.toUpperCase())
+      .replace(/^mixamorig::/, 'mixamorig:');
   }
 
   // Remove root motion — Hips position track causes characters to

@@ -99,6 +99,103 @@ export class CombatAudio {
     }
   }
 
+  playFootstep(volume = 0.08) {
+    if (this.stopped) return;
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+
+      const noise = ctx.createBufferSource();
+      const bufferSize = ctx.sampleRate * 0.04;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      }
+      noise.buffer = buffer;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 200 + Math.random() * 100;
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+
+      noise.connect(filter).connect(gain).connect(ctx.destination);
+      noise.start(now);
+      noise.stop(now + 0.06);
+    } catch {}
+  }
+
+  playComboMilestone(count: number) {
+    if (this.stopped) return;
+    const baseFreq = 440 + count * 40;
+    this.synthNote(baseFreq, 0.12, 0.08);
+    setTimeout(() => this.synthNote(baseFreq * 1.5, 0.1, 0.1), 50);
+    setTimeout(() => this.synthNote(baseFreq * 2, 0.08, 0.12), 100);
+  }
+
+  private bgmCtx: AudioContext | null = null;
+  private bgmGain: GainNode | null = null;
+  private bgmIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  startBGM() {
+    if (this.stopped || this.bgmCtx) return;
+    try {
+      const ctx = new AudioContext();
+      this.bgmCtx = ctx;
+      const masterGain = ctx.createGain();
+      masterGain.gain.value = 0.06;
+      masterGain.connect(ctx.destination);
+      this.bgmGain = masterGain;
+
+      const bassNotes = [65.41, 73.42, 82.41, 73.42]; // C2, D2, E2, D2
+      let noteIdx = 0;
+
+      const playBeat = () => {
+        if (this.stopped || !this.bgmCtx) return;
+        const now = ctx.currentTime;
+        const freq = bassNotes[noteIdx % bassNotes.length];
+        noteIdx++;
+
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 300;
+
+        const env = ctx.createGain();
+        env.gain.setValueAtTime(0.3, now);
+        env.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+
+        osc.connect(filter).connect(env).connect(masterGain);
+        osc.start(now);
+        osc.stop(now + 0.45);
+
+        // Kick drum on beats 1 and 3
+        if (noteIdx % 2 === 1) {
+          const kick = ctx.createOscillator();
+          kick.type = 'sine';
+          kick.frequency.setValueAtTime(150, now);
+          kick.frequency.exponentialRampToValueAtTime(30, now + 0.1);
+          const kickEnv = ctx.createGain();
+          kickEnv.gain.setValueAtTime(0.6, now);
+          kickEnv.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          kick.connect(kickEnv).connect(masterGain);
+          kick.start(now);
+          kick.stop(now + 0.15);
+        }
+      };
+
+      playBeat();
+      this.bgmIntervalId = setInterval(playBeat, 500);
+    } catch {}
+  }
+
   playVictoryFanfare() {
     if (this.stopped) return;
     this.synthNote(523, 0.12, 0.15);
@@ -116,21 +213,45 @@ export class CombatAudio {
   stopAll() {
     this.stopped = true;
     Howler.stop();
+    if (this.bgmIntervalId) {
+      clearInterval(this.bgmIntervalId);
+      this.bgmIntervalId = null;
+    }
+    if (this.bgmGain) {
+      this.bgmGain.gain.value = 0;
+    }
+    if (this.bgmCtx) {
+      this.bgmCtx.close().catch(() => {});
+      this.bgmCtx = null;
+    }
+  }
+
+  private sharedCtx: AudioContext | null = null;
+
+  private getSharedContext(): AudioContext | null {
+    if (this.sharedCtx && this.sharedCtx.state !== 'closed') return this.sharedCtx;
+    try {
+      this.sharedCtx = new AudioContext();
+      return this.sharedCtx;
+    } catch {
+      return null;
+    }
   }
 
   private synthNote(freq: number, volume: number, duration: number) {
     try {
-      const ctx = new AudioContext();
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.value = freq;
-      gain.gain.setValueAtTime(volume, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
       osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + duration);
-      setTimeout(() => ctx.close(), (duration + 0.1) * 1000);
+      osc.start(now);
+      osc.stop(now + duration);
     } catch {}
   }
 }

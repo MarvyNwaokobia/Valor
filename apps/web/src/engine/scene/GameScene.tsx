@@ -16,6 +16,7 @@ import { ComboSystem, type ComboState, MoveType } from '../combat';
 import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
 import { ParticleSystem } from '../vfx/ParticleSystem';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
+import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
 import { StageLighting } from '../world/StageLighting';
 import { AmbientVFX } from '../world/AmbientVFX';
@@ -47,7 +48,21 @@ const ATTACK_DURATION_MS: Record<string, number> = {
   [AnimState.Special]: 1200,
 };
 
-const STAGGER_DURATION_MS = 400;
+const HITSTOP_DURATION: Record<string, number> = {
+  light: 0.05,
+  heavy: 0.1,
+  special: 0.15,
+  kill: 0.35,
+};
+
+const STAGGER_DURATION: Record<string, number> = {
+  light: 0.2,
+  heavy: 0.45,
+  special: 0.7,
+};
+
+const FOOTSTEP_INTERVAL = 0.3;
+const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 
 function BattleWorld({
   playerClass,
@@ -87,8 +102,8 @@ function BattleWorld({
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
-  const playerController = useMemo(() => new CharacterController(new THREE.Vector3(-3, 0, 0)), []);
-  const enemyController = useMemo(() => new CharacterController(new THREE.Vector3(3, 0, 0)), []);
+  const playerController = useMemo(() => new CharacterController(new THREE.Vector3(-1.5, 0, 0)), []);
+  const enemyController = useMemo(() => new CharacterController(new THREE.Vector3(1.5, 0, 0)), []);
 
   const playerAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]), [playerClass]);
   const enemyAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]), [enemyClass]);
@@ -107,6 +122,20 @@ function BattleWorld({
   const playerAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
   const enemyAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
 
+  // Hit-stop
+  const hitStopTimerRef = useRef(0);
+
+  // Weapon trails
+  const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 20, 0.12, 0.35), [playerClass]);
+  const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 20, 0.12, 0.35), [enemyClass]);
+
+  // Footstep timer
+  const playerStepTimerRef = useRef(0);
+  const enemyStepTimerRef = useRef(0);
+
+  // Background music
+  const bgmStartedRef = useRef(false);
+
   useEffect(() => {
     damageSystem.registerFighter('player', playerClass);
     damageSystem.registerFighter('enemy', enemyClass);
@@ -124,7 +153,33 @@ function BattleWorld({
       particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
       battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30, 0.2);
 
+      // Hit-stop: freeze both fighters briefly
+      const hitStopDur = event.killed
+        ? HITSTOP_DURATION.kill
+        : HITSTOP_DURATION[event.hitType] ?? 0.05;
+      hitStopTimerRef.current = hitStopDur;
+      playerAnimMachine.pause();
+      enemyAnimMachine.pause();
+      setTimeout(() => {
+        hitStopTimerRef.current = 0;
+        playerAnimMachine.resume();
+        enemyAnimMachine.resume();
+      }, hitStopDur * 1000);
+
+      // Combo escalation audio
       if (!event.blocked) {
+        comboSystem.registerHit(
+          event.attackerId,
+          event.hitType === 'light' ? MoveType.LightAttack : event.hitType === 'heavy' ? MoveType.HeavyAttack : MoveType.Special,
+          performance.now()
+        );
+        const comboState = comboSystem.getState(event.attackerId);
+        onComboUpdate?.(comboState ?? null);
+
+        if (comboState && comboState.count >= 3 && comboState.count % 5 === 0) {
+          combatAudio.playComboMilestone(comboState.count);
+        }
+
         knockback.applyKnockback(event.defenderId, {
           direction: event.knockbackDir,
           force: event.knockbackForce,
@@ -132,23 +187,20 @@ function BattleWorld({
           killed: event.killed,
         });
 
-        comboSystem.registerHit(
-          event.attackerId,
-          event.hitType === 'light' ? MoveType.LightAttack : event.hitType === 'heavy' ? MoveType.HeavyAttack : MoveType.Special,
-          performance.now()
-        );
-        onComboUpdate?.(comboSystem.getState(event.attackerId) ?? null);
+        // Variable hit-stun based on attack type
+        const staggerMs = (STAGGER_DURATION[event.hitType] ?? 0.3) * 1000;
+        const hitAnim = event.hitType === 'light' ? AnimState.HitLight : AnimState.HitHeavy;
 
         if (event.defenderId === 'enemy') {
-          enemyAnimMachine.transition(AnimState.HitLight, true);
+          enemyAnimMachine.transition(hitAnim, true);
           enemyController.state.isStaggered = true;
           enemyAttackingRef.current = false;
           setTimeout(() => {
             enemyController.clearStagger();
             if (!enemyController.state.isDead) enemyAnimMachine.transition(AnimState.Idle, true);
-          }, STAGGER_DURATION_MS);
+          }, staggerMs);
         } else {
-          playerAnimMachine.transition(AnimState.HitLight, true);
+          playerAnimMachine.transition(hitAnim, true);
           playerController.state.isStaggered = true;
           playerController.state.isAttacking = false;
           playerAttackingRef.current = false;
@@ -157,7 +209,7 @@ function BattleWorld({
           setTimeout(() => {
             playerController.clearStagger();
             if (!playerController.state.isDead) playerAnimMachine.transition(AnimState.Idle, true);
-          }, STAGGER_DURATION_MS);
+          }, staggerMs);
         }
       }
 
@@ -209,10 +261,27 @@ function BattleWorld({
     anim.transition(animState, true);
     combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
 
+    // Attack lunge — surge toward opponent
+    const target = who === 'player' ? enemyController : playerController;
+    const lungeDir = new THREE.Vector3()
+      .subVectors(target.state.position, ctrl.state.position)
+      .setY(0)
+      .normalize();
+    const dist = ctrl.state.position.distanceTo(target.state.position);
+    const lungeForce = animState === AnimState.LightAttack ? 4 : animState === AnimState.HeavyAttack ? 6 : 8;
+    const lungeDist = Math.max(0, dist - 1.2);
+    const clampedLunge = Math.min(lungeForce, lungeDist * 3);
+    ctrl.state.velocity.addScaledVector(lungeDir, clampedLunge);
+
+    // Start weapon trail
+    const trail = who === 'player' ? playerTrail : enemyTrail;
+    trail.start();
+
     const duration = ATTACK_DURATION_MS[animState] ?? 600;
     setTimeout(() => {
       s.isAttacking = false;
       attackRef.current = false;
+      trail.stop();
       if (!s.isDead && !s.isStaggered) {
         anim.transition(AnimState.Idle, true);
       }
@@ -225,7 +294,19 @@ function BattleWorld({
   useFrame((_, dt) => {
     const clampedDt = Math.min(dt, 0.05);
     frameCountRef.current++;
+
+    // Always update trails (they fade even during hit-stop)
+    playerTrail.update(clampedDt, camera.position);
+    enemyTrail.update(clampedDt, camera.position);
+
     if (battleEndedRef.current) return;
+
+    // Hit-stop: freeze game logic but keep rendering
+    if (hitStopTimerRef.current > 0) {
+      hitStopTimerRef.current -= clampedDt;
+      battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
+      return;
+    }
 
     if (frameCountRef.current % 180 === 1) {
       const ps = playerController.state;
@@ -240,6 +321,12 @@ function BattleWorld({
       battleCamera.update(clampedDt, ps.position, enemyController.state.position);
       input.update();
       return;
+    }
+
+    // --- Start background music on first combat frame ---
+    if (!bgmStartedRef.current) {
+      bgmStartedRef.current = true;
+      combatAudio.startBGM();
     }
 
     // --- Player input ---
@@ -289,7 +376,7 @@ function BattleWorld({
     // --- Hit detection ---
     if (playerAttackingRef.current) {
       attackFrameRef.current++;
-      const fd = CLASS_FRAME_DATA['berserker']?.[playerAttackTypeRef.current];
+      const fd = CLASS_FRAME_DATA[playerClass]?.[playerAttackTypeRef.current];
       if (fd) {
         for (const hb of fd.hitboxes) {
           if (attackFrameRef.current >= hb.startFrame && attackFrameRef.current <= hb.endFrame) {
@@ -309,7 +396,7 @@ function BattleWorld({
 
     if (enemyAttackingRef.current) {
       enemyAttackFrameRef.current++;
-      const fd = CLASS_FRAME_DATA['berserker']?.[enemyAttackTypeRef.current];
+      const fd = CLASS_FRAME_DATA[enemyClass]?.[enemyAttackTypeRef.current];
       if (fd) {
         for (const hb of fd.hitboxes) {
           if (enemyAttackFrameRef.current >= hb.startFrame && enemyAttackFrameRef.current <= hb.endFrame) {
@@ -335,6 +422,49 @@ function BattleWorld({
     particles.update(clampedDt);
     battleCamera.update(clampedDt, ps.position, enemyController.state.position);
 
+    // --- Weapon trail points ---
+    if (playerAttackingRef.current) {
+      const trailPos = ps.position.clone();
+      trailPos.y += 1.2;
+      const fwd = new THREE.Vector3(Math.sin(ps.rotation), 0, Math.cos(ps.rotation));
+      trailPos.addScaledVector(fwd, 1.0);
+      playerTrail.addPoint(trailPos);
+    }
+    if (enemyAttackingRef.current) {
+      const es = enemyController.state;
+      const trailPos = es.position.clone();
+      trailPos.y += 1.2;
+      const fwd = new THREE.Vector3(Math.sin(es.rotation), 0, Math.cos(es.rotation));
+      trailPos.addScaledVector(fwd, 1.0);
+      enemyTrail.addPoint(trailPos);
+    }
+
+    // --- Footsteps + ground dust ---
+    const playerSpeed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
+    if (playerSpeed > FOOTSTEP_SPEED_THRESHOLD && !ps.isAttacking && !ps.isStaggered && !ps.isDead) {
+      playerStepTimerRef.current -= clampedDt;
+      if (playerStepTimerRef.current <= 0) {
+        playerStepTimerRef.current = FOOTSTEP_INTERVAL;
+        combatAudio.playFootstep();
+        particles.emitDust(ps.position, 0.2);
+      }
+    } else {
+      playerStepTimerRef.current = 0;
+    }
+
+    const es = enemyController.state;
+    const enemySpeed = Math.sqrt(es.velocity.x ** 2 + es.velocity.z ** 2);
+    if (enemySpeed > FOOTSTEP_SPEED_THRESHOLD && !es.isAttacking && !es.isStaggered && !es.isDead) {
+      enemyStepTimerRef.current -= clampedDt;
+      if (enemyStepTimerRef.current <= 0) {
+        enemyStepTimerRef.current = FOOTSTEP_INTERVAL;
+        combatAudio.playFootstep(0.15);
+        particles.emitDust(es.position, 0.15);
+      }
+    } else {
+      enemyStepTimerRef.current = 0;
+    }
+
     const playerStats = damageSystem.getStats('player');
     onPlayerStateUpdate?.(ps.health, ps.maxHealth, playerStats?.stamina ?? 100, playerStats?.staminaMax ?? 100);
     onEnemyStateUpdate?.(enemyController.state.health, enemyController.state.maxHealth);
@@ -350,6 +480,8 @@ function BattleWorld({
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} />
       <primitive object={particles.mesh} />
+      <primitive object={playerTrail.object3d} />
+      <primitive object={enemyTrail.object3d} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
         <planeGeometry args={[30, 30]} />
         <shadowMaterial opacity={0.3} />

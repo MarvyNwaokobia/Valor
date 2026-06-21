@@ -90,7 +90,25 @@ export class CharacterController {
 
     this.updateTimers(dt);
 
-    if (this.state.isStaggered || this.state.isAttacking) return;
+    if (this.state.isAttacking) {
+      // Apply lunge momentum during attacks
+      this.state.position.addScaledVector(this.state.velocity, dt);
+      const decay = Math.exp(-10 * dt);
+      this.state.velocity.x *= decay;
+      this.state.velocity.z *= decay;
+      // Face lock-on target during attacks
+      if (this.lockOnTarget) {
+        const toTarget = new THREE.Vector3()
+          .subVectors(this.lockOnTarget.state.position, this.state.position)
+          .setY(0);
+        this.targetRotation = Math.atan2(toTarget.x, toTarget.z);
+        this.state.rotation = lerpAngle(this.state.rotation, this.targetRotation, this.config.turnSpeed * dt);
+      }
+      this.clampToArena();
+      return;
+    }
+
+    if (this.state.isStaggered) return;
 
     if (this.state.isDodging) {
       this.applyDodgeMovement(dt);
@@ -149,8 +167,11 @@ export class CharacterController {
     const hasInput = Math.abs(move.x) > 0.1 || Math.abs(move.y) > 0.1;
 
     if (!hasInput) {
-      this.state.velocity.x *= 0.85;
-      this.state.velocity.z *= 0.85;
+      const decay = Math.exp(-15 * dt);
+      this.state.velocity.x *= decay;
+      this.state.velocity.z *= decay;
+      if (Math.abs(this.state.velocity.x) < 0.01) this.state.velocity.x = 0;
+      if (Math.abs(this.state.velocity.z) < 0.01) this.state.velocity.z = 0;
       return;
     }
 
