@@ -350,66 +350,49 @@ function BattleWorld({
       }
     }
 
-    // --- Hitbox detection (player attacking) ---
+    // --- Hitbox detection (simplified: direct distance + frame check) ---
+    const checkAttackHit = (
+      attackerId: string,
+      defenderId: string,
+      attackerCtrl: typeof playerController,
+      defenderCtrl: typeof enemyController,
+      attackAnim: AnimState | null,
+      frameCount: number,
+    ) => {
+      if (!attackAnim) return;
+      const frameData = CLASS_FRAME_DATA['berserker']?.[attackAnim];
+      if (!frameData) return;
+
+      for (const hb of frameData.hitboxes) {
+        if (frameCount >= hb.startFrame && frameCount <= hb.endFrame) {
+          const dist = attackerCtrl.state.position.distanceTo(defenderCtrl.state.position);
+          const reach = hb.offset.z + hb.radius + 0.5;
+          if (dist <= reach) {
+            const hitKey = `${attackerId}_${defenderId}_${frameCount}`;
+            if ((hitboxSystem as any)._usedKeys?.has(hitKey)) return;
+            if (!(hitboxSystem as any)._usedKeys) (hitboxSystem as any)._usedKeys = new Set();
+            (hitboxSystem as any)._usedKeys.add(hitKey);
+
+            damageSystem.calculateAndApply(
+              attackerId, defenderId,
+              attackerCtrl, defenderCtrl,
+              hb,
+              { blockable: attackAnim !== AnimState.Special }
+            );
+            return;
+          }
+        }
+      }
+    };
+
     if (playerAttackingRef.current) {
       attackFrameRef.current++;
-      hitboxSystem.advanceFrame();
-
-      const animToState: Record<string, AnimState> = {
-        [AnimState.LightAttack]: AnimState.LightAttack,
-        [AnimState.HeavyAttack]: AnimState.HeavyAttack,
-        [AnimState.Special]: AnimState.Special,
-      };
-      const attackState = animToState[playerAttackingRef.current];
-      const frameData = CLASS_FRAME_DATA['berserker']?.[attackState];
-
-      if (frameData) {
-        hitboxSystem.updateAttackerHitboxes(
-          'player', ps.position, ps.rotation, frameData
-        );
-        const result = hitboxSystem.checkHit('player', 'enemy', enemyController.state.position);
-        if (result.hit && result.hitbox) {
-          const moveMap: Record<string, any> = {
-            [AnimState.LightAttack]: { blockable: true },
-            [AnimState.HeavyAttack]: { blockable: true },
-            [AnimState.Special]: { blockable: false },
-          };
-          damageSystem.calculateAndApply(
-            'player', 'enemy',
-            playerController, enemyController,
-            result.hitbox,
-            moveMap[playerAttackingRef.current] ?? { blockable: true }
-          );
-        }
-      }
+      checkAttackHit('player', 'enemy', playerController, enemyController, playerAttackingRef.current, attackFrameRef.current);
     }
 
-    // --- Hitbox detection (enemy attacking) ---
     if (enemyAttackingRef.current) {
       enemyAttackFrameRef.current++;
-
-      const attackState = enemyAttackingRef.current;
-      const frameData = CLASS_FRAME_DATA['berserker']?.[attackState];
-
-      if (frameData) {
-        hitboxSystem.updateAttackerHitboxes(
-          'enemy', enemyController.state.position, enemyController.state.rotation, frameData
-        );
-        const result = hitboxSystem.checkHit('enemy', 'player', ps.position);
-        if (result.hit && result.hitbox) {
-          const moveMap: Record<string, any> = {
-            [AnimState.LightAttack]: { blockable: true },
-            [AnimState.HeavyAttack]: { blockable: true },
-            [AnimState.Special]: { blockable: false },
-          };
-          damageSystem.calculateAndApply(
-            'enemy', 'player',
-            enemyController, playerController,
-            result.hitbox,
-            moveMap[enemyAttackingRef.current] ?? { blockable: true }
-          );
-        }
-      }
+      checkAttackHit('enemy', 'player', enemyController, playerController, enemyAttackingRef.current, enemyAttackFrameRef.current);
     }
 
     // --- Knockback physics ---
