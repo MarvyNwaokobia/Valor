@@ -4,6 +4,9 @@ valor-design.html
 # Raw Mixamo FBX downloads — large binaries, convert to GLB before committing
 apps/web/public/characters/raw/
 
+# Sketchfab zip archives (keep extracted gltf/glb, not zips)
+apps/web/public/models/**/*.zip
+
 # Dependencies
 node_modules/
 .pnp

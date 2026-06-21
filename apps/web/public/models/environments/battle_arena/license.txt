@@ -1,0 +1,11 @@
+Model Information:
+* title:	battle arena
+* source:	https://sketchfab.com/3d-models/battle-arena-ac1432c2970045a0a0e92a10b288fe5b
+* author:	3D Arena (https://sketchfab.com/Jamesaalam)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "battle arena" (https://sketchfab.com/3d-models/battle-arena-ac1432c2970045a0a0e92a10b288fe5b) by 3D Arena (https://sketchfab.com/Jamesaalam) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
