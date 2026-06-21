@@ -4,10 +4,18 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sword, Shield, Zap, Trophy, HeartCrack, Wifi, WifiOff } from 'lucide-react'
 import { useGameSocket, type ActionType } from '@/hooks/useGameSocket'
-import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
+import { CLASS_DEFINITIONS } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import type { Player } from '@/types'
+import { useCombatFeel } from '@/hooks/useCombatFeel'
+import { useAudio } from '@/hooks/useAudio'
+import WeaponTrail from './WeaponTrail'
+import CombatOverlay from './CombatOverlay'
+import ComboCounter from './ComboCounter'
+import DamageNumber from './DamageNumber'
+import ImpactBurst from './ImpactBurst'
+import HitSpark from './HitSpark'
+import IllustratedBattleScene from './IllustratedBattleScene'
 
 interface Props {
   player:        Player
@@ -274,15 +282,82 @@ function FightScreen({
   onForfeit: () => void
 }) {
   const [matchSecs, setMatchSecs] = useState(60)
+  const combatFeel = useCombatFeel()
+  const { playHit, playSpecial, playSwing, playBlock, startAmbient, stopAmbient } = useAudio()
+  const [playerTrail, setPlayerTrail] = useState(false)
+  const [opponentTrail, setOpponentTrail] = useState(false)
+  const [comboCount, setComboCount] = useState(0)
+  interface DmgEvent { id: number; value: number; isSpecial: boolean; side: 'player' | 'bot' }
+  const [dmgEvents, setDmgEvents] = useState<DmgEvent[]>([])
+  const dmgCounter = useRef(0)
+  const lastActionKey = useRef('')
+
   useEffect(() => {
     const t = setInterval(() => setMatchSecs(s => Math.max(0, s - 1)), 1000)
     return () => clearInterval(t)
   }, [])
 
+  useEffect(() => {
+    startAmbient()
+    return () => stopAmbient()
+  }, [startAmbient, stopAmbient])
+
+  function spawnDmgNumber(value: number, side: 'player' | 'bot', isSpecial: boolean) {
+    if (value <= 0) return
+    const id = ++dmgCounter.current
+    setDmgEvents(prev => [...prev, { id, value, isSpecial, side }])
+    setTimeout(() => setDmgEvents(prev => prev.filter(e => e.id !== id)), 760)
+  }
+
+  useEffect(() => {
+    if (!state.lastAction) return
+    const ev = state.lastAction
+    const key = `${ev.attacker}-${ev.action}-${ev.damage}-${ev.player_hp}-${ev.opponent_hp}`
+    if (lastActionKey.current === key) return
+    lastActionKey.current = key
+
+    const isSpecial = ev.action === 'special'
+    const attackerColor = ev.attacker === 'player' ? def.accentColor : oppDef.accentColor
+    const attackerClass = ev.attacker === 'player'
+      ? (player.character_class ?? 'Berserker')
+      : (state.opponent?.class ?? 'Berserker')
+    const hitSide = ev.attacker === 'player' ? 'bot' : 'player'
+
+    playSwing(isSpecial)
+    if (ev.attacker === 'player') {
+      setPlayerTrail(true)
+      setTimeout(() => setPlayerTrail(false), isSpecial ? 390 : 260)
+    } else {
+      setOpponentTrail(true)
+      setTimeout(() => setOpponentTrail(false), isSpecial ? 390 : 260)
+    }
+
+    if (ev.damage > 0) {
+      combatFeel.triggerHit(hitSide, ev.damage, attackerColor, isSpecial)
+      spawnDmgNumber(ev.damage, hitSide, isSpecial)
+      if (ev.attacker === 'player') setComboCount(c => c + 1)
+      else setComboCount(0)
+      playHit(attackerClass, ev.damage)
+      if (isSpecial) playSpecial(attackerClass)
+    } else if (ev.was_blocked || ev.action === 'block') {
+      combatFeel.triggerBlock(hitSide, hitSide === 'player' ? def.accentColor : oppDef.accentColor)
+      playBlock()
+      if (ev.attacker === 'player') setComboCount(0)
+    }
+  }, [state.lastAction, def.accentColor, oppDef.accentColor, player.character_class, state.opponent?.class, combatFeel, playHit, playSpecial, playSwing, playBlock])
+
   const timerColor = matchSecs <= 10 ? '#ef4444' : matchSecs <= 20 ? '#f97316' : 'rgba(255,255,255,0.4)'
+  const shakeX = combatFeel.shakeLevel >= 3 ? [-10, 9, -6, 5, 0] : combatFeel.shakeLevel >= 2 ? [-5, 5, -3, 0] : combatFeel.shakeLevel === 1 ? [-2, 2, 0] : 0
+  const camScale = combatFeel.specialCam > 0 ? [1, 1.045, 1] : 1
 
   return (
-    <div className="fixed inset-0 z-60 flex flex-col overflow-hidden" style={{ background: '#04030c' }}>
+    <motion.div
+      key={combatFeel.shakeKey}
+      animate={{ x: shakeX, scale: camScale }}
+      transition={{ duration: combatFeel.shakeLevel >= 3 ? 0.28 : 0.18, ease: 'easeOut' }}
+      className="fixed inset-0 z-60 flex flex-col overflow-hidden"
+      style={{ background: '#04030c' }}
+    >
 
       {/* ── Atmosphere ── */}
       <div className="absolute inset-0 pointer-events-none">
@@ -296,30 +371,57 @@ function FightScreen({
         }} />
       </div>
 
-      {/* ── Opponent section (top ~40%) ── */}
-      <div className="relative flex-none" style={{ height: '40%' }}>
-        {/* Opponent HP bar */}
-        <div className="absolute inset-x-0 top-0 z-20 px-4 pt-10">
-          <HpBar hp={state.opponentHp} color={oppDef.accentColor} flip />
-          <div className="flex justify-between items-center mt-1 px-0.5">
-            <span className="font-display font-black text-[10px] uppercase tracking-widest" style={{ color: oppDef.accentColor }}>
-              {state.opponent?.name ?? 'Opponent'}
-            </span>
-            <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">
-              {state.opponent?.class}
-            </span>
-          </div>
+      <WeaponTrail active={playerTrail} side="player" color={def.accentColor} special={state.lastAction?.action === 'special' && state.lastAction.attacker === 'player'} />
+      <WeaponTrail active={opponentTrail} side="bot" color={oppDef.accentColor} special={state.lastAction?.action === 'special' && state.lastAction.attacker === 'opponent'} />
+      <CombatOverlay color={combatFeel.overlayColor} intensity={combatFeel.overlayIntensity} side={combatFeel.overlaySide} />
+      <ComboCounter count={comboCount} color={def.accentColor} />
+
+      <div className="absolute left-0 top-0 bottom-0 w-1/2 pointer-events-none z-40">
+        <AnimatePresence>
+          {dmgEvents.filter(e => e.side === 'player').map(e => <DamageNumber key={e.id} {...e} />)}
+        </AnimatePresence>
+        <div className="absolute" style={{ left: '65%', top: '62%' }}>
+          <AnimatePresence>
+            {combatFeel.playerSpark && <HitSpark key={`pvp-player-spark-${combatFeel.shakeKey}`} color={combatFeel.playerSpark.color} level={combatFeel.playerSpark.level} />}
+          </AnimatePresence>
+          <AnimatePresence>
+            {combatFeel.playerBurst && <ImpactBurst key={`pvp-player-burst-${combatFeel.shakeKey}`} color={combatFeel.playerBurst} size="md" />}
+          </AnimatePresence>
         </div>
-        {/* Opponent 3D character — mirrored to face player */}
-        <div className="absolute inset-0 overflow-hidden" style={{ transform: 'scaleX(-1)' }}>
-          <CharacterViewer
-            glbPath={CHARACTER_GLB[(state.opponent?.class as CharacterClass) ?? 'Berserker']}
-            accentColor={oppDef.accentColor}
-            animationName={state.opponentAnim}
-            modelKey={`pvp-opp-${state.opponent?.class ?? 'bot'}`}
-            className="absolute inset-0"
-          />
+      </div>
+
+      <div className="absolute right-0 top-0 bottom-0 w-1/2 pointer-events-none z-40">
+        <AnimatePresence>
+          {dmgEvents.filter(e => e.side === 'bot').map(e => <DamageNumber key={e.id} {...e} />)}
+        </AnimatePresence>
+        <div className="absolute" style={{ left: '35%', top: '30%' }}>
+          <AnimatePresence>
+            {combatFeel.botSpark && <HitSpark key={`pvp-bot-spark-${combatFeel.shakeKey}`} color={combatFeel.botSpark.color} level={combatFeel.botSpark.level} />}
+          </AnimatePresence>
+          <AnimatePresence>
+            {combatFeel.botBurst && <ImpactBurst key={`pvp-bot-burst-${combatFeel.shakeKey}`} color={combatFeel.botBurst} size="md" />}
+          </AnimatePresence>
         </div>
+      </div>
+
+      <div className="absolute inset-0">
+        <IllustratedBattleScene
+          playerClass={player.character_class as CharacterClass}
+          playerAnim={state.playerAnim}
+          playerAccentColor={def.accentColor}
+          botClass={(state.opponent?.class as CharacterClass) ?? 'Berserker'}
+          botAnim={state.opponentAnim}
+          botAccentColor={oppDef.accentColor}
+        />
+      </div>
+
+      <div className="absolute inset-x-0 top-0 z-50 flex justify-between gap-3 px-3"
+        style={{
+          paddingTop: 'max(12px, env(safe-area-inset-top, 12px))',
+          background: 'linear-gradient(180deg, rgba(6,3,10,0.9), transparent)',
+        }}>
+        <DuelPlate name={player.character_name} label={player.character_class ?? 'Berserker'} hp={state.playerHp} color={def.accentColor} />
+        <DuelPlate name={state.opponent?.name ?? 'Opponent'} label={state.opponent?.class ?? 'Warrior'} hp={state.opponentHp} color={oppDef.accentColor} align="right" />
       </div>
 
       {/* ── Center bar: timer + last action flash ── */}
@@ -352,16 +454,7 @@ function FightScreen({
         </AnimatePresence>
       </div>
 
-      {/* ── Player section (middle ~30%) ── */}
-      <div className="relative flex-1 min-h-0">
-        <CharacterViewer
-          glbPath={CHARACTER_GLB[player.character_class as CharacterClass]}
-          accentColor={def.accentColor}
-          animationName={state.playerAnim}
-          modelKey={`pvp-player-${player.character_class}`}
-          className="absolute inset-0"
-        />
-      </div>
+      <div className="relative flex-1 min-h-0 pointer-events-none" />
 
       {/* ── Player HP + controls ── */}
       <div className="relative z-30 flex flex-col px-4 pb-safe shrink-0"
@@ -403,11 +496,64 @@ function FightScreen({
           Forfeit
         </button>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
 // ── HP bar ────────────────────────────────────────────────────────────────────
+
+function DuelPlate({ name, label, hp, color, align = 'left' }: {
+  name: string
+  label: string
+  hp: number
+  color: string
+  align?: 'left' | 'right'
+}) {
+  const right = align === 'right'
+  return (
+    <div
+      className={`relative flex w-[44%] max-w-[320px] items-center gap-2 ${right ? 'flex-row-reverse text-right' : ''}`}
+      style={{
+        padding: '8px 10px',
+        background: 'linear-gradient(180deg, rgba(66,35,13,0.9), rgba(12,6,16,0.86))',
+        border: '1px solid rgba(245,188,85,0.5)',
+        boxShadow: `0 0 20px ${color}28, inset 0 0 18px rgba(255,218,138,0.08)`,
+        clipPath: right
+          ? 'polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 10px 50%)'
+          : 'polygon(14px 0, 100% 0, calc(100% - 10px) 50%, 100% 100%, 14px 100%, 0 50%)',
+      }}
+    >
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border font-display font-black"
+        style={{
+          color,
+          borderColor: 'rgba(245,188,85,0.75)',
+          background: `radial-gradient(circle, ${color}40, rgba(0,0,0,0.7))`,
+          boxShadow: `0 0 16px ${color}70`,
+        }}
+      >
+        {name.charAt(0).toUpperCase()}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-display font-black leading-none" style={{ color: '#fff2cf', fontSize: 12 }}>
+          {name}
+        </p>
+        <p className="mt-0.5 truncate text-[8px] font-black uppercase tracking-[0.22em]" style={{ color: '#f8d58a' }}>
+          {label}
+        </p>
+        <div className="mt-1 h-2 overflow-hidden rounded-full" style={{ background: 'rgba(10,5,8,0.86)', border: '1px solid rgba(245,188,85,0.16)' }}>
+          <motion.div
+            className="h-full rounded-full"
+            style={{ background: `linear-gradient(90deg, ${color}88, ${color})`, boxShadow: `0 0 8px ${color}` }}
+            animate={{ width: `${hp}%` }}
+            transition={{ duration: 0.28, ease: 'easeOut' }}
+          />
+        </div>
+      </div>
+      <span className="font-display font-black text-xs" style={{ color: '#fff2cf' }}>{hp}</span>
+    </div>
+  )
+}
 
 function HpBar({ hp, color, flip = false }: { hp: number; color: string; flip?: boolean }) {
   return (

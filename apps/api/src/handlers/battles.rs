@@ -441,21 +441,40 @@ pub async fn challenge_player(
     .execute(&state.db)
     .await;
 
-    // Update both players
+    // Update both players using the same 1000-XP rank cadence as bot battles.
     for (wallet, xp, won) in [
         (&body.challenger_wallet, xp_challenger, result.challenger_won),
         (&body.opponent_wallet, xp_opponent, !result.challenger_won),
     ] {
         let player = if wallet == &body.challenger_wallet { &challenger } else { &opponent };
-        let new_xp = (player.xp + xp).min(999);
+        let raw_new_xp = player.xp + xp;
+        let ranked_up = raw_new_xp >= XP_PER_RANK;
+        let new_xp = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
+        let new_rank = if ranked_up { next_rank(&player.rank) } else { None };
         let wins = if won { player.wins + 1 } else { player.wins };
         let losses = if !won { player.losses + 1 } else { player.losses };
-        let _ = sqlx::query(
-            "UPDATE players SET xp = $1, wins = $2, losses = $3, last_active = $4 WHERE wallet_address = $5",
-        )
-        .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
-        .execute(&state.db)
-        .await;
+
+        if let Some(rank) = new_rank {
+            let _ = sqlx::query(
+                "UPDATE players
+                 SET xp = $1, wins = $2, losses = $3, rank = $4,
+                     last_active = $5, decay_status = 'none'
+                 WHERE wallet_address = $6",
+            )
+            .bind(new_xp).bind(wins).bind(losses).bind(rank).bind(now).bind(wallet)
+            .execute(&state.db)
+            .await;
+        } else {
+            let _ = sqlx::query(
+                "UPDATE players
+                 SET xp = $1, wins = $2, losses = $3,
+                     last_active = $4, decay_status = 'none'
+                 WHERE wallet_address = $5",
+            )
+            .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
+            .execute(&state.db)
+            .await;
+        }
     }
 
     // Background chain write — non-blocking
