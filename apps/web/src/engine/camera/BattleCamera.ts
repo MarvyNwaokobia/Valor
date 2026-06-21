@@ -13,14 +13,14 @@ export interface CameraConfig {
 }
 
 const DEFAULT_CONFIG: CameraConfig = {
-  followDistance: 6,
-  followHeight: 3.5,
+  followDistance: 8,
+  followHeight: 4,
   lookAheadDistance: 2,
-  smoothSpeed: 5,
-  lockOnDistance: 8,
-  lockOnHeight: 2.5,
-  fovDefault: 55,
-  fovCombat: 45,
+  smoothSpeed: 4,
+  lockOnDistance: 12,
+  lockOnHeight: 4,
+  fovDefault: 60,
+  fovCombat: 50,
   shakeDecay: 8,
 };
 
@@ -52,6 +52,10 @@ export class BattleCamera {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.camera.fov = this.config.fovDefault;
     this.camera.updateProjectionMatrix();
+    this.currentPosition.set(0, this.config.lockOnHeight, this.config.lockOnDistance);
+    this.currentLookAt.set(0, 1, 0);
+    this.camera.position.copy(this.currentPosition);
+    this.camera.lookAt(this.currentLookAt);
   }
 
   get cameraYaw(): number {

@@ -70,13 +70,14 @@ function BattleWorld({
     []
   );
 
+  // All classes use the berserker GLTF model, so force berserker animation map
   const playerAnimMachine = useMemo(
-    () => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]),
-    [playerClass]
+    () => new AnimationStateMachine(CLASS_ANIMATIONS['berserker']),
+    []
   );
   const enemyAnimMachine = useMemo(
-    () => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]),
-    [enemyClass]
+    () => new AnimationStateMachine(CLASS_ANIMATIONS['berserker']),
+    []
   );
 
   const hitboxSystem = useMemo(() => new HitboxSystem(), []);
@@ -310,8 +311,9 @@ function BattleWorld({
 
     // --- Enemy AI ---
     if (!enemyController.state.isDead) {
-      enemyAI.update(clampedDt, enemyController, playerController);
       const aiInput = enemyAI.getInput();
+      aiInput.update();
+      enemyAI.update(clampedDt, enemyController, playerController);
       enemyController.update(clampedDt, aiInput, 0);
 
       const es = enemyController.state;
@@ -319,9 +321,9 @@ function BattleWorld({
       const aiHeavyAtk = aiInput.getAction(Action.HeavyAttack);
       const aiSpecial = aiInput.getAction(Action.Special);
 
-      if (aiLightAtk.justPressed) startEnemyAttack(AnimState.LightAttack);
-      if (aiHeavyAtk.justPressed) startEnemyAttack(AnimState.HeavyAttack);
-      if (aiSpecial.justPressed) startEnemyAttack(AnimState.Special);
+      if (aiLightAtk.held && !es.isAttacking) startEnemyAttack(AnimState.LightAttack);
+      if (aiHeavyAtk.held && !es.isAttacking) startEnemyAttack(AnimState.HeavyAttack);
+      if (aiSpecial.held && !es.isAttacking) startEnemyAttack(AnimState.Special);
 
       if (!es.isStaggered && !es.isAttacking && !es.isDead) {
         const aiMove = aiInput.moveAxis;
@@ -336,8 +338,6 @@ function BattleWorld({
           enemyAnimMachine.transition(AnimState.Idle);
         }
       }
-
-      aiInput.update();
     }
 
     // --- Hitbox detection (player attacking) ---
@@ -351,7 +351,7 @@ function BattleWorld({
         [AnimState.Special]: AnimState.Special,
       };
       const attackState = animToState[playerAttackingRef.current];
-      const frameData = CLASS_FRAME_DATA[playerClass]?.[attackState];
+      const frameData = CLASS_FRAME_DATA['berserker']?.[attackState];
 
       if (frameData) {
         hitboxSystem.updateAttackerHitboxes(
@@ -379,7 +379,7 @@ function BattleWorld({
       enemyAttackFrameRef.current++;
 
       const attackState = enemyAttackingRef.current;
-      const frameData = CLASS_FRAME_DATA[enemyClass]?.[attackState];
+      const frameData = CLASS_FRAME_DATA['berserker']?.[attackState];
 
       if (frameData) {
         hitboxSystem.updateAttackerHitboxes(
