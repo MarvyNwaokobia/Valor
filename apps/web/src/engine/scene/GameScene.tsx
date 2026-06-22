@@ -18,6 +18,9 @@ import { ParticleSystem } from '../vfx/ParticleSystem';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
+import { ScreenEffects } from '../vfx/ScreenEffects';
+import { CombatPostProcessing } from '../vfx/PostProcessing';
+import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
 import { StageLighting } from '../world/StageLighting';
 import { AmbientVFX } from '../world/AmbientVFX';
 
@@ -76,7 +79,8 @@ function BattleWorld({
   onBattleEnd,
   onReady,
   combatActive = false,
-}: GameSceneProps & { difficulty: AIDifficulty; onReady?: () => void; combatActive?: boolean }) {
+  screenFx,
+}: GameSceneProps & { difficulty: AIDifficulty; onReady?: () => void; combatActive?: boolean; screenFx: ScreenEffects }) {
   const { camera } = useThree();
   const perspCamera = camera as THREE.PerspectiveCamera;
   const battleEndedRef = useRef(false);
@@ -156,6 +160,19 @@ function BattleWorld({
         battleCamera.punch(event.hitType === 'heavy' ? 0.06 : 0.1);
       }
 
+      if (event.killed) {
+        const killColor = CLASS_ACCENTS[event.attackerId] ?? '#ffffff';
+        screenFx.onKill(killColor);
+      } else if (event.hitType === 'light') {
+        screenFx.onLightHit();
+      } else if (event.hitType === 'heavy') {
+        screenFx.onHeavyHit();
+        if (event.critical) screenFx.onCriticalHit();
+      } else {
+        screenFx.onSpecialHit();
+      }
+      if (event.blocked) screenFx.onBlock();
+
       // Hit-stop: set timer, frame loop counts it down
       const hitStopDur = event.killed
         ? HITSTOP_DURATION.kill
@@ -230,7 +247,7 @@ function BattleWorld({
       }
     });
   }, [damageSystem, comboSystem, knockback, playerController, enemyController,
-    battleCamera, particles, combatAudio, playerAnimMachine, enemyAnimMachine,
+    battleCamera, particles, combatAudio, screenFx, playerAnimMachine, enemyAnimMachine,
     playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
 
   const doAttack = useCallback((
@@ -303,6 +320,7 @@ function BattleWorld({
     if (hitStopTimerRef.current > 0) {
       hitStopTimerRef.current -= clampedDt;
       particles.update(clampedDt);
+      screenFx.update(clampedDt);
       battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
       if (hitStopTimerRef.current <= 0) {
         playerAnimMachine.resume();
@@ -423,6 +441,7 @@ function BattleWorld({
     damageSystem.updateStamina(clampedDt);
     comboSystem.update(clampedDt);
     particles.update(clampedDt);
+    screenFx.update(clampedDt);
     battleCamera.update(clampedDt, ps.position, enemyController.state.position);
 
     // --- Weapon trail points ---
@@ -489,6 +508,7 @@ function BattleWorld({
         <planeGeometry args={[30, 30]} />
         <shadowMaterial opacity={0.3} />
       </mesh>
+      <CombatPostProcessing screenEffects={screenFx} />
     </>
   );
 }
@@ -518,6 +538,7 @@ export function GameScene(props: GameSceneProps) {
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
+  const screenFx = useMemo(() => new ScreenEffects(), []);
 
   useEffect(() => {
     if (inputAttached.current) return;
@@ -554,6 +575,7 @@ export function GameScene(props: GameSceneProps) {
             {...props}
             difficulty={difficulty}
             combatActive={combatStartedRef.current}
+            screenFx={screenFx}
             onDamageEvent={props.onDamageEvent}
             onComboUpdate={setCombo}
             onPlayerStateUpdate={(h, mh, s, sm) => { setPlayerHP(h); setPlayerMaxHP(mh); setPlayerStamina(s); setPlayerStaminaMax(sm); }}
@@ -563,6 +585,8 @@ export function GameScene(props: GameSceneProps) {
           />
         </Suspense>
       </Canvas>
+
+      <ScreenFlashOverlay screenEffects={screenFx} />
 
       {/* HUD */}
       <div className="fixed inset-0 pointer-events-none z-30">

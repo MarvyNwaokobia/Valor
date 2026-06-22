@@ -70,6 +70,7 @@ export class AnimationStateMachine {
   private animMap: AnimationMap;
   private onStateChange?: (from: AnimState, to: AnimState) => void;
   private paused = false;
+  private pendingTransition: { state: AnimState; force: boolean } | null = null;
 
   constructor(animMap: AnimationMap) {
     this.animMap = animMap;
@@ -97,6 +98,11 @@ export class AnimationStateMachine {
 
   transition(newState: AnimState, force = false) {
     if (!this.mixer) return;
+
+    if (this.paused) {
+      this.pendingTransition = { state: newState, force };
+      return;
+    }
 
     if (newState === this.currentState && !force) return;
 
@@ -173,6 +179,11 @@ export class AnimationStateMachine {
   resume() {
     this.paused = false;
     if (this.mixer) this.mixer.timeScale = 1;
+    if (this.pendingTransition) {
+      const { state, force } = this.pendingTransition;
+      this.pendingTransition = null;
+      this.transition(state, force);
+    }
   }
 
   setTimeScale(scale: number) {
