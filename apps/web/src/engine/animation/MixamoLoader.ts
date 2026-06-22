@@ -1,58 +1,80 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import { AnimState } from './AnimationStateMachine';
 
-const MIXAMO_ANIMS: Record<string, { path: string; state: AnimState }> = {
-  fightIdle: { path: '/characters/raw/Fighting Idle.fbx', state: AnimState.Idle },
-  walk: { path: '/characters/raw/Walking.fbx', state: AnimState.Walk },
-  run: { path: '/characters/raw/Running.fbx', state: AnimState.Run },
-  lightAttack: { path: '/characters/raw/Jab Cross.fbx', state: AnimState.LightAttack },
-  heavyAttack: { path: '/characters/raw/Hook Punch.fbx', state: AnimState.HeavyAttack },
-  special: { path: '/characters/raw/Roundhouse Kick.fbx', state: AnimState.Special },
-  block: { path: '/characters/raw/Body Block.fbx', state: AnimState.Block },
-  dodge: { path: '/characters/raw/Dodging.fbx', state: AnimState.Dodge },
-  hitLight: { path: '/characters/raw/Hit Reaction.fbx', state: AnimState.HitLight },
-  hitHeavy: { path: '/characters/raw/Getting Hit.fbx', state: AnimState.HitHeavy },
-  knockdown: { path: '/characters/raw/Shoulder Hit And Fall.fbx', state: AnimState.Knockdown },
-  getUp: { path: '/characters/raw/Getting Up.fbx', state: AnimState.GetUp },
-  death: { path: '/characters/raw/Standing Death Forward 02.fbx', state: AnimState.Death },
-  victory: { path: '/characters/raw/Victory.fbx', state: AnimState.Victory },
+export const CLIP_NAMES = {
+  fightIdle: 'fightIdle',
+  walk: 'walk',
+  run: 'run',
+  jabCross: 'jabCross',
+  hookPunch: 'hookPunch',
+  roundhouseKick: 'roundhouseKick',
+  bodyBlock: 'bodyBlock',
+  dodge: 'dodge',
+  hitReaction: 'hitReaction',
+  gettingHit: 'gettingHit',
+  shoulderFall: 'shoulderFall',
+  gettingUp: 'gettingUp',
+  deathForward: 'deathForward',
+  victory: 'victory',
+  hook: 'hook',
+  fistFight: 'fistFight',
+  rollKick: 'rollKick',
+  roundhouseAlt: 'roundhouseAlt',
+  uppercut: 'uppercut',
+  takingPunch: 'takingPunch',
+  outwardBlock: 'outwardBlock',
+  dodgeWalk: 'dodgeWalk',
+  jumpDown: 'jumpDown',
+  runRoll: 'runRoll',
+  victoryAlt: 'victoryAlt',
+  standUp: 'standUp',
+  reaction: 'reaction',
+  hitReactionAlt: 'hitReactionAlt',
+  gettingUpAlt: 'gettingUpAlt',
+} as const;
+
+const ALL_ANIMS: Record<string, string> = {
+  [CLIP_NAMES.fightIdle]: '/characters/raw/Fighting Idle.fbx',
+  [CLIP_NAMES.walk]: '/characters/raw/Walking.fbx',
+  [CLIP_NAMES.run]: '/characters/raw/Running.fbx',
+  [CLIP_NAMES.jabCross]: '/characters/raw/Jab Cross.fbx',
+  [CLIP_NAMES.hookPunch]: '/characters/raw/Hook Punch.fbx',
+  [CLIP_NAMES.roundhouseKick]: '/characters/raw/Roundhouse Kick.fbx',
+  [CLIP_NAMES.bodyBlock]: '/characters/raw/Body Block.fbx',
+  [CLIP_NAMES.dodge]: '/characters/raw/Dodging.fbx',
+  [CLIP_NAMES.hitReaction]: '/characters/raw/Hit Reaction.fbx',
+  [CLIP_NAMES.gettingHit]: '/characters/raw/Getting Hit.fbx',
+  [CLIP_NAMES.shoulderFall]: '/characters/raw/Shoulder Hit And Fall.fbx',
+  [CLIP_NAMES.gettingUp]: '/characters/raw/Getting Up.fbx',
+  [CLIP_NAMES.deathForward]: '/characters/raw/Standing Death Forward 02.fbx',
+  [CLIP_NAMES.victory]: '/characters/raw/Victory.fbx',
+  [CLIP_NAMES.hook]: '/characters/raw/Hook.fbx',
+  [CLIP_NAMES.fistFight]: '/characters/raw/Fist Fight A.fbx',
+  [CLIP_NAMES.rollKick]: '/characters/raw/Roll Kicking.fbx',
+  [CLIP_NAMES.roundhouseAlt]: '/characters/raw/Roundhouse Kicking.fbx',
+  [CLIP_NAMES.uppercut]: '/characters/raw/Receiving A Big Uppercut.fbx',
+  [CLIP_NAMES.takingPunch]: '/characters/raw/Taking Punch.fbx',
+  [CLIP_NAMES.outwardBlock]: '/characters/raw/Outward Block.fbx',
+  [CLIP_NAMES.dodgeWalk]: '/characters/raw/Dodging walk.fbx',
+  [CLIP_NAMES.jumpDown]: '/characters/raw/Jumping Down.fbx',
+  [CLIP_NAMES.runRoll]: '/characters/raw/Running and rolling.fbx',
+  [CLIP_NAMES.victoryAlt]: '/characters/raw/Victoryy.fbx',
+  [CLIP_NAMES.standUp]: '/characters/raw/standing Up.fbx',
+  [CLIP_NAMES.reaction]: '/characters/raw/Reaction.fbx',
+  [CLIP_NAMES.hitReactionAlt]: '/characters/raw/Hit Reaction (1).fbx',
+  [CLIP_NAMES.gettingUpAlt]: '/characters/raw/Getting Upp.fbx',
 };
 
-// Extra animations loaded for variety — can be swapped in per-class
-export const EXTRA_ANIMS: Record<string, string> = {
-  hookCombo: '/characters/raw/Hook.fbx',
-  fistFight: '/characters/raw/Fist Fight A.fbx',
-  rollKick: '/characters/raw/Roll Kicking.fbx',
-  roundhouseAlt: '/characters/raw/Roundhouse Kicking.fbx',
-  uppercut: '/characters/raw/Receiving A Big Uppercut.fbx',
-  takingPunch: '/characters/raw/Taking Punch.fbx',
-  outwardBlock: '/characters/raw/Outward Block.fbx',
-  dodgeWalk: '/characters/raw/Dodging walk.fbx',
-  jumpDown: '/characters/raw/Jumping Down.fbx',
-  runRoll: '/characters/raw/Running and rolling.fbx',
-  victoryAlt: '/characters/raw/Victoryy.fbx',
-  standUp: '/characters/raw/standing Up.fbx',
-  reaction: '/characters/raw/Reaction.fbx',
-};
-
-const loadedClips: Map<string, THREE.AnimationClip> = new Map();
-const extraClips: Map<string, THREE.AnimationClip> = new Map();
+const allClips: Map<string, THREE.AnimationClip> = new Map();
 let loadingPromise: Promise<void> | null = null;
 
-function retargetClip(clip: THREE.AnimationClip, glbBonePrefix?: string): THREE.AnimationClip {
+function retargetClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   for (const track of clip.tracks) {
-    // Handle all Mixamo bone name variants:
-    // mixamorigHips → mixamorig:Hips
-    // mixamorig1Hips → mixamorig:Hips
-    // mixamorig:Hips stays as-is
     track.name = track.name
-      .replace(/^mixamorig\d*(\w)/, (_, first) => 'mixamorig:' + first.toUpperCase())
+      .replace(/^mixamorig\d*(\w)/, (_, first: string) => 'mixamorig:' + first.toUpperCase())
       .replace(/^mixamorig::/, 'mixamorig:');
   }
 
-  // Remove root motion — Hips position track causes characters to
-  // float, sink, and slide. Game controls position, not animation.
   clip.tracks = clip.tracks.filter(track => {
     if (track.name.includes('Hips') && track.name.includes('position')) {
       return false;
@@ -64,78 +86,39 @@ function retargetClip(clip: THREE.AnimationClip, glbBonePrefix?: string): THREE.
 }
 
 export async function loadMixamoAnimations(): Promise<Map<string, THREE.AnimationClip>> {
-  if (loadedClips.size > 0) return loadedClips;
+  if (allClips.size > 0) return allClips;
   if (loadingPromise) {
     await loadingPromise;
-    return loadedClips;
+    return allClips;
   }
 
   loadingPromise = (async () => {
     const loader = new FBXLoader();
-
-    // Load primary animations
-    const entries = Object.entries(MIXAMO_ANIMS);
-    console.log(`[MixamoLoader] Loading ${entries.length} primary animations...`);
+    const entries = Object.entries(ALL_ANIMS);
+    console.log(`[MixamoLoader] Loading ${entries.length} animations...`);
 
     await Promise.allSettled(
-      entries.map(async ([key, { path, state }]) => {
+      entries.map(async ([name, path]) => {
         try {
           const group = await loader.loadAsync(path);
           if (group.animations.length > 0) {
             const clip = retargetClip(group.animations[0]);
-            clip.name = state;
-            loadedClips.set(state, clip);
+            clip.name = name;
+            allClips.set(name, clip);
           }
         } catch (e) {
-          console.warn(`[MixamoLoader] Failed: ${key} — ${(e as Error).message}`);
+          console.warn(`[MixamoLoader] Failed: ${name} — ${(e as Error).message}`);
         }
       })
     );
 
-    console.log(`[MixamoLoader] Primary: ${loadedClips.size}/${entries.length}`);
-
-    // Load extras in background (non-blocking)
-    const extraEntries = Object.entries(EXTRA_ANIMS);
-    Promise.allSettled(
-      extraEntries.map(async ([key, path]) => {
-        try {
-          const group = await loader.loadAsync(path);
-          if (group.animations.length > 0) {
-            const clip = retargetClip(group.animations[0]);
-            clip.name = `extra_${key}`;
-            extraClips.set(key, clip);
-          }
-        } catch {}
-      })
-    ).then(() => {
-      console.log(`[MixamoLoader] Extras: ${extraClips.size}/${extraEntries.length}`);
-    });
+    console.log(`[MixamoLoader] Loaded ${allClips.size}/${entries.length} animations`);
   })();
 
   await loadingPromise;
-  return loadedClips;
+  return allClips;
 }
 
 export function getMixamoClips(): Map<string, THREE.AnimationClip> {
-  return loadedClips;
-}
-
-export function getExtraClips(): Map<string, THREE.AnimationClip> {
-  return extraClips;
-}
-
-export function applyMixamoToMixer(
-  mixer: THREE.AnimationMixer,
-  existingClips: THREE.AnimationClip[]
-): THREE.AnimationClip[] {
-  const combined = [...existingClips];
-
-  for (const [name, clip] of loadedClips) {
-    const exists = combined.find(c => c.name === name);
-    if (!exists) {
-      combined.push(clip);
-    }
-  }
-
-  return combined;
+  return allClips;
 }
