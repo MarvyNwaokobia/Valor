@@ -21,6 +21,8 @@ import { ScreenEffects } from '../vfx/ScreenEffects';
 import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
 import { StageLighting } from '../world/StageLighting';
 import { AmbientVFX } from '../world/AmbientVFX';
+import { Crowd } from '../world/Crowd';
+import { CrowdDirector } from '../world/CrowdDirector';
 
 type ClassId = 'berserker' | 'sentinel' | 'phantom';
 
@@ -122,6 +124,7 @@ function BattleWorld({
   const knockback = useMemo(() => new KnockbackPhysics(), []);
   const combatAudio = useMemo(() => new CombatAudio(), []);
   const particles = useMemo(() => new ParticleSystem(), []);
+  const crowd = useMemo(() => new CrowdDirector(), []);
 
   const playerAttackingRef = useRef(false);
   const enemyAttackingRef = useRef(false);
@@ -174,13 +177,21 @@ function BattleWorld({
       if (event.blocked) {
         particles.emitSparks(event.hitPosition, event.knockbackDir, 0.4);
         defender.state.impactPulse = 0.5;
+        crowd.boo(0.4);
+        combatAudio.crowdBoo(0.4);
       } else if (event.killed) {
         particles.emitKillBurst(event.hitPosition, CLASS_ACCENTS[event.attackerId] ?? '#ffffff');
         particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
         defender.state.impactPulse = 1;
+        crowd.roar();
+        combatAudio.crowdCheer(1);
       } else {
         particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
         defender.state.impactPulse = event.hitType === 'light' ? 0.7 : 1;
+        // Big blows pop the crowd; light taps stir a low murmur.
+        const hype = event.hitType === 'light' ? 0.3 : event.hitType === 'heavy' ? 0.6 : 0.9;
+        crowd.cheer(hype);
+        if (event.hitType !== 'light') combatAudio.crowdCheer(hype);
       }
 
       if (event.killed) {
@@ -275,7 +286,7 @@ function BattleWorld({
       }
     });
   }, [damageSystem, comboSystem, knockback, playerController, enemyController,
-    battleCamera, combatAudio, particles, screenFx, playerAnimMachine, enemyAnimMachine,
+    battleCamera, combatAudio, particles, crowd, screenFx, playerAnimMachine, enemyAnimMachine,
     playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
 
   const doAttack = useCallback((
@@ -331,10 +342,12 @@ function BattleWorld({
     const clampedDt = Math.min(dt, 0.05);
     frameCountRef.current++;
 
-    // Always update trails + particles (they live on through hit-stop)
+    // Always update trails + particles + crowd (they live on through hit-stop)
     playerTrail.update(clampedDt, camera.position);
     enemyTrail.update(clampedDt, camera.position);
     particles.update(clampedDt);
+    crowd.update(clampedDt);
+    combatAudio.setCrowdEnergy(crowd.energy);
 
     if (battleEndedRef.current) return;
 
@@ -365,10 +378,11 @@ function BattleWorld({
       return;
     }
 
-    // --- Start background music on first combat frame ---
+    // --- Start background music + crowd ambience on first combat frame ---
     if (!bgmStartedRef.current) {
       bgmStartedRef.current = true;
       combatAudio.startBGM();
+      combatAudio.startCrowdAmbience();
     }
 
     // --- Player input ---
@@ -541,6 +555,7 @@ function BattleWorld({
       <StageLighting stageId={stageId} />
       <AmbientVFX stageId={stageId} />
       <ArenaStage stageId={stageId} />
+      <Crowd director={crowd} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} />
       <primitive object={playerTrail.object3d} />
