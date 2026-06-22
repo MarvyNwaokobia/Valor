@@ -139,6 +139,94 @@ export class CombatAudio {
     setTimeout(() => this.synthNote(baseFreq * 2, 0.08, 0.12), 100);
   }
 
+  // --- Crowd ambience (procedural) ---
+  private crowdGain: GainNode | null = null;
+  private crowdSource: AudioBufferSourceNode | null = null;
+  private crowdBaseVol = 0.05;
+
+  /** Continuous low murmur of the arena crowd — looped filtered noise. */
+  startCrowdAmbience() {
+    if (this.stopped || this.crowdSource) return;
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+
+      const seconds = 2;
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < data.length; i++) {
+        // brown-ish noise = warmer, less hiss → reads as a hum of voices
+        last = (last + (Math.random() * 2 - 1) * 0.08) * 0.96;
+        data[i] = last;
+      }
+
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 700;
+
+      const gain = ctx.createGain();
+      gain.gain.value = this.crowdBaseVol;
+
+      src.connect(filter).connect(gain).connect(ctx.destination);
+      src.start();
+
+      this.crowdSource = src;
+      this.crowdGain = gain;
+    } catch {}
+  }
+
+  /** Continuously track crowd excitement (0..1) → murmur swells. */
+  setCrowdEnergy(energy: number) {
+    if (!this.crowdGain) return;
+    const target = this.crowdBaseVol + energy * 0.12;
+    this.crowdGain.gain.value += (target - this.crowdGain.gain.value) * 0.1;
+  }
+
+  /** Bright, rising swell — the crowd pops for a clean hit / KO. */
+  crowdCheer(intensity = 0.6) {
+    this.crowdNoiseSwell(1500, 0.9, 0.35 + intensity * 0.6, 0.18 + intensity * 0.25);
+  }
+
+  /** Lower, growling jeer — block, whiff, or the player getting hit. */
+  crowdBoo(intensity = 0.5) {
+    this.crowdNoiseSwell(320, 1.6, 0.45 + intensity * 0.5, 0.12 + intensity * 0.2);
+  }
+
+  private crowdNoiseSwell(centerHz: number, q: number, dur: number, vol: number) {
+    if (this.stopped) return;
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = centerHz;
+      filter.Q.value = q;
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(vol, now + dur * 0.35);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      src.connect(filter).connect(gain).connect(ctx.destination);
+      src.start(now);
+      src.stop(now + dur);
+    } catch {}
+  }
+
   private bgmCtx: AudioContext | null = null;
   private bgmGain: GainNode | null = null;
   private bgmIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -240,6 +328,11 @@ export class CombatAudio {
   stopAll() {
     this.stopped = true;
     Howler.stop();
+    if (this.crowdSource) {
+      try { this.crowdSource.stop(); } catch {}
+      this.crowdSource = null;
+    }
+    this.crowdGain = null;
     if (this.bgmIntervalId) {
       clearInterval(this.bgmIntervalId);
       this.bgmIntervalId = null;
