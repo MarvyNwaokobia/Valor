@@ -171,7 +171,11 @@ function BattleWorld({
       } else {
         screenFx.onSpecialHit();
       }
-      if (event.blocked) screenFx.onBlock();
+      if (event.blocked) {
+        screenFx.onBlock();
+        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
+        defenderAnim.transition(AnimState.BlockHit, true);
+      }
 
       // Hit-stop: set timer, frame loop counts it down
       const hitStopDur = event.killed
@@ -359,10 +363,13 @@ function BattleWorld({
     }
 
     if (!ps.isDead && !ps.isStaggered && !ps.isAttacking) {
-      if (ps.isBlocking) {
+      if (ps.isDodging) {
+        playerAnimMachine.transition(AnimState.Dodge);
+      } else if (ps.isBlocking) {
         playerAnimMachine.transition(AnimState.Block);
       } else if (isMoving) {
-        playerAnimMachine.transition(AnimState.Walk);
+        const speed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
+        playerAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk);
       } else {
         playerAnimMachine.transition(AnimState.Idle);
       }
@@ -385,11 +392,18 @@ function BattleWorld({
 
       const es = enemyController.state;
       if (!es.isStaggered && !es.isAttacking && !es.isDead) {
-        const aiMove = aiInput.moveAxis;
-        if (Math.abs(aiMove.x) > 0.1 || Math.abs(aiMove.y) > 0.1) {
-          enemyAnimMachine.transition(AnimState.Walk);
+        if (es.isDodging) {
+          enemyAnimMachine.transition(AnimState.Dodge);
+        } else if (es.isBlocking) {
+          enemyAnimMachine.transition(AnimState.Block);
         } else {
-          enemyAnimMachine.transition(AnimState.Idle);
+          const aiMove = aiInput.moveAxis;
+          if (Math.abs(aiMove.x) > 0.1 || Math.abs(aiMove.y) > 0.1) {
+            const speed = Math.sqrt(es.velocity.x ** 2 + es.velocity.z ** 2);
+            enemyAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk);
+          } else {
+            enemyAnimMachine.transition(AnimState.Idle);
+          }
         }
       }
     }

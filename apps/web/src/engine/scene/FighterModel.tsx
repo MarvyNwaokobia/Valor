@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
-import { loadMixamoAnimations, getMixamoClips } from '../animation/MixamoLoader';
+import { loadMixamoAnimations, getMixamoClips } from '../animation';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -74,19 +74,18 @@ export function FighterModel({
       console.log(`[Fighter:${classId}] Init with ${animations.length} GLB clips, bones: ${boneNames.slice(0, 5).join(', ')}...`);
     }
 
-    // Reinit when Mixamo clips are ready (check every frame via ref, not state)
     if (initDone.current && !mixamoApplied.current && mixerRef.current) {
       const mixamoClips = getMixamoClips();
       if (mixamoClips.size > 0) {
         mixamoApplied.current = true;
-        const allClips = [...animations];
+        const combined = [...animations];
         for (const [name, clip] of mixamoClips) {
-          if (!allClips.find(c => c.name === name)) {
-            allClips.push(clip);
+          if (!combined.find(c => c.name === name)) {
+            combined.push(clip);
           }
         }
-        animMachine.init(mixerRef.current, allClips);
-        console.log(`[Fighter:${classId}] Reinit with ${allClips.length} clips (${mixamoClips.size} from Mixamo)`);
+        animMachine.init(mixerRef.current, combined);
+        console.log(`[Fighter:${classId}] ${combined.length} clips ready (${mixamoClips.size} Mixamo + ${animations.length} GLB)`);
       }
     }
 
