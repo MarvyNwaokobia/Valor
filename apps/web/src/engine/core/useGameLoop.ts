@@ -13,8 +13,8 @@ export function useGameLoop(
   frameRef.current = frameUpdate;
 
   useEffect(() => {
-    loop.onFixedUpdate((dt, t) => fixedRef.current?.(dt, t));
-    loop.onFrameUpdate((dt, t) => frameRef.current?.(dt, t));
+    loop.onFixedUpdate((dt, realDt, t) => fixedRef.current?.(dt, realDt, t));
+    loop.onFrameUpdate((dt, realDt, t) => frameRef.current?.(dt, realDt, t));
     loop.start();
     return () => loop.stop();
   }, [loop]);

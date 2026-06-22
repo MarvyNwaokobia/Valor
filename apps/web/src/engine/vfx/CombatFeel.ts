@@ -26,9 +26,10 @@ export class CombatFeel {
   private particles: ParticleSystem;
   private animMachines: Map<string, AnimationStateMachine> = new Map();
 
-  private hitStopTimer = 0;
-  private slowMoTimer = 0;
+  private freeze = 0;
+  private slowmo = 0;
   private slowMoScale = 1;
+  private wasFrozen = false;
   private hitStopConfig: HitStopConfig;
 
   constructor(
@@ -76,7 +77,7 @@ export class CombatFeel {
   private onLightHit(event: DamageEvent) {
     this.hitStop(this.hitStopConfig.light);
 
-    this.camera.shake(0.08, 35, 0.12);
+    this.camera.shake(0.08, 35);
 
     this.screenFx.onLightHit();
 
@@ -90,8 +91,8 @@ export class CombatFeel {
   private onHeavyHit(event: DamageEvent) {
     this.hitStop(this.hitStopConfig.heavy);
 
-    this.camera.shake(0.2, 28, 0.2);
-    this.camera.punch(1.06, 0.35);
+    this.camera.shake(0.2, 28);
+    this.camera.punch(0.06);
 
     this.screenFx.onHeavyHit();
 
@@ -103,15 +104,15 @@ export class CombatFeel {
 
     if (event.critical) {
       this.screenFx.onCriticalHit();
-      this.camera.shake(0.35, 25, 0.3);
+      this.camera.shake(0.35, 25);
     }
   }
 
   private onSpecialHit(event: DamageEvent) {
     this.hitStop(this.hitStopConfig.special);
 
-    this.camera.shake(0.35, 22, 0.3);
-    this.camera.punch(1.1, 0.5);
+    this.camera.shake(0.35, 22);
+    this.camera.punch(0.1);
 
     this.screenFx.onSpecialHit();
 
@@ -131,13 +132,11 @@ export class CombatFeel {
     const color = classColors[event.attackerId] ?? '#ffffff';
 
     this.hitStop(this.hitStopConfig.kill);
-
     this.startSlowMo(0.2, 1.5);
 
-    this.camera.shake(0.5, 18, 0.5);
-    this.camera.punch(1.15, 0.8);
+    this.camera.shake(0.5, 18);
+    this.camera.punch(0.15);
     this.camera.setSlowMoFov(-8);
-    setTimeout(() => this.camera.setSlowMoFov(0), 2000);
 
     this.screenFx.onKill(color);
 
@@ -152,7 +151,7 @@ export class CombatFeel {
   private onBlock(event: DamageEvent) {
     this.hitStop(0.03);
 
-    this.camera.shake(0.05, 40, 0.08);
+    this.camera.shake(0.05, 40);
 
     this.screenFx.onBlock();
 
@@ -164,48 +163,39 @@ export class CombatFeel {
   }
 
   private hitStop(duration: number) {
-    this.hitStopTimer = duration;
-    this.gameLoop.timeScale = 0;
+    this.freeze = Math.max(this.freeze, duration);
+  }
 
-    for (const machine of this.animMachines.values()) {
-      machine.pause();
-    }
+  private startSlowMo(scale: number, duration: number) {
+    this.slowMoScale = scale;
+    this.slowmo = duration;
+  }
 
-    setTimeout(() => {
-      if (this.hitStopTimer <= 0) return;
-      this.hitStopTimer = 0;
-      if (this.slowMoTimer <= 0) {
+  update(realDt: number) {
+    if (this.freeze > 0) {
+      this.freeze -= realDt;
+      this.gameLoop.timeScale = 0;
+    } else if (this.slowmo > 0) {
+      this.slowmo -= realDt;
+      this.gameLoop.timeScale = this.slowMoScale;
+      if (this.slowmo <= 0) {
+        this.slowMoScale = 1;
         this.gameLoop.timeScale = 1;
-      } else {
-        this.gameLoop.timeScale = this.slowMoScale;
+        this.camera.setSlowMoFov(0);
       }
-      for (const machine of this.animMachines.values()) {
-        machine.resume();
-      }
-    }, duration * 1000);
-  }
-
-  private startSlowMo(timeScale: number, duration: number) {
-    this.slowMoScale = timeScale;
-    this.slowMoTimer = duration;
-    this.gameLoop.timeScale = timeScale;
-
-    for (const machine of this.animMachines.values()) {
-      machine.setTimeScale(timeScale);
+    } else {
+      this.gameLoop.timeScale = 1;
     }
 
-    setTimeout(() => {
-      this.slowMoTimer = 0;
-      this.slowMoScale = 1;
-      this.gameLoop.timeScale = 1;
-      for (const machine of this.animMachines.values()) {
-        machine.setTimeScale(1);
+    const frozen = this.freeze > 0;
+    if (frozen !== this.wasFrozen) {
+      for (const m of this.animMachines.values()) {
+        if (frozen) m.pause(); else m.resume();
       }
-    }, duration * 1000);
-  }
+      this.wasFrozen = frozen;
+    }
 
-  update(dt: number) {
-    this.screenFx.update(dt);
-    this.particles.update(dt);
+    this.screenFx.update(realDt);
+    this.particles.update(realDt);
   }
 }

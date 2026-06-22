@@ -41,12 +41,12 @@ export class CombatAudio {
     this.punchHit = loadBank([
       '/sounds/combat/punch_276600.mp3',
       '/sounds/combat/punch_847837.mp3',
-    ], 0.5);
+    ], 0.8);
 
     this.slashHit = loadBank([
       '/sounds/combat/slash_437118.mp3',
       '/sounds/combat/slash_776646.mp3',
-    ], 0.4);
+    ], 0.7);
 
     this.blockHit = loadBank([
       '/sounds/combat/slash_437118.mp3',
@@ -70,19 +70,21 @@ export class CombatAudio {
       return;
     }
 
-    // One impact sound per hit — not layered
     if (event.hitType === 'light') {
       playOne(this.punchHit);
     } else if (event.hitType === 'heavy') {
       playOne(this.slashHit);
+      this.subThump(150, 40, 0.8, 0.18);
+      this.duckBGM(0.4, 180);
     } else {
       playOne(this.punchHit);
-      setTimeout(() => {
-        if (!this.stopped) playOne(this.slashHit);
-      }, 80);
+      setTimeout(() => !this.stopped && playOne(this.slashHit), 60);
+      this.subThump(180, 38, 1.0, 0.28);
+      this.duckBGM(0.55, 240);
     }
 
     if (event.killed) {
+      this.subThump(200, 30, 1.0, 0.5);
       setTimeout(() => {
         if (!this.stopped) playOne(this.bodyFall);
       }, 300);
@@ -208,6 +210,31 @@ export class CombatAudio {
     if (this.stopped) return;
     this.synthNote(330, 0.15, 0.4);
     setTimeout(() => this.synthNote(220, 0.15, 0.5), 200);
+  }
+
+  private subThump(f0 = 150, f1 = 40, vol = 0.8, dur = 0.18) {
+    const ctx = this.getSharedContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f0, now);
+    osc.frequency.exponentialRampToValueAtTime(f1, now + dur);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + dur);
+  }
+
+  private duckBGM(amount = 0.4, ms = 180) {
+    if (!this.bgmGain) return;
+    const base = 0.06;
+    this.bgmGain.gain.value = base * (1 - amount);
+    setTimeout(() => {
+      if (this.bgmGain) this.bgmGain.gain.value = base;
+    }, ms);
   }
 
   stopAll() {

@@ -28,6 +28,9 @@ export interface ScreenEffectsState {
 }
 
 export class ScreenEffects {
+  private vignetteResetTimer = 0;
+  private killResetTimer = 0;
+
   state: ScreenEffectsState = {
     flash: null,
     chromaticAberration: { intensity: 0, timer: 0, decay: 8 },
@@ -81,7 +84,7 @@ export class ScreenEffects {
     this.chromaticAberration(0.015, 0.2);
     this.motionBlur(0.8, 0, 0.18);
     this.vignette(0.6);
-    setTimeout(() => this.vignette(0.3), 400);
+    this.vignetteResetTimer = 0.4;
   }
 
   onCriticalHit() {
@@ -100,10 +103,7 @@ export class ScreenEffects {
       parseInt(classColor.slice(5, 7), 16) / 255,
       0.15
     );
-    setTimeout(() => {
-      this.vignette(0.3);
-      this.clearTint();
-    }, 1500);
+    this.killResetTimer = 1.5;
   }
 
   onBlock() {
@@ -122,6 +122,19 @@ export class ScreenEffects {
   }
 
   update(dt: number) {
+    if (this.vignetteResetTimer > 0) {
+      this.vignetteResetTimer -= dt;
+      if (this.vignetteResetTimer <= 0) this.vignette(0.3);
+    }
+
+    if (this.killResetTimer > 0) {
+      this.killResetTimer -= dt;
+      if (this.killResetTimer <= 0) {
+        this.vignette(0.3);
+        this.clearTint();
+      }
+    }
+
     if (this.state.flash) {
       this.state.flash.timer -= dt;
       if (this.state.flash.timer <= 0) {
