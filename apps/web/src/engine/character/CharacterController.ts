@@ -60,6 +60,11 @@ export class CharacterController {
   private targetRotation = 0;
   private lockOnTarget: CharacterController | null = null;
 
+  // Stagger split into hard hitstun (locked) then a tech tail where a block or
+  // dodge can cancel the recovery — so trading hits isn't a pure lockout.
+  private staggerTimer = 0;
+  private staggerTechTime = 0;
+
   constructor(
     startPosition: THREE.Vector3,
     config?: Partial<CharacterConfig>
@@ -111,7 +116,24 @@ export class CharacterController {
       return;
     }
 
-    if (this.state.isStaggered) return;
+    if (this.state.isStaggered) {
+      // Hard hitstun — fully locked, knockback carries the body.
+      if (this.staggerTimer > this.staggerTechTime) return;
+
+      // Tech tail — a dodge escapes, or block raises the guard, cancelling
+      // the rest of the recovery. Anything else stays committed to the flinch.
+      if (input.consumeBuffered(Action.Dodge) && this.dodgeCooldownTimer <= 0) {
+        this.clearStagger();
+        this.startDodge();
+        // fall through into dodge movement below
+      } else if (input.getAction(Action.Block).held) {
+        this.clearStagger();
+        this.state.isBlocking = true;
+        return;
+      } else {
+        return;
+      }
+    }
 
     if (this.state.isDodging) {
       this.applyDodgeMovement(dt);
@@ -124,6 +146,15 @@ export class CharacterController {
     this.clampToArena();
   }
 
+  // Begin a stagger of `duration` seconds; the last `techFraction` of it is the
+  // tech window where the fighter can cancel into block or dodge.
+  applyStagger(duration: number, techFraction = 0.45) {
+    this.state.isStaggered = true;
+    this.state.isAttacking = false;
+    this.staggerTimer = duration;
+    this.staggerTechTime = duration * (1 - techFraction);
+  }
+
   applyDamage(amount: number, knockbackDir: THREE.Vector3, knockbackForce: number) {
     if (this.state.isDodging) return;
 
@@ -134,7 +165,8 @@ export class CharacterController {
 
     if (!blocked) {
       this.state.velocity.addScaledVector(knockbackDir, knockbackForce);
-      this.state.isStaggered = true;
+      // Stagger timing is set by applyStagger() from the hit handler; here we
+      // only break the attack/combo so the flinch can take over.
       this.state.isAttacking = false;
       this.state.comboCount = 0;
     }
@@ -143,7 +175,7 @@ export class CharacterController {
       this.state.isDead = true;
       this.state.isAttacking = false;
       this.state.isBlocking = false;
-      this.state.isStaggered = false;
+      this.clearStagger();
     }
 
     return { blocked, actualDamage };
@@ -151,6 +183,8 @@ export class CharacterController {
 
   clearStagger() {
     this.state.isStaggered = false;
+    this.staggerTimer = 0;
+    this.staggerTechTime = 0;
   }
 
   // Push two fighters apart so their bodies never overlap/clip.
@@ -183,6 +217,10 @@ export class CharacterController {
     }
     if (this.dodgeCooldownTimer > 0) {
       this.dodgeCooldownTimer -= dt;
+    }
+    if (this.staggerTimer > 0) {
+      this.staggerTimer -= dt;
+      if (this.staggerTimer <= 0) this.clearStagger();
     }
   }
 
