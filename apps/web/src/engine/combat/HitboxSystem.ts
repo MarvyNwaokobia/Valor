@@ -205,6 +205,18 @@ export function getHitboxWindow(fd: FrameData, hb: HitboxData): { start: number;
   return { start: hb.startFrame / total, end: hb.endFrame / total };
 }
 
+// World-space center of a hitbox — i.e. where the fist/weapon is. VFX should
+// spawn here, not at the defender's center, so sparks read as a real contact.
+export function hitboxContactPoint(
+  hb: HitboxData,
+  attackerPos: THREE.Vector3,
+  attackerRotation: number
+): THREE.Vector3 {
+  return attackerPos.clone().add(
+    hb.offset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), attackerRotation)
+  );
+}
+
 // Pure 3D overlap test between an attacker's (rotated) hitbox and a defender's
 // hurtbox. No internal frame state — the caller decides when the box is live.
 export function hitboxHits(

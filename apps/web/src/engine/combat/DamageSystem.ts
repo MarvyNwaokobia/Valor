@@ -94,7 +94,8 @@ export class DamageSystem {
     attacker: CharacterController,
     defender: CharacterController,
     hitbox: HitboxData,
-    move: MoveDefinition
+    move: MoveDefinition,
+    contactPoint?: THREE.Vector3
   ): DamageEvent {
     const atkStats = this.stats.get(attackerId);
     const defStats = this.stats.get(defenderId);
@@ -128,9 +129,11 @@ export class DamageSystem {
 
     const hitStun = blocked ? hitbox.hitStun * 0.4 : hitbox.hitStun;
 
-    const hitPosition = defender.state.position.clone();
-    hitPosition.y += 1;
-    hitPosition.addScaledVector(knockbackDir, -0.3);
+    // Prefer the true contact point (the fist/weapon position); fall back to a
+    // point just in front of the defender's torso if none was supplied.
+    const hitPosition = contactPoint
+      ? contactPoint.clone()
+      : defender.state.position.clone().setY(defender.state.position.y + 1).addScaledVector(knockbackDir, -0.3);
 
     const result = defender.applyDamage(finalDamage, knockbackDir, knockbackForce);
 
