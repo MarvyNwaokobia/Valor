@@ -71,6 +71,7 @@ export class AnimationStateMachine {
   private onStateChange?: (from: AnimState, to: AnimState) => void;
   private paused = false;
   private pendingTransition: { state: AnimState; force: boolean } | null = null;
+  private previousAction: THREE.AnimationAction | null = null;
 
   constructor(animMap: AnimationMap) {
     this.animMap = animMap;
@@ -80,6 +81,7 @@ export class AnimationStateMachine {
     this.mixer = mixer;
     mixer.stopAllAction();
     this.activeAction = null;
+    this.previousAction = null;
     this.currentState = AnimState.Idle;
     this.clips.clear();
     for (const clip of clips) {
@@ -144,11 +146,20 @@ export class AnimationStateMachine {
       newAction.setDuration(config.duration);
     }
 
+    // Stop lingering action from a prior transition to prevent
+    // three-way blends where total weight < 1 → T-pose bleed
+    if (this.previousAction && this.previousAction !== this.activeAction && this.previousAction !== newAction) {
+      this.previousAction.stop();
+    }
+    this.previousAction = this.activeAction;
+
     if (this.activeAction && this.activeAction !== newAction) {
       this.activeAction.fadeOut(config.fadeIn);
+      newAction.reset().fadeIn(config.fadeIn).play();
+    } else {
+      // No active action to crossfade with — play at full weight immediately
+      newAction.reset().setEffectiveWeight(1).play();
     }
-
-    newAction.reset().fadeIn(config.fadeIn).play();
     this.activeAction = newAction;
 
     if (!config.loop) {
@@ -180,9 +191,14 @@ export class AnimationStateMachine {
     this.paused = false;
     if (this.mixer) this.mixer.timeScale = 1;
     if (this.pendingTransition) {
-      const { state, force } = this.pendingTransition;
+      const { state } = this.pendingTransition;
       this.pendingTransition = null;
-      this.transition(state, force);
+      // Clean slate after freeze — stop everything so transition()
+      // plays the new clip at full weight with no stale crossfades
+      this.mixer?.stopAllAction();
+      this.activeAction = null;
+      this.previousAction = null;
+      this.transition(state, true);
     }
   }
 
