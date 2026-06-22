@@ -223,6 +223,18 @@ export class AnimationStateMachine {
     this.mixer.update(dt);
   }
 
+  // Normalized progress (0..1) of the current action through its clip.
+  // Because it reads action.time directly, it is in clip-local seconds and
+  // therefore independent of playback speed, AND frozen while the mixer is
+  // paused for hitstop — making it the single clock all combat hangs off.
+  getActiveProgress(): number {
+    if (!this.activeAction) return 1;
+    const clip = this.activeAction.getClip();
+    const dur = clip?.duration ?? 0;
+    if (dur <= 0) return 1;
+    return Math.min(1, Math.max(0, this.activeAction.time / dur));
+  }
+
   pause() {
     this.paused = true;
     if (this.mixer) this.mixer.timeScale = 0;

@@ -189,11 +189,46 @@ export const CLASS_FRAME_DATA: Record<string, Partial<Record<AnimState, FrameDat
   phantom: PHANTOM_FRAME_DATA,
 };
 
-const DEFAULT_HURTBOX: HurtboxData = {
+export const DEFAULT_HURTBOX: HurtboxData = {
   offset: new THREE.Vector3(0, 0.9, 0),
   radius: 0.5,
   height: 1.8,
 };
+
+// The normalized [start,end] window (0..1 of the attack's full timeline) during
+// which a hitbox is live. Derived from the frame data so existing tuning is
+// preserved, but expressed relative to the animation — so the contact moment
+// tracks the visible swing regardless of per-class playback speed.
+export function getHitboxWindow(fd: FrameData, hb: HitboxData): { start: number; end: number } {
+  const total = fd.startup + fd.active + fd.recovery;
+  if (total <= 0) return { start: 0, end: 1 };
+  return { start: hb.startFrame / total, end: hb.endFrame / total };
+}
+
+// Pure 3D overlap test between an attacker's (rotated) hitbox and a defender's
+// hurtbox. No internal frame state — the caller decides when the box is live.
+export function hitboxHits(
+  hb: HitboxData,
+  attackerPos: THREE.Vector3,
+  attackerRotation: number,
+  defenderPos: THREE.Vector3,
+  hurtbox: HurtboxData = DEFAULT_HURTBOX
+): boolean {
+  const worldPos = attackerPos.clone().add(
+    hb.offset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), attackerRotation)
+  );
+  const hurtCenter = defenderPos.clone().add(hurtbox.offset);
+
+  const dx = worldPos.x - hurtCenter.x;
+  const dz = worldPos.z - hurtCenter.z;
+  const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+  const verticalDist = Math.abs(worldPos.y - hurtCenter.y);
+
+  return (
+    horizontalDist < hb.radius + hurtbox.radius &&
+    verticalDist < hurtbox.height * 0.5 + hb.radius
+  );
+}
 
 export interface HitResult {
   hit: boolean;
