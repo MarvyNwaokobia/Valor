@@ -7,7 +7,7 @@ import { FighterModel } from './FighterModel';
 import { ArenaStage, type StageId } from './ArenaStage';
 import { BattleCamera } from '../camera';
 import { CharacterController } from '../character';
-import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
+import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS, type HitDirection } from '../animation';
 import { Action, getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
@@ -51,6 +51,19 @@ const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
   [AnimState.HeavyAttack]: MoveType.HeavyAttack,
   [AnimState.Special]: MoveType.Special,
 };
+
+// Where did the blow land relative to the defender's facing? knockbackDir points
+// attacker → defender, so the attacker sits the opposite way.
+function hitDirection(defender: CharacterController, knockbackDir: THREE.Vector3): HitDirection {
+  const toAttacker = new THREE.Vector3(-knockbackDir.x, 0, -knockbackDir.z);
+  if (toAttacker.lengthSq() < 1e-6) return 'front';
+  toAttacker.normalize();
+  const fwd = new THREE.Vector3(Math.sin(defender.state.rotation), 0, Math.cos(defender.state.rotation));
+  const dot = fwd.dot(toAttacker);
+  if (dot > 0.4) return 'front';
+  if (dot < -0.4) return 'back';
+  return 'side';
+}
 
 const HITSTOP_DURATION: Record<string, number> = {
   light: 0.05,
@@ -141,9 +154,10 @@ function BattleWorld({
   const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 20, 0.12, 0.35), [playerClass]);
   const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 20, 0.12, 0.35), [enemyClass]);
 
-  // Stagger recovery timeouts — clear on new hit to prevent stale Idle transitions
-  const playerStaggerTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const enemyStaggerTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the stagger edge so we can snap out of the (non-interruptible) hit clip
+  // the instant the fighter recovers or techs into block/dodge.
+  const playerWasStaggered = useRef(false);
+  const enemyWasStaggered = useRef(false);
 
   // Footstep timer
   const playerStepTimerRef = useRef(0);
@@ -240,31 +254,24 @@ function BattleWorld({
           killed: event.killed,
         });
 
-        // Variable hit-stun based on attack type
-        const staggerMs = (STAGGER_DURATION[event.hitType] ?? 0.3) * 1000;
+        // Variable hit-stun based on attack type. The controller times the
+        // stagger and exposes a tech tail (block/dodge cancel); the hit clip
+        // auto-returns to Idle on its own. Reaction pose depends on direction.
+        const staggerSec = STAGGER_DURATION[event.hitType] ?? 0.3;
         const hitAnim = event.hitType === 'light' ? AnimState.HitLight : AnimState.HitHeavy;
+        const defenderCtrl = event.defenderId === 'enemy' ? enemyController : playerController;
+        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
+        const dir = hitDirection(defenderCtrl, event.knockbackDir);
+
+        defenderAnim.transitionHit(hitAnim, dir);
+        defenderCtrl.applyStagger(staggerSec);
 
         if (event.defenderId === 'enemy') {
-          if (enemyStaggerTimeout.current) clearTimeout(enemyStaggerTimeout.current);
-          enemyAnimMachine.transition(hitAnim, true);
-          enemyController.state.isStaggered = true;
           enemyAttackingRef.current = false;
-          enemyStaggerTimeout.current = setTimeout(() => {
-            enemyController.clearStagger();
-            if (!enemyController.state.isDead) enemyAnimMachine.transition(AnimState.Idle, true);
-          }, staggerMs);
         } else {
-          if (playerStaggerTimeout.current) clearTimeout(playerStaggerTimeout.current);
-          playerAnimMachine.transition(hitAnim, true);
-          playerController.state.isStaggered = true;
-          playerController.state.isAttacking = false;
           playerAttackingRef.current = false;
           comboSystem.drop('player');
           onComboUpdate?.(null);
-          playerStaggerTimeout.current = setTimeout(() => {
-            playerController.clearStagger();
-            if (!playerController.state.isDead) playerAnimMachine.transition(AnimState.Idle, true);
-          }, staggerMs);
         }
       }
 
@@ -393,16 +400,22 @@ function BattleWorld({
       playerController.update(clampedDt, input, battleCamera.cameraYaw);
     }
 
+    // On the frame the fighter leaves stagger (recovered or teched), force the
+    // transition so the non-interruptible hit clip is cut immediately.
+    const playerJustRecovered = playerWasStaggered.current && !ps.isStaggered;
+    playerWasStaggered.current = ps.isStaggered;
+
     if (!ps.isDead && !ps.isStaggered && !ps.isAttacking) {
+      const f = playerJustRecovered;
       if (ps.isDodging) {
-        playerAnimMachine.transition(AnimState.Dodge);
+        playerAnimMachine.transition(AnimState.Dodge, f);
       } else if (ps.isBlocking) {
-        playerAnimMachine.transition(AnimState.Block);
+        playerAnimMachine.transition(AnimState.Block, f);
       } else if (isMoving) {
         const speed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
-        playerAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk);
+        playerAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk, f);
       } else {
-        playerAnimMachine.transition(AnimState.Idle);
+        playerAnimMachine.transition(AnimState.Idle, f);
       }
     }
 
@@ -422,18 +435,22 @@ function BattleWorld({
       if (aiInput.getAction(Action.Special).held) doAttack('enemy', AnimState.Special);
 
       const es = enemyController.state;
+      const enemyJustRecovered = enemyWasStaggered.current && !es.isStaggered;
+      enemyWasStaggered.current = es.isStaggered;
+
       if (!es.isStaggered && !es.isAttacking && !es.isDead) {
+        const f = enemyJustRecovered;
         if (es.isDodging) {
-          enemyAnimMachine.transition(AnimState.Dodge);
+          enemyAnimMachine.transition(AnimState.Dodge, f);
         } else if (es.isBlocking) {
-          enemyAnimMachine.transition(AnimState.Block);
+          enemyAnimMachine.transition(AnimState.Block, f);
         } else {
           const aiMove = aiInput.moveAxis;
           if (Math.abs(aiMove.x) > 0.1 || Math.abs(aiMove.y) > 0.1) {
             const speed = Math.sqrt(es.velocity.x ** 2 + es.velocity.z ** 2);
-            enemyAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk);
+            enemyAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk, f);
           } else {
-            enemyAnimMachine.transition(AnimState.Idle);
+            enemyAnimMachine.transition(AnimState.Idle, f);
           }
         }
       }
