@@ -4,4 +4,4 @@ export {
   CLASS_ANIMATIONS,
 } from './AnimationStateMachine';
 export type { AnimationMap } from './AnimationStateMachine';
-export { loadMixamoAnimations, applyMixamoToMixer } from './MixamoLoader';
+export { loadMixamoAnimations, getMixamoClips, CLIP_NAMES } from './MixamoLoader';
