@@ -16,6 +16,8 @@ export interface CharacterState {
   maxHealth: number;
   specialMeter: number;
   comboCount: number;
+  /** VFX-only: 0..1 squash-and-stretch impulse set on being hit, decayed by the renderer. */
+  impactPulse: number;
 }
 
 export interface CharacterConfig {
@@ -78,6 +80,7 @@ export class CharacterController {
       maxHealth: 100,
       specialMeter: 0,
       comboCount: 0,
+      impactPulse: 0,
     };
   }
 

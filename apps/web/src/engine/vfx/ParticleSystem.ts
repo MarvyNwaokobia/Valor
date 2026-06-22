@@ -35,8 +35,9 @@ export class ParticleSystem {
   private posArray: Float32Array;
   private colorArray: Float32Array;
   private sizeArray: Float32Array;
+  private lastDrawCount = 0;
 
-  constructor(maxParticles = 2000) {
+  constructor(maxParticles = 800) {
     this.maxParticles = maxParticles;
 
     this.posArray = new Float32Array(maxParticles * 3);
@@ -258,6 +259,11 @@ export class ParticleSystem {
   private updateBuffers() {
     const count = this.particles.length;
 
+    // Idle early-out: when there's nothing to draw and nothing was drawn last
+    // frame, skip flagging needsUpdate — otherwise THREE re-uploads the full
+    // (empty) buffers to the GPU every frame, which was the prior slowdown.
+    if (count === 0 && this.lastDrawCount === 0) return;
+
     for (let i = 0; i < count; i++) {
       const p = this.particles[i];
       const lifeRatio = p.life / p.maxLife;
@@ -277,6 +283,7 @@ export class ParticleSystem {
     this.geometry.attributes.color.needsUpdate = true;
     this.geometry.attributes.size.needsUpdate = true;
     this.geometry.setDrawRange(0, count);
+    this.lastDrawCount = count;
   }
 
   get particleCount(): number {

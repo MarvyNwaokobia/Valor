@@ -11,8 +11,9 @@ import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation
 import { Action, getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
-import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, getMoveForAction } from '../combat';
+import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint, getMoveForAction } from '../combat';
 import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
+import { ParticleSystem } from '../vfx/ParticleSystem';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
@@ -120,6 +121,7 @@ function BattleWorld({
   const enemyAI = useMemo(() => new EnemyAI(difficulty), [difficulty]);
   const knockback = useMemo(() => new KnockbackPhysics(), []);
   const combatAudio = useMemo(() => new CombatAudio(), []);
+  const particles = useMemo(() => new ParticleSystem(), []);
 
   const playerAttackingRef = useRef(false);
   const enemyAttackingRef = useRef(false);
@@ -164,6 +166,21 @@ function BattleWorld({
       battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30);
       if (event.hitType !== 'light') {
         battleCamera.punch(event.hitType === 'heavy' ? 0.06 : 0.1);
+      }
+
+      // Contact-point VFX + squash-punch on the struck fighter. Both fire at the
+      // exact hit instant (event carries the true fist/weapon position).
+      const defender = event.defenderId === 'enemy' ? enemyController : playerController;
+      if (event.blocked) {
+        particles.emitSparks(event.hitPosition, event.knockbackDir, 0.4);
+        defender.state.impactPulse = 0.5;
+      } else if (event.killed) {
+        particles.emitKillBurst(event.hitPosition, CLASS_ACCENTS[event.attackerId] ?? '#ffffff');
+        particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
+        defender.state.impactPulse = 1;
+      } else {
+        particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
+        defender.state.impactPulse = event.hitType === 'light' ? 0.7 : 1;
       }
 
       if (event.killed) {
@@ -258,7 +275,7 @@ function BattleWorld({
       }
     });
   }, [damageSystem, comboSystem, knockback, playerController, enemyController,
-    battleCamera, combatAudio, screenFx, playerAnimMachine, enemyAnimMachine,
+    battleCamera, combatAudio, particles, screenFx, playerAnimMachine, enemyAnimMachine,
     playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
 
   const doAttack = useCallback((
@@ -314,9 +331,10 @@ function BattleWorld({
     const clampedDt = Math.min(dt, 0.05);
     frameCountRef.current++;
 
-    // Always update trails (they fade even during hit-stop)
+    // Always update trails + particles (they live on through hit-stop)
     playerTrail.update(clampedDt, camera.position);
     enemyTrail.update(clampedDt, camera.position);
+    particles.update(clampedDt);
 
     if (battleEndedRef.current) return;
 
@@ -443,7 +461,8 @@ function BattleWorld({
             if (progress < win.start || progress > win.end) return;
             if (hitboxHits(hb, attacker.state.position, attacker.state.rotation, defender.state.position)) {
               consumed.current.add(i);
-              damageSystem.calculateAndApply(attackerId, defenderId, attacker, defender, hb, move);
+              const contact = hitboxContactPoint(hb, attacker.state.position, attacker.state.rotation);
+              damageSystem.calculateAndApply(attackerId, defenderId, attacker, defender, hb, move, contact);
             }
           });
         }
@@ -526,6 +545,7 @@ function BattleWorld({
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} />
       <primitive object={playerTrail.object3d} />
       <primitive object={enemyTrail.object3d} />
+      <primitive object={particles.mesh} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
         <planeGeometry args={[30, 30]} />
         <shadowMaterial opacity={0.3} />

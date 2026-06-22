@@ -1,4 +1,4 @@
-export { HitboxSystem, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, DEFAULT_HURTBOX } from './HitboxSystem';
+export { HitboxSystem, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint, DEFAULT_HURTBOX } from './HitboxSystem';
 export type { HitboxData, HurtboxData, FrameData, HitResult } from './HitboxSystem';
 
 export { MoveType, CLASS_MOVES, getMoveForAction } from './MoveRegistry';

@@ -28,6 +28,9 @@ const CLASS_ACCENTS: Record<string, string> = {
   phantom: '#8b5cf6',
 };
 
+// Seconds for the impact squash to spring fully back to rest.
+const IMPACT_DECAY = 0.13;
+
 export function FighterModel({
   classId,
   state,
@@ -99,6 +102,15 @@ export function FighterModel({
     );
     const rotLerp = 1 - Math.exp(-12 * dt);
     groupRef.current.quaternion.slerp(targetQuat, rotLerp);
+
+    // Impact scale-punch — squash on contact, springs back as the pulse decays.
+    // Pure transform, no animation cost; sells the hit on top of the clip.
+    if (state.impactPulse > 0) {
+      const p = state.impactPulse;
+      groupRef.current.scale.set(1 + 0.16 * p, 1 - 0.2 * p, 1 + 0.16 * p);
+      state.impactPulse = Math.max(0, p - dt / IMPACT_DECAY);
+      if (state.impactPulse === 0) groupRef.current.scale.set(1, 1, 1);
+    }
 
     animMachine.update(dt);
   });
