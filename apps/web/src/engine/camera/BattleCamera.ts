@@ -42,8 +42,7 @@ export class BattleCamera {
   private shakeFrequency = 0;
   private shakeTimer = 0;
 
-  private punchScale = 1;
-  private punchTarget = 1;
+  private punchAmt = 0;
 
   private slowMoFov = 0;
 
@@ -109,25 +108,13 @@ export class BattleCamera {
     this.camera.updateProjectionMatrix();
   }
 
-  shake(intensity: number, frequency = 30, duration?: number) {
-    this.shakeIntensity = intensity;
+  shake(intensity: number, frequency = 30) {
+    this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
     this.shakeFrequency = frequency;
-    if (duration) {
-      setTimeout(() => {
-        this.shakeIntensity = 0;
-      }, duration * 1000);
-    }
   }
 
-  punch(scale: number, duration = 0.4) {
-    this.punchScale = scale;
-    this.punchTarget = 1;
-    setTimeout(() => {
-      this.punchTarget = scale;
-    }, 0);
-    setTimeout(() => {
-      this.punchTarget = 1;
-    }, duration * 1000);
+  punch(strength = 0.12) {
+    this.punchAmt = strength;
   }
 
   setSlowMoFov(fovOffset: number) {
@@ -218,11 +205,13 @@ export class BattleCamera {
   }
 
   private updatePunch(dt: number) {
-    this.punchScale = THREE.MathUtils.lerp(this.punchScale, this.punchTarget, dt * 8);
-    const offset = (this.punchScale - 1) * this.config.followDistance;
+    const k = 1 - Math.exp(-12 * dt);
+    this.punchAmt = THREE.MathUtils.lerp(this.punchAmt, 0, k);
     const dir = new THREE.Vector3()
       .subVectors(this.currentLookAt, this.currentPosition)
       .normalize();
-    this.currentPosition.addScaledVector(dir, offset);
+    this.currentPosition.addScaledVector(
+      dir, this.punchAmt * this.config.followDistance
+    );
   }
 }

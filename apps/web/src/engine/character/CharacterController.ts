@@ -215,8 +215,7 @@ export class CharacterController {
   }
 
   private handleActions(input: InputSystem) {
-    const dodge = input.getAction(Action.Dodge);
-    if (dodge.justPressed && this.dodgeCooldownTimer <= 0) {
+    if (input.consumeBuffered(Action.Dodge) && this.dodgeCooldownTimer <= 0) {
       this.startDodge();
     }
 

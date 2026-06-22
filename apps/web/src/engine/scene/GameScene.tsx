@@ -151,20 +151,18 @@ function BattleWorld({
       onDamageEvent?.(event);
       combatAudio.onDamageEvent(event);
       particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
-      battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30, 0.2);
+      battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30);
+      if (event.hitType !== 'light') {
+        battleCamera.punch(event.hitType === 'heavy' ? 0.06 : 0.1);
+      }
 
-      // Hit-stop: freeze both fighters briefly
+      // Hit-stop: set timer, frame loop counts it down
       const hitStopDur = event.killed
         ? HITSTOP_DURATION.kill
         : HITSTOP_DURATION[event.hitType] ?? 0.05;
-      hitStopTimerRef.current = hitStopDur;
+      hitStopTimerRef.current = Math.max(hitStopTimerRef.current, hitStopDur);
       playerAnimMachine.pause();
       enemyAnimMachine.pause();
-      setTimeout(() => {
-        hitStopTimerRef.current = 0;
-        playerAnimMachine.resume();
-        enemyAnimMachine.resume();
-      }, hitStopDur * 1000);
 
       // Combo escalation audio
       if (!event.blocked) {
@@ -301,10 +299,15 @@ function BattleWorld({
 
     if (battleEndedRef.current) return;
 
-    // Hit-stop: freeze game logic but keep rendering
+    // Hit-stop: freeze game logic but keep VFX + camera alive
     if (hitStopTimerRef.current > 0) {
       hitStopTimerRef.current -= clampedDt;
+      particles.update(clampedDt);
       battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
+      if (hitStopTimerRef.current <= 0) {
+        playerAnimMachine.resume();
+        enemyAnimMachine.resume();
+      }
       return;
     }
 
@@ -347,9 +350,9 @@ function BattleWorld({
       }
     }
 
-    if (input.getAction(Action.LightAttack).justPressed) doAttack('player', AnimState.LightAttack);
-    if (input.getAction(Action.HeavyAttack).justPressed) doAttack('player', AnimState.HeavyAttack);
-    if (input.getAction(Action.Special).justPressed) doAttack('player', AnimState.Special);
+    if (input.consumeBuffered(Action.LightAttack)) doAttack('player', AnimState.LightAttack);
+    if (input.consumeBuffered(Action.HeavyAttack)) doAttack('player', AnimState.HeavyAttack);
+    if (input.consumeBuffered(Action.Special)) doAttack('player', AnimState.Special);
 
     // --- Enemy AI ---
     if (!enemyController.state.isDead) {
