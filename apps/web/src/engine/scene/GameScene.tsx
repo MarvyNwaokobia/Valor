@@ -14,7 +14,6 @@ import { CLASS_FRAME_DATA } from '../combat/HitboxSystem';
 import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
 import { ComboSystem, type ComboState, MoveType } from '../combat';
 import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
-import { ParticleSystem } from '../vfx/ParticleSystem';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
@@ -114,7 +113,6 @@ function BattleWorld({
   const damageSystem = useMemo(() => new DamageSystem(), []);
   const comboSystem = useMemo(() => new ComboSystem(), []);
   const enemyAI = useMemo(() => new EnemyAI(difficulty), [difficulty]);
-  const particles = useMemo(() => new ParticleSystem(), []);
   const knockback = useMemo(() => new KnockbackPhysics(), []);
   const combatAudio = useMemo(() => new CombatAudio(), []);
 
@@ -131,6 +129,10 @@ function BattleWorld({
   // Weapon trails
   const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 20, 0.12, 0.35), [playerClass]);
   const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 20, 0.12, 0.35), [enemyClass]);
+
+  // Stagger recovery timeouts — clear on new hit to prevent stale Idle transitions
+  const playerStaggerTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enemyStaggerTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Footstep timer
   const playerStepTimerRef = useRef(0);
@@ -153,7 +155,6 @@ function BattleWorld({
     damageSystem.onDamage((event) => {
       onDamageEvent?.(event);
       combatAudio.onDamageEvent(event);
-      particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
       battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30);
       if (event.hitType !== 'light') {
         battleCamera.punch(event.hitType === 'heavy' ? 0.06 : 0.1);
@@ -206,21 +207,23 @@ function BattleWorld({
         const hitAnim = event.hitType === 'light' ? AnimState.HitLight : AnimState.HitHeavy;
 
         if (event.defenderId === 'enemy') {
+          if (enemyStaggerTimeout.current) clearTimeout(enemyStaggerTimeout.current);
           enemyAnimMachine.transition(hitAnim, true);
           enemyController.state.isStaggered = true;
           enemyAttackingRef.current = false;
-          setTimeout(() => {
+          enemyStaggerTimeout.current = setTimeout(() => {
             enemyController.clearStagger();
             if (!enemyController.state.isDead) enemyAnimMachine.transition(AnimState.Idle, true);
           }, staggerMs);
         } else {
+          if (playerStaggerTimeout.current) clearTimeout(playerStaggerTimeout.current);
           playerAnimMachine.transition(hitAnim, true);
           playerController.state.isStaggered = true;
           playerController.state.isAttacking = false;
           playerAttackingRef.current = false;
           comboSystem.drop('player');
           onComboUpdate?.(null);
-          setTimeout(() => {
+          playerStaggerTimeout.current = setTimeout(() => {
             playerController.clearStagger();
             if (!playerController.state.isDead) playerAnimMachine.transition(AnimState.Idle, true);
           }, staggerMs);
@@ -236,7 +239,6 @@ function BattleWorld({
         } else {
           playerAnimMachine.transition(AnimState.Death, true);
         }
-        particles.emitKillBurst(event.hitPosition, CLASS_ACCENTS[winner === 'player' ? playerClass : enemyClass]);
         combatAudio.stopAll();
         setTimeout(() => {
           if (winner === 'player') combatAudio.playVictoryFanfare();
@@ -246,7 +248,7 @@ function BattleWorld({
       }
     });
   }, [damageSystem, comboSystem, knockback, playerController, enemyController,
-    battleCamera, particles, combatAudio, screenFx, playerAnimMachine, enemyAnimMachine,
+    battleCamera, combatAudio, screenFx, playerAnimMachine, enemyAnimMachine,
     playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
 
   const doAttack = useCallback((
@@ -318,7 +320,6 @@ function BattleWorld({
     // Hit-stop: freeze game logic but keep VFX + camera alive
     if (hitStopTimerRef.current > 0) {
       hitStopTimerRef.current -= clampedDt;
-      particles.update(clampedDt);
       screenFx.update(clampedDt);
       battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
       if (hitStopTimerRef.current <= 0) {
@@ -439,7 +440,6 @@ function BattleWorld({
     knockback.update(clampedDt, 'enemy', enemyController);
     damageSystem.updateStamina(clampedDt);
     comboSystem.update(clampedDt);
-    particles.update(clampedDt);
     screenFx.update(clampedDt);
     battleCamera.update(clampedDt, ps.position, enemyController.state.position);
 
@@ -467,7 +467,6 @@ function BattleWorld({
       if (playerStepTimerRef.current <= 0) {
         playerStepTimerRef.current = FOOTSTEP_INTERVAL;
         combatAudio.playFootstep();
-        particles.emitDust(ps.position, 0.2);
       }
     } else {
       playerStepTimerRef.current = 0;
@@ -480,7 +479,6 @@ function BattleWorld({
       if (enemyStepTimerRef.current <= 0) {
         enemyStepTimerRef.current = FOOTSTEP_INTERVAL;
         combatAudio.playFootstep(0.15);
-        particles.emitDust(es.position, 0.15);
       }
     } else {
       enemyStepTimerRef.current = 0;
@@ -500,7 +498,6 @@ function BattleWorld({
       <ArenaStage stageId={stageId} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} />
-      <primitive object={particles.mesh} />
       <primitive object={playerTrail.object3d} />
       <primitive object={enemyTrail.object3d} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
