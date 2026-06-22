@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback, type MutableRefObject } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
@@ -10,9 +10,8 @@ import { CharacterController } from '../character';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
 import { Action, getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
-import { CLASS_FRAME_DATA } from '../combat/HitboxSystem';
 import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
-import { ComboSystem, type ComboState, MoveType } from '../combat';
+import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, getMoveForAction } from '../combat';
 import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
@@ -43,10 +42,11 @@ const CLASS_ACCENTS: Record<string, string> = {
   phantom: '#aa44ff',
 };
 
-const ATTACK_DURATION_MS: Record<string, number> = {
-  [AnimState.LightAttack]: 600,
-  [AnimState.HeavyAttack]: 900,
-  [AnimState.Special]: 1200,
+// Maps an attack animation state to its move definition (for damage/blockable rules).
+const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
+  [AnimState.LightAttack]: MoveType.LightAttack,
+  [AnimState.HeavyAttack]: MoveType.HeavyAttack,
+  [AnimState.Special]: MoveType.Special,
 };
 
 const HITSTOP_DURATION: Record<string, number> = {
@@ -123,8 +123,9 @@ function BattleWorld({
 
   const playerAttackingRef = useRef(false);
   const enemyAttackingRef = useRef(false);
-  const attackFrameRef = useRef(0);
-  const enemyAttackFrameRef = useRef(0);
+  // Hitbox indices already consumed in the current swing (one hit per box per attack).
+  const playerHitConsumed = useRef<Set<number>>(new Set());
+  const enemyHitConsumed = useRef<Set<number>>(new Set());
   const playerAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
   const enemyAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
 
@@ -267,7 +268,7 @@ function BattleWorld({
     const ctrl = who === 'player' ? playerController : enemyController;
     const anim = who === 'player' ? playerAnimMachine : enemyAnimMachine;
     const attackRef = who === 'player' ? playerAttackingRef : enemyAttackingRef;
-    const frameRef = who === 'player' ? attackFrameRef : enemyAttackFrameRef;
+    const consumed = who === 'player' ? playerHitConsumed : enemyHitConsumed;
     const typeRef = who === 'player' ? playerAttackTypeRef : enemyAttackTypeRef;
 
     const s = ctrl.state;
@@ -281,7 +282,7 @@ function BattleWorld({
 
     s.isAttacking = true;
     attackRef.current = true;
-    frameRef.current = 0;
+    consumed.current.clear();
     typeRef.current = animState;
     anim.transition(animState, true);
     combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
@@ -298,19 +299,12 @@ function BattleWorld({
     const clampedLunge = Math.min(lungeForce, lungeDist * 3);
     ctrl.state.velocity.addScaledVector(lungeDir, clampedLunge);
 
-    // Start weapon trail
+    // Start weapon trail. The attack now ends when its animation completes
+    // (state machine auto-transitions to Idle on the clip's finished event),
+    // detected in the frame loop — no setTimeout, so it can never desync from
+    // the visible swing or the hitstop freeze.
     const trail = who === 'player' ? playerTrail : enemyTrail;
     trail.start();
-
-    const duration = ATTACK_DURATION_MS[animState] ?? 600;
-    setTimeout(() => {
-      s.isAttacking = false;
-      attackRef.current = false;
-      trail.stop();
-      if (!s.isDead && !s.isStaggered) {
-        anim.transition(AnimState.Idle, true);
-      }
-    }, duration);
   }, [playerController, enemyController, playerAnimMachine, enemyAnimMachine,
     damageSystem, combatAudio, playerClass, enemyClass]);
 
@@ -416,46 +410,56 @@ function BattleWorld({
     // --- Body separation — keep fighters from overlapping/clipping ---
     playerController.separateFrom(enemyController, FIGHTER_SEPARATION);
 
-    // --- Hit detection ---
-    if (playerAttackingRef.current) {
-      attackFrameRef.current++;
-      const fd = CLASS_FRAME_DATA[playerClass]?.[playerAttackTypeRef.current];
-      if (fd) {
-        for (const hb of fd.hitboxes) {
-          if (attackFrameRef.current >= hb.startFrame && attackFrameRef.current <= hb.endFrame) {
-            const dist = ps.position.distanceTo(enemyController.state.position);
-            if (dist <= hb.offset.z + hb.radius + 0.5) {
-              const key = `p_${attackFrameRef.current}`;
-              if (!(damageSystem as any)[key]) {
-                (damageSystem as any)[key] = true;
-                damageSystem.calculateAndApply('player', 'enemy', playerController, enemyController, hb, { blockable: playerAttackTypeRef.current !== AnimState.Special });
-                setTimeout(() => delete (damageSystem as any)[key], 1000);
-              }
-            }
-          }
-        }
-      }
-    }
+    // --- Hit detection (animation-clocked) ---
+    // Damage is gated by the attack animation's own normalized progress, so the
+    // hitbox goes live exactly when the visible swing reaches its contact frames
+    // — and freezes with it during hitstop. The attack ends when its clip
+    // finishes (state machine auto-transitions away), not on a wall-clock timer.
+    const resolveAttack = (
+      attackerId: 'player' | 'enemy',
+      defenderId: 'player' | 'enemy',
+      attacker: CharacterController,
+      defender: CharacterController,
+      anim: AnimationStateMachine,
+      attackingRef: MutableRefObject<boolean>,
+      typeRef: MutableRefObject<AnimState>,
+      consumed: MutableRefObject<Set<number>>,
+      classId: ClassId,
+      trail: TrailRenderer,
+    ) => {
+      if (!attackingRef.current) return;
+      const attackState = typeRef.current;
 
-    if (enemyAttackingRef.current) {
-      enemyAttackFrameRef.current++;
-      const fd = CLASS_FRAME_DATA[enemyClass]?.[enemyAttackTypeRef.current];
-      if (fd) {
-        for (const hb of fd.hitboxes) {
-          if (enemyAttackFrameRef.current >= hb.startFrame && enemyAttackFrameRef.current <= hb.endFrame) {
-            const dist = enemyController.state.position.distanceTo(ps.position);
-            if (dist <= hb.offset.z + hb.radius + 0.5) {
-              const key = `e_${enemyAttackFrameRef.current}`;
-              if (!(damageSystem as any)[key]) {
-                (damageSystem as any)[key] = true;
-                damageSystem.calculateAndApply('enemy', 'player', enemyController, playerController, hb, { blockable: enemyAttackTypeRef.current !== AnimState.Special });
-                setTimeout(() => delete (damageSystem as any)[key], 1000);
-              }
+      // Still mid-swing: check the live hitbox windows against the animation clock.
+      if (anim.state === attackState) {
+        const fd = CLASS_FRAME_DATA[classId]?.[attackState];
+        const moveType = ANIM_TO_MOVE[attackState];
+        const move = moveType ? getMoveForAction(classId, moveType) : undefined;
+        if (fd && move) {
+          const progress = anim.getActiveProgress();
+          fd.hitboxes.forEach((hb, i) => {
+            if (consumed.current.has(i)) return;
+            const win = getHitboxWindow(fd, hb);
+            if (progress < win.start || progress > win.end) return;
+            if (hitboxHits(hb, attacker.state.position, attacker.state.rotation, defender.state.position)) {
+              consumed.current.add(i);
+              damageSystem.calculateAndApply(attackerId, defenderId, attacker, defender, hb, move);
             }
-          }
+          });
         }
+        return;
       }
-    }
+
+      // Clip finished (auto-returned to Idle) or was interrupted → release control.
+      attackingRef.current = false;
+      attacker.state.isAttacking = false;
+      trail.stop();
+    };
+
+    resolveAttack('player', 'enemy', playerController, enemyController, playerAnimMachine,
+      playerAttackingRef, playerAttackTypeRef, playerHitConsumed, playerClass, playerTrail);
+    resolveAttack('enemy', 'player', enemyController, playerController, enemyAnimMachine,
+      enemyAttackingRef, enemyAttackTypeRef, enemyHitConsumed, enemyClass, enemyTrail);
 
     // --- Systems ---
     knockback.update(clampedDt, 'player', playerController);
