@@ -1,107 +1,153 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useGLTF } from '@react-three/drei';
+import { useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 
 export type StageId = 'lava_arena' | 'scifi_stage' | 'battle_arena' | 'rpg_environment';
 
-const STAGE_PATHS: Record<StageId, string> = {
-  lava_arena: '/models/environments/battle_arena/scene.gltf',
-  scifi_stage: '/models/environments/battle_arena/scene.gltf',
-  battle_arena: '/models/environments/battle_arena/scene.gltf',
-  rpg_environment: '/models/environments/battle_arena/scene.gltf',
-};
-
-const STAGE_COLORS: Record<StageId, { floor: string; accent: string; glow: string }> = {
-  lava_arena: { floor: '#3a2215', accent: '#ff6633', glow: '#ff8844' },
-  scifi_stage: { floor: '#1a1535', accent: '#8866ff', glow: '#aa88ff' },
-  battle_arena: { floor: '#152535', accent: '#5599ff', glow: '#aaddff' },
-  rpg_environment: { floor: '#253520', accent: '#99bb55', glow: '#bbdd77' },
+const STAGE_COLORS: Record<StageId, { floor: string; stone: string; accent: string; glow: string; flame: string }> = {
+  lava_arena:     { floor: '#241712', stone: '#2c2420', accent: '#ff6633', glow: '#ff8844', flame: '#ff7722' },
+  scifi_stage:    { floor: '#15132a', stone: '#1c1b30', accent: '#8866ff', glow: '#aa88ff', flame: '#88aaff' },
+  battle_arena:   { floor: '#141d28', stone: '#1e2630', accent: '#5599ff', glow: '#aaddff', flame: '#66ccff' },
+  rpg_environment:{ floor: '#1d2417', stone: '#26301f', accent: '#99bb55', glow: '#bbdd77', flame: '#ffaa44' },
 };
 
 interface ArenaStageProps {
   stageId: StageId;
 }
 
-function ProceduralArena({ stageId }: { stageId: StageId }) {
-  const colors = STAGE_COLORS[stageId];
+// A single flickering torch — emissive flame + (optionally) a warm point light.
+function Torch({ position, color, withLight }: { position: [number, number, number]; color: string; withLight?: boolean }) {
+  const lightRef = useRef<THREE.PointLight>(null);
+  const flameRef = useRef<THREE.Mesh>(null);
+  const seed = useRef(Math.random() * 100);
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime * 12 + seed.current;
+    const flicker = 0.75 + (Math.sin(t) * 0.5 + Math.sin(t * 2.3) * 0.5) * 0.25;
+    if (lightRef.current) lightRef.current.intensity = 3.2 * flicker;
+    if (flameRef.current) {
+      flameRef.current.scale.set(1, 0.85 + flicker * 0.4, 1);
+    }
+  });
 
   return (
-    <group>
-      {/* Main floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <circleGeometry args={[15, 64]} />
-        <meshStandardMaterial
-          color={colors.floor}
-          roughness={0.8}
-          metalness={0.2}
-        />
+    <group position={position}>
+      {/* brazier bowl */}
+      <mesh position={[0, -0.15, 0]} castShadow>
+        <cylinderGeometry args={[0.32, 0.18, 0.3, 8]} />
+        <meshStandardMaterial color="#15110e" roughness={0.9} metalness={0.3} />
       </mesh>
-
-      {/* Arena ring / edge */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
-        <ringGeometry args={[14, 15, 64]} />
-        <meshStandardMaterial
-          color={colors.accent}
-          emissive={colors.accent}
-          emissiveIntensity={0.5}
-          roughness={0.3}
-        />
+      {/* flame */}
+      <mesh ref={flameRef} position={[0, 0.35, 0]}>
+        <coneGeometry args={[0.22, 0.9, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
       </mesh>
-
-      {/* Center line */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-        <ringGeometry args={[0.02, 0.05, 32]} />
-        <meshStandardMaterial
-          color={colors.glow}
-          emissive={colors.glow}
-          emissiveIntensity={1}
-        />
+      <mesh position={[0, 0.2, 0]}>
+        <coneGeometry args={[0.32, 0.55, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={0.4} />
       </mesh>
-
-      {/* Corner pillars */}
-      {[0, 1, 2, 3].map((i) => {
-        const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        const dist = 13;
-        return (
-          <group key={i} position={[Math.cos(angle) * dist, 0, Math.sin(angle) * dist]}>
-            <mesh position={[0, 1.5, 0]} castShadow>
-              <cylinderGeometry args={[0.3, 0.4, 3, 8]} />
-              <meshStandardMaterial color="#222" roughness={0.6} metalness={0.4} />
-            </mesh>
-            <pointLight
-              color={colors.glow}
-              intensity={0.8}
-              distance={8}
-              position={[0, 3.2, 0]}
-            />
-          </group>
-        );
-      })}
+      {withLight && (
+        <pointLight ref={lightRef} color={color} intensity={3} distance={14} decay={2} position={[0, 0.6, 0]} />
+      )}
     </group>
   );
 }
 
-function GLTFStage({ stageId }: { stageId: StageId }) {
-  const path = STAGE_PATHS[stageId];
-  const { scene } = useGLTF(path);
+function PitArena({ stageId }: { stageId: StageId }) {
+  const c = STAGE_COLORS[stageId];
 
-  const clonedScene = useMemo(() => {
-    const clone = scene.clone(true);
-    clone.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.receiveShadow = true;
-        child.castShadow = false;
-      }
-    });
-    return clone;
-  }, [scene]);
+  // Amphitheatre terraces: each steps up and out from the pit, giving the
+  // crowd somewhere to stand. Tops align with the Crowd tier heights.
+  const terraces = [
+    { inner: 11, outer: 13, top: 1.0, prev: 0.2 },
+    { inner: 13, outer: 15, top: 2.0, prev: 1.0 },
+    { inner: 15, outer: 17.5, top: 3.0, prev: 2.0 },
+  ];
+
+  const COLUMN_COUNT = 8;
+  const TORCH_LIGHT_EVERY = 2; // only every Nth torch casts a light (perf)
 
   return (
     <group>
-      <primitive object={clonedScene} />
+      {/* Pit floor — dark stone slab */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+        <circleGeometry args={[11, 64]} />
+        <meshStandardMaterial color={c.floor} roughness={0.95} metalness={0.15} />
+      </mesh>
+
+      {/* Central combat emblem — faint glowing rings */}
+      {[2.2, 4.4, 7].map((r, i) => (
+        <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
+          <ringGeometry args={[r - 0.06, r, 64]} />
+          <meshStandardMaterial color={c.accent} emissive={c.accent} emissiveIntensity={0.4} transparent opacity={0.5} />
+        </mesh>
+      ))}
+
+      {/* Pit rim / barrier wall around the fighting floor */}
+      <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[11, 11, 1, 64, 1, true]} />
+        <meshStandardMaterial color={c.stone} roughness={0.9} metalness={0.2} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1.0, 0]}>
+        <ringGeometry args={[10.9, 11.25, 64]} />
+        <meshStandardMaterial color={c.accent} emissive={c.accent} emissiveIntensity={0.7} roughness={0.4} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Amphitheatre terraces (tops + vertical risers) */}
+      {terraces.map((tr, i) => (
+        <group key={i}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, tr.top, 0]} receiveShadow>
+            <ringGeometry args={[tr.inner, tr.outer, 64]} />
+            <meshStandardMaterial color={c.stone} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh position={[0, (tr.top + tr.prev) / 2, 0]}>
+            <cylinderGeometry args={[tr.inner, tr.inner, tr.top - tr.prev, 64, 1, true]} />
+            <meshStandardMaterial color={c.floor} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Torch-lit columns ringing the pit */}
+      {Array.from({ length: COLUMN_COUNT }).map((_, i) => {
+        const angle = (i / COLUMN_COUNT) * Math.PI * 2 + Math.PI / COLUMN_COUNT;
+        const dist = 11.4;
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        return (
+          <group key={i} position={[x, 0, z]}>
+            <mesh position={[0, 3, 0]} castShadow>
+              <cylinderGeometry args={[0.45, 0.55, 6, 8]} />
+              <meshStandardMaterial color={c.stone} roughness={0.85} metalness={0.25} />
+            </mesh>
+            {/* capital */}
+            <mesh position={[0, 6.1, 0]} castShadow>
+              <boxGeometry args={[1.1, 0.3, 1.1]} />
+              <meshStandardMaterial color={c.stone} roughness={0.85} metalness={0.25} />
+            </mesh>
+            <Torch position={[0, 6.5, 0]} color={c.flame} withLight={i % TORCH_LIGHT_EVERY === 0} />
+          </group>
+        );
+      })}
+
+      {/* Ground braziers flanking the pit for foreground warmth */}
+      {[[0, 9.5], [0, -9.5]].map(([x, z], i) => (
+        <group key={`b${i}`} position={[x, 0, z]}>
+          <mesh position={[0, 0.5, 0]} castShadow>
+            <cylinderGeometry args={[0.4, 0.5, 1, 8]} />
+            <meshStandardMaterial color={c.stone} roughness={0.9} metalness={0.3} />
+          </mesh>
+          <Torch position={[0, 1.1, 0]} color={c.flame} withLight />
+        </group>
+      ))}
+
+      {/* Dark enclosure so the arena doesn't float in a void */}
+      <mesh position={[0, 7, 0]}>
+        <cylinderGeometry args={[19, 19, 16, 48, 1, true]} />
+        <meshStandardMaterial color="#0a0810" roughness={1} metalness={0} side={THREE.BackSide} />
+      </mesh>
     </group>
   );
 }
@@ -120,8 +166,8 @@ class StageErrorBoundary extends React.Component<
 
 export function ArenaStage({ stageId }: ArenaStageProps) {
   return (
-    <StageErrorBoundary fallback={<ProceduralArena stageId={stageId} />}>
-      <ProceduralArena stageId={stageId} />
+    <StageErrorBoundary fallback={<PitArena stageId="battle_arena" />}>
+      <PitArena stageId={stageId} />
     </StageErrorBoundary>
   );
 }
