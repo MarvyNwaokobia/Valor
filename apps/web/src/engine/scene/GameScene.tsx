@@ -19,7 +19,6 @@ import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
 import { ScreenEffects } from '../vfx/ScreenEffects';
-import { CombatPostProcessing } from '../vfx/PostProcessing';
 import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
 import { StageLighting } from '../world/StageLighting';
 import { AmbientVFX } from '../world/AmbientVFX';
@@ -508,7 +507,6 @@ function BattleWorld({
         <planeGeometry args={[30, 30]} />
         <shadowMaterial opacity={0.3} />
       </mesh>
-      <CombatPostProcessing screenEffects={screenFx} />
     </>
   );
 }
