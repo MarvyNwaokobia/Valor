@@ -65,6 +65,11 @@ const STAGGER_DURATION: Record<string, number> = {
 const FOOTSTEP_INTERVAL = 0.3;
 const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 
+// Minimum center-to-center distance between fighters' bodies. Below the
+// attack range (2.0) so strikes still connect, but wide enough that the
+// two characters never visually clip into each other.
+const FIGHTER_SEPARATION = 1.5;
+
 function BattleWorld({
   playerClass,
   enemyClass,
@@ -104,8 +109,8 @@ function BattleWorld({
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
-  const playerController = useMemo(() => new CharacterController(new THREE.Vector3(-1.5, 0, 0)), []);
-  const enemyController = useMemo(() => new CharacterController(new THREE.Vector3(1.5, 0, 0)), []);
+  const playerController = useMemo(() => new CharacterController(new THREE.Vector3(-2.5, 0, 0)), []);
+  const enemyController = useMemo(() => new CharacterController(new THREE.Vector3(2.5, 0, 0)), []);
 
   const playerAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]), [playerClass]);
   const enemyAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]), [enemyClass]);
@@ -407,6 +412,9 @@ function BattleWorld({
         }
       }
     }
+
+    // --- Body separation — keep fighters from overlapping/clipping ---
+    playerController.separateFrom(enemyController, FIGHTER_SEPARATION);
 
     // --- Hit detection ---
     if (playerAttackingRef.current) {
