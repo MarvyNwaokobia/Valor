@@ -20,6 +20,8 @@ export enum AnimState {
   Intro = 'intro',
 }
 
+export type HitDirection = 'front' | 'back' | 'side';
+
 interface AnimStateConfig {
   clip: string;
   // Optional pool of alternate clips for this state. When present, the machine
@@ -29,6 +31,8 @@ interface AnimStateConfig {
   //   'random' → pick at random (varied hit reactions, dodges, etc.).
   clips?: string[];
   variant?: 'chain' | 'random';
+  // Hit reactions can pick a pool by where the blow landed (front/back/side).
+  clipsByDir?: { front?: string[]; back?: string[]; side?: string[] };
   loop: boolean;
   speed: number;
   fadeIn: number;
@@ -59,8 +63,8 @@ const BERSERKER_ANIMS: AnimationMap = {
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.takingPunch,   loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
   // Dodge mixes a jump-back and a roll.
   [AnimState.Dodge]:       { clip: CLIP_NAMES.jumpDown,      clips: [CLIP_NAMES.jumpDown, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.takingPunch,   clips: [CLIP_NAMES.takingPunch, CLIP_NAMES.hitReaction, CLIP_NAMES.reaction], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.uppercut,      clips: [CLIP_NAMES.uppercut, CLIP_NAMES.gettingHit], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.takingPunch,   clipsByDir: { front: [CLIP_NAMES.takingPunch, CLIP_NAMES.hitReaction], back: [CLIP_NAMES.gettingHit, CLIP_NAMES.hitReactionAlt], side: [CLIP_NAMES.reaction, CLIP_NAMES.hitReactionAlt] }, variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.uppercut,      clipsByDir: { front: [CLIP_NAMES.uppercut, CLIP_NAMES.takingPunch], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut] }, loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,  loop: false, speed: 0.8,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUpAlt,  loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,  loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
@@ -80,8 +84,8 @@ const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.5,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Block },
   // Phantom favours rolls.
   [AnimState.Dodge]:       { clip: CLIP_NAMES.runRoll,        clips: [CLIP_NAMES.runRoll, CLIP_NAMES.dodge, CLIP_NAMES.jumpDown], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.reaction,       clips: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction, CLIP_NAMES.hitReactionAlt], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.hitReactionAlt, clips: [CLIP_NAMES.hitReactionAlt, CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut], variant: 'random', loop: false, speed: 1.1,  fadeIn: 0.04, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.reaction,       clipsByDir: { front: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction], back: [CLIP_NAMES.hitReactionAlt, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.hitReaction, CLIP_NAMES.hitReactionAlt] }, variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.hitReactionAlt, clipsByDir: { front: [CLIP_NAMES.uppercut, CLIP_NAMES.hitReactionAlt], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut] }, loop: false, speed: 1.1,  fadeIn: 0.04, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUp,      loop: false, speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0,    canInterrupt: false },
@@ -100,8 +104,8 @@ const SENTINEL_ANIMS: AnimationMap = {
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.hitReaction,    loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
   [AnimState.Dodge]:       { clip: CLIP_NAMES.dodge,          clips: [CLIP_NAMES.dodge, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.hitReaction,    clips: [CLIP_NAMES.hitReaction, CLIP_NAMES.takingPunch, CLIP_NAMES.reaction], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.gettingHit,     clips: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.hitReaction,    clipsByDir: { front: [CLIP_NAMES.hitReaction, CLIP_NAMES.takingPunch], back: [CLIP_NAMES.gettingHit, CLIP_NAMES.hitReactionAlt], side: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction] }, variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.gettingHit,     clipsByDir: { front: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.uppercut, CLIP_NAMES.gettingHit] }, loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.standUp,        loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
@@ -123,7 +127,7 @@ export class AnimationStateMachine {
   private animMap: AnimationMap;
   private onStateChange?: (from: AnimState, to: AnimState) => void;
   private paused = false;
-  private pendingTransition: { state: AnimState; force: boolean } | null = null;
+  private pendingTransition: { state: AnimState; force: boolean; dir?: HitDirection } | null = null;
   private previousAction: THREE.AnimationAction | null = null;
   // Combo-chain cursor for 'chain' variant pools (shared across attack states so
   // a light→heavy string keeps advancing), reset after a lull between hits.
@@ -149,9 +153,17 @@ export class AnimationStateMachine {
     this.transition(AnimState.Idle, true);
   }
 
-  // Picks which clip a state plays this entry: a fixed clip, the next in a combo
-  // chain, or a random variant — so moves and reactions stop looking identical.
-  private resolveClipName(config: AnimStateConfig): string {
+  // Picks which clip a state plays this entry: a directional reaction, a fixed
+  // clip, the next in a combo chain, or a random variant — so moves and
+  // reactions stop looking identical.
+  private resolveClipName(config: AnimStateConfig, dir?: HitDirection): string {
+    if (dir && config.clipsByDir) {
+      const pool = config.clipsByDir[dir] ?? config.clipsByDir.front;
+      if (pool && pool.length > 0) {
+        return pool[Math.floor(Math.random() * pool.length)];
+      }
+    }
+
     const pool = config.clips;
     if (!pool || pool.length === 0) return config.clip;
     if (pool.length === 1) return pool[0];
@@ -174,11 +186,16 @@ export class AnimationStateMachine {
     this.onStateChange = cb;
   }
 
-  transition(newState: AnimState, force = false) {
+  // Force a directional hit reaction (front/back/side picks the clip pool).
+  transitionHit(newState: AnimState, dir: HitDirection) {
+    this.transition(newState, true, dir);
+  }
+
+  transition(newState: AnimState, force = false, dir?: HitDirection) {
     if (!this.mixer) return;
 
     if (this.paused) {
-      this.pendingTransition = { state: newState, force };
+      this.pendingTransition = { state: newState, force, dir };
       return;
     }
 
@@ -192,7 +209,7 @@ export class AnimationStateMachine {
     const config = this.animMap[newState];
     if (!config) return;
 
-    let clip = this.clips.get(this.resolveClipName(config));
+    let clip = this.clips.get(this.resolveClipName(config, dir));
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
@@ -280,14 +297,14 @@ export class AnimationStateMachine {
     this.paused = false;
     if (this.mixer) this.mixer.timeScale = 1;
     if (this.pendingTransition) {
-      const { state } = this.pendingTransition;
+      const { state, dir } = this.pendingTransition;
       this.pendingTransition = null;
       // Clean slate after freeze — stop everything so transition()
       // plays the new clip at full weight with no stale crossfades
       this.mixer?.stopAllAction();
       this.activeAction = null;
       this.previousAction = null;
-      this.transition(state, true);
+      this.transition(state, true, dir);
     }
   }
 
