@@ -150,6 +150,27 @@ export class CharacterController {
     this.state.isStaggered = false;
   }
 
+  // Push two fighters apart so their bodies never overlap/clip.
+  // Resolves mutually — each is shoved half the penetration depth.
+  separateFrom(other: CharacterController, minDist: number) {
+    const delta = new THREE.Vector3()
+      .subVectors(other.state.position, this.state.position)
+      .setY(0);
+    const dist = delta.length();
+
+    if (dist < minDist) {
+      // Degenerate case: exactly stacked — pick an arbitrary axis to split them
+      const dir = dist > 1e-4
+        ? delta.multiplyScalar(1 / dist)
+        : new THREE.Vector3(1, 0, 0);
+      const push = (minDist - dist) * 0.5;
+      this.state.position.addScaledVector(dir, -push);
+      other.state.position.addScaledVector(dir, push);
+      this.clampToArena();
+      other.clampToArena();
+    }
+  }
+
   private updateTimers(dt: number) {
     if (this.dodgeTimer > 0) {
       this.dodgeTimer -= dt;
