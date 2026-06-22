@@ -22,6 +22,13 @@ export enum AnimState {
 
 interface AnimStateConfig {
   clip: string;
+  // Optional pool of alternate clips for this state. When present, the machine
+  // picks one per entry so the move "switches up" instead of repeating:
+  //   'chain'  → cycle through the pool across a combo (jab → cross → hook),
+  //              resetting after a pause so isolated hits start fresh.
+  //   'random' → pick at random (varied hit reactions, dodges, etc.).
+  clips?: string[];
+  variant?: 'chain' | 'random';
   loop: boolean;
   speed: number;
   fadeIn: number;
@@ -32,6 +39,9 @@ interface AnimStateConfig {
   onComplete?: () => void;
 }
 
+// How long a gap (ms) between attacks before the chain restarts from the top.
+const CHAIN_RESET_MS = 1200;
+
 export interface AnimationMap {
   [state: string]: AnimStateConfig;
 }
@@ -41,14 +51,16 @@ const BERSERKER_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,     loop: true,  speed: 0.9,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,          loop: true,  speed: 1.0,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,           loop: true,  speed: 1.1,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.fistFight,     loop: false, speed: 1.3,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hook,          loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseKick,loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
+  // Light mash flows as a brawler flurry; heavy alternates big swings.
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.fistFight,     clips: [CLIP_NAMES.fistFight, CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch], variant: 'chain', loop: false, speed: 1.3,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hook,          clips: [CLIP_NAMES.hook, CLIP_NAMES.hookPunch], variant: 'chain', loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseKick,clips: [CLIP_NAMES.roundhouseKick, CLIP_NAMES.roundhouseAlt], variant: 'random', loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.bodyBlock,     loop: true,  speed: 1.0,  fadeIn: 0.08, fadeOut: 0.08, canInterrupt: true },
-  [AnimState.BlockHit]:    { clip: CLIP_NAMES.takingPunch,   loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.jumpDown,      loop: false, speed: 1.3,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.takingPunch,   loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.uppercut,      loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.BlockHit]:    { clip: CLIP_NAMES.takingPunch,   loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
+  // Dodge mixes a jump-back and a roll.
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.jumpDown,      clips: [CLIP_NAMES.jumpDown, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.takingPunch,   clips: [CLIP_NAMES.takingPunch, CLIP_NAMES.hitReaction, CLIP_NAMES.reaction], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.uppercut,      clips: [CLIP_NAMES.uppercut, CLIP_NAMES.gettingHit], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,  loop: false, speed: 0.8,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUpAlt,  loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,  loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
@@ -61,14 +73,15 @@ const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.1,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.dodgeWalk,      loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.1,  canInterrupt: true },
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       loop: false, speed: 1.5,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.roundhouseAlt,  loop: false, speed: 1.1,  fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]:     { clip: CLIP_NAMES.rollKick,       loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.fistFight], variant: 'chain', loop: false, speed: 1.5,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.roundhouseAlt, CLIP_NAMES.rollKick], variant: 'chain', loop: false, speed: 1.1,  fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Special]:     { clip: CLIP_NAMES.rollKick,       clips: [CLIP_NAMES.rollKick, CLIP_NAMES.roundhouseKick], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
-  [AnimState.BlockHit]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.5,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.runRoll,        loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.4,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.hitReactionAlt, loop: false, speed: 1.1,  fadeIn: 0.04, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.BlockHit]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.5,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Block },
+  // Phantom favours rolls.
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.runRoll,        clips: [CLIP_NAMES.runRoll, CLIP_NAMES.dodge, CLIP_NAMES.jumpDown], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.reaction,       clips: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction, CLIP_NAMES.hitReactionAlt], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.hitReactionAlt, clips: [CLIP_NAMES.hitReactionAlt, CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut], variant: 'random', loop: false, speed: 1.1,  fadeIn: 0.04, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUp,      loop: false, speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0,    canInterrupt: false },
@@ -81,14 +94,14 @@ const SENTINEL_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.0,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 0.95, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       loop: false, speed: 1.2,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hookPunch,      loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseAlt,  loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch], variant: 'chain', loop: false, speed: 1.2,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hookPunch,      clips: [CLIP_NAMES.hookPunch, CLIP_NAMES.hook], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.roundhouseAlt, CLIP_NAMES.roundhouseKick], variant: 'random', loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
-  [AnimState.BlockHit]:    { clip: CLIP_NAMES.hitReaction,    loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.dodge,          loop: false, speed: 1.2,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitLight]:    { clip: CLIP_NAMES.hitReaction,    loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.gettingHit,     loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.BlockHit]:    { clip: CLIP_NAMES.hitReaction,    loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.dodge,          clips: [CLIP_NAMES.dodge, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitLight]:    { clip: CLIP_NAMES.hitReaction,    clips: [CLIP_NAMES.hitReaction, CLIP_NAMES.takingPunch, CLIP_NAMES.reaction], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HitHeavy]:    { clip: CLIP_NAMES.gettingHit,     clips: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
   [AnimState.GetUp]:       { clip: CLIP_NAMES.standUp,        loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
@@ -112,6 +125,10 @@ export class AnimationStateMachine {
   private paused = false;
   private pendingTransition: { state: AnimState; force: boolean } | null = null;
   private previousAction: THREE.AnimationAction | null = null;
+  // Combo-chain cursor for 'chain' variant pools (shared across attack states so
+  // a light→heavy string keeps advancing), reset after a lull between hits.
+  private chainIndex = 0;
+  private lastChainTime = 0;
 
   constructor(animMap: AnimationMap) {
     this.animMap = animMap;
@@ -123,11 +140,30 @@ export class AnimationStateMachine {
     this.activeAction = null;
     this.previousAction = null;
     this.currentState = AnimState.Idle;
+    this.chainIndex = 0;
+    this.lastChainTime = 0;
     this.clips.clear();
     for (const clip of clips) {
       this.clips.set(clip.name, clip);
     }
     this.transition(AnimState.Idle, true);
+  }
+
+  // Picks which clip a state plays this entry: a fixed clip, the next in a combo
+  // chain, or a random variant — so moves and reactions stop looking identical.
+  private resolveClipName(config: AnimStateConfig): string {
+    const pool = config.clips;
+    if (!pool || pool.length === 0) return config.clip;
+    if (pool.length === 1) return pool[0];
+
+    if (config.variant === 'chain') {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - this.lastChainTime > CHAIN_RESET_MS) this.chainIndex = 0;
+      this.lastChainTime = now;
+      return pool[this.chainIndex++ % pool.length];
+    }
+
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   get state(): AnimState {
@@ -156,7 +192,7 @@ export class AnimationStateMachine {
     const config = this.animMap[newState];
     if (!config) return;
 
-    let clip = this.clips.get(config.clip);
+    let clip = this.clips.get(this.resolveClipName(config));
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
