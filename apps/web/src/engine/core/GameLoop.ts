@@ -1,4 +1,4 @@
-export type UpdateCallback = (dt: number, elapsed: number) => void;
+export type UpdateCallback = (dt: number, realDt: number, elapsed: number) => void;
 
 const FIXED_TIMESTEP = 1 / 60;
 const MAX_FRAME_SKIP = 5;
@@ -63,13 +63,13 @@ export class GameLoop {
 
     let steps = 0;
     while (this.accumulator >= FIXED_TIMESTEP && steps < MAX_FRAME_SKIP) {
-      this.fixedUpdate?.(FIXED_TIMESTEP, this.elapsed);
+      this.fixedUpdate?.(FIXED_TIMESTEP, rawDt, this.elapsed);
       this.accumulator -= FIXED_TIMESTEP;
       this.elapsed += FIXED_TIMESTEP;
       steps++;
     }
 
-    this.frameUpdate?.(dt, this.elapsed);
+    this.frameUpdate?.(dt, rawDt, this.elapsed);
   };
 }
 

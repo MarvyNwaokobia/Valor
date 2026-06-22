@@ -35,6 +35,10 @@ const DEFAULT_BINDINGS: Record<string, Action> = {
   Tab: Action.LockOn,
 };
 
+const BUFFERED_ACTIONS = [
+  Action.LightAttack, Action.HeavyAttack, Action.Special, Action.Dodge,
+];
+
 export class InputSystem {
   private keys = new Set<string>();
   private prevKeys = new Set<string>();
@@ -46,6 +50,9 @@ export class InputSystem {
   private mouseDeltaX = 0;
   private mouseDeltaY = 0;
   private pointerLocked = false;
+
+  private buffer = new Map<Action, number>();
+  private readonly bufferMs = 130;
 
   constructor(bindings?: Record<string, Action>) {
     this.bindings = bindings ?? { ...DEFAULT_BINDINGS };
@@ -84,6 +91,15 @@ export class InputSystem {
     };
   }
 
+  consumeBuffered(action: Action): boolean {
+    const t = this.buffer.get(action);
+    if (t !== undefined && performance.now() - t <= this.bufferMs) {
+      this.buffer.delete(action);
+      return true;
+    }
+    return false;
+  }
+
   get moveAxis(): { x: number; y: number } {
     let x = this.stickX;
     let y = this.stickY;
@@ -112,6 +128,9 @@ export class InputSystem {
 
   triggerAction(action: Action) {
     this.keys.add(action);
+    if (BUFFERED_ACTIONS.includes(action)) {
+      this.buffer.set(action, performance.now());
+    }
   }
 
   releaseAction(action: Action) {
@@ -133,6 +152,9 @@ export class InputSystem {
     if (action) {
       ke.preventDefault();
       this.keys.add(action);
+      if (BUFFERED_ACTIONS.includes(action)) {
+        this.buffer.set(action, performance.now());
+      }
     }
   };
 
