@@ -209,10 +209,12 @@ function BattleWorld({
       }
 
       combatAudio.onDamageEvent(event);
-      battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30);
-      if (event.hitType !== 'light') {
-        battleCamera.punch(event.hitType === 'heavy' ? 0.06 : 0.1);
-      }
+      // Camera kick scaled to hit weight, fired on the exact contact frame
+      // (this handler runs the instant damage lands). Every hit kicks; heavies
+      // and specials kick harder, crits harder still.
+      const weight = event.hitType === 'light' ? 1 : event.hitType === 'heavy' ? 2.2 : 3.2;
+      battleCamera.shake(0.09 * weight * (event.critical ? 1.4 : 1), 32);
+      battleCamera.punch(0.035 * weight);
 
       // Contact-point VFX + squash-punch on the struck fighter. Both fire at the
       // exact hit instant (event carries the true fist/weapon position).
@@ -351,17 +353,16 @@ function BattleWorld({
     anim.transition(animState, true);
     combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
 
-    // Attack lunge — surge toward opponent
+    // Committed step into the strike — front-loaded then plants (no slide).
     const target = who === 'player' ? enemyController : playerController;
     const lungeDir = new THREE.Vector3()
       .subVectors(target.state.position, ctrl.state.position)
       .setY(0)
       .normalize();
     const dist = ctrl.state.position.distanceTo(target.state.position);
-    const lungeForce = animState === AnimState.LightAttack ? 4 : animState === AnimState.HeavyAttack ? 6 : 8;
-    const lungeDist = Math.max(0, dist - 1.2);
-    const clampedLunge = Math.min(lungeForce, lungeDist * 3);
-    ctrl.state.velocity.addScaledVector(lungeDir, clampedLunge);
+    const stepInto = animState === AnimState.LightAttack ? 0.5 : animState === AnimState.HeavyAttack ? 0.95 : 1.3;
+    const gap = Math.max(0, dist - 1.1); // stop just short of overlapping the target
+    ctrl.applyLunge(lungeDir, Math.min(stepInto, gap));
 
     // Start weapon trail. The attack now ends when its animation completes
     // (state machine auto-transitions to Idle on the clip's finished event),

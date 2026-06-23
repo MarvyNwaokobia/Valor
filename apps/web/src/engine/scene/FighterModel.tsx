@@ -42,6 +42,7 @@ export function FighterModel({
   const modelRef = useRef<THREE.Group>(null);
   const shadowRef = useRef<THREE.Group>(null);
   const lean = useRef({ x: 0, z: 0 });
+  const lastPos = useRef<THREE.Vector3 | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const initDone = useRef(false);
   const mixamoApplied = useRef(false);
@@ -113,11 +114,19 @@ export function FighterModel({
     animMachine.matchLocomotionSpeed(planarSpeed);
 
     // Procedural lean — tilt into movement and recoil on impact, for weight.
+    // Velocity is read from actual position delta so it also captures the
+    // attack lunge (which moves position directly, not via state.velocity).
+    let vx = 0, vz = 0;
+    if (lastPos.current && dt > 0.0001) {
+      vx = THREE.MathUtils.clamp((state.position.x - lastPos.current.x) / dt, -10, 10);
+      vz = THREE.MathUtils.clamp((state.position.z - lastPos.current.z) / dt, -10, 10);
+    }
+    (lastPos.current ??= new THREE.Vector3()).copy(state.position);
     const sin = Math.sin(state.rotation), cos = Math.cos(state.rotation);
-    const fwd = state.velocity.x * sin + state.velocity.z * cos;
-    const side = state.velocity.x * cos - state.velocity.z * sin;
-    const targetX = -fwd * 0.04 + state.impactPulse * 0.35;
-    const targetZ = side * 0.04;
+    const fwd = vx * sin + vz * cos;
+    const side = vx * cos - vz * sin;
+    const targetX = -fwd * 0.045 + state.impactPulse * 0.35;
+    const targetZ = side * 0.045;
     const lk = 1 - Math.exp(-10 * dt);
     lean.current.x += (targetX - lean.current.x) * lk;
     lean.current.z += (targetZ - lean.current.z) * lk;
