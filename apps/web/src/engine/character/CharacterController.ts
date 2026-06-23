@@ -73,6 +73,12 @@ export class CharacterController {
   private blockHeldTime = PARRY_WINDOW + 1;
   private wasBlocking = false;
 
+  // Committed forward step of an attack (replaces the old velocity slide).
+  private lungeDir = new THREE.Vector3();
+  private lungeDist = 0;
+  private lungeElapsed = 0;
+  private lungeDuration = 0;
+
   constructor(
     startPosition: THREE.Vector3,
     config?: Partial<CharacterConfig>
@@ -107,11 +113,14 @@ export class CharacterController {
     this.updateTimers(dt);
 
     if (this.state.isAttacking) {
-      // Apply lunge momentum during attacks
-      this.state.position.addScaledVector(this.state.velocity, dt);
-      const decay = Math.exp(-10 * dt);
-      this.state.velocity.x *= decay;
-      this.state.velocity.z *= decay;
+      // Committed step that front-loads its travel then hard-plants — the step
+      // into a strike, not a long velocity slide (root-motion-style commit).
+      if (this.lungeElapsed < this.lungeDuration && this.lungeDist > 0) {
+        const e0 = easeOutCubic(this.lungeElapsed / this.lungeDuration);
+        this.lungeElapsed = Math.min(this.lungeDuration, this.lungeElapsed + dt);
+        const e1 = easeOutCubic(this.lungeElapsed / this.lungeDuration);
+        this.state.position.addScaledVector(this.lungeDir, this.lungeDist * (e1 - e0));
+      }
       // Face lock-on target during attacks
       if (this.lockOnTarget) {
         const toTarget = new THREE.Vector3()
@@ -152,6 +161,19 @@ export class CharacterController {
 
     this.applyGravity(dt);
     this.clampToArena();
+  }
+
+  // Commit a forward step for an attack — travels `distance` metres along
+  // `direction`, front-loaded over `duration`, then plants. Cancels any prior
+  // planar drift so there's no residual slide.
+  applyLunge(direction: THREE.Vector3, distance: number, duration = 0.14) {
+    this.lungeDir.copy(direction).setY(0);
+    if (this.lungeDir.lengthSq() > 1e-6) this.lungeDir.normalize();
+    this.lungeDist = Math.max(0, distance);
+    this.lungeDuration = duration;
+    this.lungeElapsed = 0;
+    this.state.velocity.x = 0;
+    this.state.velocity.z = 0;
   }
 
   // Begin a stagger of `duration` seconds; the last `techFraction` of it is the
@@ -358,4 +380,11 @@ function lerpAngle(a: number, b: number, t: number): number {
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
   return a + diff * Math.min(t, 1);
+}
+
+// Fast start, settling to a stop — front-loads the lunge so the step lands
+// early and the body plants for the rest of the swing.
+function easeOutCubic(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return 1 - Math.pow(1 - x, 3);
 }
