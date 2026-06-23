@@ -10,6 +10,7 @@ export interface CharacterState {
   isBlocking: boolean;
   isDodging: boolean;
   isStaggered: boolean;
+  isRunning: boolean;
   isDead: boolean;
   facingRight: boolean;
   health: number;
@@ -23,7 +24,7 @@ export interface CharacterState {
 export interface CharacterConfig {
   moveSpeed: number;
   runSpeed: number;
-  dodgeSpeed: number;
+  dodgeDistance: number;
   dodgeDuration: number;
   dodgeCooldown: number;
   turnSpeed: number;
@@ -38,11 +39,15 @@ export interface CharacterConfig {
 // A hit landing within this many seconds of raising the guard is a parry.
 const PARRY_WINDOW = 0.18;
 
+// Seconds of continuous movement before a walk breaks into a run.
+const RUN_DELAY = 0.4;
+
 const DEFAULT_CONFIG: CharacterConfig = {
-  moveSpeed: 3.5,
-  runSpeed: 6,
-  dodgeSpeed: 10,
-  dodgeDuration: 0.3,
+  // Tuned to the walk/run cycles so the feet track the ground (no skating).
+  moveSpeed: 2.0,
+  runSpeed: 4.8,
+  dodgeDistance: 1.9,
+  dodgeDuration: 0.42,
   dodgeCooldown: 0.8,
   turnSpeed: 10,
   gravity: -20,
@@ -79,6 +84,11 @@ export class CharacterController {
   private lungeElapsed = 0;
   private lungeDuration = 0;
 
+  // How long movement has been held (walk breaks into a run past RUN_DELAY),
+  // and the eased progress of the current dodge roll.
+  private moveHoldTime = 0;
+  private dodgeElapsed = 0;
+
   constructor(
     startPosition: THREE.Vector3,
     config?: Partial<CharacterConfig>
@@ -93,6 +103,7 @@ export class CharacterController {
       isBlocking: false,
       isDodging: false,
       isStaggered: false,
+      isRunning: false,
       isDead: false,
       facingRight: true,
       health: 100,
@@ -275,6 +286,8 @@ export class CharacterController {
     const hasInput = Math.abs(move.x) > 0.1 || Math.abs(move.y) > 0.1;
 
     if (!hasInput) {
+      this.moveHoldTime = 0;
+      this.state.isRunning = false;
       const decay = Math.exp(-15 * dt);
       this.state.velocity.x *= decay;
       this.state.velocity.z *= decay;
@@ -282,6 +295,10 @@ export class CharacterController {
       if (Math.abs(this.state.velocity.z) < 0.01) this.state.velocity.z = 0;
       return;
     }
+
+    // Hold a direction long enough and the walk breaks into a run.
+    this.moveHoldTime += dt;
+    this.state.isRunning = this.moveHoldTime > RUN_DELAY;
 
     const forward = new THREE.Vector3(
       -Math.sin(cameraYaw),
@@ -299,7 +316,7 @@ export class CharacterController {
       .addScaledVector(forward, move.y)
       .normalize();
 
-    const speed = this.config.moveSpeed;
+    const speed = this.state.isRunning ? this.config.runSpeed : this.config.moveSpeed;
     this.state.velocity.x = moveDir.x * speed;
     this.state.velocity.z = moveDir.z * speed;
 
@@ -332,27 +349,34 @@ export class CharacterController {
 
   private startDodge() {
     this.state.isDodging = true;
+    this.state.isRunning = false;
+    this.moveHoldTime = 0;
     this.dodgeTimer = this.config.dodgeDuration;
+    this.dodgeElapsed = 0;
     this.dodgeCooldownTimer = this.config.dodgeCooldown;
 
+    // Dodge where you're moving; with no input, step back away from the
+    // opponent (a backstep) rather than lunging into them.
     const forward = new THREE.Vector3(
       Math.sin(this.state.rotation),
       0,
       Math.cos(this.state.rotation)
     );
-
-    if (this.state.velocity.lengthSq() > 0.1) {
-      this.dodgeDirection.copy(this.state.velocity).normalize();
+    if (this.state.velocity.lengthSq() > 0.5) {
+      this.dodgeDirection.copy(this.state.velocity).setY(0).normalize();
     } else {
-      this.dodgeDirection.copy(forward);
+      this.dodgeDirection.copy(forward).negate();
     }
   }
 
+  // A short, front-loaded roll that covers a set distance over the dodge
+  // duration, then plants — reads as an evasive roll, not a long glide.
   private applyDodgeMovement(dt: number) {
-    this.state.position.addScaledVector(
-      this.dodgeDirection,
-      this.config.dodgeSpeed * dt
-    );
+    if (this.dodgeElapsed >= this.config.dodgeDuration) return;
+    const e0 = easeOutCubic(this.dodgeElapsed / this.config.dodgeDuration);
+    this.dodgeElapsed = Math.min(this.config.dodgeDuration, this.dodgeElapsed + dt);
+    const e1 = easeOutCubic(this.dodgeElapsed / this.config.dodgeDuration);
+    this.state.position.addScaledVector(this.dodgeDirection, this.config.dodgeDistance * (e1 - e0));
   }
 
   private applyGravity(dt: number) {

@@ -62,7 +62,7 @@ const BERSERKER_ANIMS: AnimationMap = {
   [AnimState.Block]:       { clip: CLIP_NAMES.bodyBlock,     loop: true,  speed: 1.0,  fadeIn: 0.08, fadeOut: 0.08, canInterrupt: true },
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.takingPunch,   loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
   // Dodge mixes a jump-back and a roll.
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.jumpDown,      clips: [CLIP_NAMES.jumpDown, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.jumpDown,      clips: [CLIP_NAMES.jumpDown, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.05, fadeOut: 0.12, duration: 0.5, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitLight]:    { clip: CLIP_NAMES.takingPunch,   clipsByDir: { front: [CLIP_NAMES.takingPunch, CLIP_NAMES.hitReaction, CLIP_NAMES.reaction], back: [CLIP_NAMES.gettingHit, CLIP_NAMES.hitReactionAlt], side: [CLIP_NAMES.reaction, CLIP_NAMES.hitReactionAlt] }, variant: 'random', loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitHeavy]:    { clip: CLIP_NAMES.uppercut,      clipsByDir: { front: [CLIP_NAMES.uppercut, CLIP_NAMES.takingPunch, CLIP_NAMES.gettingHit], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut] }, loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,  loop: false, speed: 0.8,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
@@ -83,7 +83,7 @@ const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.5,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Block },
   // Phantom favours rolls.
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.runRoll,        clips: [CLIP_NAMES.runRoll, CLIP_NAMES.dodge, CLIP_NAMES.jumpDown], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.runRoll,        clips: [CLIP_NAMES.runRoll, CLIP_NAMES.dodge, CLIP_NAMES.jumpDown], variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.04, fadeOut: 0.1,  duration: 0.5, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitLight]:    { clip: CLIP_NAMES.reaction,       clipsByDir: { front: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction, CLIP_NAMES.hitReactionAlt], back: [CLIP_NAMES.hitReactionAlt, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.hitReaction, CLIP_NAMES.hitReactionAlt] }, variant: 'random', loop: false, speed: 1.4,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitHeavy]:    { clip: CLIP_NAMES.hitReactionAlt, clipsByDir: { front: [CLIP_NAMES.uppercut, CLIP_NAMES.hitReactionAlt, CLIP_NAMES.gettingHit], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut] }, loop: false, speed: 1.1,  fadeIn: 0.04, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.GetUp },
@@ -103,7 +103,7 @@ const SENTINEL_ANIMS: AnimationMap = {
   [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.roundhouseAlt, CLIP_NAMES.roundhouseKick], variant: 'random', loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.hitReaction,    loop: false, speed: 1.3,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Block },
-  [AnimState.Dodge]:       { clip: CLIP_NAMES.dodge,          clips: [CLIP_NAMES.dodge, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.05, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Dodge]:       { clip: CLIP_NAMES.dodge,          clips: [CLIP_NAMES.dodge, CLIP_NAMES.runRoll], variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.05, fadeOut: 0.12, duration: 0.5, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitLight]:    { clip: CLIP_NAMES.hitReaction,    clipsByDir: { front: [CLIP_NAMES.hitReaction, CLIP_NAMES.takingPunch, CLIP_NAMES.reaction], back: [CLIP_NAMES.gettingHit, CLIP_NAMES.hitReactionAlt], side: [CLIP_NAMES.reaction, CLIP_NAMES.hitReaction] }, variant: 'random', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HitHeavy]:    { clip: CLIP_NAMES.gettingHit,     clipsByDir: { front: [CLIP_NAMES.gettingHit, CLIP_NAMES.uppercut, CLIP_NAMES.hitReactionAlt], back: [CLIP_NAMES.shoulderFall, CLIP_NAMES.gettingHit], side: [CLIP_NAMES.uppercut, CLIP_NAMES.gettingHit] }, loop: false, speed: 1.0,  fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Knockdown]:   { clip: CLIP_NAMES.shoulderFall,   loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
@@ -297,7 +297,9 @@ export class AnimationStateMachine {
     if (s !== AnimState.Walk && s !== AnimState.Run) return;
     const cfg = this.animMap[s];
     if (!cfg) return;
-    const ref = s === AnimState.Run ? 5 : 2.2; // speed the cycle reads natural at
+    // Reference set a touch below the move speeds so the cycle plays slightly
+    // fast and the feet keep up with the ground rather than sliding behind.
+    const ref = s === AnimState.Run ? 4.2 : 1.6;
     const scale = Math.min(1.8, Math.max(0.7, worldSpeed / ref));
     this.activeAction.timeScale = cfg.speed * scale;
   }
