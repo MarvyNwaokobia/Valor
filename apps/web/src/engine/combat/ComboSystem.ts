@@ -5,7 +5,6 @@ export interface ComboState {
   moves: MoveType[];
   timer: number;
   damageMultiplier: number;
-  lastHitTime: number;
   longestCombo: number;
 }
 
@@ -85,6 +84,9 @@ export const CLASS_COMBO_ROUTES: Record<string, ComboRoute[]> = {
   phantom: PHANTOM_ROUTES,
 };
 
+// The combo window, in seconds. Tracked purely on the game `dt` clock (see
+// `update`), so it freezes during hitstop along with everything else and never
+// drifts against the animation clock.
 const COMBO_WINDOW = 0.8;
 const BASE_SCALING = 0.05;
 const MAX_COMBO_MULT = 2.5;
@@ -100,7 +102,6 @@ export class ComboSystem {
       moves: [],
       timer: 0,
       damageMultiplier: 1,
-      lastHitTime: 0,
       longestCombo: 0,
     });
     this.routes.set(fighterId, CLASS_COMBO_ROUTES[classId] ?? []);
@@ -110,7 +111,7 @@ export class ComboSystem {
     this.onComboEvent = cb;
   }
 
-  registerHit(fighterId: string, move: MoveType, now: number): {
+  registerHit(fighterId: string, move: MoveType): {
     multiplier: number;
     matchedRoute?: ComboRoute;
     comboCount: number;
@@ -118,7 +119,9 @@ export class ComboSystem {
     const state = this.states.get(fighterId);
     if (!state) return { multiplier: 1, comboCount: 0 };
 
-    if (now - state.lastHitTime > COMBO_WINDOW) {
+    // If the window has already lapsed (timer drained to 0 by `update`), this hit
+    // starts a fresh combo. Otherwise it extends the current one.
+    if (state.timer <= 0) {
       state.count = 0;
       state.moves = [];
       state.damageMultiplier = 1;
@@ -126,7 +129,6 @@ export class ComboSystem {
 
     state.count++;
     state.moves.push(move);
-    state.lastHitTime = now;
     state.timer = COMBO_WINDOW;
     state.damageMultiplier = Math.min(
       MAX_COMBO_MULT,

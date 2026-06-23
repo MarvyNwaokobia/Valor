@@ -1,5 +1,18 @@
 import * as THREE from 'three';
-import { CLIP_NAMES } from './MixamoLoader';
+import { CLIP_NAMES, getClipStride } from './MixamoLoader';
+
+// Mixamo clips are authored in centimetres; the fighters live in a metre-scaled
+// world. So a clip's baked ground speed (clip-units/sec) divided by this is its
+// real-world m/s. (Confirmed empirically: walk ≈ 1.79 m/s, run ≈ 4.75 m/s.)
+const MIXAMO_UNITS_PER_METER = 100;
+// Below this baked speed (clip-units/sec) a clip is treated as in-place — too
+// little travel to lock a cadence to, so we fall back to its authored speed.
+const MIN_BAKED_STRIDE = 1;
+// Hip height (m) of the Mixamo reference skeleton the clips were authored on.
+// A taller rig's longer legs sweep proportionally more ground per stride, so we
+// scale the baked speed by (this rig's hip height / reference) to keep feet
+// planted across differently-sized fighters.
+const REF_HIP_HEIGHT_M = 1.0;
 
 export enum AnimState {
   Idle = 'idle',
@@ -45,9 +58,11 @@ interface AnimStateConfig {
   onComplete?: () => void;
 }
 
-// How long a gap (ms) between attacks before the combo chain restarts from the
-// top — matched to the combo window so a dropped combo resets the string.
-const CHAIN_RESET_MS = 1000;
+// How long a gap (seconds) between attacks before the combo chain restarts from
+// the top — matched to the combo window so a dropped combo resets the string.
+// Measured on the game clock (see `clockSec`), not wall time, so it freezes with
+// everything else during hitstop.
+const CHAIN_RESET_SEC = 1.0;
 
 export interface AnimationMap {
   [state: string]: AnimStateConfig;
@@ -80,7 +95,7 @@ const BERSERKER_ANIMS: AnimationMap = {
 // --- Phantom: fast, agile, acrobatic ---
 const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.1,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-  [AnimState.Walk]:        { clip: CLIP_NAMES.dodgeWalk,      loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
+  [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.1,  canInterrupt: true },
   [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.fistFight, CLIP_NAMES.hookPunch, CLIP_NAMES.rollKick], variant: 'chain', loop: false, speed: 1.5,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HeavyAttack]: { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.hookPunch, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.1,  fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
@@ -142,6 +157,12 @@ export class AnimationStateMachine {
   // a light→heavy string keeps advancing), reset after a lull between hits.
   private chainIndex = 0;
   private lastChainTime = 0;
+  // This fighter's hip height ÷ reference, so locomotion cadence accounts for
+  // leg length (set once the rig is bound; 1 = same size as the clip's rig).
+  private rigScale = 1;
+  // Accumulated game time (seconds), advanced by `update` only while unpaused, so
+  // it freezes during hitstop. Single clock for all time-based animation logic.
+  private clockSec = 0;
 
   constructor(animMap: AnimationMap) {
     this.animMap = animMap;
@@ -155,6 +176,7 @@ export class AnimationStateMachine {
     this.currentState = AnimState.Idle;
     this.chainIndex = 0;
     this.lastChainTime = 0;
+    this.clockSec = 0;
     this.clips.clear();
     for (const clip of clips) {
       this.clips.set(clip.name, clip);
@@ -178,9 +200,8 @@ export class AnimationStateMachine {
     if (pool.length === 1) return pool[0];
 
     if (config.variant === 'chain') {
-      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      if (now - this.lastChainTime > CHAIN_RESET_MS) this.chainIndex = 0;
-      this.lastChainTime = now;
+      if (this.clockSec - this.lastChainTime > CHAIN_RESET_SEC) this.chainIndex = 0;
+      this.lastChainTime = this.clockSec;
       return pool[this.chainIndex++ % pool.length];
     }
 
@@ -283,6 +304,7 @@ export class AnimationStateMachine {
 
   update(dt: number) {
     if (this.paused || !this.mixer) return;
+    this.clockSec += dt;
     this.mixer.update(dt);
   }
 
@@ -298,20 +320,33 @@ export class AnimationStateMachine {
     return Math.min(1, Math.max(0, this.activeAction.time / dur));
   }
 
-  // Scale the walk/run cycle to the fighter's real ground speed so the feet
-  // track the floor instead of skating. (Root motion is stripped, so the cycle
-  // otherwise plays at a fixed rate regardless of how fast the body moves.)
+  // Record the bound rig's hip height (metres) so locomotion cadence accounts
+  // for leg length — a taller fighter covers more ground per stride.
+  setRigScale(hipHeightMeters: number) {
+    if (hipHeightMeters > 0.1) {
+      this.rigScale = Math.min(2, Math.max(0.5, hipHeightMeters / REF_HIP_HEIGHT_M));
+    }
+  }
+
+  // Lock the walk/run cycle cadence to the fighter's real ground speed so the
+  // planted foot stays put instead of skating. Root motion is stripped (the body
+  // is moved by code), so we drive timeScale from the clip's MEASURED baked
+  // stride: at timeScale = worldSpeed / bakedSpeed the legs cover exactly the
+  // ground the body travels. Beats a hand-guessed reference, and self-corrects
+  // for partial-speed (analog/touch) movement and the walk→run handoff.
   matchLocomotionSpeed(worldSpeed: number) {
     if (!this.activeAction || this.paused) return;
     const s = this.currentState;
     if (s !== AnimState.Walk && s !== AnimState.Run) return;
-    const cfg = this.animMap[s];
-    if (!cfg) return;
-    // Reference set a touch below the move speeds so the cycle plays slightly
-    // fast and the feet keep up with the ground rather than sliding behind.
-    const ref = s === AnimState.Run ? 4.2 : 1.6;
-    const scale = Math.min(1.8, Math.max(0.7, worldSpeed / ref));
-    this.activeAction.timeScale = cfg.speed * scale;
+
+    const stride = getClipStride(this.activeAction.getClip().name);
+    if (stride && stride.groundSpeed > MIN_BAKED_STRIDE) {
+      const bakedWorldSpeed = (stride.groundSpeed / MIXAMO_UNITS_PER_METER) * this.rigScale;
+      this.activeAction.timeScale = Math.min(1.7, Math.max(0.55, worldSpeed / bakedWorldSpeed));
+    } else {
+      // In-place clip — no baked travel to match; play at its authored speed.
+      this.activeAction.timeScale = this.animMap[s]?.speed ?? 1;
+    }
   }
 
   pause() {

@@ -67,13 +67,63 @@ const ALL_ANIMS: Record<string, string> = {
 
 const allClips: Map<string, THREE.AnimationClip> = new Map();
 let loadingPromise: Promise<void> | null = null;
+let loadComplete = false;
 
-function retargetClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+/**
+ * Per-clip locomotion measurements, taken from the Hips position track BEFORE it
+ * is stripped for in-place playback. `groundSpeed` is the clip's baked horizontal
+ * travel in clip-units per second at timeScale 1 — i.e. how fast the feet are
+ * really moving. The locomotion blender uses it to lock the cycle cadence to the
+ * body's ground speed so the feet stop skating. `hipY` is the mean hip height,
+ * kept so callers can convert clip-units → world metres if the rigs differ.
+ */
+export interface ClipStride {
+  groundSpeed: number;
+  hipY: number;
+}
+const clipStride: Map<string, ClipStride> = new Map();
+
+export function getClipStride(name: string): ClipStride | undefined {
+  return clipStride.get(name);
+}
+
+// Reads the Hips position track and records the clip's baked horizontal stride
+// speed + mean hip height under the friendly clip name. Called before the root
+// track is stripped for in-place playback.
+function measureRootStride(clip: THREE.AnimationClip, name: string): void {
+  const hipsPos = clip.tracks.find(
+    (t) => t.name.includes('Hips') && t.name.includes('position')
+  );
+  if (hipsPos) {
+    const v = hipsPos.values; // [x,y,z, x,y,z, ...]
+    const n = Math.floor(v.length / 3);
+    if (n >= 2 && clip.duration > 0) {
+      const x0 = v[0], z0 = v[2];
+      const x1 = v[(n - 1) * 3], z1 = v[(n - 1) * 3 + 2];
+      const horiz = Math.hypot(x1 - x0, z1 - z0);
+      let sumY = 0;
+      for (let i = 0; i < n; i++) sumY += v[i * 3 + 1];
+      clipStride.set(name, {
+        groundSpeed: horiz / clip.duration,
+        hipY: sumY / n,
+      });
+    }
+  }
+}
+
+function retargetClip(clip: THREE.AnimationClip, name: string): THREE.AnimationClip {
+  // Name the clip up front so the stride map keys by the same friendly name the
+  // state machine looks clips up under.
+  clip.name = name;
+
   for (const track of clip.tracks) {
     track.name = track.name
       .replace(/^mixamorig\d*(\w)/, (_, first: string) => 'mixamorig:' + first.toUpperCase())
       .replace(/^mixamorig::/, 'mixamorig:');
   }
+
+  // Measure baked root travel before discarding it (used to kill foot-skate).
+  measureRootStride(clip, name);
 
   clip.tracks = clip.tracks.filter(track => {
     if (track.name.includes('Hips') && track.name.includes('position')) {
@@ -102,8 +152,7 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
         try {
           const group = await loader.loadAsync(path);
           if (group.animations.length > 0) {
-            const clip = retargetClip(group.animations[0]);
-            clip.name = name;
+            const clip = retargetClip(group.animations[0], name);
             allClips.set(name, clip);
           }
         } catch (e) {
@@ -112,7 +161,14 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
       })
     );
 
-    console.log(`[MixamoLoader] Loaded ${allClips.size}/${entries.length} animations`);
+    const loco = [CLIP_NAMES.walk, CLIP_NAMES.run, CLIP_NAMES.dodgeWalk].filter((n) => clipStride.has(n));
+    console.log(
+      `[MixamoLoader] Loaded ${allClips.size}/${entries.length} animations` +
+      (loco.length
+        ? ` — root motion detected on: ${loco.join(', ')}`
+        : ` — locomotion clips are in-place (no baked stride; cadence is speed-matched)`)
+    );
+    loadComplete = true;
   })();
 
   await loadingPromise;
@@ -121,4 +177,11 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
 
 export function getMixamoClips(): Map<string, THREE.AnimationClip> {
   return allClips;
+}
+
+// True once every Mixamo FBX has finished loading. Consumers wait on this before
+// binding the clip set, so a fighter never latches a half-loaded set (which left
+// walk/run missing → the idle pose sliding across the floor).
+export function isMixamoLoadComplete(): boolean {
+  return loadComplete;
 }

@@ -265,7 +265,6 @@ function BattleWorld({
         comboSystem.registerHit(
           event.attackerId,
           event.hitType === 'light' ? MoveType.LightAttack : event.hitType === 'heavy' ? MoveType.HeavyAttack : MoveType.Special,
-          performance.now()
         );
         const comboState = comboSystem.getState(event.attackerId);
         onComboUpdate?.(comboState ?? null);

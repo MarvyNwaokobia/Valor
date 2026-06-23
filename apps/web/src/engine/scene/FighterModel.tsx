@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
-import { loadMixamoAnimations, getMixamoClips } from '../animation';
+import { loadMixamoAnimations, getMixamoClips, isMixamoLoadComplete } from '../animation';
 import { makeBlobShadowTexture } from '../world/textures';
 
 interface FighterModelProps {
@@ -82,13 +82,28 @@ export const FighterModel = memo(function FighterModel({
       animMachine.init(mixer, animations);
 
       const boneNames: string[] = [];
+      let hipsBone: THREE.Object3D | null = null;
       groupRef.current.traverse((child) => {
-        if ((child as THREE.Bone).isBone) boneNames.push(child.name);
+        if ((child as THREE.Bone).isBone) {
+          boneNames.push(child.name);
+          if (!hipsBone && /hips/i.test(child.name)) hipsBone = child;
+        }
       });
+      // Feed the rig's bind-pose hip height to the locomotion matcher so cadence
+      // scales with leg length (kills foot-skate on taller/shorter fighters).
+      if (hipsBone) {
+        groupRef.current.updateWorldMatrix(true, true);
+        const hipY = (hipsBone as THREE.Object3D).getWorldPosition(new THREE.Vector3()).y;
+        animMachine.setRigScale(hipY);
+        console.log(`[Fighter:${classId}] hip height ${hipY.toFixed(2)}m → rig-scaled locomotion`);
+      }
       console.log(`[Fighter:${classId}] Init with ${animations.length} GLB clips, bones: ${boneNames.slice(0, 5).join(', ')}...`);
     }
 
-    if (initDone.current && !mixamoApplied.current && mixerRef.current) {
+    // Wait for the FULL Mixamo set before binding — not just the first clip to
+    // arrive. Latching early left walk/run unloaded, so the rig fell back to the
+    // GLB idle clip and slid the idle pose across the floor (punch-list A1).
+    if (initDone.current && !mixamoApplied.current && mixerRef.current && isMixamoLoadComplete()) {
       const mixamoClips = getMixamoClips();
       if (mixamoClips.size > 0) {
         mixamoApplied.current = true;
