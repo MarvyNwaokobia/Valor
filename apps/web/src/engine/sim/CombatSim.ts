@@ -7,6 +7,7 @@ import {
   ComboSystem, MoveType, canGatlingCancel,
   CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint,
   getMoveForAction,
+  EnemyAI, AIDifficulty,
 } from '../combat';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 
@@ -48,6 +49,13 @@ const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
   [AnimState.HeavyAttack]: MoveType.HeavyAttack,
   [AnimState.Special]: MoveType.Special,
   [AnimState.JumpAttack]: MoveType.HeavyAttack,
+};
+
+// AI follow-up Action → the attack animation startAttack expects.
+const AI_ACTION_TO_ANIM: Partial<Record<Action, AnimState>> = {
+  [Action.LightAttack]: AnimState.LightAttack,
+  [Action.HeavyAttack]: AnimState.HeavyAttack,
+  [Action.Special]: AnimState.Special,
 };
 
 const FIGHTER_SEPARATION = 1.5;
@@ -126,6 +134,7 @@ export class CombatSim {
   readonly knockback = new KnockbackPhysics();
 
   private fighters: Record<FighterId, Fighter>;
+  private ais: Partial<Record<FighterId, EnemyAI>> = {};
   private tick = 0;
   private winner: FighterId | null = null;
   private events: SimEvent[] = [];
@@ -163,27 +172,61 @@ export class CombatSim {
     return this.winner;
   }
 
+  /** Read-only access to a fighter's controller (for client rendering). */
+  controller(id: FighterId): CharacterController {
+    return this.fighters[id].ctrl;
+  }
+
+  /**
+   * Make a fighter AI-controlled (PvE). The sim then drives that fighter's input
+   * and combo follow-ups internally; the caller need not provide its InputSystem.
+   * Leave a fighter un-attached for human/network control via `step`'s inputs.
+   */
+  attachAI(id: FighterId, difficulty: AIDifficulty) {
+    this.ais[id] = new EnemyAI(difficulty, this.fighters[id].classId);
+  }
+
+  private inputFor(id: FighterId, inputs: Partial<Record<FighterId, InputSystem>>): InputSystem {
+    const ai = this.ais[id];
+    if (ai) return ai.getInput();
+    const provided = inputs[id];
+    if (!provided) throw new Error(`No input or AI for fighter ${id}`);
+    return provided;
+  }
+
   /**
    * Advance the fight one step. Inputs are virtual InputSystems (the caller —
    * server or client — sets actions on them); `dt` is the real elapsed time.
    * Returns the authoritative events produced this step.
    */
-  step(dt: number, inputs: Record<FighterId, InputSystem>): SimEvent[] {
+  step(dt: number, inputs: Partial<Record<FighterId, InputSystem>> = {}): SimEvent[] {
     this.events = [];
     if (this.winner !== null) return this.events;
 
     this.tick++;
     const clampedDt = Math.min(dt, 0.05);
+    const ids = ['p1', 'p2'] as FighterId[];
 
-    // 1. Movement / dodge / block / jump for both fighters.
-    for (const id of ['p1', 'p2'] as FighterId[]) {
-      const f = this.fighters[id];
-      if (!f.ctrl.state.isDead) f.ctrl.update(clampedDt, inputs[id], 0);
+    // 0. AI-controlled fighters decide their input first (movement + buffered attack).
+    for (const id of ids) {
+      const ai = this.ais[id];
+      if (ai) {
+        const opp = id === 'p1' ? 'p2' : 'p1';
+        ai.update(clampedDt, this.fighters[id].ctrl, this.fighters[opp].ctrl);
+      }
     }
 
-    // 2. Attack triggers (buffered, with cancel-window + gatling gating).
-    for (const id of ['p1', 'p2'] as FighterId[]) {
-      this.handleAttackInput(id, inputs[id]);
+    // 1. Movement / dodge / block / jump.
+    for (const id of ids) {
+      const f = this.fighters[id];
+      if (!f.ctrl.state.isDead) f.ctrl.update(clampedDt, this.inputFor(id, inputs), 0);
+    }
+
+    // 2. Attack triggers (buffered, cancel-window + gatling gating). AI fighters
+    //    also chain their queued combo follow-ups through the same cancel gate.
+    for (const id of ids) {
+      this.handleAttackInput(id, this.inputFor(id, inputs));
+      this.handleAiFollowup(id);
     }
 
     // 3. Keep bodies from overlapping.
@@ -200,10 +243,20 @@ export class CombatSim {
     this.combos.update(clampedDt);
 
     // 6. Advance input frame edges.
-    inputs.p1.update();
-    inputs.p2.update();
+    for (const id of ids) this.inputFor(id, inputs).update();
 
     return this.events;
+  }
+
+  // Chain an AI fighter's queued combo follow-ups via the same cancel gate the
+  // player uses (the AI builds class routes; we pull them one per cancel window).
+  private handleAiFollowup(id: FighterId) {
+    const ai = this.ais[id];
+    if (!ai) return;
+    if (!this.fighters[id].attack.active || !this.canCancel(id)) return;
+    const next = ai.takeFollowUp();
+    const anim = next ? AI_ACTION_TO_ANIM[next] : undefined;
+    if (anim) this.startAttack(id, anim, true);
   }
 
   // ── Attack lifecycle ──────────────────────────────────────────────────────
