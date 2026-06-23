@@ -335,9 +335,33 @@ function BattleWorld({
     battleCamera, combatAudio, particles, crowd, screenFx, playerAnimMachine, enemyAnimMachine,
     playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
 
+  // Is the fighter's current attack cancellable right now? Lets buffered inputs
+  // chain into a string instead of waiting for the whole clip to finish (the
+  // stiffness fix). A confirmed hit opens the window early (from the active
+  // frames — snappy hit-confirm); a whiff only cancels in recovery, so whiffing
+  // stays punishable. Returns true when not mid-attack so callers can `||` it.
+  const canCancelAttack = useCallback((who: 'player' | 'enemy'): boolean => {
+    const anim = who === 'player' ? playerAnimMachine : enemyAnimMachine;
+    const typeRef = who === 'player' ? playerAttackTypeRef : enemyAttackTypeRef;
+    const consumed = who === 'player' ? playerHitConsumed : enemyHitConsumed;
+    const classId = who === 'player' ? playerClass : enemyClass;
+
+    const attackState = typeRef.current;
+    if (anim.state !== attackState) return true; // clip already ended / moved on
+    const fdState = attackState === AnimState.JumpAttack ? AnimState.HeavyAttack : attackState;
+    const fd = CLASS_FRAME_DATA[classId]?.[fdState];
+    const progress = anim.getActiveProgress();
+    if (!fd) return progress > 0.5;
+    const total = fd.startup + fd.active + fd.recovery;
+    const activeStart = fd.startup / total;
+    const recoveryStart = (fd.startup + fd.active) / total;
+    return consumed.current.size > 0 ? progress >= activeStart : progress >= recoveryStart;
+  }, [playerAnimMachine, enemyAnimMachine, playerClass, enemyClass]);
+
   const doAttack = useCallback((
     who: 'player' | 'enemy',
     animState: AnimState,
+    isCancel = false,
   ) => {
     const ctrl = who === 'player' ? playerController : enemyController;
     const anim = who === 'player' ? playerAnimMachine : enemyAnimMachine;
@@ -346,7 +370,9 @@ function BattleWorld({
     const typeRef = who === 'player' ? playerAttackTypeRef : enemyAttackTypeRef;
 
     const s = ctrl.state;
-    if (s.isAttacking || s.isDodging || s.isStaggered || s.isDead) return;
+    if (s.isDodging || s.isStaggered || s.isDead) return;
+    // Mid-attack: only proceed if this is a legal cancel into the next move.
+    if (s.isAttacking && !isCancel) return;
 
     // Attacking while airborne becomes a diving jump-attack.
     const airborne = !s.isGrounded;
@@ -464,9 +490,16 @@ function BattleWorld({
       }
     }
 
-    if (input.consumeBuffered(Action.LightAttack)) doAttack('player', AnimState.LightAttack);
-    if (input.consumeBuffered(Action.HeavyAttack)) doAttack('player', AnimState.HeavyAttack);
-    if (input.consumeBuffered(Action.Special)) doAttack('player', AnimState.Special);
+    // Buffered attacks fire when free, or chain mid-swing inside a cancel window.
+    // Only consume the buffer when we can actually act, so a press made a few
+    // frames early is held (until it expires) and fires the instant the cancel
+    // opens — that's what makes strings feel fluid instead of dropping inputs.
+    const pAttacking = playerAttackingRef.current;
+    if (!pAttacking || canCancelAttack('player')) {
+      if (input.consumeBuffered(Action.LightAttack)) doAttack('player', AnimState.LightAttack, pAttacking);
+      else if (input.consumeBuffered(Action.HeavyAttack)) doAttack('player', AnimState.HeavyAttack, pAttacking);
+      else if (input.consumeBuffered(Action.Special)) doAttack('player', AnimState.Special, pAttacking);
+    }
 
     // --- Enemy AI ---
     if (!enemyController.state.isDead) {
