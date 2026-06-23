@@ -131,6 +131,17 @@ export function TouchControls() {
         Move
       </div>
 
+      {/* Jump — left side, above the stick (left thumb), so it never clashes
+          with moving forward on the joystick. */}
+      <div className="pointer-events-auto absolute bottom-52 left-10">
+        <TouchButton
+          action={Action.Jump}
+          icon="⬆️"
+          label="Jump"
+          className="w-14 h-14 bg-cyan-600/80 border border-cyan-400/40"
+        />
+      </div>
+
       {/* Action Buttons — bottom right */}
       <div className="pointer-events-auto absolute bottom-14 right-4 flex flex-col items-center gap-2">
         <TouchButton
