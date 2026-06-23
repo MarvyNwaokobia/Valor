@@ -12,5 +12,5 @@ export type { AbilityState, ClassAbility } from './ClassAbilities';
 
 export { EnemyAI, AIState, AIDifficulty } from './EnemyAI';
 
-export { ComboSystem, CLASS_COMBO_ROUTES } from './ComboSystem';
+export { ComboSystem, CLASS_COMBO_ROUTES, getGatlingRoutes, canGatlingCancel } from './ComboSystem';
 export type { ComboState, ComboRoute } from './ComboSystem';

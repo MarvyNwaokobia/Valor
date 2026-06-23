@@ -11,7 +11,7 @@ import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS, type HitDirection }
 import { Action, getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
-import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint, getMoveForAction } from '../combat';
+import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint, getMoveForAction, canGatlingCancel } from '../combat';
 import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
 import { ParticleSystem } from '../vfx/ParticleSystem';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
@@ -136,7 +136,7 @@ function BattleWorld({
 
   const damageSystem = useMemo(() => new DamageSystem(), []);
   const comboSystem = useMemo(() => new ComboSystem(), []);
-  const enemyAI = useMemo(() => new EnemyAI(difficulty), [difficulty]);
+  const enemyAI = useMemo(() => new EnemyAI(difficulty, enemyClass), [difficulty, enemyClass]);
   const knockback = useMemo(() => new KnockbackPhysics(), []);
   const combatAudio = useMemo(() => new CombatAudio(), []);
   const particles = useMemo(() => new ParticleSystem(), []);
@@ -149,6 +149,10 @@ function BattleWorld({
   const enemyHitConsumed = useRef<Set<number>>(new Set());
   const playerAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
   const enemyAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
+  // The current attack-cancel string per fighter (move types), so cancels can be
+  // gated to this class's combo routes. Reset on a fresh attack, extended on cancel.
+  const playerChainRef = useRef<MoveType[]>([]);
+  const enemyChainRef = useRef<MoveType[]>([]);
 
   // Hit-stop
   const hitStopTimerRef = useRef(0);
@@ -395,6 +399,13 @@ function BattleWorld({
     attackRef.current = true;
     consumed.current.clear();
     typeRef.current = move;
+
+    // Track the cancel string: extend it on a cancel, restart it on a fresh attack.
+    const chainRef = who === 'player' ? playerChainRef : enemyChainRef;
+    const chainMove = ANIM_TO_MOVE[move];
+    if (isCancel && chainMove) chainRef.current = [...chainRef.current, chainMove];
+    else chainRef.current = chainMove ? [chainMove] : [];
+
     anim.transition(move, true);
     combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
 
@@ -498,14 +509,21 @@ function BattleWorld({
     }
 
     // Buffered attacks fire when free, or chain mid-swing inside a cancel window.
-    // Only consume the buffer when we can actually act, so a press made a few
-    // frames early is held (until it expires) and fires the instant the cancel
-    // opens — that's what makes strings feel fluid instead of dropping inputs.
+    // A fresh attack (not attacking) can be any opener; a cancel must continue one
+    // of this class's combo routes, so strings are class-flavored not any-into-any.
+    // Only consume the buffer when we can actually act, so a press made a few frames
+    // early is held until the cancel opens instead of being dropped.
     const pAttacking = playerAttackingRef.current;
     if (!pAttacking || canCancelAttack('player')) {
-      if (input.consumeBuffered(Action.LightAttack)) doAttack('player', AnimState.LightAttack, pAttacking);
-      else if (input.consumeBuffered(Action.HeavyAttack)) doAttack('player', AnimState.HeavyAttack, pAttacking);
-      else if (input.consumeBuffered(Action.Special)) doAttack('player', AnimState.Special, pAttacking);
+      const onRoute = (mv: MoveType) =>
+        !pAttacking || canGatlingCancel(playerClass, playerChainRef.current, mv);
+      if (onRoute(MoveType.LightAttack) && input.consumeBuffered(Action.LightAttack)) {
+        doAttack('player', AnimState.LightAttack, pAttacking);
+      } else if (onRoute(MoveType.HeavyAttack) && input.consumeBuffered(Action.HeavyAttack)) {
+        doAttack('player', AnimState.HeavyAttack, pAttacking);
+      } else if (onRoute(MoveType.Special) && input.consumeBuffered(Action.Special)) {
+        doAttack('player', AnimState.Special, pAttacking);
+      }
     }
 
     // --- Enemy AI ---

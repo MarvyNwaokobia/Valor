@@ -84,6 +84,35 @@ export const CLASS_COMBO_ROUTES: Record<string, ComboRoute[]> = {
   phantom: PHANTOM_ROUTES,
 };
 
+const ATTACK_MOVES = new Set<MoveType>([
+  MoveType.LightAttack, MoveType.HeavyAttack, MoveType.Special,
+]);
+
+// A class's combo routes expressed as pure attack strings — the ones you can
+// build by cancelling one attack into the next. Routes that open with Block/Dodge
+// (e.g. Shield Combo, Phantom Strike) are dropped here; they're scored by the
+// landed-hit damage system, not the attack-cancel gatling.
+export function getGatlingRoutes(classId: string): MoveType[][] {
+  return (CLASS_COMBO_ROUTES[classId] ?? [])
+    .map((r) => r.sequence)
+    .filter((seq) => seq.length > 1 && seq.every((m) => ATTACK_MOVES.has(m)));
+}
+
+// Can `next` cancel-extend the current attack string for this class? True when
+// [...current, next] is a prefix of one of the class's attack routes — so strings
+// only flow along that class's real routes (Berserker L→H→S "Inferno Rush", etc.)
+// instead of any-into-any. A fresh attack (empty `current`) is gated by the caller,
+// not here.
+export function canGatlingCancel(classId: string, current: MoveType[], next: MoveType): boolean {
+  return getGatlingRoutes(classId).some((seq) => {
+    if (current.length + 1 > seq.length) return false;
+    for (let i = 0; i < current.length; i++) {
+      if (seq[i] !== current[i]) return false;
+    }
+    return seq[current.length] === next;
+  });
+}
+
 // The combo window, in seconds. Tracked purely on the game `dt` clock (see
 // `update`), so it freezes during hitstop along with everything else and never
 // drifts against the animation clock.

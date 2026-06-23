@@ -1,6 +1,17 @@
 import * as THREE from 'three';
 import { Action, InputSystem } from '../input';
 import type { CharacterController } from '../character';
+import { getGatlingRoutes } from './ComboSystem';
+import { MoveType } from './MoveRegistry';
+
+// The AI presses Actions; routes are defined in MoveTypes. Bridge the two.
+function moveToAction(m: MoveType): Action {
+  switch (m) {
+    case MoveType.HeavyAttack: return Action.HeavyAttack;
+    case MoveType.Special: return Action.Special;
+    default: return Action.LightAttack;
+  }
+}
 
 export enum AIState {
   Idle = 'idle',
@@ -106,13 +117,17 @@ export class EnemyAI {
   // windows so the AI chains a string instead of throwing one move at a time.
   private followUps: Action[] = [];
   private virtualInput: InputSystem;
+  // This class's attack-cancel routes — the AI strings its combos along these, so
+  // its pressure is class-flavored (Berserker slams, Phantom flurries, …).
+  private attackRoutes: MoveType[][];
   // What the AI tries when staggered — held through the tech window so it cancels
   // the recovery the instant it opens. Higher difficulty techs more often.
   private techChoice: 'block' | 'dodge' | 'none' = 'none';
 
-  constructor(difficulty: AIDifficulty = AIDifficulty.Medium) {
+  constructor(difficulty: AIDifficulty = AIDifficulty.Medium, classId = 'berserker') {
     this.config = { ...DIFFICULTY_CONFIGS[difficulty] };
     this.virtualInput = new InputSystem();
+    this.attackRoutes = getGatlingRoutes(classId);
   }
 
   getInput(): InputSystem {
@@ -338,27 +353,19 @@ export class EnemyAI {
   }
 
   private chooseAttack() {
-    const roll = Math.random();
-    let first: Action;
-    if (roll < 0.5) {
-      first = Action.LightAttack;
-    } else if (roll < 0.8) {
-      first = Action.HeavyAttack;
-    } else {
-      first = Action.Special;
+    // Commit to one of the class's combo routes (chance scales with comboChance,
+    // so Medium 0.35 → Boss 0.8 chains more), otherwise throw a single poke. The
+    // scene drains the follow-ups one-per-cancel-window during the swing.
+    if (this.attackRoutes.length > 0 && Math.random() < this.config.comboChance) {
+      const route = this.attackRoutes[Math.floor(Math.random() * this.attackRoutes.length)];
+      this.pendingAttack = moveToAction(route[0]);
+      this.followUps = route.slice(1).map(moveToAction);
+      return;
     }
-    this.pendingAttack = first;
 
-    // Build a follow-up string. Depth is gated by comboChance, so harder AI
-    // chains more often (Medium 0.35 → Boss 0.8). Specials end a string, never
-    // open one — they read as a committed finisher.
+    const roll = Math.random();
+    this.pendingAttack = roll < 0.6 ? Action.LightAttack : roll < 0.9 ? Action.HeavyAttack : Action.Special;
     this.followUps = [];
-    if (first !== Action.Special && Math.random() < this.config.comboChance) {
-      this.followUps.push(Math.random() < 0.6 ? Action.LightAttack : Action.HeavyAttack);
-      if (Math.random() < this.config.comboChance * 0.7) {
-        this.followUps.push(Math.random() < 0.5 ? Action.HeavyAttack : Action.Special);
-      }
-    }
   }
 
   // Pulled by the scene when a cancel window opens mid-swing — the next link in
