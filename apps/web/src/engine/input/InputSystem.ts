@@ -8,6 +8,7 @@ export enum Action {
   Special = 'Special',
   Block = 'Block',
   Dodge = 'Dodge',
+  Jump = 'Jump',
   LockOn = 'LockOn',
 }
 
@@ -36,8 +37,11 @@ const DEFAULT_BINDINGS: Record<string, Action> = {
 };
 
 const BUFFERED_ACTIONS = [
-  Action.LightAttack, Action.HeavyAttack, Action.Special, Action.Dodge,
+  Action.LightAttack, Action.HeavyAttack, Action.Special, Action.Dodge, Action.Jump,
 ];
+
+// Double-tap forward (within this window) is a jump on keyboard.
+const DOUBLE_TAP_MS = 280;
 
 export class InputSystem {
   private keys = new Set<string>();
@@ -53,6 +57,7 @@ export class InputSystem {
 
   private buffer = new Map<Action, number>();
   private readonly bufferMs = 130;
+  private lastForwardTap = 0;
 
   constructor(bindings?: Record<string, Action>) {
     this.bindings = bindings ?? { ...DEFAULT_BINDINGS };
@@ -154,6 +159,14 @@ export class InputSystem {
       this.keys.add(action);
       if (BUFFERED_ACTIONS.includes(action)) {
         this.buffer.set(action, performance.now());
+      }
+      // Double-tap forward = jump.
+      if (action === Action.MoveForward) {
+        const now = performance.now();
+        if (now - this.lastForwardTap < DOUBLE_TAP_MS) {
+          this.buffer.set(Action.Jump, now);
+        }
+        this.lastForwardTap = now;
       }
     }
   };
