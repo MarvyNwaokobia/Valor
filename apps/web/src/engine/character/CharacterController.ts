@@ -51,7 +51,9 @@ const DEFAULT_CONFIG: CharacterConfig = {
   dodgeCooldown: 0.8,
   turnSpeed: 10,
   gravity: -20,
-  arenaRadius: 12,
+  // Fighters are clamped to this circle, kept inside the pit floor (radius 11)
+  // and its rim wall so they never walk off the edge or under the arena.
+  arenaRadius: 9.5,
   arenaMinX: -12,
   arenaMaxX: 12,
   arenaMinZ: -8,
@@ -392,10 +394,17 @@ export class CharacterController {
     }
   }
 
+  // Keep the fighter inside the circular pit — the floor is round, so a
+  // rectangular clamp let them walk off the edge into the void/terraces.
   private clampToArena() {
     const p = this.state.position;
-    p.x = Math.max(this.config.arenaMinX, Math.min(this.config.arenaMaxX, p.x));
-    p.z = Math.max(this.config.arenaMinZ, Math.min(this.config.arenaMaxZ, p.z));
+    const r = this.config.arenaRadius;
+    const distSq = p.x * p.x + p.z * p.z;
+    if (distSq > r * r) {
+      const d = Math.sqrt(distSq) || 1;
+      p.x = (p.x / d) * r;
+      p.z = (p.z / d) * r;
+    }
   }
 }
 

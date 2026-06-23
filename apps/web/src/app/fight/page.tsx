@@ -71,8 +71,8 @@ export default function FightPage() {
       </button>
 
       {/* Build marker — confirms which deployed build this device is running */}
-      <div className="fixed top-4 right-4 z-50 text-[10px] font-mono text-white/30 pointer-events-none select-none">
-        {process.env.NEXT_PUBLIC_BUILD_SHA} · {process.env.NEXT_PUBLIC_BUILD_TIME}
+      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 text-[10px] font-mono text-white/40 bg-black/40 px-2 py-0.5 rounded pointer-events-none select-none">
+        build {process.env.NEXT_PUBLIC_BUILD_SHA} · {process.env.NEXT_PUBLIC_BUILD_TIME}
       </div>
 
       <GameScene
