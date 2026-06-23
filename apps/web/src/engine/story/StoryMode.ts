@@ -1,4 +1,4 @@
-import { ZoneSystem, ZoneType, type Zone, type Chapter } from '../world/ZoneSystem';
+import { ZoneSystem, type Zone, type Chapter } from '../world/ZoneSystem';
 import type { DialogueLine, StoryScene } from './StoryPanel';
 
 export enum StoryPhase {

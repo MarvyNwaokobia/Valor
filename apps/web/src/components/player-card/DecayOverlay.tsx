@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { AlertTriangle, Skull } from 'lucide-react'
 import type { DecayStatus } from '@/utils/decay'
 
 interface Props {
@@ -19,7 +20,7 @@ export default function DecayOverlay({ status }: Props) {
           animate={{ opacity: [1, 0.4, 1] }}
           transition={{ duration: 1.5, repeat: Infinity }}
         >
-          ⚠
+          <AlertTriangle size={14} />
         </motion.span>
         Decay Warning
       </motion.div>
@@ -38,7 +39,7 @@ export default function DecayOverlay({ status }: Props) {
           animate={{ opacity: [1, 0.3, 1] }}
           transition={{ duration: 0.8, repeat: Infinity }}
         >
-          💀
+          <Skull size={14} />
         </motion.span>
         Decaying
       </motion.div>

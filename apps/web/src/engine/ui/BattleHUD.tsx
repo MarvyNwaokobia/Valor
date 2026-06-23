@@ -1,6 +1,5 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CharacterState } from '../character';
 import type { FighterStats } from '../combat/DamageSystem';

@@ -1,6 +1,6 @@
 'use client';
 
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import type { RewardSummary } from '../story/Progression';
 
 interface FightIntroProps {

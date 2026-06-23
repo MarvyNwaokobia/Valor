@@ -8,6 +8,7 @@ import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { useAudio } from '@/hooks/useAudio'
+import { Volume2, VolumeX } from 'lucide-react'
 
 function AudioToggle() {
   const { muted, toggleMute } = useAudio()
@@ -19,9 +20,7 @@ function AudioToggle() {
       style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
       aria-label={muted ? 'Unmute audio' : 'Mute audio'}
     >
-      <span style={{ fontSize: 14, lineHeight: 1, filter: muted ? 'grayscale(1)' : 'none' }}>
-        {muted ? '🔇' : '🔊'}
-      </span>
+      {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
     </button>
   )
 }

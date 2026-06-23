@@ -3,13 +3,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Medal } from 'lucide-react'
 
 import type { Player } from '@/types'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_COLORS } from '@/lib/constants'
 interface Props { currentWallet: string | undefined }
 
-const MEDAL = ['🥇','🥈','🥉']
+const MEDAL_COLOR = ['#FFD700', '#C0C0C0', '#CD7F32']
 
 const CLASS_ACCENT: Record<string, string> = {
   Berserker: '#ef4444',
@@ -73,7 +74,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
                 initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: rank * 0.08 }}>
                 <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: accent }}/>
-                <span className="text-lg mb-0.5">{MEDAL[rank - 1]}</span>
+                <Medal size={22} className="mb-0.5" color={MEDAL_COLOR[rank - 1]} />
                 <p className="font-black text-white text-xs text-center truncate w-full">{p.character_name}</p>
                 <span className="text-[8px] uppercase tracking-wider font-bold" style={{ color: accent }}>{p.rank}</span>
                 {isMe && <span className="absolute top-1.5 right-1.5 text-[7px] font-black bg-amber-400 text-black px-1 rounded-sm">YOU</span>}
@@ -107,7 +108,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
                 {/* Position */}
                 <div className="w-8 text-center shrink-0">
                   {pos <= 3
-                    ? <span className="text-base">{MEDAL[pos - 1]}</span>
+                    ? <Medal size={18} className="inline" color={MEDAL_COLOR[pos - 1]} />
                     : <span className="font-black text-slate-600 text-xs">#{pos}</span>
                   }
                 </div>

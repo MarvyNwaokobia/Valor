@@ -1,16 +1,17 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { Sword, Hammer, Shield, Wind, Zap, ChevronUp, type LucideIcon } from 'lucide-react';
 import { Action, getInputSystem } from './InputSystem';
 
 interface TouchButtonProps {
   action: Action;
   label: string;
-  icon?: string;
+  icon?: LucideIcon;
   className?: string;
 }
 
-function TouchButton({ action, label, icon, className = '' }: TouchButtonProps) {
+function TouchButton({ action, label, icon: Icon, className = '' }: TouchButtonProps) {
   const input = getInputSystem();
 
   return (
@@ -36,7 +37,7 @@ function TouchButton({ action, label, icon, className = '' }: TouchButtonProps) 
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {icon && <span className="text-lg leading-none">{icon}</span>}
+      {Icon && <Icon size={20} strokeWidth={2.5} className="leading-none" />}
       <span className="text-[9px] uppercase tracking-wide leading-none mt-0.5">{label}</span>
     </button>
   );
@@ -136,7 +137,7 @@ export function TouchControls() {
       <div className="pointer-events-auto absolute bottom-52 left-10">
         <TouchButton
           action={Action.Jump}
-          icon="⬆️"
+          icon={ChevronUp}
           label="Jump"
           className="w-14 h-14 bg-cyan-600/80 border border-cyan-400/40"
         />
@@ -146,33 +147,33 @@ export function TouchControls() {
       <div className="pointer-events-auto absolute bottom-14 right-4 flex flex-col items-center gap-2">
         <TouchButton
           action={Action.HeavyAttack}
-          icon="💥"
+          icon={Hammer}
           label="Heavy"
           className="w-14 h-14 bg-orange-600/80 border border-orange-400/40"
         />
         <div className="flex gap-2">
           <TouchButton
             action={Action.Block}
-            icon="🛡️"
+            icon={Shield}
             label="Block"
             className="w-13 h-13 bg-blue-600/80 border border-blue-400/40"
           />
           <TouchButton
             action={Action.LightAttack}
-            icon="⚔️"
+            icon={Sword}
             label="Attack"
             className="w-16 h-16 bg-red-600/80 border-2 border-red-400/50"
           />
           <TouchButton
             action={Action.Dodge}
-            icon="💨"
+            icon={Wind}
             label="Dodge"
             className="w-13 h-13 bg-green-600/80 border border-green-400/40"
           />
         </div>
         <TouchButton
           action={Action.Special}
-          icon="⚡"
+          icon={Zap}
           label="Special"
           className="w-14 h-14 bg-purple-600/80 border border-purple-400/40"
         />

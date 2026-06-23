@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useAnimation } from 'framer-motion'
-import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords } from 'lucide-react'
+import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords, Smartphone } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
@@ -294,13 +294,13 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
               {player.character_class}
             </span>
             <div className="flex gap-1.5 mt-2 flex-wrap">
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                 style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>
-                {attackBoost > 0 ? `⚔ ${effectiveAttack} (+${attackBoost})` : `⚔ ${effectiveAttack}`}
+                <Sword size={10} />{attackBoost > 0 ? `${effectiveAttack} (+${attackBoost})` : `${effectiveAttack}`}
               </span>
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                 style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}>
-                {defenseBoost > 0 ? `🛡 ${effectiveDefense} (+${defenseBoost})` : `🛡 ${effectiveDefense}`}
+                <Shield size={10} />{defenseBoost > 0 ? `${effectiveDefense} (+${defenseBoost})` : `${effectiveDefense}`}
               </span>
               {hasXpBooster && (
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
@@ -593,9 +593,8 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
         style={{ background: 'rgba(4,3,12,0.97)' }}>
         <motion.div
           animate={{ rotate: [0, 0, 90, 90, 0] }}
-          transition={{ duration: 2, repeat: Infinity, repeatDelay: 1, ease: 'easeInOut' }}
-          style={{ fontSize: 56 }}>
-          📱
+          transition={{ duration: 2, repeat: Infinity, repeatDelay: 1, ease: 'easeInOut' }}>
+          <Smartphone size={56} className="text-white" />
         </motion.div>
         <div className="text-center px-6">
           <p className="font-display font-black text-white text-xl tracking-wide">Rotate Your Device</p>
@@ -846,7 +845,7 @@ function ArenaPlayerCard({ name, hp, classLabel, color, side, lastMove, lastDmgD
   const isCritical = hp <= 30
 
   const moveColor = lastMove === 'special' ? '#8b5cf6' : lastMove === 'defend' ? '#3b82f6' : '#ef4444'
-  const moveIcon  = lastMove === 'special' ? '⚡' : lastMove === 'defend' ? '🛡' : '⚔'
+  const MoveIcon  = lastMove === 'special' ? Zap : lastMove === 'defend' ? Shield : Sword
   const moveLabel = lastMove === 'defend'
     ? 'DEFEND'
     : lastMove === 'special'
@@ -857,9 +856,9 @@ function ArenaPlayerCard({ name, hp, classLabel, color, side, lastMove, lastDmgD
     <div className={`flex flex-col gap-1 ${side === 'right' ? 'items-end' : 'items-start'}`}
       style={{ minWidth: 110, maxWidth: 150 }}>
       <div className={`flex items-center gap-1.5 ${side === 'right' ? 'flex-row-reverse' : ''}`}>
-        <div className="w-7 h-7 rounded-full border flex items-center justify-center shrink-0 font-black text-xs"
+        <div className="w-7 h-7 rounded-full border flex items-center justify-center shrink-0"
           style={{ borderColor: `${color}60`, background: `${color}18`, color }}>
-          ⚔
+          <Sword size={14} />
         </div>
         <div className={side === 'right' ? 'text-right' : ''}>
           <p className="font-black text-white leading-none" style={{ fontSize: 10 }}>{name}</p>
@@ -888,7 +887,7 @@ function ArenaPlayerCard({ name, hp, classLabel, color, side, lastMove, lastDmgD
               initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
               style={{ fontSize: 7, color: moveColor, fontWeight: 900, letterSpacing: '0.04em', marginLeft: 4 }}>
-              {moveIcon} {moveLabel}
+              <MoveIcon size={9} className="inline mr-0.5" />{moveLabel}
             </motion.span>
           </AnimatePresence>
         )}
