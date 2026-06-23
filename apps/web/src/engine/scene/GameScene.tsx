@@ -278,12 +278,20 @@ function BattleWorld({
           combatAudio.playComboMilestone(comboState.count);
         }
 
+        // Combo launcher — the deeper the chain, the harder the knockback, so a
+        // string ends on a satisfying pop (MK-style finisher feel).
+        const comboCount = comboState?.count ?? 1;
+        const comboPush = 1 + Math.min(comboCount, 8) * 0.12;
         knockback.applyKnockback(event.defenderId, {
           direction: event.knockbackDir,
-          force: event.knockbackForce,
+          force: event.knockbackForce * comboPush,
           hitType: event.hitType,
           killed: event.killed,
         });
+        if (comboCount >= 4) {
+          // A landed combo finisher kicks the camera a touch extra.
+          battleCamera.punch(0.05);
+        }
 
         // Variable hit-stun based on attack type. The controller times the
         // stagger and exposes a tech tail (block/dodge cancel); the hit clip
