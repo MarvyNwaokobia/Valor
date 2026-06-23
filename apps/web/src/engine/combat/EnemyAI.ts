@@ -101,6 +101,10 @@ export class EnemyAI {
   private stateTimer = 0;
   private circleDirection = 1;
   private pendingAttack: Action | null = null;
+  // Queued follow-up attacks for a combo string. The first hit is pressed through
+  // the virtual input as usual; these are pulled by the scene during cancel
+  // windows so the AI chains a string instead of throwing one move at a time.
+  private followUps: Action[] = [];
   private virtualInput: InputSystem;
   // What the AI tries when staggered — held through the tech window so it cancels
   // the recovery the instant it opens. Higher difficulty techs more often.
@@ -122,8 +126,13 @@ export class EnemyAI {
   ) {
     if (self.state.isDead) return;
     if (self.state.isStaggered) {
-      // Decide once, on the frame we get hit, whether/how to tech out.
-      if (this.state !== AIState.Staggered) this.techChoice = this.rollTech();
+      // Decide once, on the frame we get hit, whether/how to tech out. Getting
+      // hit also drops any queued combo — no resuming the string after eating one.
+      if (this.state !== AIState.Staggered) {
+        this.techChoice = this.rollTech();
+        this.followUps = [];
+        this.pendingAttack = null;
+      }
       this.state = AIState.Staggered;
       this.stateTimer = 0.3;
     }
@@ -330,13 +339,32 @@ export class EnemyAI {
 
   private chooseAttack() {
     const roll = Math.random();
+    let first: Action;
     if (roll < 0.5) {
-      this.pendingAttack = Action.LightAttack;
+      first = Action.LightAttack;
     } else if (roll < 0.8) {
-      this.pendingAttack = Action.HeavyAttack;
+      first = Action.HeavyAttack;
     } else {
-      this.pendingAttack = Action.Special;
+      first = Action.Special;
     }
+    this.pendingAttack = first;
+
+    // Build a follow-up string. Depth is gated by comboChance, so harder AI
+    // chains more often (Medium 0.35 → Boss 0.8). Specials end a string, never
+    // open one — they read as a committed finisher.
+    this.followUps = [];
+    if (first !== Action.Special && Math.random() < this.config.comboChance) {
+      this.followUps.push(Math.random() < 0.6 ? Action.LightAttack : Action.HeavyAttack);
+      if (Math.random() < this.config.comboChance * 0.7) {
+        this.followUps.push(Math.random() < 0.5 ? Action.HeavyAttack : Action.Special);
+      }
+    }
+  }
+
+  // Pulled by the scene when a cancel window opens mid-swing — the next link in
+  // the AI's combo string, or null when the string is done.
+  takeFollowUp(): Action | null {
+    return this.followUps.shift() ?? null;
   }
 
   private transition(newState: AIState) {
