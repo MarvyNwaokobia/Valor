@@ -152,8 +152,8 @@ function BattleWorld({
   const hitStopTimerRef = useRef(0);
 
   // Weapon trails
-  const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 20, 0.12, 0.35), [playerClass]);
-  const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 20, 0.12, 0.35), [enemyClass]);
+  const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 24, 0.18, 0.42), [playerClass]);
+  const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 24, 0.18, 0.42), [enemyClass]);
 
   // Track the stagger edge so we can snap out of the (non-interruptible) hit clip
   // the instant the fighter recovers or techs into block/dodge.
@@ -573,22 +573,30 @@ function BattleWorld({
     screenFx.update(clampedDt);
     battleCamera.update(clampedDt, ps.position, enemyController.state.position);
 
-    // --- Weapon trail points ---
-    if (playerAttackingRef.current) {
-      const trailPos = ps.position.clone();
-      trailPos.y += 1.2;
-      const fwd = new THREE.Vector3(Math.sin(ps.rotation), 0, Math.cos(ps.rotation));
-      trailPos.addScaledVector(fwd, 1.0);
-      playerTrail.addPoint(trailPos);
-    }
-    if (enemyAttackingRef.current) {
-      const es = enemyController.state;
-      const trailPos = es.position.clone();
-      trailPos.y += 1.2;
-      const fwd = new THREE.Vector3(Math.sin(es.rotation), 0, Math.cos(es.rotation));
-      trailPos.addScaledVector(fwd, 1.0);
-      enemyTrail.addPoint(trailPos);
-    }
+    // --- Weapon trail points — trace the swing arc (driven by the attack
+    // animation clock): the strike point sweeps across and out, arcing down. ---
+    const emitTrail = (
+      ctrl: CharacterController,
+      anim: AnimationStateMachine,
+      attacking: boolean,
+      trail: TrailRenderer,
+    ) => {
+      if (!attacking) return;
+      const progress = anim.getActiveProgress();
+      if (progress < 0.08 || progress > 0.82) return; // crisp arc, skip wind-up/recovery
+      const s = ctrl.state;
+      const sin = Math.sin(s.rotation), cos = Math.cos(s.rotation);
+      const reach = 0.7 + progress * 0.7;        // extends through the swing
+      const sweep = (progress - 0.45) * 1.6;     // lateral arc across the body
+      const h = 1.45 - progress * 0.5;           // arcs downward
+      const p = s.position.clone();
+      p.x += sin * reach + cos * sweep * 0.8;
+      p.z += cos * reach - sin * sweep * 0.8;
+      p.y += h;
+      trail.addPoint(p);
+    };
+    emitTrail(playerController, playerAnimMachine, playerAttackingRef.current, playerTrail);
+    emitTrail(enemyController, enemyAnimMachine, enemyAttackingRef.current, enemyTrail);
 
     // --- Footsteps + ground dust ---
     const playerSpeed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
