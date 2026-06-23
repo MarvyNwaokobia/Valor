@@ -70,6 +70,11 @@ export default function FightPage() {
         Exit
       </button>
 
+      {/* Build marker — confirms which deployed build this device is running */}
+      <div className="fixed top-4 right-4 z-50 text-[10px] font-mono text-white/30 pointer-events-none select-none">
+        {process.env.NEXT_PUBLIC_BUILD_SHA} · {process.env.NEXT_PUBLIC_BUILD_TIME}
+      </div>
+
       <GameScene
         playerClass={playerClass}
         enemyClass={enemyClass}
