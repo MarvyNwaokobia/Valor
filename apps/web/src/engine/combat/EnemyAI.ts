@@ -221,7 +221,7 @@ export class EnemyAI {
     if (dir.x < 0) this.virtualInput.triggerAction(Action.MoveLeft);
   }
 
-  private handleCircle(dt: number, distance: number, dir: THREE.Vector3) {
+  private handleCircle(_dt: number, distance: number, dir: THREE.Vector3) {
     if (this.stateTimer <= 0) {
       if (Math.random() < this.config.aggressiveness) {
         this.transition(AIState.Telegraph);

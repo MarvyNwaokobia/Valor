@@ -118,11 +118,6 @@ function BattleWorld({
     return () => clearTimeout(timer);
   }, [onReady]);
 
-  const activateCombat = useCallback(() => {
-    combatActiveRef.current = true;
-    console.log('[BattleWorld] Combat activated!');
-  }, []);
-
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
@@ -669,7 +664,6 @@ export function GameScene(props: GameSceneProps) {
   const [countdown, setCountdown] = useState<number | 'FIGHT' | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const combatStartedRef = useRef(false);
-  const battleWorldRef = useRef<{ startCombat: () => void }>();
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
