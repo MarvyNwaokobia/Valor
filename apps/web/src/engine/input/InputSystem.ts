@@ -54,7 +54,9 @@ export class InputSystem {
   private pointerLocked = false;
 
   private buffer = new Map<Action, number>();
-  private readonly bufferMs = 130;
+  // Held long enough that a press made mid-swing survives until the attack's
+  // cancel window opens, so combo strings chain instead of dropping inputs.
+  private readonly bufferMs = 200;
   private lastForwardTap = 0;
 
   constructor(bindings?: Record<string, Action>) {
