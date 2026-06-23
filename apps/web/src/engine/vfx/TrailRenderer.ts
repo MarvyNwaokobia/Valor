@@ -14,7 +14,9 @@ export class TrailRenderer {
   private material: THREE.MeshBasicMaterial;
   private active = false;
   private posArray: Float32Array;
-  private alphaArray: Float32Array;
+  private colorArray: Float32Array;
+  private width: number;
+  private baseColor: THREE.Color;
 
   constructor(
     color: string = '#ffffff',
@@ -24,14 +26,18 @@ export class TrailRenderer {
   ) {
     this.maxPoints = maxPoints;
     this.lifetime = lifetime;
+    this.width = width;
+    this.baseColor = new THREE.Color(color);
 
     const vertCount = maxPoints * 2;
     this.posArray = new Float32Array(vertCount * 3);
-    this.alphaArray = new Float32Array(vertCount);
+    this.colorArray = new Float32Array(vertCount * 3);
 
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.posArray, 3));
-    this.geometry.setAttribute('alpha', new THREE.BufferAttribute(this.alphaArray, 1));
+    // Per-vertex colour carries the fade — MeshBasicMaterial ignores a custom
+    // 'alpha' attribute, so the taper has to live in vertexColors instead.
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(this.colorArray, 3));
 
     const indices: number[] = [];
     for (let i = 0; i < maxPoints - 1; i++) {
@@ -45,9 +51,10 @@ export class TrailRenderer {
     this.geometry.setIndex(indices);
 
     this.material = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(color),
+      color: 0xffffff,
+      vertexColors: true,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.95,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -63,7 +70,7 @@ export class TrailRenderer {
   }
 
   setColor(color: string) {
-    this.material.color.set(color);
+    this.baseColor.set(color);
   }
 
   start() {
@@ -76,7 +83,7 @@ export class TrailRenderer {
     this.active = false;
   }
 
-  addPoint(position: THREE.Vector3, up: THREE.Vector3 = new THREE.Vector3(0, 1, 0)) {
+  addPoint(position: THREE.Vector3) {
     if (!this.active && this.points.length === 0) return;
 
     this.points.unshift({
@@ -108,7 +115,6 @@ export class TrailRenderer {
 
   private buildGeometry(cameraPosition?: THREE.Vector3) {
     const cam = cameraPosition ?? new THREE.Vector3(0, 5, 10);
-    const width = 0.3;
 
     for (let i = 0; i < this.maxPoints; i++) {
       if (i >= this.points.length) {
@@ -118,13 +124,15 @@ export class TrailRenderer {
         this.posArray[i * 6 + 3] = 0;
         this.posArray[i * 6 + 4] = 0;
         this.posArray[i * 6 + 5] = 0;
-        this.alphaArray[i * 2] = 0;
-        this.alphaArray[i * 2 + 1] = 0;
+        for (let k = 0; k < 6; k++) this.colorArray[i * 6 + k] = 0;
         continue;
       }
 
       const p = this.points[i];
-      const alpha = 1 - p.age / this.lifetime;
+      // Fade out toward the tail, and taper the leading edge in too so the head
+      // is a fine point rather than a blunt slab.
+      const headTaper = Math.min(1, (i + 1) / 4);
+      const alpha = (1 - p.age / this.lifetime) * headTaper;
 
       let tangent: THREE.Vector3;
       if (i < this.points.length - 1) {
@@ -145,7 +153,7 @@ export class TrailRenderer {
       const side = new THREE.Vector3()
         .crossVectors(tangent, toCamera)
         .normalize()
-        .multiplyScalar(width * alpha);
+        .multiplyScalar(this.width * (0.35 + alpha * 0.65));
 
       const p1 = p.position.clone().add(side);
       const p2 = p.position.clone().sub(side);
@@ -157,12 +165,20 @@ export class TrailRenderer {
       this.posArray[i * 6 + 4] = p2.y;
       this.posArray[i * 6 + 5] = p2.z;
 
-      this.alphaArray[i * 2] = alpha;
-      this.alphaArray[i * 2 + 1] = alpha;
+      // Brightness carries the fade (additive blend → alpha reads as glow).
+      const r = this.baseColor.r * alpha;
+      const g = this.baseColor.g * alpha;
+      const b = this.baseColor.b * alpha;
+      this.colorArray[i * 6] = r;
+      this.colorArray[i * 6 + 1] = g;
+      this.colorArray[i * 6 + 2] = b;
+      this.colorArray[i * 6 + 3] = r;
+      this.colorArray[i * 6 + 4] = g;
+      this.colorArray[i * 6 + 5] = b;
     }
 
     this.geometry.attributes.position.needsUpdate = true;
-    this.geometry.attributes.alpha.needsUpdate = true;
+    this.geometry.attributes.color.needsUpdate = true;
     this.geometry.setDrawRange(0, Math.max(0, (this.points.length - 1)) * 6);
   }
 
