@@ -10,8 +10,9 @@ interface Spectator {
   base: THREE.Vector3;
   yaw: number;
   phase: number;
-  jump: number; // per-person responsiveness to surges
-  bob: number;  // idle bob speed
+  jump: number;   // responsiveness to surges
+  bob: number;    // idle bob speed
+  height: number; // per-person scale for a natural crowd
 }
 
 // Concentric tiers of standing spectators rising away from the pit.
@@ -21,22 +22,51 @@ const TIERS = [
   { radius: 16.8, y: 3.1, count: 62 },
 ];
 
-// Dark, torch-lit silhouettes with the odd brighter garment.
-const CLOTHING = ['#1c1a24', '#241a1a', '#1a2024', '#2a221c', '#201a26', '#3a2a1a'];
-const ACCENT = ['#7a2a1a', '#6a3a1a', '#2a3a5a', '#5a2a3a'];
+const CLOTHING = ['#2a2730', '#33222a', '#222a33', '#3a3024', '#2c2238', '#243a2c', '#3a2424', '#1e2a3a'];
+const SKIN = ['#d8a878', '#b97f54', '#8d5a3c', '#e3b98f', '#7a4b32', '#c98e63'];
 
-function buildPersonGeometry(): THREE.BufferGeometry {
-  const body = new THREE.CylinderGeometry(0.16, 0.22, 0.85, 6);
-  body.translate(0, 0.425, 0);
-  const head = new THREE.SphereGeometry(0.17, 8, 6);
-  head.translate(0, 0.97, 0);
-  const merged = mergeGeometries([body, head], false);
-  return merged ?? body;
+// A blocky-but-readable human: legs, hips, torso, splayed arms. Feet at y=0.
+function buildBodyGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+
+  const legL = new THREE.CylinderGeometry(0.06, 0.07, 0.8, 5);
+  legL.translate(-0.09, 0.4, 0);
+  const legR = legL.clone();
+  legR.translate(0.18, 0, 0);
+  parts.push(legL, legR);
+
+  const hips = new THREE.BoxGeometry(0.3, 0.22, 0.18);
+  hips.translate(0, 0.9, 0);
+  parts.push(hips);
+
+  const torso = new THREE.CylinderGeometry(0.16, 0.21, 0.55, 6);
+  torso.translate(0, 1.28, 0);
+  parts.push(torso);
+
+  const armL = new THREE.CylinderGeometry(0.055, 0.06, 0.55, 5);
+  armL.rotateZ(0.18);
+  armL.translate(-0.24, 1.25, 0);
+  const armR = new THREE.CylinderGeometry(0.055, 0.06, 0.55, 5);
+  armR.rotateZ(-0.18);
+  armR.translate(0.24, 1.25, 0);
+  parts.push(armL, armR);
+
+  return mergeGeometries(parts, false) ?? parts[0];
+}
+
+function buildHeadGeometry(): THREE.BufferGeometry {
+  const neck = new THREE.CylinderGeometry(0.05, 0.06, 0.1, 5);
+  neck.translate(0, 1.58, 0);
+  const head = new THREE.SphereGeometry(0.125, 8, 6);
+  head.translate(0, 1.72, 0);
+  return mergeGeometries([neck, head], false) ?? head;
 }
 
 export function Crowd({ director }: { director: CrowdDirector }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const geometry = useMemo(() => buildPersonGeometry(), []);
+  const bodyRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const bodyGeo = useMemo(() => buildBodyGeometry(), []);
+  const headGeo = useMemo(() => buildHeadGeometry(), []);
 
   const people = useMemo<Spectator[]>(() => {
     const list: Spectator[] = [];
@@ -52,6 +82,7 @@ export function Crowd({ director }: { director: CrowdDirector }) {
           phase: Math.random() * Math.PI * 2,
           jump: 0.6 + Math.random() * 0.8,
           bob: 1.5 + Math.random() * 1.5,
+          height: 0.9 + Math.random() * 0.25,
         });
       }
     }
@@ -60,24 +91,28 @@ export function Crowd({ director }: { director: CrowdDirector }) {
 
   const count = people.length;
 
-  // Per-instance clothing colour (mostly dark, a sprinkle of accents).
+  // Per-instance clothing + skin colours.
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
+    const body = bodyRef.current;
+    const head = headRef.current;
+    if (!body || !head) return;
     const c = new THREE.Color();
     for (let i = 0; i < count; i++) {
-      const pal = Math.random() < 0.12 ? ACCENT : CLOTHING;
-      c.set(pal[Math.floor(Math.random() * pal.length)]);
-      mesh.setColorAt(i, c);
+      c.set(CLOTHING[Math.floor(Math.random() * CLOTHING.length)]);
+      body.setColorAt(i, c);
+      c.set(SKIN[Math.floor(Math.random() * SKIN.length)]);
+      head.setColorAt(i, c);
     }
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (body.instanceColor) body.instanceColor.needsUpdate = true;
+    if (head.instanceColor) head.instanceColor.needsUpdate = true;
   }, [count]);
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
   useFrame((state) => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
+    const body = bodyRef.current;
+    const head = headRef.current;
+    if (!body || !head) return;
     const t = state.clock.elapsedTime;
     const energy = director.energy;
     const surge = director.surge;
@@ -91,23 +126,24 @@ export function Crowd({ director }: { director: CrowdDirector }) {
 
       dummy.position.set(p.base.x, y, p.base.z);
       dummy.rotation.set(0, p.yaw, 0);
-      const squash = 1 + hop * 0.15;
-      dummy.scale.set(1, squash, 1);
+      const squash = 1 + hop * 0.12;
+      dummy.scale.set(p.height, p.height * squash, p.height);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
+      body.setMatrixAt(i, dummy.matrix);
+      head.setMatrixAt(i, dummy.matrix);
     }
-    mesh.instanceMatrix.needsUpdate = true;
+    body.instanceMatrix.needsUpdate = true;
+    head.instanceMatrix.needsUpdate = true;
   });
 
   return (
-    <instancedMesh
-      ref={meshRef}
-      args={[geometry, undefined, count]}
-      frustumCulled={false}
-      castShadow={false}
-      receiveShadow={false}
-    >
-      <meshStandardMaterial roughness={0.95} metalness={0.05} />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={bodyRef} args={[bodyGeo, undefined, count]} frustumCulled={false}>
+        <meshStandardMaterial roughness={0.9} metalness={0.05} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[headGeo, undefined, count]} frustumCulled={false}>
+        <meshStandardMaterial roughness={0.8} metalness={0} />
+      </instancedMesh>
+    </group>
   );
 }
