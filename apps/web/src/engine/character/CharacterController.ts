@@ -35,6 +35,9 @@ export interface CharacterConfig {
   arenaMaxZ: number;
 }
 
+// A hit landing within this many seconds of raising the guard is a parry.
+const PARRY_WINDOW = 0.18;
+
 const DEFAULT_CONFIG: CharacterConfig = {
   moveSpeed: 3.5,
   runSpeed: 6,
@@ -64,6 +67,11 @@ export class CharacterController {
   // dodge can cancel the recovery — so trading hits isn't a pure lockout.
   private staggerTimer = 0;
   private staggerTechTime = 0;
+
+  // How long the guard has been raised. A hit caught in the first PARRY_WINDOW
+  // of a fresh block is a parry (perfect guard) rather than a normal block.
+  private blockHeldTime = PARRY_WINDOW + 1;
+  private wasBlocking = false;
 
   constructor(
     startPosition: THREE.Vector3,
@@ -222,6 +230,22 @@ export class CharacterController {
       this.staggerTimer -= dt;
       if (this.staggerTimer <= 0) this.clearStagger();
     }
+
+    // Track how long the guard has been up (resets on a fresh press) so a hit
+    // caught right after raising block counts as a parry.
+    if (this.state.isBlocking) {
+      this.blockHeldTime = this.wasBlocking ? this.blockHeldTime + dt : 0;
+      this.wasBlocking = true;
+    } else {
+      this.wasBlocking = false;
+      this.blockHeldTime = PARRY_WINDOW + 1;
+    }
+  }
+
+  // True if a hit landing right now would be a perfect parry rather than a
+  // chip-damage block.
+  canParry(): boolean {
+    return this.state.isBlocking && this.blockHeldTime <= PARRY_WINDOW;
   }
 
   private handleMovement(dt: number, input: InputSystem, cameraYaw: number) {

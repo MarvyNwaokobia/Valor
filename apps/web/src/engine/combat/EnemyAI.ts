@@ -102,6 +102,9 @@ export class EnemyAI {
   private circleDirection = 1;
   private pendingAttack: Action | null = null;
   private virtualInput: InputSystem;
+  // What the AI tries when staggered — held through the tech window so it cancels
+  // the recovery the instant it opens. Higher difficulty techs more often.
+  private techChoice: 'block' | 'dodge' | 'none' = 'none';
 
   constructor(difficulty: AIDifficulty = AIDifficulty.Medium) {
     this.config = { ...DIFFICULTY_CONFIGS[difficulty] };
@@ -119,6 +122,8 @@ export class EnemyAI {
   ) {
     if (self.state.isDead) return;
     if (self.state.isStaggered) {
+      // Decide once, on the frame we get hit, whether/how to tech out.
+      if (this.state !== AIState.Staggered) this.techChoice = this.rollTech();
       this.state = AIState.Staggered;
       this.stateTimer = 0.3;
     }
@@ -292,9 +297,25 @@ export class EnemyAI {
   }
 
   private handleStaggered() {
+    // Hold the chosen tech so the controller cancels into it once the tech tail
+    // of the stagger opens. A fresh reactive block here can even parry.
+    if (this.techChoice === 'block') {
+      this.virtualInput.triggerAction(Action.Block);
+    } else if (this.techChoice === 'dodge') {
+      this.virtualInput.triggerAction(Action.Dodge);
+    }
+
     if (this.stateTimer <= 0) {
       this.transition(AIState.Retreat);
     }
+  }
+
+  // Whether to tech out of a stagger, weighted by the difficulty's defensive skill.
+  private rollTech(): 'block' | 'dodge' | 'none' {
+    const r = Math.random();
+    if (r < this.config.dodgeChance) return 'dodge';
+    if (r < this.config.dodgeChance + this.config.blockChance) return 'block';
+    return 'none';
   }
 
   private tryDefend() {

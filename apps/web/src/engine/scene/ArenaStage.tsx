@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { makeStoneTexture } from '../world/textures';
 
 export type StageId = 'lava_arena' | 'scifi_stage' | 'battle_arena' | 'rpg_environment';
 
@@ -70,12 +71,25 @@ function PitArena({ stageId }: { stageId: StageId }) {
   const COLUMN_COUNT = 8;
   const TORCH_LIGHT_EVERY = 2; // only every Nth torch casts a light (perf)
 
+  // Procedural stone surfaces so nothing reads as flat-shaded geometry.
+  const tex = useMemo(() => {
+    const floor = makeStoneTexture(c.floor);
+    const rim = makeStoneTexture(c.stone);
+    const terrace = makeStoneTexture(c.stone);
+    const column = makeStoneTexture(c.stone);
+    floor.map.repeat.set(7, 7); floor.bump.repeat.set(7, 7);
+    rim.map.repeat.set(22, 2); rim.bump.repeat.set(22, 2);
+    terrace.map.repeat.set(30, 1.5); terrace.bump.repeat.set(30, 1.5);
+    column.map.repeat.set(2, 4); column.bump.repeat.set(2, 4);
+    return { floor, rim, terrace, column };
+  }, [c.floor, c.stone]);
+
   return (
     <group>
-      {/* Pit floor — dark stone slab */}
+      {/* Pit floor — textured stone slab */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
         <circleGeometry args={[11, 64]} />
-        <meshStandardMaterial color={c.floor} roughness={0.95} metalness={0.15} />
+        <meshStandardMaterial map={tex.floor.map} bumpMap={tex.floor.bump} bumpScale={0.4} roughness={0.95} metalness={0.15} />
       </mesh>
 
       {/* Central combat emblem — faint glowing rings */}
@@ -89,7 +103,7 @@ function PitArena({ stageId }: { stageId: StageId }) {
       {/* Pit rim / barrier wall around the fighting floor */}
       <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[11, 11, 1, 64, 1, true]} />
-        <meshStandardMaterial color={c.stone} roughness={0.9} metalness={0.2} side={THREE.DoubleSide} />
+        <meshStandardMaterial map={tex.rim.map} bumpMap={tex.rim.bump} bumpScale={0.5} roughness={0.9} metalness={0.2} side={THREE.DoubleSide} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1.0, 0]}>
         <ringGeometry args={[10.9, 11.25, 64]} />
@@ -101,32 +115,44 @@ function PitArena({ stageId }: { stageId: StageId }) {
         <group key={i}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, tr.top, 0]} receiveShadow>
             <ringGeometry args={[tr.inner, tr.outer, 64]} />
-            <meshStandardMaterial color={c.stone} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
+            <meshStandardMaterial map={tex.terrace.map} bumpMap={tex.terrace.bump} bumpScale={0.4} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
           </mesh>
           <mesh position={[0, (tr.top + tr.prev) / 2, 0]}>
             <cylinderGeometry args={[tr.inner, tr.inner, tr.top - tr.prev, 64, 1, true]} />
-            <meshStandardMaterial color={c.floor} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
+            <meshStandardMaterial map={tex.rim.map} bumpMap={tex.rim.bump} bumpScale={0.4} roughness={0.95} metalness={0.1} side={THREE.DoubleSide} />
           </mesh>
         </group>
       ))}
 
-      {/* Torch-lit columns ringing the pit */}
+      {/* Torch-lit columns ringing the pit, some hung with banners */}
       {Array.from({ length: COLUMN_COUNT }).map((_, i) => {
         const angle = (i / COLUMN_COUNT) * Math.PI * 2 + Math.PI / COLUMN_COUNT;
         const dist = 11.4;
         const x = Math.cos(angle) * dist;
         const z = Math.sin(angle) * dist;
+        const faceIn = Math.atan2(-x, -z);
         return (
-          <group key={i} position={[x, 0, z]}>
+          <group key={i} position={[x, 0, z]} rotation={[0, faceIn, 0]}>
             <mesh position={[0, 3, 0]} castShadow>
-              <cylinderGeometry args={[0.45, 0.55, 6, 8]} />
-              <meshStandardMaterial color={c.stone} roughness={0.85} metalness={0.25} />
+              <cylinderGeometry args={[0.45, 0.55, 6, 12]} />
+              <meshStandardMaterial map={tex.column.map} bumpMap={tex.column.bump} bumpScale={0.5} roughness={0.85} metalness={0.25} />
             </mesh>
-            {/* capital */}
+            {/* capital + base */}
             <mesh position={[0, 6.1, 0]} castShadow>
               <boxGeometry args={[1.1, 0.3, 1.1]} />
-              <meshStandardMaterial color={c.stone} roughness={0.85} metalness={0.25} />
+              <meshStandardMaterial map={tex.column.map} roughness={0.85} metalness={0.25} />
             </mesh>
+            <mesh position={[0, 0.15, 0]} castShadow>
+              <boxGeometry args={[1.2, 0.3, 1.2]} />
+              <meshStandardMaterial map={tex.column.map} roughness={0.85} metalness={0.25} />
+            </mesh>
+            {/* hanging banner on alternating columns */}
+            {i % 2 === 0 && (
+              <mesh position={[0, 3.6, 0.5]}>
+                <planeGeometry args={[0.9, 3.4]} />
+                <meshStandardMaterial color={c.accent} emissive={c.accent} emissiveIntensity={0.25} roughness={0.7} side={THREE.DoubleSide} />
+              </mesh>
+            )}
             <Torch position={[0, 6.5, 0]} color={c.flame} withLight={i % TORCH_LIGHT_EVERY === 0} />
           </group>
         );
@@ -137,11 +163,24 @@ function PitArena({ stageId }: { stageId: StageId }) {
         <group key={`b${i}`} position={[x, 0, z]}>
           <mesh position={[0, 0.5, 0]} castShadow>
             <cylinderGeometry args={[0.4, 0.5, 1, 8]} />
-            <meshStandardMaterial color={c.stone} roughness={0.9} metalness={0.3} />
+            <meshStandardMaterial map={tex.column.map} roughness={0.9} metalness={0.3} />
           </mesh>
           <Torch position={[0, 1.1, 0]} color={c.flame} withLight />
         </group>
       ))}
+
+      {/* Scattered rubble around the pit edge for lived-in detail */}
+      {Array.from({ length: 10 }).map((_, i) => {
+        const a = (i / 10) * Math.PI * 2 + 0.6;
+        const r = 9 + (i % 3);
+        const s = 0.2 + (i % 4) * 0.12;
+        return (
+          <mesh key={`r${i}`} position={[Math.cos(a) * r, s * 0.5, Math.sin(a) * r]} rotation={[i, i * 0.7, i * 1.3]} castShadow>
+            <dodecahedronGeometry args={[s, 0]} />
+            <meshStandardMaterial map={tex.rim.map} roughness={1} metalness={0.1} />
+          </mesh>
+        );
+      })}
 
       {/* Dark enclosure so the arena doesn't float in a void */}
       <mesh position={[0, 7, 0]}>
