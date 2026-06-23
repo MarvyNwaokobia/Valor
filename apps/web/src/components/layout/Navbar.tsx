@@ -27,7 +27,7 @@ function AudioToggle() {
 
 const NAV_LINKS = [
   { to: '/',            label: 'Home',    exact: true  },
-  { to: '/battle',      label: 'Battle',  exact: false },
+  { to: '/fight',       label: 'Fight',   exact: false },
   { to: '/profile',     label: 'Profile', exact: false },
   { to: '/marketplace', label: 'Market',  exact: false },
   { to: '/leaderboard', label: 'Ranks',   exact: false },

@@ -10,7 +10,7 @@ import { CLASS_DEFINITIONS } from '@/lib/classes'
 
 const NAV_ITEMS: { to: string; Icon: LucideIcon; label: string; exact: boolean }[] = [
   { to: '/',            Icon: Home,        label: 'Home',    exact: true  },
-  { to: '/battle',      Icon: Swords,      label: 'Battle',  exact: false },
+  { to: '/fight',       Icon: Swords,      label: 'Fight',   exact: false },
   { to: '/profile',     Icon: User,        label: 'Profile', exact: false },
   { to: '/marketplace', Icon: ShoppingBag, label: 'Market',  exact: false },
   { to: '/leaderboard', Icon: Trophy,      label: 'Ranks',   exact: false },
