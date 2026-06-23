@@ -103,7 +103,7 @@ export default function PlayerCardPage() {
           {/* Action row */}
           <div className="flex gap-2 justify-center">
             <Link
-              href={`/battle?challenge=${walletAddress}`}
+              href={`/ranked?challenge=${walletAddress}`}
               className="flex-1 max-w-45 px-5 py-3 rounded-xl font-bold text-sm text-center transition-colors"
               style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}
             >
