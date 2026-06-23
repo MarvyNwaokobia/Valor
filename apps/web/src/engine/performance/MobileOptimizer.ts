@@ -1,4 +1,4 @@
-import { QualityLevel, type QualitySettings } from './PerformanceManager';
+import { type QualitySettings } from './PerformanceManager';
 
 export interface MobileConfig {
   forceLandscape: boolean;

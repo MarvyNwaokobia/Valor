@@ -49,8 +49,6 @@ export class InputSystem {
   private bindings: Record<string, Action>;
   private stickX = 0;
   private stickY = 0;
-  private mouseX = 0;
-  private mouseY = 0;
   private mouseDeltaX = 0;
   private mouseDeltaY = 0;
   private pointerLocked = false;
@@ -186,8 +184,6 @@ export class InputSystem {
       this.mouseDeltaX += me.movementX;
       this.mouseDeltaY += me.movementY;
     }
-    this.mouseX = me.clientX;
-    this.mouseY = me.clientY;
   };
 
   private onPointerLockChange = () => {

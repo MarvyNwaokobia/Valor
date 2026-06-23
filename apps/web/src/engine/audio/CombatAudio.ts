@@ -57,7 +57,7 @@ export class CombatAudio {
     ], 0.4);
   }
 
-  playSwing() {
+  playSwing(_classId?: string) {
     if (this.stopped) return;
     playOne(this.whoosh);
   }

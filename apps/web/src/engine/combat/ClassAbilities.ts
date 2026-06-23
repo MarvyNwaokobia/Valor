@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { CharacterController } from '../character';
-import type { DamageSystem, FighterStats } from './DamageSystem';
+import type { FighterStats } from './DamageSystem';
 
 export interface AbilityState {
   active: boolean;
