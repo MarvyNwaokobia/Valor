@@ -442,8 +442,7 @@ function BattleWorld({
       } else if (ps.isBlocking) {
         playerAnimMachine.transition(AnimState.Block, f);
       } else if (isMoving) {
-        const speed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
-        playerAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk, f);
+        playerAnimMachine.transition(ps.isRunning ? AnimState.Run : AnimState.Walk, f);
       } else {
         playerAnimMachine.transition(AnimState.Idle, f);
       }
@@ -477,8 +476,7 @@ function BattleWorld({
         } else {
           const aiMove = aiInput.moveAxis;
           if (Math.abs(aiMove.x) > 0.1 || Math.abs(aiMove.y) > 0.1) {
-            const speed = Math.sqrt(es.velocity.x ** 2 + es.velocity.z ** 2);
-            enemyAnimMachine.transition(speed > 5 ? AnimState.Run : AnimState.Walk, f);
+            enemyAnimMachine.transition(es.isRunning ? AnimState.Run : AnimState.Walk, f);
           } else {
             enemyAnimMachine.transition(AnimState.Idle, f);
           }
