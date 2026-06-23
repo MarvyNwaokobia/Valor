@@ -93,6 +93,9 @@ export class BattleCamera {
     this.updateShake(dt);
     this.updatePunch(dt);
 
+    // Never let the camera drop below the arena floor.
+    this.currentPosition.y = Math.max(this.currentPosition.y, 1.8);
+
     const finalPos = this.currentPosition.clone().add(this.shakeOffset);
     this.camera.position.copy(finalPos);
     this.camera.lookAt(this.currentLookAt);
