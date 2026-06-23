@@ -8,6 +8,7 @@ import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
 import { loadMixamoAnimations, getMixamoClips } from '../animation';
+import { makeBlobShadowTexture } from '../world/textures';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -38,11 +39,15 @@ export function FighterModel({
   accent,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const modelRef = useRef<THREE.Group>(null);
+  const shadowRef = useRef<THREE.Group>(null);
+  const lean = useRef({ x: 0, z: 0 });
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const initDone = useRef(false);
   const mixamoApplied = useRef(false);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
+  const blobTex = useMemo(() => makeBlobShadowTexture(), []);
 
   const clonedScene = useMemo(() => {
     const clone = SkeletonUtils.clone(scene);
@@ -107,6 +112,24 @@ export function FighterModel({
     const planarSpeed = Math.sqrt(state.velocity.x ** 2 + state.velocity.z ** 2);
     animMachine.matchLocomotionSpeed(planarSpeed);
 
+    // Procedural lean — tilt into movement and recoil on impact, for weight.
+    const sin = Math.sin(state.rotation), cos = Math.cos(state.rotation);
+    const fwd = state.velocity.x * sin + state.velocity.z * cos;
+    const side = state.velocity.x * cos - state.velocity.z * sin;
+    const targetX = -fwd * 0.04 + state.impactPulse * 0.35;
+    const targetZ = side * 0.04;
+    const lk = 1 - Math.exp(-10 * dt);
+    lean.current.x += (targetX - lean.current.x) * lk;
+    lean.current.z += (targetZ - lean.current.z) * lk;
+    if (modelRef.current) modelRef.current.rotation.set(lean.current.x, 0, lean.current.z);
+
+    // Grounding contact shadow — flat on the floor, follows the fighter.
+    if (shadowRef.current) {
+      shadowRef.current.position.set(state.position.x, 0.02, state.position.z);
+      const s = Math.max(0.45, 1 - Math.max(0, state.position.y) * 0.18);
+      shadowRef.current.scale.set(s, s, s);
+    }
+
     // Impact scale-punch — squash on contact, springs back as the pulse decays.
     // Pure transform, no animation cost; sells the hit on top of the clip.
     if (state.impactPulse > 0) {
@@ -120,9 +143,19 @@ export function FighterModel({
   });
 
   return (
-    <group ref={groupRef}>
-      <primitive object={clonedScene} />
-      <pointLight color={accentColor} intensity={2} distance={5} position={[0, 1.5, 0]} />
-    </group>
+    <>
+      <group ref={shadowRef}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[1.7, 1.7]} />
+          <meshBasicMaterial map={blobTex} transparent depthWrite={false} opacity={0.85} />
+        </mesh>
+      </group>
+      <group ref={groupRef}>
+        <group ref={modelRef}>
+          <primitive object={clonedScene} />
+        </group>
+        <pointLight color={accentColor} intensity={2} distance={5} position={[0, 1.5, 0]} />
+      </group>
+    </>
   );
 }

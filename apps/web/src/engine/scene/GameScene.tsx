@@ -179,6 +179,35 @@ function BattleWorld({
 
     damageSystem.onDamage((event) => {
       onDamageEvent?.(event);
+
+      // --- Parry: the defender caught it clean. Punish the attacker. ---
+      if (event.parried) {
+        const attackerCtrl = event.attackerId === 'enemy' ? enemyController : playerController;
+        const attackerAnim = event.attackerId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
+        const attackerRef = event.attackerId === 'enemy' ? enemyAttackingRef : playerAttackingRef;
+        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
+
+        // Attacker bounces off the guard, stunned — a clear punish window.
+        attackerRef.current = false;
+        attackerAnim.transitionHit(AnimState.HitHeavy, 'front');
+        attackerCtrl.applyStagger(0.7, 0.2);
+        // Defender flashes the guard but keeps their footing.
+        defenderAnim.transition(AnimState.BlockHit, true);
+
+        combatAudio.playParry();
+        screenFx.onCriticalHit();
+        battleCamera.shake(0.22, 30);
+        battleCamera.punch(0.08);
+        particles.emitSparks(event.hitPosition, event.knockbackDir, 1);
+        crowd.cheer(0.85);
+        combatAudio.crowdCheer(0.85);
+
+        hitStopTimerRef.current = Math.max(hitStopTimerRef.current, 0.1);
+        playerAnimMachine.pause();
+        enemyAnimMachine.pause();
+        return;
+      }
+
       combatAudio.onDamageEvent(event);
       battleCamera.shake(event.hitType === 'light' ? 0.1 : event.hitType === 'heavy' ? 0.25 : 0.4, 30);
       if (event.hitType !== 'light') {

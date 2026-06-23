@@ -9,6 +9,7 @@ export interface DamageEvent {
   rawDamage: number;
   finalDamage: number;
   blocked: boolean;
+  parried: boolean;
   critical: boolean;
   hitType: 'light' | 'heavy' | 'special';
   knockbackDir: THREE.Vector3;
@@ -109,6 +110,27 @@ export class DamageSystem {
     const rawDamage = Math.round(hitbox.damage * atkStats.attack * critMult);
 
     const blocked = defender.state.isBlocking && move.blockable;
+
+    // Parry — a hit caught in the guard's opening window. No damage, no
+    // knockback, no stamina cost: the defender stuffs it clean (the attacker's
+    // punish is applied by the caller).
+    if (blocked && defender.canParry()) {
+      const knockbackDir = new THREE.Vector3()
+        .subVectors(defender.state.position, attacker.state.position)
+        .setY(0)
+        .normalize();
+      const hitPosition = contactPoint
+        ? contactPoint.clone()
+        : defender.state.position.clone().setY(defender.state.position.y + 1.1);
+      const event: DamageEvent = {
+        attackerId, defenderId, rawDamage,
+        finalDamage: 0, blocked: true, parried: true, critical: false,
+        hitType: hitbox.type, knockbackDir, knockbackForce: 0, hitStun: 0,
+        hitPosition, killed: false,
+      };
+      for (const listener of this.listeners) listener(event);
+      return event;
+    }
     const defenseReduction = blocked
       ? defStats.blockEfficiency
       : defStats.defense * 0.1;
@@ -143,6 +165,7 @@ export class DamageSystem {
       rawDamage,
       finalDamage: result?.actualDamage ?? finalDamage,
       blocked: result?.blocked ?? blocked,
+      parried: false,
       critical,
       hitType: hitbox.type,
       knockbackDir,
