@@ -36,7 +36,10 @@ interface GameSceneProps {
   onComboUpdate?: (combo: ComboState | null) => void;
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
   onEnemyStateUpdate?: (health: number, maxHealth: number) => void;
-  onBattleEnd?: (winner: 'player' | 'enemy') => void;
+  onBattleEnd?: (winner: 'player' | 'enemy', durationSecs: number) => void;
+  // Rewards earned this fight, shown on the victory screen (server-authoritative).
+  rewardPending?: boolean;
+  reward?: { won: boolean; xpAwarded: number; rankedUp: boolean; newRank: string | null; gAwarded: number } | null;
 }
 
 const CLASS_ACCENTS: Record<string, string> = {
@@ -172,6 +175,8 @@ function BattleWorld({
 
   // Background music
   const bgmStartedRef = useRef(false);
+  // Wall-clock start of live combat, for the fight-duration reward guard.
+  const combatStartRef = useRef(0);
 
   useEffect(() => {
     damageSystem.registerFighter('player', playerClass);
@@ -335,10 +340,13 @@ function BattleWorld({
           playerAnimMachine.transition(AnimState.Death, true);
         }
         combatAudio.stopAll();
+        const durationSecs = combatStartRef.current
+          ? (performance.now() - combatStartRef.current) / 1000
+          : 0;
         setTimeout(() => {
           if (winner === 'player') combatAudio.playVictoryFanfare();
           else combatAudio.playDefeatMelody();
-          onBattleEnd?.(winner);
+          onBattleEnd?.(winner, durationSecs);
         }, 1500);
       }
     });
@@ -476,6 +484,7 @@ function BattleWorld({
     // --- Start background music + crowd ambience on first combat frame ---
     if (!bgmStartedRef.current) {
       bgmStartedRef.current = true;
+      combatStartRef.current = performance.now();
       combatAudio.startBGM();
       combatAudio.startCrowdAmbience();
     }
@@ -776,7 +785,7 @@ export function GameScene(props: GameSceneProps) {
             onComboUpdate={setCombo}
             onPlayerStateUpdate={(h, mh, s, sm) => { setPlayerHP(h); setPlayerMaxHP(mh); setPlayerStamina(s); setPlayerStaminaMax(sm); }}
             onEnemyStateUpdate={(h, mh) => { setEnemyHP(h); setEnemyMaxHP(mh); }}
-            onBattleEnd={(w) => { setBattleResult(w); props.onBattleEnd?.(w); }}
+            onBattleEnd={(w, d) => { setBattleResult(w); props.onBattleEnd?.(w, d); }}
             onReady={startCountdown}
           />
         </Suspense>
@@ -873,6 +882,25 @@ export function GameScene(props: GameSceneProps) {
           <p className="text-white/50 mt-3 text-lg">
             {battleResult === 'player' ? 'Enemy has been slain' : `Slain by ${props.enemyName ?? props.enemyClass}`}
           </p>
+
+          {/* Server-authoritative rewards for this fight */}
+          {props.rewardPending && (
+            <div className="mt-5 text-sm text-white/50 animate-pulse">Recording result…</div>
+          )}
+          {props.reward && (
+            <div className="mt-5 flex flex-col items-center gap-1.5">
+              <div className="text-2xl font-black text-green-400">+{props.reward.xpAwarded} XP</div>
+              {props.reward.rankedUp && props.reward.newRank && (
+                <div className="text-lg font-black uppercase tracking-wide text-yellow-400 drop-shadow-[0_0_12px_rgba(250,204,21,0.5)]">
+                  Rank Up → {props.reward.newRank}
+                </div>
+              )}
+              {props.reward.gAwarded > 0 && (
+                <div className="text-lg font-bold text-emerald-300">+{props.reward.gAwarded} G$</div>
+              )}
+            </div>
+          )}
+
           <button onClick={() => window.location.reload()} className="mt-8 px-8 py-3 bg-white/10 hover:bg-white/20 text-white font-bold rounded-lg transition-colors">
             {battleResult === 'player' ? 'FIGHT AGAIN' : 'RETRY'}
           </button>

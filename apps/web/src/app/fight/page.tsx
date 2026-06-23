@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { usePlayerStore } from '@/stores/usePlayerStore';
+import { useFightRewards } from '@/hooks/useFightRewards';
 import type { StageId } from '@/engine/scene/ArenaStage';
 
 const GameScene = dynamic(
@@ -49,6 +50,14 @@ const CLASS_STAGES: Record<ClassId, StageId> = {
 export default function FightPage() {
   const player = usePlayerStore((s) => s.player);
   const router = useRouter();
+  const { submitResult, reward, pending } = useFightRewards();
+
+  const handleBattleEnd = useCallback(
+    (winner: 'player' | 'enemy', durationSecs: number) => {
+      submitResult(winner === 'player', durationSecs);
+    },
+    [submitResult]
+  );
 
   const { playerClass, enemyClass, enemyName, stageId } = useMemo(() => {
     const pc = CLASS_MAP[player?.character_class ?? 'Berserker'] ?? 'berserker';
@@ -80,6 +89,9 @@ export default function FightPage() {
         enemyClass={enemyClass}
         enemyName={enemyName}
         stageId={stageId}
+        onBattleEnd={handleBattleEnd}
+        reward={reward}
+        rewardPending={pending}
       />
     </div>
   );
