@@ -140,12 +140,16 @@ export function FighterModel({
     }
 
     // Impact scale-punch — squash on contact, springs back as the pulse decays.
-    // Pure transform, no animation cost; sells the hit on top of the clip.
+    // The decay is FROZEN while the mixer is paused for hit-stop, so the squash
+    // holds through the freeze (the animation-side held impact frame) and only
+    // springs back once motion resumes — instead of being used up mid-freeze.
     if (state.impactPulse > 0) {
       const p = state.impactPulse;
-      groupRef.current.scale.set(1 + 0.16 * p, 1 - 0.2 * p, 1 + 0.16 * p);
-      state.impactPulse = Math.max(0, p - dt / IMPACT_DECAY);
-      if (state.impactPulse === 0) groupRef.current.scale.set(1, 1, 1);
+      groupRef.current.scale.set(1 + 0.18 * p, 1 - 0.22 * p, 1 + 0.18 * p);
+      if (!animMachine.isPaused) {
+        state.impactPulse = Math.max(0, p - dt / IMPACT_DECAY);
+        if (state.impactPulse === 0) groupRef.current.scale.set(1, 1, 1);
+      }
     }
 
     animMachine.update(dt);

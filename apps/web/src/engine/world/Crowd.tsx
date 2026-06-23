@@ -15,50 +15,60 @@ interface Spectator {
   height: number; // per-person scale for a natural crowd
 }
 
-// Concentric tiers of standing spectators rising away from the pit.
+// Concentric tiers of seated spectators rising away from the pit. The y values
+// match the arena terrace tops so they sit on the stone steps.
 const TIERS = [
-  { radius: 12.5, y: 1.1, count: 46 },
-  { radius: 14.5, y: 2.1, count: 54 },
-  { radius: 16.8, y: 3.1, count: 62 },
+  { radius: 12.5, y: 1.0, count: 46 },
+  { radius: 14.5, y: 2.0, count: 54 },
+  { radius: 16.8, y: 3.0, count: 62 },
 ];
 
 const CLOTHING = ['#2a2730', '#33222a', '#222a33', '#3a3024', '#2c2238', '#243a2c', '#3a2424', '#1e2a3a'];
 const SKIN = ['#d8a878', '#b97f54', '#8d5a3c', '#e3b98f', '#7a4b32', '#c98e63'];
 
-// A blocky-but-readable human: legs, hips, torso, splayed arms. Feet at y=0.
+// A seated spectator: butt on the step, legs folded out in front (toward the
+// pit), torso upright, arms resting forward. Origin at the seat; +Z is forward.
 function buildBodyGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
 
-  const legL = new THREE.CylinderGeometry(0.06, 0.07, 0.8, 5);
-  legL.translate(-0.09, 0.4, 0);
-  const legR = legL.clone();
-  legR.translate(0.18, 0, 0);
-  parts.push(legL, legR);
-
-  const hips = new THREE.BoxGeometry(0.3, 0.22, 0.18);
-  hips.translate(0, 0.9, 0);
+  const hips = new THREE.BoxGeometry(0.3, 0.18, 0.22);
+  hips.translate(0, 0.06, 0);
   parts.push(hips);
 
-  const torso = new THREE.CylinderGeometry(0.16, 0.21, 0.55, 6);
-  torso.translate(0, 1.28, 0);
+  // thighs angle up-forward to the knees
+  const thighL = new THREE.CylinderGeometry(0.07, 0.07, 0.32, 5);
+  thighL.rotateX(1.2);
+  thighL.translate(-0.09, 0.12, 0.16);
+  const thighR = thighL.clone(); thighR.translate(0.18, 0, 0);
+  parts.push(thighL, thighR);
+
+  // shins drop forward-down to the feet
+  const shinL = new THREE.CylinderGeometry(0.06, 0.065, 0.34, 5);
+  shinL.rotateX(2.3);
+  shinL.translate(-0.09, 0.06, 0.42);
+  const shinR = shinL.clone(); shinR.translate(0.18, 0, 0);
+  parts.push(shinL, shinR);
+
+  // upright torso
+  const torso = new THREE.CylinderGeometry(0.16, 0.2, 0.5, 6);
+  torso.translate(0, 0.36, 0);
   parts.push(torso);
 
-  const armL = new THREE.CylinderGeometry(0.055, 0.06, 0.55, 5);
-  armL.rotateZ(0.18);
-  armL.translate(-0.24, 1.25, 0);
-  const armR = new THREE.CylinderGeometry(0.055, 0.06, 0.55, 5);
-  armR.rotateZ(-0.18);
-  armR.translate(0.24, 1.25, 0);
+  // arms resting forward over the knees
+  const armL = new THREE.CylinderGeometry(0.05, 0.055, 0.42, 5);
+  armL.rotateX(1.1);
+  armL.translate(-0.2, 0.3, 0.18);
+  const armR = armL.clone(); armR.translate(0.4, 0, 0);
   parts.push(armL, armR);
 
   return mergeGeometries(parts, false) ?? parts[0];
 }
 
 function buildHeadGeometry(): THREE.BufferGeometry {
-  const neck = new THREE.CylinderGeometry(0.05, 0.06, 0.1, 5);
-  neck.translate(0, 1.58, 0);
-  const head = new THREE.SphereGeometry(0.125, 8, 6);
-  head.translate(0, 1.72, 0);
+  const neck = new THREE.CylinderGeometry(0.05, 0.055, 0.08, 5);
+  neck.translate(0, 0.6, 0);
+  const head = new THREE.SphereGeometry(0.12, 8, 6);
+  head.translate(0, 0.72, 0);
   return mergeGeometries([neck, head], false) ?? head;
 }
 
@@ -77,7 +87,7 @@ export function Crowd({ director }: { director: CrowdDirector }) {
         const x = Math.cos(a) * r;
         const z = Math.sin(a) * r;
         list.push({
-          base: new THREE.Vector3(x, tier.y + (Math.random() - 0.5) * 0.15, z),
+          base: new THREE.Vector3(x, tier.y + Math.random() * 0.04, z),
           yaw: Math.atan2(-x, -z), // face the pit centre
           phase: Math.random() * Math.PI * 2,
           jump: 0.6 + Math.random() * 0.8,
