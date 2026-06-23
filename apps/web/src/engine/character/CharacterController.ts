@@ -24,6 +24,7 @@ export interface CharacterState {
 export interface CharacterConfig {
   moveSpeed: number;
   runSpeed: number;
+  jumpForce: number;
   dodgeDistance: number;
   dodgeDuration: number;
   dodgeCooldown: number;
@@ -46,6 +47,7 @@ const DEFAULT_CONFIG: CharacterConfig = {
   // Tuned to the walk/run cycles so the feet track the ground (no skating).
   moveSpeed: 2.0,
   runSpeed: 4.8,
+  jumpForce: 7.5,
   dodgeDistance: 1.9,
   dodgeDuration: 0.42,
   dodgeCooldown: 0.8,
@@ -142,6 +144,8 @@ export class CharacterController {
         this.targetRotation = Math.atan2(toTarget.x, toTarget.z);
         this.state.rotation = lerpAngle(this.state.rotation, this.targetRotation, this.config.turnSpeed * dt);
       }
+      // An airborne attack (jump-attack) keeps falling — it's a dive, not a hover.
+      if (!this.state.isGrounded) this.applyGravity(dt);
       this.clampToArena();
       return;
     }
@@ -342,6 +346,11 @@ export class CharacterController {
   }
 
   private handleActions(input: InputSystem) {
+    if (this.state.isGrounded && input.consumeBuffered(Action.Jump)) {
+      this.state.velocity.y = this.config.jumpForce;
+      this.state.isGrounded = false;
+    }
+
     if (input.consumeBuffered(Action.Dodge) && this.dodgeCooldownTimer <= 0) {
       this.startDodge();
     }

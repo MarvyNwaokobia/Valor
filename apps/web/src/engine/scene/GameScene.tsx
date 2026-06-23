@@ -50,6 +50,7 @@ const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
   [AnimState.LightAttack]: MoveType.LightAttack,
   [AnimState.HeavyAttack]: MoveType.HeavyAttack,
   [AnimState.Special]: MoveType.Special,
+  [AnimState.JumpAttack]: MoveType.HeavyAttack,
 };
 
 // Where did the blow land relative to the defender's facing? knockbackDir points
@@ -293,17 +294,22 @@ function BattleWorld({
           battleCamera.punch(0.05);
         }
 
-        // Variable hit-stun based on attack type. The controller times the
-        // stagger and exposes a tech tail (block/dodge cancel); the hit clip
-        // auto-returns to Idle on its own. Reaction pose depends on direction.
-        const staggerSec = STAGGER_DURATION[event.hitType] ?? 0.3;
-        const hitAnim = event.hitType === 'light' ? AnimState.HitLight : AnimState.HitHeavy;
+        // Reaction tier — the victim always reacts, never eats a hit standing.
+        // A special or a deep combo finisher knocks them DOWN (fall → get up);
+        // heavy staggers; light flinches. Knockdowns can't be teched.
         const defenderCtrl = event.defenderId === 'enemy' ? enemyController : playerController;
         const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
         const dir = hitDirection(defenderCtrl, event.knockbackDir);
+        const knockdown = event.hitType === 'special' || comboCount >= 5;
 
-        defenderAnim.transitionHit(hitAnim, dir);
-        defenderCtrl.applyStagger(staggerSec);
+        if (knockdown) {
+          defenderAnim.transition(AnimState.Knockdown, true);
+          defenderCtrl.applyStagger(1.5, 0); // long, untechable — they're on the floor
+        } else {
+          const hitAnim = event.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight;
+          defenderAnim.transitionHit(hitAnim, dir);
+          defenderCtrl.applyStagger(STAGGER_DURATION[event.hitType] ?? 0.3);
+        }
 
         if (event.defenderId === 'enemy') {
           enemyAttackingRef.current = false;
@@ -348,8 +354,12 @@ function BattleWorld({
     const s = ctrl.state;
     if (s.isAttacking || s.isDodging || s.isStaggered || s.isDead) return;
 
+    // Attacking while airborne becomes a diving jump-attack.
+    const airborne = !s.isGrounded;
+    const move = airborne ? AnimState.JumpAttack : animState;
+
     if (who === 'player') {
-      const cost = animState === AnimState.LightAttack ? 5 : animState === AnimState.HeavyAttack ? 15 : 30;
+      const cost = move === AnimState.LightAttack ? 5 : move === AnimState.Special ? 30 : 15;
       if (!damageSystem.hasStamina('player', cost)) return;
       damageSystem.consumeStamina('player', cost);
     }
@@ -357,8 +367,8 @@ function BattleWorld({
     s.isAttacking = true;
     attackRef.current = true;
     consumed.current.clear();
-    typeRef.current = animState;
-    anim.transition(animState, true);
+    typeRef.current = move;
+    anim.transition(move, true);
     combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
 
     // Committed step into the strike — front-loaded then plants (no slide).
@@ -368,9 +378,11 @@ function BattleWorld({
       .setY(0)
       .normalize();
     const dist = ctrl.state.position.distanceTo(target.state.position);
-    const stepInto = animState === AnimState.LightAttack ? 0.5 : animState === AnimState.HeavyAttack ? 0.95 : 1.3;
+    const stepInto = move === AnimState.LightAttack ? 0.5 : move === AnimState.HeavyAttack ? 0.95 : 1.3;
     const gap = Math.max(0, dist - 1.1); // stop just short of overlapping the target
     ctrl.applyLunge(lungeDir, Math.min(stepInto, gap));
+    // A jump-attack dives down toward the target.
+    if (airborne) s.velocity.y = Math.min(s.velocity.y, -3);
 
     // Start weapon trail. The attack now ends when its animation completes
     // (state machine auto-transitions to Idle on the clip's finished event),
@@ -447,6 +459,8 @@ function BattleWorld({
       const f = playerJustRecovered;
       if (ps.isDodging) {
         playerAnimMachine.transition(AnimState.Dodge, f);
+      } else if (!ps.isGrounded) {
+        playerAnimMachine.transition(AnimState.Jump, f);
       } else if (ps.isBlocking) {
         playerAnimMachine.transition(AnimState.Block, f);
       } else if (isMoving) {
@@ -479,6 +493,8 @@ function BattleWorld({
         const f = enemyJustRecovered;
         if (es.isDodging) {
           enemyAnimMachine.transition(AnimState.Dodge, f);
+        } else if (!es.isGrounded) {
+          enemyAnimMachine.transition(AnimState.Jump, f);
         } else if (es.isBlocking) {
           enemyAnimMachine.transition(AnimState.Block, f);
         } else {
@@ -517,7 +533,9 @@ function BattleWorld({
 
       // Still mid-swing: check the live hitbox windows against the animation clock.
       if (anim.state === attackState) {
-        const fd = CLASS_FRAME_DATA[classId]?.[attackState];
+        // Jump-attack borrows the heavy hitbox/move for damage.
+        const fdState = attackState === AnimState.JumpAttack ? AnimState.HeavyAttack : attackState;
+        const fd = CLASS_FRAME_DATA[classId]?.[fdState];
         const moveType = ANIM_TO_MOVE[attackState];
         const move = moveType ? getMoveForAction(classId, moveType) : undefined;
         if (fd && move) {
