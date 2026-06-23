@@ -9,6 +9,12 @@ const MAX_HP: i32 = 100;
 const XP_WIN: i32 = 100;
 const XP_LOSS: i32 = 30;
 
+/// Base XP for a single fight, win or loss — the one source the turn-based bot
+/// fight and the real-time fighter both award from.
+pub fn fight_xp(won: bool) -> i32 {
+    if won { XP_WIN } else { XP_LOSS }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundData {
     pub round: u32,

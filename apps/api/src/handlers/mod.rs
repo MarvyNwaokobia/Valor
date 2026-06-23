@@ -46,6 +46,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/battles")
                 .route("/bot/start", web::post().to(battles::start_bot_fight))
                 .route("/bot/round", web::post().to(battles::bot_fight_round))
+                .route("/fight/complete", web::post().to(battles::complete_live_fight))
                 .route("/challenge", web::post().to(battles::challenge_player)),
         )
         .service(

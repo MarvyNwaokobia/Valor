@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::models::player::Player;
-use crate::services::battle::{BotFightSession, RoundData, simulate_async_fight};
+use crate::services::battle::{BotFightSession, RoundData, fight_xp, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
 
 fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
@@ -84,6 +84,126 @@ fn rank_g_reward(rank: &str) -> i64 {
         "Diamond"  => 150,
         _          => 0,
     }
+}
+
+struct FightOutcome {
+    won:       bool,
+    xp_earned: i32,
+    new_xp:    i32,
+    ranked_up: bool,
+    new_rank:  Option<&'static str>,
+    g_awarded: i64,
+    battle_id: Uuid,
+}
+
+/// Server-authoritative finalize shared by every 1v1 fight — the turn-based bot
+/// fight and the real-time fighter both end here. Re-reads the player, awards XP
+/// (× multiplier), handles rank-up + its G$ reward, writes the battle row, and
+/// kicks the non-blocking on-chain records. The client only ever reports whether
+/// it won; all amounts are computed here.
+async fn finalize_fight(
+    state: &AppState,
+    wallet: &str,
+    won: bool,
+    base_xp: i32,
+    xp_multiplier: i32,
+    rounds_data: serde_json::Value,
+) -> Result<FightOutcome, HttpResponse> {
+    // Re-fetch so xp/wins/losses/rank reflect any change since the fight began.
+    let player = sqlx::query_as::<_, Player>("SELECT * FROM players WHERE wallet_address = $1")
+        .bind(wallet)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+    let Some(player) = player else {
+        return Err(HttpResponse::InternalServerError().json(json!({"error": "Player not found"})));
+    };
+
+    let now = Utc::now();
+
+    // ── XP + rank-up ─────────────────────────────────────────────────
+    let xp_earned  = base_xp * xp_multiplier;
+    let raw_new_xp = player.xp + xp_earned;
+    let ranked_up  = raw_new_xp >= XP_PER_RANK;
+    let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
+    let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
+    let g_awarded  = new_rank.map(rank_g_reward).unwrap_or(0);
+
+    let wins   = if won { player.wins + 1 } else { player.wins };
+    let losses = if !won { player.losses + 1 } else { player.losses };
+
+    // ── Persist battle record ────────────────────────────────────────
+    let battle_id = Uuid::new_v4();
+    let _ = sqlx::query(
+        "INSERT INTO battles
+           (id, challenger_wallet, opponent_wallet, winner_wallet,
+            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
+         VALUES ($1, $2, 'bot', $3, $4, $5, 0, true, $6)",
+    )
+    .bind(battle_id)
+    .bind(wallet)
+    .bind(if won { wallet } else { "bot" })
+    .bind(rounds_data)
+    .bind(xp_earned)
+    .bind(now)
+    .execute(&state.db)
+    .await;
+
+    // ── Update player — include rank if ranked up ────────────────────
+    if let Some(rank) = new_rank {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3, rank = $4,
+                 g_earned_lifetime = g_earned_lifetime + $5,
+                 last_active = $6, decay_status = 'none'
+             WHERE wallet_address = $7",
+        )
+        .bind(new_xp).bind(wins).bind(losses).bind(rank)
+        .bind(g_awarded).bind(now).bind(wallet)
+        .execute(&state.db).await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE players
+             SET xp = $1, wins = $2, losses = $3,
+                 last_active = $4, decay_status = 'none'
+             WHERE wallet_address = $5",
+        )
+        .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
+        .execute(&state.db).await;
+    }
+
+    // ── Background chain writes — non-blocking ───────────────────────
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        let battle_bytes = uuid_to_bytes32(battle_id);
+        let player_addr: Option<Address> = wallet.parse().ok();
+        let xp_u8 = xp_earned.min(255) as u8;
+        let db = state.db.clone();
+        let battle_uuid = battle_id;
+        tokio::spawn(async move {
+            if let Some(addr) = player_addr {
+                let (winner, loser) = if won { (addr, Address::zero()) } else { (Address::zero(), addr) };
+                if let Some(hash) = chain.record_battle(battle_bytes, winner, loser, xp_u8, 0, true).await {
+                    let hash_str = format!("{:?}", hash);
+                    let _ = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
+                        .bind(hash_str).bind(battle_uuid).execute(&db).await;
+                }
+            }
+        });
+        if let Some(rank) = new_rank {
+            let chain2 = state.chain.as_ref().cloned();
+            if let (Some(chain2), Ok(addr)) = (chain2, wallet.parse::<Address>()) {
+                let rank_str = rank.to_string();
+                tokio::spawn(async move {
+                    chain2.record_rank_up(addr, rank_str.clone()).await;
+                    chain2.enroll_in_rank_pool(addr, &rank_str).await;
+                });
+            }
+        }
+    }
+
+    Ok(FightOutcome { won, xp_earned, new_xp, ranked_up, new_rank, g_awarded, battle_id })
 }
 
 /// Sessions are abandoned (no /round call) after this long are dropped.
@@ -230,124 +350,20 @@ pub async fn bot_fight_round(
 
     state.bot_fight_sessions.remove(&body.session_id);
 
-    // Re-fetch the player so xp/wins/losses/rank reflect any changes since
-    // the fight started (the fight itself takes several rounds of input).
-    let player = sqlx::query_as::<_, crate::models::player::Player>(
-        "SELECT * FROM players WHERE wallet_address = $1",
+    let rounds_json = serde_json::to_value(&finalize.rounds).unwrap_or_default();
+    let outcome = match finalize_fight(
+        &state,
+        &finalize.wallet,
+        finalize.challenger_won,
+        finalize.xp_awarded,
+        finalize.xp_multiplier,
+        rounds_json,
     )
-    .bind(&finalize.wallet)
-    .fetch_optional(&state.db)
     .await
-    .ok()
-    .flatten();
-
-    let Some(player) = player else {
-        return HttpResponse::InternalServerError().json(json!({"error": "Player not found"}));
+    {
+        Ok(o) => o,
+        Err(resp) => return resp,
     };
-
-    let now = Utc::now();
-
-    // ── XP + rank-up logic ───────────────────────────────────────────
-    let xp_earned  = finalize.xp_awarded * finalize.xp_multiplier;
-    let raw_new_xp = player.xp + xp_earned;
-    let ranked_up  = raw_new_xp >= XP_PER_RANK;
-    let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
-    let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
-    let g_awarded  = new_rank.map(rank_g_reward).unwrap_or(0);
-
-    let wins   = if finalize.challenger_won { player.wins + 1 } else { player.wins };
-    let losses = if !finalize.challenger_won { player.losses + 1 } else { player.losses };
-
-    // ── Persist battle record ────────────────────────────────────────
-    let battle_id = Uuid::new_v4();
-    let _ = sqlx::query(
-        "INSERT INTO battles
-           (id, challenger_wallet, opponent_wallet, winner_wallet,
-            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
-         VALUES ($1, $2, 'bot', $3, $4, $5, 0, true, $6)",
-    )
-    .bind(battle_id)
-    .bind(&finalize.wallet)
-    .bind(if finalize.challenger_won { finalize.wallet.as_str() } else { "bot" })
-    .bind(serde_json::to_value(&finalize.rounds).unwrap_or_default())
-    .bind(xp_earned)
-    .bind(now)
-    .execute(&state.db)
-    .await;
-
-    // ── Update player — include rank if ranked up ────────────────────
-    if let Some(rank) = new_rank {
-        let _ = sqlx::query(
-            "UPDATE players
-             SET xp = $1, wins = $2, losses = $3, rank = $4,
-                 g_earned_lifetime = g_earned_lifetime + $5,
-                 last_active = $6, decay_status = 'none'
-             WHERE wallet_address = $7",
-        )
-        .bind(new_xp)
-        .bind(wins)
-        .bind(losses)
-        .bind(rank)
-        .bind(g_awarded)
-        .bind(now)
-        .bind(&finalize.wallet)
-        .execute(&state.db)
-        .await;
-    } else {
-        let _ = sqlx::query(
-            "UPDATE players
-             SET xp = $1, wins = $2, losses = $3,
-                 last_active = $4, decay_status = 'none'
-             WHERE wallet_address = $5",
-        )
-        .bind(new_xp)
-        .bind(wins)
-        .bind(losses)
-        .bind(now)
-        .bind(&finalize.wallet)
-        .execute(&state.db)
-        .await;
-    }
-
-    // Background chain write — non-blocking
-    if let Some(chain) = state.chain.as_ref().cloned() {
-        let battle_bytes = uuid_to_bytes32(battle_id);
-        let player_addr: Option<Address> = finalize.wallet.parse().ok();
-        let won = finalize.challenger_won;
-        let xp_u8 = xp_earned.min(255) as u8;
-        let db = state.db.clone();
-        let battle_uuid = battle_id;
-        tokio::spawn(async move {
-            if let Some(addr) = player_addr {
-                let (winner, loser) = if won {
-                    (addr, Address::zero())
-                } else {
-                    (Address::zero(), addr)
-                };
-                if let Some(hash) = chain.record_battle(battle_bytes, winner, loser, xp_u8, 0, true).await {
-                    let hash_str = format!("{:?}", hash);
-                    let _ = sqlx::query(
-                        "UPDATE battles SET game_record_tx = $1 WHERE id = $2",
-                    )
-                    .bind(hash_str)
-                    .bind(battle_uuid)
-                    .execute(&db)
-                    .await;
-                }
-            }
-        });
-        // Record rank-up on-chain + enroll in GoodCollective pool
-        if let Some(rank) = new_rank {
-            let chain2 = state.chain.as_ref().cloned();
-            if let (Some(chain2), Ok(addr)) = (chain2, finalize.wallet.parse::<Address>()) {
-                let rank_str = rank.to_string();
-                tokio::spawn(async move {
-                    chain2.record_rank_up(addr, rank_str.clone()).await;
-                    chain2.enroll_in_rank_pool(addr, &rank_str).await;
-                });
-            }
-        }
-    }
 
     HttpResponse::Ok().json(json!({
         "round":        round_response.round,
@@ -358,15 +374,71 @@ pub async fn bot_fight_round(
         "player_hp":    round_response.player_hp,
         "bot_hp":       round_response.bot_hp,
         "is_final":     true,
-        "won":          finalize.challenger_won,
-        "xp_awarded":   xp_earned,
+        "won":          outcome.won,
+        "xp_awarded":   outcome.xp_earned,
         "xp_multiplier": finalize.xp_multiplier,
-        "new_xp":       new_xp,
-        "ranked_up":    ranked_up,
-        "new_rank":     new_rank,
-        "g_awarded":    g_awarded,
-        "battle_id":    battle_id,
+        "new_xp":       outcome.new_xp,
+        "ranked_up":    outcome.ranked_up,
+        "new_rank":     outcome.new_rank,
+        "g_awarded":    outcome.g_awarded,
+        "battle_id":    outcome.battle_id,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct LiveFightRequest {
+    pub wallet:        String,
+    pub won:           bool,
+    #[serde(default)]
+    pub duration_secs: f64,
+}
+
+/// Shortest real-time fight (seconds) that still earns rewards — blocks scripted
+/// instant-win spam. A genuine fight runs well past this; it only filters abuse.
+const MIN_LIVE_FIGHT_SECS: f64 = 3.0;
+
+/// Real-time fighter reward hook. The client reports only the outcome + how long
+/// the fight ran; the server computes and awards everything (XP / rank / G$) via
+/// the same `finalize_fight` path the turn-based bot fight uses. Guards: per-IP
+/// rate limit + a minimum match duration.
+pub async fn complete_live_fight(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<LiveFightRequest>,
+) -> HttpResponse {
+    let ip = req.connection_info().realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    if !state.battle_limiter.check(&ip) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many battles. Slow down, warrior."}));
+    }
+
+    if !is_valid_wallet(&body.wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+
+    if body.duration_secs < MIN_LIVE_FIGHT_SECS {
+        return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
+    }
+
+    let wallet = normalize_wallet(&body.wallet);
+    let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
+    let base_xp = fight_xp(body.won);
+
+    match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, json!([])).await {
+        Ok(o) => HttpResponse::Ok().json(json!({
+            "won":           o.won,
+            "xp_awarded":    o.xp_earned,
+            "xp_multiplier": xp_multiplier,
+            "new_xp":        o.new_xp,
+            "ranked_up":     o.ranked_up,
+            "new_rank":      o.new_rank,
+            "g_awarded":     o.g_awarded,
+            "battle_id":     o.battle_id,
+        })),
+        Err(resp) => resp,
+    }
 }
 
 pub async fn challenge_player(
