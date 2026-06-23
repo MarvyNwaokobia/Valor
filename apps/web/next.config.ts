@@ -3,6 +3,12 @@ import path from 'path'
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@goodsdks/citizen-sdk', '@goodsdks/engagement-sdk'],
+  // Build marker so we can confirm at a glance which build a device is running
+  // (mobile browsers cache aggressively). Refreshed on every build/deploy.
+  env: {
+    NEXT_PUBLIC_BUILD_SHA: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'local').slice(0, 7),
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString().slice(5, 16).replace('T', ' '),
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },
