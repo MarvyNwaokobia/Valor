@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -32,7 +32,7 @@ const CLASS_ACCENTS: Record<string, string> = {
 // Seconds for the impact squash to spring fully back to rest.
 const IMPACT_DECAY = 0.13;
 
-export function FighterModel({
+export const FighterModel = memo(function FighterModel({
   classId,
   state,
   animMachine,
@@ -46,6 +46,11 @@ export function FighterModel({
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const initDone = useRef(false);
   const mixamoApplied = useRef(false);
+  // Keep the fighter hidden until a real animation is driving the rig, so the
+  // bind-pose T-pose (and the casual GLB idle) never show. Revealed once the
+  // combat-idle clip is ready, or after a short fallback if it's slow.
+  const revealed = useRef(false);
+  const initTime = useRef(0);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
   const blobTex = useMemo(() => makeBlobShadowTexture(), []);
@@ -95,6 +100,18 @@ export function FighterModel({
         }
         animMachine.init(mixerRef.current, combined);
         console.log(`[Fighter:${classId}] ${combined.length} clips ready (${mixamoClips.size} Mixamo + ${animations.length} GLB)`);
+      }
+    }
+
+    // Reveal once the combat-idle is actually playing — never show a T-pose.
+    // Prefer the Mixamo fight stance, but fall back after ~2.5s so a slow/failed
+    // animation load can't leave the fighter invisible.
+    if (!revealed.current && initDone.current) {
+      if (initTime.current === 0) initTime.current = performance.now();
+      if (mixamoApplied.current || performance.now() - initTime.current > 2500) {
+        revealed.current = true;
+        groupRef.current.visible = true;
+        if (shadowRef.current) shadowRef.current.visible = true;
       }
     }
 
@@ -157,13 +174,13 @@ export function FighterModel({
 
   return (
     <>
-      <group ref={shadowRef}>
+      <group ref={shadowRef} visible={false}>
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[1.7, 1.7]} />
           <meshBasicMaterial map={blobTex} transparent depthWrite={false} opacity={0.85} />
         </mesh>
       </group>
-      <group ref={groupRef}>
+      <group ref={groupRef} visible={false}>
         <group ref={modelRef}>
           <primitive object={clonedScene} />
         </group>
@@ -171,4 +188,4 @@ export function FighterModel({
       </group>
     </>
   );
-}
+});
