@@ -103,6 +103,10 @@ export function FighterModel({
     const rotLerp = 1 - Math.exp(-12 * dt);
     groupRef.current.quaternion.slerp(targetQuat, rotLerp);
 
+    // Match the walk/run cycle to actual ground speed so feet don't skate.
+    const planarSpeed = Math.sqrt(state.velocity.x ** 2 + state.velocity.z ** 2);
+    animMachine.matchLocomotionSpeed(planarSpeed);
+
     // Impact scale-punch — squash on contact, springs back as the pulse decays.
     // Pure transform, no animation cost; sells the hit on top of the clip.
     if (state.impactPulse > 0) {
