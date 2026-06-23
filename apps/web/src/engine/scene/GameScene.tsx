@@ -53,6 +53,13 @@ const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
   [AnimState.JumpAttack]: MoveType.HeavyAttack,
 };
 
+// The attack the AI queues (an Action) → the animation state doAttack expects.
+const AI_ATTACK_ANIM: Partial<Record<Action, AnimState>> = {
+  [Action.LightAttack]: AnimState.LightAttack,
+  [Action.HeavyAttack]: AnimState.HeavyAttack,
+  [Action.Special]: AnimState.Special,
+};
+
 // Where did the blow land relative to the defender's facing? knockbackDir points
 // attacker → defender, so the attacker sits the opposite way.
 function hitDirection(defender: CharacterController, knockbackDir: THREE.Vector3): HitDirection {
@@ -508,9 +515,19 @@ function BattleWorld({
       enemyAI.update(clampedDt, enemyController, playerController);
       enemyController.update(clampedDt, aiInput, 0);
 
-      if (aiInput.getAction(Action.LightAttack).held) doAttack('enemy', AnimState.LightAttack);
-      if (aiInput.getAction(Action.HeavyAttack).held) doAttack('enemy', AnimState.HeavyAttack);
-      if (aiInput.getAction(Action.Special).held) doAttack('enemy', AnimState.Special);
+      if (!enemyAttackingRef.current) {
+        // Fresh attack: the AI's telegraph→attack presses an action this frame.
+        if (aiInput.getAction(Action.LightAttack).held) doAttack('enemy', AnimState.LightAttack);
+        else if (aiInput.getAction(Action.HeavyAttack).held) doAttack('enemy', AnimState.HeavyAttack);
+        else if (aiInput.getAction(Action.Special).held) doAttack('enemy', AnimState.Special);
+      } else if (canCancelAttack('enemy')) {
+        // Mid-swing in a cancel window: chain into the AI's next queued follow-up
+        // (same mechanic the player gets). The new attack resets progress, so this
+        // self-paces to one cancel per swing rather than dumping the whole string.
+        const next = enemyAI.takeFollowUp();
+        const anim = next ? AI_ATTACK_ANIM[next] : undefined;
+        if (anim) doAttack('enemy', anim, true);
+      }
 
       const es = enemyController.state;
       const enemyJustRecovered = enemyWasStaggered.current && !es.isStaggered;
