@@ -70,7 +70,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
 
   const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, botClass, starting, submitting,
-    startBattle, handleMove, reset,
+    handleMove, reset,
     attackBoost, defenseBoost, hasXpBooster, effectiveAttack, effectiveDefense } =
     useBattle(player, walletAddress)
 
@@ -324,7 +324,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           <motion.button onClick={() => {
               const el = document.documentElement
               if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
-              startBattle()
+              router.push('/fight')
             }}
             disabled={starting}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all disabled:opacity-60 disabled:pointer-events-none"

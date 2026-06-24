@@ -213,7 +213,11 @@ export class CombatSim {
    * server or client — sets actions on them); `dt` is the real elapsed time.
    * Returns the authoritative events produced this step.
    */
-  step(dt: number, inputs: Partial<Record<FighterId, InputSystem>> = {}): SimEvent[] {
+  step(
+    dt: number,
+    inputs: Partial<Record<FighterId, InputSystem>> = {},
+    cameraYaw: Partial<Record<FighterId, number>> = {},
+  ): SimEvent[] {
     this.events = [];
     if (this.winner !== null) return this.events;
 
@@ -230,10 +234,11 @@ export class CombatSim {
       }
     }
 
-    // 1. Movement / dodge / block / jump.
+    // 1. Movement / dodge / block / jump. Camera-relative on the client (the local
+    //    player passes its camera yaw); the server passes none → world-frame (0).
     for (const id of ids) {
       const f = this.fighters[id];
-      if (!f.ctrl.state.isDead) f.ctrl.update(clampedDt, this.inputFor(id, inputs), 0);
+      if (!f.ctrl.state.isDead) f.ctrl.update(clampedDt, this.inputFor(id, inputs), cameraYaw[id] ?? 0);
     }
 
     // 2. Attack triggers (buffered, cancel-window + gatling gating). AI fighters

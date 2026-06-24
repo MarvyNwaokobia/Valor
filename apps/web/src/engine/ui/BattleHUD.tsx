@@ -193,7 +193,7 @@ export function BattleHUD({
   playerClass,
   playerName,
   enemyState,
-  enemyStats,
+  enemyStats: _enemyStats,
   enemyClass,
   enemyName,
   combo,

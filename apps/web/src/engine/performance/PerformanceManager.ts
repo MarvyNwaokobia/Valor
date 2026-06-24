@@ -174,9 +174,7 @@ export class PerformanceManager {
     const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
     if (!gl) return QualityLevel.Low;
 
-    const renderer = (gl as WebGLRenderingContext).getParameter(
-      (gl as WebGLRenderingContext).RENDERER
-    ) as string;
+
     const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
     const cores = navigator.hardwareConcurrency ?? 2;
     const memory = (navigator as any).deviceMemory ?? 4;

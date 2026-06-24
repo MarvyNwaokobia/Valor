@@ -36,7 +36,7 @@ export class WaveSystem {
   private waves: WaveConfig[] = [];
   private currentWaveIdx = 0;
   private phase: WavePhase = WavePhase.Waiting;
-  private timer = 0;
+
   private activeEnemies: Set<string> = new Set();
   private defeatedCount = 0;
 
