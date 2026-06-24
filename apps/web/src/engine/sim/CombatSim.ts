@@ -90,6 +90,7 @@ export interface SimSnapshot {
 /** Authoritative event the client renders (hit sparks, KO, etc.). */
 export type SimEvent =
   | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
+  | { kind: 'attackStart'; fighter: FighterId; anim: AnimState }
   | { kind: 'ko'; winner: FighterId; loser: FighterId };
 
 interface AttackTrack {
@@ -175,6 +176,19 @@ export class CombatSim {
   /** Read-only access to a fighter's controller (for client rendering). */
   controller(id: FighterId): CharacterController {
     return this.fighters[id].ctrl;
+  }
+
+  /** Normalized progress (0..1) of a fighter's current attack, or 0 if not
+   *  attacking — the renderer uses it to drive the weapon-trail arc. */
+  attackProgress(id: FighterId): number {
+    const a = this.fighters[id].attack;
+    if (!a.active || a.duration <= 0) return 0;
+    return Math.min(1, a.elapsed / a.duration);
+  }
+
+  /** The combo state for a fighter (HUD count, etc.). */
+  comboState(id: FighterId) {
+    return this.combos.getState(id);
   }
 
   /**
@@ -322,6 +336,10 @@ export class CombatSim {
     const gap = Math.max(0, dist - 1.1);
     f.ctrl.applyLunge(lungeDir, Math.min(stepInto, gap));
     if (!s.isGrounded) s.velocity.y = Math.min(s.velocity.y, -3);
+
+    // Tell the renderer to (re)play the swing clip — needed so a cancel into the
+    // same move restarts the animation instead of holding the last pose.
+    this.events.push({ kind: 'attackStart', fighter: id, anim: move });
   }
 
   private resolveAttack(attackerId: FighterId, defenderId: FighterId, dt: number) {
