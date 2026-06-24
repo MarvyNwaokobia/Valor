@@ -1,20 +1,20 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState, useCallback, type MutableRefObject } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
 import { ArenaStage, type StageId } from './ArenaStage';
 import { BattleCamera } from '../camera';
-import { CharacterController } from '../character';
-import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS, type HitDirection } from '../animation';
-import { Action, getInputSystem } from '../input';
+import type { CharacterController } from '../character';
+import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
+import { getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
-import { DamageSystem, type DamageEvent } from '../combat/DamageSystem';
-import { ComboSystem, type ComboState, MoveType, CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint, getMoveForAction, canGatlingCancel } from '../combat';
-import { EnemyAI, AIDifficulty } from '../combat/EnemyAI';
+import type { DamageEvent } from '../combat/DamageSystem';
+import type { ComboState } from '../combat';
+import { AIDifficulty } from '../combat/EnemyAI';
+import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
 import { ParticleSystem } from '../vfx/ParticleSystem';
-import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 import { TrailRenderer } from '../vfx/TrailRenderer';
 import { CombatAudio } from '../audio/CombatAudio';
 import { ScreenEffects } from '../vfx/ScreenEffects';
@@ -48,34 +48,6 @@ const CLASS_ACCENTS: Record<string, string> = {
   phantom: '#aa44ff',
 };
 
-// Maps an attack animation state to its move definition (for damage/blockable rules).
-const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
-  [AnimState.LightAttack]: MoveType.LightAttack,
-  [AnimState.HeavyAttack]: MoveType.HeavyAttack,
-  [AnimState.Special]: MoveType.Special,
-  [AnimState.JumpAttack]: MoveType.HeavyAttack,
-};
-
-// The attack the AI queues (an Action) → the animation state doAttack expects.
-const AI_ATTACK_ANIM: Partial<Record<Action, AnimState>> = {
-  [Action.LightAttack]: AnimState.LightAttack,
-  [Action.HeavyAttack]: AnimState.HeavyAttack,
-  [Action.Special]: AnimState.Special,
-};
-
-// Where did the blow land relative to the defender's facing? knockbackDir points
-// attacker → defender, so the attacker sits the opposite way.
-function hitDirection(defender: CharacterController, knockbackDir: THREE.Vector3): HitDirection {
-  const toAttacker = new THREE.Vector3(-knockbackDir.x, 0, -knockbackDir.z);
-  if (toAttacker.lengthSq() < 1e-6) return 'front';
-  toAttacker.normalize();
-  const fwd = new THREE.Vector3(Math.sin(defender.state.rotation), 0, Math.cos(defender.state.rotation));
-  const dot = fwd.dot(toAttacker);
-  if (dot > 0.4) return 'front';
-  if (dot < -0.4) return 'back';
-  return 'side';
-}
-
 const HITSTOP_DURATION: Record<string, number> = {
   light: 0.05,
   heavy: 0.1,
@@ -83,19 +55,8 @@ const HITSTOP_DURATION: Record<string, number> = {
   kill: 0.35,
 };
 
-const STAGGER_DURATION: Record<string, number> = {
-  light: 0.2,
-  heavy: 0.45,
-  special: 0.7,
-};
-
 const FOOTSTEP_INTERVAL = 0.3;
 const FOOTSTEP_SPEED_THRESHOLD = 1.0;
-
-// Minimum center-to-center distance between fighters' bodies. Below the
-// attack range (2.0) so strikes still connect, but wide enough that the
-// two characters never visually clip into each other.
-const FIGHTER_SEPARATION = 1.5;
 
 function BattleWorld({
   playerClass,
@@ -131,31 +92,22 @@ function BattleWorld({
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
-  const playerController = useMemo(() => new CharacterController(new THREE.Vector3(-2.5, 0, 0)), []);
-  const enemyController = useMemo(() => new CharacterController(new THREE.Vector3(2.5, 0, 0)), []);
+  // The one authoritative combat sim (the same render-free core a server runs).
+  // In PvE the enemy (p2) is AI-driven inside the sim; the local player drives p1.
+  const sim = useMemo(() => {
+    const s = new CombatSim(playerClass, enemyClass);
+    s.attachAI('p2', difficulty);
+    return s;
+  }, [playerClass, enemyClass, difficulty]);
+  const playerController = sim.controller('p1');
+  const enemyController = sim.controller('p2');
 
   const playerAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]), [playerClass]);
   const enemyAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]), [enemyClass]);
 
-  const damageSystem = useMemo(() => new DamageSystem(), []);
-  const comboSystem = useMemo(() => new ComboSystem(), []);
-  const enemyAI = useMemo(() => new EnemyAI(difficulty, enemyClass), [difficulty, enemyClass]);
-  const knockback = useMemo(() => new KnockbackPhysics(), []);
   const combatAudio = useMemo(() => new CombatAudio(), []);
   const particles = useMemo(() => new ParticleSystem(), []);
   const crowd = useMemo(() => new CrowdDirector(), []);
-
-  const playerAttackingRef = useRef(false);
-  const enemyAttackingRef = useRef(false);
-  // Hitbox indices already consumed in the current swing (one hit per box per attack).
-  const playerHitConsumed = useRef<Set<number>>(new Set());
-  const enemyHitConsumed = useRef<Set<number>>(new Set());
-  const playerAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
-  const enemyAttackTypeRef = useRef<AnimState>(AnimState.LightAttack);
-  // The current attack-cancel string per fighter (move types), so cancels can be
-  // gated to this class's combo routes. Reset on a fresh attack, extended on cancel.
-  const playerChainRef = useRef<MoveType[]>([]);
-  const enemyChainRef = useRef<MoveType[]>([]);
 
   // Hit-stop
   const hitStopTimerRef = useRef(0);
@@ -164,10 +116,9 @@ function BattleWorld({
   const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 24, 0.18, 0.42), [playerClass]);
   const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 24, 0.18, 0.42), [enemyClass]);
 
-  // Track the stagger edge so we can snap out of the (non-interruptible) hit clip
-  // the instant the fighter recovers or techs into block/dodge.
-  const playerWasStaggered = useRef(false);
-  const enemyWasStaggered = useRef(false);
+  // Edge trackers: snap out of the hit clip on stagger-recovery; stop the weapon
+  // trail the instant a swing ends.
+
 
   // Footstep timer
   const playerStepTimerRef = useRef(0);
@@ -178,266 +129,98 @@ function BattleWorld({
   // Wall-clock start of live combat, for the fight-duration reward guard.
   const combatStartRef = useRef(0);
 
+  // The sim wires lock-on between fighters; here we just lock the camera onto the duel.
   useEffect(() => {
-    damageSystem.registerFighter('player', playerClass);
-    damageSystem.registerFighter('enemy', enemyClass);
-    comboSystem.register('player', playerClass);
-    comboSystem.register('enemy', enemyClass);
-    knockback.register('player');
-    knockback.register('enemy');
-    playerController.setLockOnTarget(enemyController);
-    enemyController.setLockOnTarget(playerController);
     battleCamera.setLockedOn(true);
+  }, [battleCamera]);
 
-    damageSystem.onDamage((event) => {
-      onDamageEvent?.(event);
+  const animFor = useCallback(
+    (id: FighterId) => (id === 'p1' ? playerAnimMachine : enemyAnimMachine),
+    [playerAnimMachine, enemyAnimMachine],
+  );
 
-      // --- Parry: the defender caught it clean. Punish the attacker. ---
-      if (event.parried) {
-        const attackerCtrl = event.attackerId === 'enemy' ? enemyController : playerController;
-        const attackerAnim = event.attackerId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
-        const attackerRef = event.attackerId === 'enemy' ? enemyAttackingRef : playerAttackingRef;
-        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
+  // Render one authoritative hit into client feedback — animation clips, VFX,
+  // audio, camera kicks, hit-stop, HUD. The sim already applied the *gameplay*
+  // (damage, knockback, stagger, combo, KO); this only shows its consequences.
+  const processHit = useCallback((e: Extract<SimEvent, { kind: 'hit' }>) => {
+    const ev = e.event;
+    onDamageEvent?.(ev);
+    const attackerId = ev.attackerId as FighterId;
+    const defenderId = ev.defenderId as FighterId;
+    const attackerClass = attackerId === 'p1' ? playerClass : enemyClass;
+    const defenderAnim = animFor(defenderId);
+    const defenderCtrl = sim.controller(defenderId);
 
-        // Attacker bounces off the guard, stunned — a clear punish window.
-        attackerRef.current = false;
-        attackerAnim.transitionHit(AnimState.HitHeavy, 'front');
-        attackerCtrl.applyStagger(0.7, 0.2);
-        // Defender flashes the guard but keeps their footing.
-        defenderAnim.transition(AnimState.BlockHit, true);
-
-        combatAudio.playParry();
-        screenFx.onCriticalHit();
-        battleCamera.shake(0.22, 30);
-        battleCamera.punch(0.08);
-        particles.emitSparks(event.hitPosition, event.knockbackDir, 1);
-        crowd.cheer(0.85);
-        combatAudio.crowdCheer(0.85);
-
-        hitStopTimerRef.current = Math.max(hitStopTimerRef.current, 0.1);
-        playerAnimMachine.pause();
-        enemyAnimMachine.pause();
-        return;
-      }
-
-      combatAudio.onDamageEvent(event);
-      // Camera kick scaled to hit weight, fired on the exact contact frame
-      // (this handler runs the instant damage lands). Every hit kicks; heavies
-      // and specials kick harder, crits harder still.
-      const weight = event.hitType === 'light' ? 1 : event.hitType === 'heavy' ? 2.2 : 3.2;
-      battleCamera.shake(0.09 * weight * (event.critical ? 1.4 : 1), 32);
-      battleCamera.punch(0.035 * weight);
-
-      // Contact-point VFX + squash-punch on the struck fighter. Both fire at the
-      // exact hit instant (event carries the true fist/weapon position).
-      const defender = event.defenderId === 'enemy' ? enemyController : playerController;
-      if (event.blocked) {
-        particles.emitSparks(event.hitPosition, event.knockbackDir, 0.4);
-        defender.state.impactPulse = 0.5;
-        crowd.boo(0.4);
-        combatAudio.crowdBoo(0.4);
-      } else if (event.killed) {
-        particles.emitKillBurst(event.hitPosition, CLASS_ACCENTS[event.attackerId] ?? '#ffffff');
-        particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
-        defender.state.impactPulse = 1;
-        crowd.roar();
-        combatAudio.crowdCheer(1);
-      } else {
-        particles.emitImpact(event.hitPosition, event.knockbackDir, event.hitType);
-        defender.state.impactPulse = event.hitType === 'light' ? 0.7 : 1;
-        // Big blows pop the crowd; light taps stir a low murmur.
-        const hype = event.hitType === 'light' ? 0.3 : event.hitType === 'heavy' ? 0.6 : 0.9;
-        crowd.cheer(hype);
-        if (event.hitType !== 'light') combatAudio.crowdCheer(hype);
-      }
-
-      if (event.killed) {
-        const killColor = CLASS_ACCENTS[event.attackerId] ?? '#ffffff';
-        screenFx.onKill(killColor);
-      } else if (event.hitType === 'light') {
-        screenFx.onLightHit();
-      } else if (event.hitType === 'heavy') {
-        screenFx.onHeavyHit();
-        if (event.critical) screenFx.onCriticalHit();
-      } else {
-        screenFx.onSpecialHit();
-      }
-      if (event.blocked) {
-        screenFx.onBlock();
-        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
-        defenderAnim.transition(AnimState.BlockHit, true);
-      }
-
-      // Hit-stop: set timer, frame loop counts it down
-      const hitStopDur = event.killed
-        ? HITSTOP_DURATION.kill
-        : HITSTOP_DURATION[event.hitType] ?? 0.05;
-      hitStopTimerRef.current = Math.max(hitStopTimerRef.current, hitStopDur);
+    // Parry — the defender caught it clean; the sim stunned the attacker.
+    if (ev.parried) {
+      animFor(attackerId).transitionHit(AnimState.HitHeavy, 'front');
+      defenderAnim.transition(AnimState.BlockHit, true);
+      combatAudio.playParry();
+      screenFx.onCriticalHit();
+      battleCamera.shake(0.22, 30);
+      battleCamera.punch(0.08);
+      particles.emitSparks(ev.hitPosition, ev.knockbackDir, 1);
+      crowd.cheer(0.85);
+      combatAudio.crowdCheer(0.85);
+      hitStopTimerRef.current = Math.max(hitStopTimerRef.current, 0.1);
       playerAnimMachine.pause();
       enemyAnimMachine.pause();
-
-      // Combo escalation audio
-      if (!event.blocked) {
-        comboSystem.registerHit(
-          event.attackerId,
-          event.hitType === 'light' ? MoveType.LightAttack : event.hitType === 'heavy' ? MoveType.HeavyAttack : MoveType.Special,
-        );
-        const comboState = comboSystem.getState(event.attackerId);
-        onComboUpdate?.(comboState ?? null);
-
-        if (comboState && comboState.count >= 3 && comboState.count % 5 === 0) {
-          combatAudio.playComboMilestone(comboState.count);
-        }
-
-        // Combo launcher — the deeper the chain, the harder the knockback, so a
-        // string ends on a satisfying pop (MK-style finisher feel).
-        const comboCount = comboState?.count ?? 1;
-        const comboPush = 1 + Math.min(comboCount, 8) * 0.12;
-        knockback.applyKnockback(event.defenderId, {
-          direction: event.knockbackDir,
-          force: event.knockbackForce * comboPush,
-          hitType: event.hitType,
-          killed: event.killed,
-        });
-        if (comboCount >= 4) {
-          // A landed combo finisher kicks the camera a touch extra.
-          battleCamera.punch(0.05);
-        }
-
-        // Reaction tier — the victim always reacts, never eats a hit standing.
-        // A special or a deep combo finisher knocks them DOWN (fall → get up);
-        // heavy staggers; light flinches. Knockdowns can't be teched.
-        const defenderCtrl = event.defenderId === 'enemy' ? enemyController : playerController;
-        const defenderAnim = event.defenderId === 'enemy' ? enemyAnimMachine : playerAnimMachine;
-        const dir = hitDirection(defenderCtrl, event.knockbackDir);
-        const knockdown = event.hitType === 'special' || comboCount >= 5;
-
-        if (knockdown) {
-          defenderAnim.transition(AnimState.Knockdown, true);
-          defenderCtrl.applyStagger(1.5, 0); // long, untechable — they're on the floor
-        } else {
-          const hitAnim = event.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight;
-          defenderAnim.transitionHit(hitAnim, dir);
-          defenderCtrl.applyStagger(STAGGER_DURATION[event.hitType] ?? 0.3);
-        }
-
-        if (event.defenderId === 'enemy') {
-          enemyAttackingRef.current = false;
-        } else {
-          playerAttackingRef.current = false;
-          comboSystem.drop('player');
-          onComboUpdate?.(null);
-        }
-      }
-
-      if (event.killed && !battleEndedRef.current) {
-        battleEndedRef.current = true;
-        combatActiveRef.current = false;
-        const winner = event.defenderId === 'enemy' ? 'player' : 'enemy';
-        if (event.defenderId === 'enemy') {
-          enemyAnimMachine.transition(AnimState.Death, true);
-        } else {
-          playerAnimMachine.transition(AnimState.Death, true);
-        }
-        combatAudio.stopAll();
-        const durationSecs = combatStartRef.current
-          ? (performance.now() - combatStartRef.current) / 1000
-          : 0;
-        setTimeout(() => {
-          if (winner === 'player') combatAudio.playVictoryFanfare();
-          else combatAudio.playDefeatMelody();
-          onBattleEnd?.(winner, durationSecs);
-        }, 1500);
-      }
-    });
-  }, [damageSystem, comboSystem, knockback, playerController, enemyController,
-    battleCamera, combatAudio, particles, crowd, screenFx, playerAnimMachine, enemyAnimMachine,
-    playerClass, enemyClass, onDamageEvent, onComboUpdate, onBattleEnd]);
-
-  // Is the fighter's current attack cancellable right now? Lets buffered inputs
-  // chain into a string instead of waiting for the whole clip to finish (the
-  // stiffness fix). A confirmed hit opens the window early (from the active
-  // frames — snappy hit-confirm); a whiff only cancels in recovery, so whiffing
-  // stays punishable. Returns true when not mid-attack so callers can `||` it.
-  const canCancelAttack = useCallback((who: 'player' | 'enemy'): boolean => {
-    const anim = who === 'player' ? playerAnimMachine : enemyAnimMachine;
-    const typeRef = who === 'player' ? playerAttackTypeRef : enemyAttackTypeRef;
-    const consumed = who === 'player' ? playerHitConsumed : enemyHitConsumed;
-    const classId = who === 'player' ? playerClass : enemyClass;
-
-    const attackState = typeRef.current;
-    if (anim.state !== attackState) return true; // clip already ended / moved on
-    const fdState = attackState === AnimState.JumpAttack ? AnimState.HeavyAttack : attackState;
-    const fd = CLASS_FRAME_DATA[classId]?.[fdState];
-    const progress = anim.getActiveProgress();
-    if (!fd) return progress > 0.5;
-    const total = fd.startup + fd.active + fd.recovery;
-    const activeStart = fd.startup / total;
-    const recoveryStart = (fd.startup + fd.active) / total;
-    return consumed.current.size > 0 ? progress >= activeStart : progress >= recoveryStart;
-  }, [playerAnimMachine, enemyAnimMachine, playerClass, enemyClass]);
-
-  const doAttack = useCallback((
-    who: 'player' | 'enemy',
-    animState: AnimState,
-    isCancel = false,
-  ) => {
-    const ctrl = who === 'player' ? playerController : enemyController;
-    const anim = who === 'player' ? playerAnimMachine : enemyAnimMachine;
-    const attackRef = who === 'player' ? playerAttackingRef : enemyAttackingRef;
-    const consumed = who === 'player' ? playerHitConsumed : enemyHitConsumed;
-    const typeRef = who === 'player' ? playerAttackTypeRef : enemyAttackTypeRef;
-
-    const s = ctrl.state;
-    if (s.isDodging || s.isStaggered || s.isDead) return;
-    // Mid-attack: only proceed if this is a legal cancel into the next move.
-    if (s.isAttacking && !isCancel) return;
-
-    // Attacking while airborne becomes a diving jump-attack.
-    const airborne = !s.isGrounded;
-    const move = airborne ? AnimState.JumpAttack : animState;
-
-    if (who === 'player') {
-      const cost = move === AnimState.LightAttack ? 5 : move === AnimState.Special ? 30 : 15;
-      if (!damageSystem.hasStamina('player', cost)) return;
-      damageSystem.consumeStamina('player', cost);
+      return;
     }
 
-    s.isAttacking = true;
-    attackRef.current = true;
-    consumed.current.clear();
-    typeRef.current = move;
+    combatAudio.onDamageEvent(ev);
+    // Camera kick scaled to hit weight, on the exact contact frame.
+    const weight = ev.hitType === 'light' ? 1 : ev.hitType === 'heavy' ? 2.2 : 3.2;
+    battleCamera.shake(0.09 * weight * (ev.critical ? 1.4 : 1), 32);
+    battleCamera.punch(0.035 * weight);
 
-    // Track the cancel string: extend it on a cancel, restart it on a fresh attack.
-    const chainRef = who === 'player' ? playerChainRef : enemyChainRef;
-    const chainMove = ANIM_TO_MOVE[move];
-    if (isCancel && chainMove) chainRef.current = [...chainRef.current, chainMove];
-    else chainRef.current = chainMove ? [chainMove] : [];
+    // Contact-point VFX + squash-punch on the struck fighter.
+    if (ev.blocked) {
+      particles.emitSparks(ev.hitPosition, ev.knockbackDir, 0.4);
+      defenderCtrl.state.impactPulse = 0.5;
+      crowd.boo(0.4);
+      combatAudio.crowdBoo(0.4);
+      screenFx.onBlock();
+      defenderAnim.transition(AnimState.BlockHit, true);
+    } else if (ev.killed) {
+      particles.emitKillBurst(ev.hitPosition, CLASS_ACCENTS[attackerClass] ?? '#ffffff');
+      particles.emitImpact(ev.hitPosition, ev.knockbackDir, ev.hitType);
+      defenderCtrl.state.impactPulse = 1;
+      crowd.roar();
+      combatAudio.crowdCheer(1);
+      screenFx.onKill(CLASS_ACCENTS[attackerClass] ?? '#ffffff');
+    } else {
+      particles.emitImpact(ev.hitPosition, ev.knockbackDir, ev.hitType);
+      defenderCtrl.state.impactPulse = ev.hitType === 'light' ? 0.7 : 1;
+      const hype = ev.hitType === 'light' ? 0.3 : ev.hitType === 'heavy' ? 0.6 : 0.9;
+      crowd.cheer(hype);
+      if (ev.hitType !== 'light') combatAudio.crowdCheer(hype);
+      if (ev.hitType === 'light') screenFx.onLightHit();
+      else if (ev.hitType === 'heavy') { screenFx.onHeavyHit(); if (ev.critical) screenFx.onCriticalHit(); }
+      else screenFx.onSpecialHit();
+    }
 
-    anim.transition(move, true);
-    combatAudio.playSwing(who === 'player' ? playerClass : enemyClass);
+    // Hit-reaction clip (the sim already applied the stagger/knockdown state),
+    // plus combo HUD/audio.
+    if (!ev.blocked) {
+      const knockdown = ev.hitType === 'special' || e.comboCount >= 5;
+      if (knockdown) defenderAnim.transition(AnimState.Knockdown, true);
+      else defenderAnim.transitionHit(ev.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight, e.direction);
 
-    // Committed step into the strike — front-loaded then plants (no slide).
-    const target = who === 'player' ? enemyController : playerController;
-    const lungeDir = new THREE.Vector3()
-      .subVectors(target.state.position, ctrl.state.position)
-      .setY(0)
-      .normalize();
-    const dist = ctrl.state.position.distanceTo(target.state.position);
-    const stepInto = move === AnimState.LightAttack ? 0.5 : move === AnimState.HeavyAttack ? 0.95 : 1.3;
-    const gap = Math.max(0, dist - 1.1); // stop just short of overlapping the target
-    ctrl.applyLunge(lungeDir, Math.min(stepInto, gap));
-    // A jump-attack dives down toward the target.
-    if (airborne) s.velocity.y = Math.min(s.velocity.y, -3);
+      const combo = sim.comboState(attackerId);
+      if (combo && combo.count >= 3 && combo.count % 5 === 0) combatAudio.playComboMilestone(combo.count);
+      if (e.comboCount >= 4) battleCamera.punch(0.05);
+      // The player combo HUD reflects the player's own string; clears if the player is hit.
+      onComboUpdate?.(defenderId === 'p1' ? null : sim.comboState('p1') ?? null);
+    }
 
-    // Start weapon trail. The attack now ends when its animation completes
-    // (state machine auto-transitions to Idle on the clip's finished event),
-    // detected in the frame loop — no setTimeout, so it can never desync from
-    // the visible swing or the hitstop freeze.
-    const trail = who === 'player' ? playerTrail : enemyTrail;
-    trail.start();
-  }, [playerController, enemyController, playerAnimMachine, enemyAnimMachine,
-    damageSystem, combatAudio, playerClass, enemyClass]);
+    // Hit-stop — freeze the sim + anim for a beat (the loop counts it down).
+    const hitStopDur = ev.killed ? HITSTOP_DURATION.kill : HITSTOP_DURATION[ev.hitType] ?? 0.05;
+    hitStopTimerRef.current = Math.max(hitStopTimerRef.current, hitStopDur);
+    playerAnimMachine.pause();
+    enemyAnimMachine.pause();
+  }, [sim, animFor, playerAnimMachine, enemyAnimMachine, combatAudio, particles, crowd,
+    screenFx, battleCamera, onDamageEvent, onComboUpdate, playerClass, enemyClass]);
 
   const frameCountRef = useRef(0);
 
@@ -466,13 +249,6 @@ function BattleWorld({
       return;
     }
 
-    if (frameCountRef.current % 180 === 1) {
-      const ps = playerController.state;
-      const es = enemyController.state;
-      const dist = ps.position.distanceTo(es.position);
-      console.log(`[F${frameCountRef.current}] P:${ps.health}hp atk=${ps.isAttacking} stag=${ps.isStaggered} | E:${es.health}hp atk=${es.isAttacking} | dist=${dist.toFixed(1)} | AI=${enemyAI.currentState}`);
-    }
-
     // --- Wait for combat to start ---
     const ps = playerController.state;
     if (!combatActiveRef.current) {
@@ -489,185 +265,76 @@ function BattleWorld({
       combatAudio.startCrowdAmbience();
     }
 
-    // --- Player input ---
-    const move = input.moveAxis;
-    const isMoving = Math.abs(move.x) > 0.1 || Math.abs(move.y) > 0.1;
+    // --- Advance Simulation Headless ---
+    const events = sim.step(clampedDt, { p1: input }, { p1: battleCamera.cameraYaw });
 
-    if (!ps.isDead) {
-      playerController.update(clampedDt, input, battleCamera.cameraYaw);
-    }
-
-    // On the frame the fighter leaves stagger (recovered or teched), force the
-    // transition so the non-interruptible hit clip is cut immediately.
-    const playerJustRecovered = playerWasStaggered.current && !ps.isStaggered;
-    playerWasStaggered.current = ps.isStaggered;
-
-    if (!ps.isDead && !ps.isStaggered && !ps.isAttacking) {
-      const f = playerJustRecovered;
-      if (ps.isDodging) {
-        playerAnimMachine.transition(AnimState.Dodge, f);
-      } else if (!ps.isGrounded) {
-        playerAnimMachine.transition(AnimState.Jump, f);
-      } else if (ps.isBlocking) {
-        playerAnimMachine.transition(AnimState.Block, f);
-      } else if (isMoving) {
-        playerAnimMachine.transition(ps.isRunning ? AnimState.Run : AnimState.Walk, f);
-      } else {
-        playerAnimMachine.transition(AnimState.Idle, f);
-      }
-    }
-
-    // Buffered attacks fire when free, or chain mid-swing inside a cancel window.
-    // A fresh attack (not attacking) can be any opener; a cancel must continue one
-    // of this class's combo routes, so strings are class-flavored not any-into-any.
-    // Only consume the buffer when we can actually act, so a press made a few frames
-    // early is held until the cancel opens instead of being dropped.
-    const pAttacking = playerAttackingRef.current;
-    if (!pAttacking || canCancelAttack('player')) {
-      const onRoute = (mv: MoveType) =>
-        !pAttacking || canGatlingCancel(playerClass, playerChainRef.current, mv);
-      if (onRoute(MoveType.LightAttack) && input.consumeBuffered(Action.LightAttack)) {
-        doAttack('player', AnimState.LightAttack, pAttacking);
-      } else if (onRoute(MoveType.HeavyAttack) && input.consumeBuffered(Action.HeavyAttack)) {
-        doAttack('player', AnimState.HeavyAttack, pAttacking);
-      } else if (onRoute(MoveType.Special) && input.consumeBuffered(Action.Special)) {
-        doAttack('player', AnimState.Special, pAttacking);
-      }
-    }
-
-    // --- Enemy AI ---
-    if (!enemyController.state.isDead) {
-      const aiInput = enemyAI.getInput();
-      aiInput.update();
-      enemyAI.update(clampedDt, enemyController, playerController);
-      enemyController.update(clampedDt, aiInput, 0);
-
-      if (!enemyAttackingRef.current) {
-        // Fresh attack: the AI's telegraph→attack presses an action this frame.
-        if (aiInput.getAction(Action.LightAttack).held) doAttack('enemy', AnimState.LightAttack);
-        else if (aiInput.getAction(Action.HeavyAttack).held) doAttack('enemy', AnimState.HeavyAttack);
-        else if (aiInput.getAction(Action.Special).held) doAttack('enemy', AnimState.Special);
-      } else if (canCancelAttack('enemy')) {
-        // Mid-swing in a cancel window: chain into the AI's next queued follow-up
-        // (same mechanic the player gets). The new attack resets progress, so this
-        // self-paces to one cancel per swing rather than dumping the whole string.
-        const next = enemyAI.takeFollowUp();
-        const anim = next ? AI_ATTACK_ANIM[next] : undefined;
-        if (anim) doAttack('enemy', anim, true);
-      }
-
-      const es = enemyController.state;
-      const enemyJustRecovered = enemyWasStaggered.current && !es.isStaggered;
-      enemyWasStaggered.current = es.isStaggered;
-
-      if (!es.isStaggered && !es.isAttacking && !es.isDead) {
-        const f = enemyJustRecovered;
-        if (es.isDodging) {
-          enemyAnimMachine.transition(AnimState.Dodge, f);
-        } else if (!es.isGrounded) {
-          enemyAnimMachine.transition(AnimState.Jump, f);
-        } else if (es.isBlocking) {
-          enemyAnimMachine.transition(AnimState.Block, f);
-        } else {
-          const aiMove = aiInput.moveAxis;
-          if (Math.abs(aiMove.x) > 0.1 || Math.abs(aiMove.y) > 0.1) {
-            enemyAnimMachine.transition(es.isRunning ? AnimState.Run : AnimState.Walk, f);
-          } else {
-            enemyAnimMachine.transition(AnimState.Idle, f);
-          }
+    // --- Process Simulation Events ---
+    events.forEach((e) => {
+      if (e.kind === 'attackStart') {
+        const who = e.fighter;
+        const animMachine = who === 'p1' ? playerAnimMachine : enemyAnimMachine;
+        animMachine.transition(e.anim, true);
+        combatAudio.playSwing(who === 'p1' ? playerClass : enemyClass);
+        
+        // Start weapon trail
+        const trail = who === 'p1' ? playerTrail : enemyTrail;
+        trail.start();
+      } else if (e.kind === 'hit') {
+        processHit(e);
+      } else if (e.kind === 'ko') {
+        if (!battleEndedRef.current) {
+          battleEndedRef.current = true;
+          combatActiveRef.current = false;
+          combatAudio.stopAll();
+          
+          const winner = e.winner === 'p1' ? 'player' : 'enemy';
+          const loser = e.loser === 'p1' ? 'player' : 'enemy';
+          
+          // Trigger death animation
+          const loserAnim = loser === 'player' ? playerAnimMachine : enemyAnimMachine;
+          loserAnim.transition(AnimState.Death, true);
+          
+          const durationSecs = combatStartRef.current
+            ? (performance.now() - combatStartRef.current) / 1000
+            : 0;
+            
+          setTimeout(() => {
+            if (winner === 'player') combatAudio.playVictoryFanfare();
+            else combatAudio.playDefeatMelody();
+            onBattleEnd?.(winner, durationSecs);
+          }, 1500);
         }
       }
-    }
+    });
 
-    // --- Body separation — keep fighters from overlapping/clipping ---
-    playerController.separateFrom(enemyController, FIGHTER_SEPARATION);
+    // --- Synchronise Animation States Frame-by-Frame ---
+    const snapshot = sim.snapshot();
+    playerAnimMachine.transition(snapshot.fighters.p1.animState);
+    enemyAnimMachine.transition(snapshot.fighters.p2.animState);
 
-    // --- Hit detection (animation-clocked) ---
-    // Damage is gated by the attack animation's own normalized progress, so the
-    // hitbox goes live exactly when the visible swing reaches its contact frames
-    // — and freezes with it during hitstop. The attack ends when its clip
-    // finishes (state machine auto-transitions away), not on a wall-clock timer.
-    const resolveAttack = (
-      attackerId: 'player' | 'enemy',
-      defenderId: 'player' | 'enemy',
-      attacker: CharacterController,
-      defender: CharacterController,
-      anim: AnimationStateMachine,
-      attackingRef: MutableRefObject<boolean>,
-      typeRef: MutableRefObject<AnimState>,
-      consumed: MutableRefObject<Set<number>>,
-      classId: ClassId,
-      trail: TrailRenderer,
-    ) => {
-      if (!attackingRef.current) return;
-      const attackState = typeRef.current;
-
-      // Still mid-swing: check the live hitbox windows against the animation clock.
-      if (anim.state === attackState) {
-        // Jump-attack borrows the heavy hitbox/move for damage.
-        const fdState = attackState === AnimState.JumpAttack ? AnimState.HeavyAttack : attackState;
-        const fd = CLASS_FRAME_DATA[classId]?.[fdState];
-        const moveType = ANIM_TO_MOVE[attackState];
-        const move = moveType ? getMoveForAction(classId, moveType) : undefined;
-        if (fd && move) {
-          const progress = anim.getActiveProgress();
-          fd.hitboxes.forEach((hb, i) => {
-            if (consumed.current.has(i)) return;
-            const win = getHitboxWindow(fd, hb);
-            if (progress < win.start || progress > win.end) return;
-            if (hitboxHits(hb, attacker.state.position, attacker.state.rotation, defender.state.position)) {
-              consumed.current.add(i);
-              const contact = hitboxContactPoint(hb, attacker.state.position, attacker.state.rotation);
-              damageSystem.calculateAndApply(attackerId, defenderId, attacker, defender, hb, move, contact);
-            }
-          });
-        }
-        return;
-      }
-
-      // Clip finished (auto-returned to Idle) or was interrupted → release control.
-      attackingRef.current = false;
-      attacker.state.isAttacking = false;
-      trail.stop();
-    };
-
-    resolveAttack('player', 'enemy', playerController, enemyController, playerAnimMachine,
-      playerAttackingRef, playerAttackTypeRef, playerHitConsumed, playerClass, playerTrail);
-    resolveAttack('enemy', 'player', enemyController, playerController, enemyAnimMachine,
-      enemyAttackingRef, enemyAttackTypeRef, enemyHitConsumed, enemyClass, enemyTrail);
-
-    // --- Systems ---
-    knockback.update(clampedDt, 'player', playerController);
-    knockback.update(clampedDt, 'enemy', enemyController);
-    damageSystem.updateStamina(clampedDt);
-    comboSystem.update(clampedDt);
-    screenFx.update(clampedDt);
-    battleCamera.update(clampedDt, ps.position, enemyController.state.position);
-
-    // --- Weapon trail points — trace the swing arc (driven by the attack
-    // animation clock): the strike point sweeps across and out, arcing down. ---
+    // --- Weapon trail points ---
     const emitTrail = (
+      id: FighterId,
       ctrl: CharacterController,
-      anim: AnimationStateMachine,
-      attacking: boolean,
       trail: TrailRenderer,
     ) => {
+      const attacking = ctrl.state.isAttacking;
       if (!attacking) return;
-      const progress = anim.getActiveProgress();
-      if (progress < 0.08 || progress > 0.82) return; // crisp arc, skip wind-up/recovery
+      const progress = sim.attackProgress(id);
+      if (progress < 0.08 || progress > 0.82) return; // skip wind-up / recovery
       const s = ctrl.state;
       const sin = Math.sin(s.rotation), cos = Math.cos(s.rotation);
-      const reach = 0.7 + progress * 0.7;        // extends through the swing
-      const sweep = (progress - 0.45) * 1.6;     // lateral arc across the body
-      const h = 1.45 - progress * 0.5;           // arcs downward
+      const reach = 0.7 + progress * 0.7;
+      const sweep = (progress - 0.45) * 1.6;
+      const h = 1.45 - progress * 0.5;
       const p = s.position.clone();
       p.x += sin * reach + cos * sweep * 0.8;
       p.z += cos * reach - sin * sweep * 0.8;
       p.y += h;
       trail.addPoint(p);
     };
-    emitTrail(playerController, playerAnimMachine, playerAttackingRef.current, playerTrail);
-    emitTrail(enemyController, enemyAnimMachine, enemyAttackingRef.current, enemyTrail);
+    emitTrail('p1', playerController, playerTrail);
+    emitTrail('p2', enemyController, enemyTrail);
 
     // --- Footsteps + ground dust ---
     const playerSpeed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
@@ -693,11 +360,10 @@ function BattleWorld({
       enemyStepTimerRef.current = 0;
     }
 
-    const playerStats = damageSystem.getStats('player');
+    // --- Update HUD Stats ---
+    const playerStats = sim.damage.getStats('p1');
     onPlayerStateUpdate?.(ps.health, ps.maxHealth, playerStats?.stamina ?? 100, playerStats?.staminaMax ?? 100);
     onEnemyStateUpdate?.(enemyController.state.health, enemyController.state.maxHealth);
-
-    input.update();
   });
 
   return (
