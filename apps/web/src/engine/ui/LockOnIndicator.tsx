@@ -94,7 +94,7 @@ export function EnemyWorldHealthBar({
   targetPosition,
   health,
   maxHealth,
-  name,
+  name: _name,
   show,
 }: EnemyWorldHealthBarProps) {
   const groupRef = useRef<THREE.Group>(null);

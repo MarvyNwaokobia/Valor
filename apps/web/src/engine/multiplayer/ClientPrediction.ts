@@ -27,7 +27,7 @@ const RECONCILIATION_THRESHOLD = 0.5; // units — snap if too far off
 export class ClientPrediction {
   private localPlayerId: string = '';
   private predictionBuffer: PredictedState[] = [];
-  private lastAckedSeq = 0;
+
 
   private remoteStates: Map<string, InterpolationTarget[]> = new Map();
   private interpolatedPositions: Map<string, {
@@ -67,7 +67,7 @@ export class ClientPrediction {
     const serverPos = new THREE.Vector3(...localPlayer.position);
     const serverSeq = serverUpdate.seq;
 
-    this.lastAckedSeq = serverSeq;
+
     this.predictionBuffer = this.predictionBuffer.filter((p) => p.seq > serverSeq);
 
     let replayedPos = serverPos.clone();
@@ -179,7 +179,7 @@ export class ClientPrediction {
     this.predictionBuffer = [];
     this.remoteStates.clear();
     this.interpolatedPositions.clear();
-    this.lastAckedSeq = 0;
+
   }
 }
 
