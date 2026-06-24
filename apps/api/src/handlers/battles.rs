@@ -96,19 +96,25 @@ struct FightOutcome {
     battle_id: Uuid,
 }
 
-/// Server-authoritative finalize shared by every 1v1 fight — the turn-based bot
-/// fight and the real-time fighter both end here. Re-reads the player, awards XP
-/// (× multiplier), handles rank-up + its G$ reward, writes the battle row, and
-/// kicks the non-blocking on-chain records. The client only ever reports whether
-/// it won; all amounts are computed here.
-async fn finalize_fight(
+struct PlayerAward {
+    xp_earned: i32,
+    new_xp:    i32,
+    ranked_up: bool,
+    new_rank:  Option<&'static str>,
+    g_awarded: i64,
+}
+
+/// Award one player for a finished fight: re-read them, compute XP (× multiplier),
+/// handle rank-up + its G$ reward, persist the player row, and kick the per-player
+/// rank-up on-chain records. The caller decides win/loss; all amounts are computed
+/// here. Used for every mode (bot, live PvE, PvP) so awards never diverge.
+async fn award_player(
     state: &AppState,
     wallet: &str,
     won: bool,
     base_xp: i32,
     xp_multiplier: i32,
-    rounds_data: serde_json::Value,
-) -> Result<FightOutcome, HttpResponse> {
+) -> Result<PlayerAward, HttpResponse> {
     // Re-fetch so xp/wins/losses/rank reflect any change since the fight began.
     let player = sqlx::query_as::<_, Player>("SELECT * FROM players WHERE wallet_address = $1")
         .bind(wallet)
@@ -123,7 +129,6 @@ async fn finalize_fight(
 
     let now = Utc::now();
 
-    // ── XP + rank-up ─────────────────────────────────────────────────
     let xp_earned  = base_xp * xp_multiplier;
     let raw_new_xp = player.xp + xp_earned;
     let ranked_up  = raw_new_xp >= XP_PER_RANK;
@@ -134,24 +139,6 @@ async fn finalize_fight(
     let wins   = if won { player.wins + 1 } else { player.wins };
     let losses = if !won { player.losses + 1 } else { player.losses };
 
-    // ── Persist battle record ────────────────────────────────────────
-    let battle_id = Uuid::new_v4();
-    let _ = sqlx::query(
-        "INSERT INTO battles
-           (id, challenger_wallet, opponent_wallet, winner_wallet,
-            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
-         VALUES ($1, $2, 'bot', $3, $4, $5, 0, true, $6)",
-    )
-    .bind(battle_id)
-    .bind(wallet)
-    .bind(if won { wallet } else { "bot" })
-    .bind(rounds_data)
-    .bind(xp_earned)
-    .bind(now)
-    .execute(&state.db)
-    .await;
-
-    // ── Update player — include rank if ranked up ────────────────────
     if let Some(rank) = new_rank {
         let _ = sqlx::query(
             "UPDATE players
@@ -174,36 +161,93 @@ async fn finalize_fight(
         .execute(&state.db).await;
     }
 
-    // ── Background chain writes — non-blocking ───────────────────────
-    if let Some(chain) = state.chain.as_ref().cloned() {
-        let battle_bytes = uuid_to_bytes32(battle_id);
-        let player_addr: Option<Address> = wallet.parse().ok();
-        let xp_u8 = xp_earned.min(255) as u8;
-        let db = state.db.clone();
-        let battle_uuid = battle_id;
-        tokio::spawn(async move {
-            if let Some(addr) = player_addr {
-                let (winner, loser) = if won { (addr, Address::zero()) } else { (Address::zero(), addr) };
-                if let Some(hash) = chain.record_battle(battle_bytes, winner, loser, xp_u8, 0, true).await {
-                    let hash_str = format!("{:?}", hash);
-                    let _ = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
-                        .bind(hash_str).bind(battle_uuid).execute(&db).await;
-                }
-            }
-        });
-        if let Some(rank) = new_rank {
-            let chain2 = state.chain.as_ref().cloned();
-            if let (Some(chain2), Ok(addr)) = (chain2, wallet.parse::<Address>()) {
-                let rank_str = rank.to_string();
-                tokio::spawn(async move {
-                    chain2.record_rank_up(addr, rank_str.clone()).await;
-                    chain2.enroll_in_rank_pool(addr, &rank_str).await;
-                });
-            }
+    if let Some(rank) = new_rank {
+        if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
+            let rank_str = rank.to_string();
+            tokio::spawn(async move {
+                chain.record_rank_up(addr, rank_str.clone()).await;
+                chain.enroll_in_rank_pool(addr, &rank_str).await;
+            });
         }
     }
 
-    Ok(FightOutcome { won, xp_earned, new_xp, ranked_up, new_rank, g_awarded, battle_id })
+    Ok(PlayerAward { xp_earned, new_xp, ranked_up, new_rank, g_awarded })
+}
+
+/// Persist exactly one battle row and kick the on-chain `record_battle`. The loser
+/// is whichever of challenger/opponent is not the winner; "bot"/invalid wallets map
+/// to the zero address on-chain. Shared by PvE (opponent = "bot", is_bot) and PvP.
+async fn persist_battle(
+    state: &AppState,
+    battle_id: Uuid,
+    challenger: &str,
+    opponent: &str,
+    winner_wallet: &str,
+    xp_challenger: i32,
+    xp_opponent: i32,
+    is_bot: bool,
+    rounds_data: serde_json::Value,
+) {
+    let now = Utc::now();
+    let _ = sqlx::query(
+        "INSERT INTO battles
+           (id, challenger_wallet, opponent_wallet, winner_wallet,
+            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(battle_id)
+    .bind(challenger)
+    .bind(opponent)
+    .bind(winner_wallet)
+    .bind(rounds_data)
+    .bind(xp_challenger)
+    .bind(xp_opponent)
+    .bind(is_bot)
+    .bind(now)
+    .execute(&state.db)
+    .await;
+
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        let loser_wallet = if winner_wallet == challenger { opponent } else { challenger };
+        let winner_addr = winner_wallet.parse::<Address>().unwrap_or_else(|_| Address::zero());
+        let loser_addr = loser_wallet.parse::<Address>().unwrap_or_else(|_| Address::zero());
+        let battle_bytes = uuid_to_bytes32(battle_id);
+        let xp_u8 = xp_challenger.max(xp_opponent).min(255) as u8;
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_u8, 0, is_bot).await {
+                let hash_str = format!("{:?}", hash);
+                let _ = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
+                    .bind(hash_str).bind(battle_id).execute(&db).await;
+            }
+        });
+    }
+}
+
+/// Server-authoritative finalize for a single-player-perspective fight (turn-based
+/// bot fight and the real-time PvE fighter). Awards the player and records one bot
+/// battle row.
+async fn finalize_fight(
+    state: &AppState,
+    wallet: &str,
+    won: bool,
+    base_xp: i32,
+    xp_multiplier: i32,
+    rounds_data: serde_json::Value,
+) -> Result<FightOutcome, HttpResponse> {
+    let award = award_player(state, wallet, won, base_xp, xp_multiplier).await?;
+    let battle_id = Uuid::new_v4();
+    let winner = if won { wallet } else { "bot" };
+    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data).await;
+    Ok(FightOutcome {
+        won,
+        xp_earned: award.xp_earned,
+        new_xp:    award.new_xp,
+        ranked_up: award.ranked_up,
+        new_rank:  award.new_rank,
+        g_awarded: award.g_awarded,
+        battle_id,
+    })
 }
 
 /// Sessions are abandoned (no /round call) after this long are dropped.
@@ -439,6 +483,70 @@ pub async fn complete_live_fight(
         })),
         Err(resp) => resp,
     }
+}
+
+#[derive(Deserialize)]
+pub struct PvpCompleteRequest {
+    pub winner_wallet: String,
+    pub loser_wallet:  String,
+    #[serde(default)]
+    pub duration_secs: f64,
+}
+
+/// Server-authoritative completion of a real-time PvP match. Called ONLY by the
+/// trusted realtime sim host (GameRoom) — never by a client — so it's gated by a
+/// shared secret (`PVP_SERVER_SECRET`); without that env var set it fails closed.
+/// The host reports who won; the API awards BOTH players via the same `award_player`
+/// path as every other mode and records one PvP (non-bot) battle row.
+pub async fn complete_pvp_match(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<PvpCompleteRequest>,
+) -> HttpResponse {
+    // Trusted-server auth — fail closed if no secret is configured.
+    let expected = std::env::var("PVP_SERVER_SECRET").ok();
+    let provided = req.headers().get("x-pvp-secret").and_then(|h| h.to_str().ok()).map(str::to_string);
+    match (expected, provided) {
+        (Some(e), Some(p)) if !e.is_empty() && e == p => {}
+        _ => return HttpResponse::Unauthorized().json(json!({"error": "Unauthorized"})),
+    }
+
+    if !is_valid_wallet(&body.winner_wallet) || !is_valid_wallet(&body.loser_wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    if body.winner_wallet.to_lowercase() == body.loser_wallet.to_lowercase() {
+        return HttpResponse::BadRequest().json(json!({"error": "Winner and loser are the same player"}));
+    }
+    if body.duration_secs < MIN_LIVE_FIGHT_SECS {
+        return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
+    }
+
+    let winner = normalize_wallet(&body.winner_wallet);
+    let loser  = normalize_wallet(&body.loser_wallet);
+    let win_mult  = equipped_xp_multiplier(&state.db, &winner).await;
+    let lose_mult = equipped_xp_multiplier(&state.db, &loser).await;
+
+    let aw_w = match award_player(&state, &winner, true, fight_xp(true), win_mult).await {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+    let aw_l = match award_player(&state, &loser, false, fight_xp(false), lose_mult).await {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+
+    let battle_id = Uuid::new_v4();
+    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([])).await;
+
+    let side = |w: &str, a: &PlayerAward| json!({
+        "wallet": w, "xp_awarded": a.xp_earned, "new_xp": a.new_xp,
+        "ranked_up": a.ranked_up, "new_rank": a.new_rank, "g_awarded": a.g_awarded,
+    });
+    HttpResponse::Ok().json(json!({
+        "battle_id": battle_id,
+        "winner": side(&winner, &aw_w),
+        "loser":  side(&loser, &aw_l),
+    }))
 }
 
 pub async fn challenge_player(
