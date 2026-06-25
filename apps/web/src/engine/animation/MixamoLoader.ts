@@ -1,52 +1,29 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
+// The clean shooter animation set — one clip per gameplay state the duel drives.
+// Idle/walk/run/fire/dodge + four damage reactions (light flinch, heavy flinch,
+// crit knockdown, get-up) + death + victory. Everything melee was retired with
+// the fighter→shooter pivot; see AnimationStateMachine for how these map to states.
 export const CLIP_NAMES = {
-  fightIdle: 'fightIdle',
-  // Shooter stance + fire (the 6-clip ranged set; reactions/dodge/death/victory
-  // reuse the existing Mixamo clips below).
-  rifleIdle: 'rifleIdle',
-  gunplayShooting: 'gunplayShooting',
+  rifleIdle: 'rifleIdle',           // Idle — stand at the ready with the gun
+  gunplayShooting: 'gunplayShooting', // Fire — one-shot muzzle animation
   walk: 'walk',
   run: 'run',
-  jabCross: 'jabCross',
-  hookPunch: 'hookPunch',
-  roundhouseKick: 'roundhouseKick',
-  bodyBlock: 'bodyBlock',
-  dodge: 'dodge',
-  hitReaction: 'hitReaction',
-  gettingHit: 'gettingHit',
-  shoulderFall: 'shoulderFall',
-  gettingUp: 'gettingUp',
-  deathForward: 'deathForward',
-  victory: 'victory',
-  hook: 'hook',
-  fistFight: 'fistFight',
-  rollKick: 'rollKick',
-  roundhouseAlt: 'roundhouseAlt',
-  uppercut: 'uppercut',
-  takingPunch: 'takingPunch',
-  outwardBlock: 'outwardBlock',
-  dodgeWalk: 'dodgeWalk',
-  jumpDown: 'jumpDown',
-  runRoll: 'runRoll',
-  victoryAlt: 'victoryAlt',
-  standUp: 'standUp',
-  reaction: 'reaction',
-  hitReactionAlt: 'hitReactionAlt',
-  gettingUpAlt: 'gettingUpAlt',
+  dodge: 'dodge',                   // Dodge — reactive roll / side-step
+  hitReaction: 'hitReaction',       // HitLight — light flinch
+  gettingHit: 'gettingHit',         // HitHeavy — heavier flinch
+  shoulderFall: 'shoulderFall',     // Knockdown — crit puts the target down
+  gettingUp: 'gettingUp',           // GetUp — recover from a knockdown
+  deathForward: 'deathForward',     // Death — the loser
+  victory: 'victory',               // Victory — the winner
 } as const;
 
 const ALL_ANIMS: Record<string, string> = {
-  [CLIP_NAMES.fightIdle]: '/characters/raw/Fighting Idle.fbx',
   [CLIP_NAMES.rifleIdle]: '/characters/raw/Rifle Idle.fbx',
   [CLIP_NAMES.gunplayShooting]: '/characters/raw/Gunplay Shooting.fbx',
   [CLIP_NAMES.walk]: '/characters/raw/Walking.fbx',
   [CLIP_NAMES.run]: '/characters/raw/Running.fbx',
-  [CLIP_NAMES.jabCross]: '/characters/raw/Jab Cross.fbx',
-  [CLIP_NAMES.hookPunch]: '/characters/raw/Hook Punch.fbx',
-  [CLIP_NAMES.roundhouseKick]: '/characters/raw/Roundhouse Kick.fbx',
-  [CLIP_NAMES.bodyBlock]: '/characters/raw/Body Block.fbx',
   [CLIP_NAMES.dodge]: '/characters/raw/Dodging.fbx',
   [CLIP_NAMES.hitReaction]: '/characters/raw/Hit Reaction.fbx',
   [CLIP_NAMES.gettingHit]: '/characters/raw/Getting Hit.fbx',
@@ -54,21 +31,6 @@ const ALL_ANIMS: Record<string, string> = {
   [CLIP_NAMES.gettingUp]: '/characters/raw/Getting Up.fbx',
   [CLIP_NAMES.deathForward]: '/characters/raw/Standing Death Forward 02.fbx',
   [CLIP_NAMES.victory]: '/characters/raw/Victory.fbx',
-  [CLIP_NAMES.hook]: '/characters/raw/Hook.fbx',
-  [CLIP_NAMES.fistFight]: '/characters/raw/Fist Fight A.fbx',
-  [CLIP_NAMES.rollKick]: '/characters/raw/Roll Kicking.fbx',
-  [CLIP_NAMES.roundhouseAlt]: '/characters/raw/Roundhouse Kicking.fbx',
-  [CLIP_NAMES.uppercut]: '/characters/raw/Receiving A Big Uppercut.fbx',
-  [CLIP_NAMES.takingPunch]: '/characters/raw/Taking Punch.fbx',
-  [CLIP_NAMES.outwardBlock]: '/characters/raw/Outward Block.fbx',
-  [CLIP_NAMES.dodgeWalk]: '/characters/raw/Dodging walk.fbx',
-  [CLIP_NAMES.jumpDown]: '/characters/raw/Jumping Down.fbx',
-  [CLIP_NAMES.runRoll]: '/characters/raw/Running and rolling.fbx',
-  [CLIP_NAMES.victoryAlt]: '/characters/raw/Victoryy.fbx',
-  [CLIP_NAMES.standUp]: '/characters/raw/standing Up.fbx',
-  [CLIP_NAMES.reaction]: '/characters/raw/Reaction.fbx',
-  [CLIP_NAMES.hitReactionAlt]: '/characters/raw/Hit Reaction (1).fbx',
-  [CLIP_NAMES.gettingUpAlt]: '/characters/raw/Getting Upp.fbx',
 };
 
 const allClips: Map<string, THREE.AnimationClip> = new Map();
@@ -167,7 +129,7 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
       })
     );
 
-    const loco = [CLIP_NAMES.walk, CLIP_NAMES.run, CLIP_NAMES.dodgeWalk].filter((n) => clipStride.has(n));
+    const loco = [CLIP_NAMES.walk, CLIP_NAMES.run].filter((n) => clipStride.has(n));
     console.log(
       `[MixamoLoader] Loaded ${allClips.size}/${entries.length} animations` +
       (loco.length
