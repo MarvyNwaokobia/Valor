@@ -2,9 +2,9 @@
 
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ChevronLeft, Lock, Skull, Check, Crosshair } from 'lucide-react'
+import { ChevronLeft, Lock, Skull, Check, Crosshair, Infinity as InfinityIcon } from 'lucide-react'
 import type { Player } from '@/types'
-import { CAMPAIGN_LEVELS } from '@/engine/campaign/levels'
+import { CAMPAIGN_LEVELS, ENDLESS_UNLOCK_LEVEL } from '@/engine/campaign/levels'
 import { GUN_CATALOG } from '@/engine/combat'
 
 interface Props {
@@ -32,6 +32,14 @@ export default function CampaignSelect({ player, onBack }: Props) {
     router.push(`/fight?level=${n}`)
   }
 
+  const endlessUnlocked = cleared >= ENDLESS_UNLOCK_LEVEL
+  const playEndless = () => {
+    if (!endlessUnlocked) return
+    const el = document.documentElement
+    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+    router.push('/endless')
+  }
+
   return (
     <div className="min-h-screen px-4 py-6" style={{ background: '#04030c' }}>
       <div className="max-w-2xl mx-auto">
@@ -46,6 +54,37 @@ export default function CampaignSelect({ player, onBack }: Props) {
             {cleared}/{CAMPAIGN_LEVELS.length} cleared · beat a level to unlock the next
           </p>
         </div>
+
+        {/* Endless — unlocked after clearing the campaign. */}
+        <motion.button
+          onClick={playEndless}
+          disabled={!endlessUnlocked}
+          whileHover={endlessUnlocked ? { scale: 1.01 } : undefined}
+          whileTap={endlessUnlocked ? { scale: 0.99 } : undefined}
+          className="group relative overflow-hidden p-4 rounded-xl border text-left transition-all mb-4 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: 'rgba(20,8,30,0.9)', borderColor: endlessUnlocked ? 'rgba(176,112,255,0.5)' : 'rgba(42,42,58,0.8)' }}
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: 'rgba(176,112,255,0.12)', color: '#b070ff', border: '1px solid rgba(176,112,255,0.35)' }}>
+              {endlessUnlocked ? <InfinityIcon size={20} /> : <Lock size={18} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-display font-black text-white text-base">Endless</p>
+              <p className="text-slate-500 text-xs mt-0.5">
+                {endlessUnlocked
+                  ? 'Survive infinite scaling waves · climb the weekly leaderboard'
+                  : `Clear level ${ENDLESS_UNLOCK_LEVEL} to unlock`}
+              </p>
+            </div>
+            {endlessUnlocked && (
+              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md shrink-0"
+                style={{ background: '#b070ff', color: '#000' }}>
+                Play
+              </span>
+            )}
+          </div>
+        </motion.button>
 
         <div className="flex flex-col gap-2.5">
           {CAMPAIGN_LEVELS.map((lvl) => {

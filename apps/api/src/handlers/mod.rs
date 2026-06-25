@@ -9,6 +9,7 @@ pub mod decay;
 pub mod rewards;
 pub mod auth;
 pub mod ws;
+pub mod endless;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -69,6 +70,11 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/rewards")
                 .route("/sign-claim", web::post().to(rewards::sign_engagement_claim)),
+        )
+        .service(
+            web::scope("/endless")
+                .route("/score", web::post().to(endless::submit_score))
+                .route("/leaderboard", web::get().to(endless::get_leaderboard)),
         )
         .service(
             web::scope("/auth")
