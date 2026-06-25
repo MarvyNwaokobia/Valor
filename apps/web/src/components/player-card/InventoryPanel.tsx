@@ -6,6 +6,7 @@ import type { InventoryItem, Item } from '@/types'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useResale } from '@/hooks/useResale'
 
 interface Props {
   inventory: InventoryItem[]
@@ -23,6 +24,9 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
   const toggleEquip   = usePlayerStore((s) => s.toggleEquip)
   const [toggling, setToggling] = useState<string | null>(null)
   const [flash, setFlash]       = useState<{ id: string; msg: string } | null>(null)
+  const { listForResale, pending: resalePending } = useResale(walletAddress)
+  const [sellingId, setSellingId] = useState<string | null>(null)
+  const [sellPrice, setSellPrice] = useState('')
 
   const itemIds = inventory.map((i) => i.item_id)
 
@@ -67,6 +71,24 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
     }
   }
 
+  async function handleList(item: Item) {
+    const priceG = parseFloat(sellPrice)
+    if (!(priceG > 0)) {
+      setFlash({ id: item.id, msg: 'Enter a price' })
+      setTimeout(() => setFlash(null), 1500)
+      return
+    }
+    try {
+      await listForResale(item, priceG)
+      setFlash({ id: item.id, msg: 'Listed for sale' })
+      setSellingId(null)
+      setSellPrice('')
+    } catch (e) {
+      setFlash({ id: item.id, msg: (e as Error).message.slice(0, 36) })
+    }
+    setTimeout(() => setFlash(null), 2500)
+  }
+
   if (inventory.length === 0) {
     return (
       <div className="bg-valor-surface border border-valor-border rounded-xl p-6 text-center">
@@ -95,11 +117,12 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
           const isFlash = flash?.id === inv.item_id
 
           return (
-            <button
+            <div
               key={inv.item_id}
-              onClick={() => handleToggle(inv)}
-              disabled={toggling === inv.item_id || (!walletAddress)}
-              className={`relative flex flex-col gap-2 p-3 rounded-lg border text-left transition-all disabled:opacity-60 ${
+              onClick={() => sellingId !== inv.item_id && handleToggle(inv)}
+              className={`relative flex flex-col gap-2 p-3 rounded-lg border text-left transition-all cursor-pointer ${
+                toggling === inv.item_id ? 'opacity-60' : ''
+              } ${
                 inv.equipped
                   ? 'border-valor-gold bg-valor-gold/10 hover:bg-valor-gold/15'
                   : 'border-valor-border bg-valor-surface-2 hover:border-slate-500'
@@ -120,10 +143,35 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
                 +{item.stat_boost} <span className="font-bold" style={{ color }}>{statLbl}</span>
               </p>
 
+              {/* Resale — list this item on the marketplace (on-chain items only). */}
+              {item.on_chain_id != null && (
+                sellingId === inv.item_id ? (
+                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="number" min="0" value={sellPrice}
+                      onChange={(e) => setSellPrice(e.target.value)}
+                      placeholder="Price G$"
+                      className="w-full min-w-0 bg-black/40 border border-valor-border rounded px-1.5 py-0.5 text-xs text-white"
+                    />
+                    <button onClick={() => handleList(item)} disabled={resalePending}
+                      className="shrink-0 text-[10px] font-black px-1.5 py-1 rounded bg-valor-gold text-black disabled:opacity-50">
+                      {resalePending ? '…' : 'List'}
+                    </button>
+                    <button onClick={() => { setSellingId(null); setSellPrice('') }}
+                      className="shrink-0 text-xs text-slate-400 px-1">×</button>
+                  </div>
+                ) : (
+                  <button onClick={(e) => { e.stopPropagation(); setSellingId(inv.item_id); setSellPrice('') }}
+                    className="self-start text-[10px] font-bold text-slate-400 hover:text-amber-400 transition-colors">
+                    Sell ▸
+                  </button>
+                )
+              )}
+
               <AnimatePresence>
                 {isFlash && (
                   <motion.div
-                    className="absolute inset-0 flex items-center justify-center rounded-lg text-xs font-black pointer-events-none"
+                    className="absolute inset-0 flex items-center justify-center rounded-lg text-xs font-black pointer-events-none px-2 text-center"
                     style={{ background: 'rgba(4,3,12,0.85)', color: inv.equipped ? '#eab308' : '#94a3b8' }}
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
@@ -132,7 +180,7 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
                   </motion.div>
                 )}
               </AnimatePresence>
-            </button>
+            </div>
           )
         })}
       </div>

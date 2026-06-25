@@ -31,9 +31,14 @@ contract UpgradeMarketplace is Script {
         ValorMarketplace newImpl = new ValorMarketplace();
         console.log("New impl: %s", address(newImpl));
 
-        // Upgrade proxy to point at the new implementation (no migration data needed)
-        ValorMarketplace(proxy).upgradeToAndCall(address(newImpl), "");
-        console.log("Upgraded successfully");
+        // Upgrade the proxy and run the resale reinitializer (sets the default 5% fee).
+        // NOTE: initializeResale is reinitializer(2) — runs once. If this proxy was
+        // already upgraded to a resale impl, pass "" instead to avoid a revert.
+        ValorMarketplace(proxy).upgradeToAndCall(
+            address(newImpl),
+            abi.encodeCall(ValorMarketplace.initializeResale, ())
+        );
+        console.log("Upgraded + resale initialized");
 
         vm.stopBroadcast();
     }
