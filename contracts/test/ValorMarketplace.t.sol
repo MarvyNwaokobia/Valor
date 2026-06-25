@@ -29,6 +29,21 @@ contract MockGToken {
         IERC677Receiver(to).onTokenTransfer(msg.sender, value, data);
         return true;
     }
+
+    // ERC-20 allowance bits used by the resale buy path.
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
 }
 
 contract ValorMarketplaceTest is Test {
@@ -129,5 +144,115 @@ contract ValorMarketplaceTest is Test {
         vm.prank(player2);
         vm.expectRevert(ValorItems.MaxSupplyReached.selector);
         gToken.transferAndCall(address(marketplace), PRICE, abi.encode(uint256(2)));
+    }
+
+    // ── Resale ────────────────────────────────────────────────────────────────
+
+    address seller = makeAddr("seller");
+    address buyer  = makeAddr("buyer");
+    uint256 constant RESALE_PRICE = 20e18;
+
+    /// Mint the seller item 1 via a normal house purchase, then approve resale.
+    function _sellerOwnsAndApproves() internal {
+        gToken.mint(seller, PRICE);
+        vm.prank(seller);
+        gToken.transferAndCall(address(marketplace), PRICE, abi.encode(ITEM_ID));
+        assertEq(items.balanceOf(seller, ITEM_ID), 1);
+        vm.prank(seller);
+        items.setApprovalForAll(address(marketplace), true);
+    }
+
+    function test_ResaleFlow_TransfersItemAndSplitsFee() public {
+        vm.prank(owner);
+        marketplace.setFeeBps(500); // 5%
+        _sellerOwnsAndApproves();
+
+        vm.prank(seller);
+        uint256 resaleId = marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+
+        uint256 revBefore = marketplace.accumulatedRevenue(); // house sale already counted
+
+        gToken.mint(buyer, RESALE_PRICE);
+        vm.startPrank(buyer);
+        gToken.approve(address(marketplace), RESALE_PRICE);
+        marketplace.buyResale(resaleId);
+        vm.stopPrank();
+
+        // Item moved seller -> buyer.
+        assertEq(items.balanceOf(buyer, ITEM_ID), 1);
+        assertEq(items.balanceOf(seller, ITEM_ID), 0);
+
+        // Seller got price minus the 5% fee; the fee is the platform's revenue.
+        uint256 fee = (RESALE_PRICE * 500) / 10000;
+        assertEq(gToken.balanceOf(seller), RESALE_PRICE - fee);
+        assertEq(marketplace.accumulatedRevenue() - revBefore, fee);
+
+        // Listing is gone from the active set.
+        assertEq(marketplace.getActiveResaleCount(), 0);
+    }
+
+    function test_ListRequiresApproval() public {
+        gToken.mint(seller, PRICE);
+        vm.prank(seller);
+        gToken.transferAndCall(address(marketplace), PRICE, abi.encode(ITEM_ID));
+
+        vm.prank(seller);
+        vm.expectRevert(ValorMarketplace.MarketplaceNotApproved.selector);
+        marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+    }
+
+    function test_ListRequiresOwnership() public {
+        vm.prank(seller);
+        items.setApprovalForAll(address(marketplace), true);
+        vm.prank(seller);
+        vm.expectRevert(ValorMarketplace.NotItemOwner.selector);
+        marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+    }
+
+    function test_CannotBuyOwnListing() public {
+        _sellerOwnsAndApproves();
+        vm.prank(seller);
+        uint256 resaleId = marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+
+        gToken.mint(seller, RESALE_PRICE);
+        vm.startPrank(seller);
+        gToken.approve(address(marketplace), RESALE_PRICE);
+        vm.expectRevert(ValorMarketplace.CannotBuyOwnListing.selector);
+        marketplace.buyResale(resaleId);
+        vm.stopPrank();
+    }
+
+    function test_CancelResale() public {
+        _sellerOwnsAndApproves();
+        vm.prank(seller);
+        uint256 resaleId = marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+        assertEq(marketplace.getActiveResaleCount(), 1);
+
+        vm.prank(seller);
+        marketplace.cancelResale(resaleId);
+        assertEq(marketplace.getActiveResaleCount(), 0);
+
+        // A cancelled listing can't be bought.
+        gToken.mint(buyer, RESALE_PRICE);
+        vm.startPrank(buyer);
+        gToken.approve(address(marketplace), RESALE_PRICE);
+        vm.expectRevert(ValorMarketplace.ResaleNotActive.selector);
+        marketplace.buyResale(resaleId);
+        vm.stopPrank();
+    }
+
+    function test_OnlySellerCancels() public {
+        _sellerOwnsAndApproves();
+        vm.prank(seller);
+        uint256 resaleId = marketplace.listForResale(ITEM_ID, RESALE_PRICE);
+        vm.prank(buyer);
+        vm.expectRevert(ValorMarketplace.NotSeller.selector);
+        marketplace.cancelResale(resaleId);
+    }
+
+    function test_SetFeeBpsCapped() public {
+        vm.prank(owner);
+        vm.expectRevert(ValorMarketplace.FeeTooHigh.selector);
+        marketplace.setFeeBps(2001);
     }
 }
