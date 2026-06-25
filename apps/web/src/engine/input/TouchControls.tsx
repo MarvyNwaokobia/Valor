@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Sword, Hammer, Shield, Wind, Zap, ChevronUp, type LucideIcon } from 'lucide-react';
+import { Crosshair, Wind, type LucideIcon } from 'lucide-react';
 import { Action, getInputSystem } from './InputSystem';
 
 interface TouchButtonProps {
@@ -132,50 +132,20 @@ export function TouchControls() {
         Move
       </div>
 
-      {/* Jump — left side, above the stick (left thumb), so it never clashes
-          with moving forward on the joystick. */}
-      <div className="pointer-events-auto absolute bottom-52 left-10">
+      {/* Shooter controls — bottom right: hold FIRE (auto-fires on the gun's
+          cadence) + DODGE for i-frames. */}
+      <div className="pointer-events-auto absolute bottom-16 right-6 flex items-end gap-3">
         <TouchButton
-          action={Action.Jump}
-          icon={ChevronUp}
-          label="Jump"
-          className="w-14 h-14 bg-cyan-600/80 border border-cyan-400/40"
+          action={Action.Dodge}
+          icon={Wind}
+          label="Dodge"
+          className="w-16 h-16 bg-green-600/80 border border-green-400/40 mb-1"
         />
-      </div>
-
-      {/* Action Buttons — bottom right */}
-      <div className="pointer-events-auto absolute bottom-14 right-4 flex flex-col items-center gap-2">
         <TouchButton
-          action={Action.HeavyAttack}
-          icon={Hammer}
-          label="Heavy"
-          className="w-14 h-14 bg-orange-600/80 border border-orange-400/40"
-        />
-        <div className="flex gap-2">
-          <TouchButton
-            action={Action.Block}
-            icon={Shield}
-            label="Block"
-            className="w-13 h-13 bg-blue-600/80 border border-blue-400/40"
-          />
-          <TouchButton
-            action={Action.LightAttack}
-            icon={Sword}
-            label="Attack"
-            className="w-16 h-16 bg-red-600/80 border-2 border-red-400/50"
-          />
-          <TouchButton
-            action={Action.Dodge}
-            icon={Wind}
-            label="Dodge"
-            className="w-13 h-13 bg-green-600/80 border border-green-400/40"
-          />
-        </div>
-        <TouchButton
-          action={Action.Special}
-          icon={Zap}
-          label="Special"
-          className="w-14 h-14 bg-purple-600/80 border border-purple-400/40"
+          action={Action.Fire}
+          icon={Crosshair}
+          label="Fire"
+          className="w-24 h-24 bg-red-600/85 border-2 border-red-400/50"
         />
       </div>
     </div>

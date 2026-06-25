@@ -35,6 +35,16 @@ const CLASS_ACCENTS: Record<string, string> = {
 // Seconds for the impact squash to spring fully back to rest.
 const IMPACT_DECAY = 0.13;
 
+// The gun is driven from the right-hand bone each frame rather than PARENTED into
+// the skeleton — parenting a child into the rig corrupted the animation bind and
+// left the fighter in its T-pose. GUN_GRIP is the gun's offset relative to the hand.
+const GUN_GRIP = new THREE.Matrix4().compose(
+  new THREE.Vector3(0, 0.02, 0.04),
+  new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
+  new THREE.Vector3(1, 1, 1),
+);
+const _gunScratch = new THREE.Matrix4();
+
 export const FighterModel = memo(function FighterModel({
   classId,
   state,
@@ -46,6 +56,7 @@ export const FighterModel = memo(function FighterModel({
   const modelRef = useRef<THREE.Group>(null);
   const shadowRef = useRef<THREE.Group>(null);
   const gunRef = useRef<THREE.Group | null>(null);
+  const handBoneRef = useRef<THREE.Object3D | null>(null);
   const lean = useRef({ x: 0, z: 0 });
   const lastPos = useRef<THREE.Vector3 | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -88,28 +99,16 @@ export const FighterModel = memo(function FighterModel({
 
       const boneNames: string[] = [];
       let hipsBone: THREE.Object3D | null = null;
-      let handBone: THREE.Object3D | null = null;
       groupRef.current.traverse((child) => {
         if ((child as THREE.Bone).isBone) {
           boneNames.push(child.name);
           if (!hipsBone && /hips/i.test(child.name)) hipsBone = child;
           // The hand root ends in "RightHand"; finger bones (…RightHandThumb1) don't.
-          if (!handBone && /righthand$/i.test(child.name)) handBone = child;
+          // Stashed for the gun, attached AFTER the Mixamo bind (see below).
+          if (!handBoneRef.current && /righthand$/i.test(child.name)) handBoneRef.current = child;
         }
       });
-
-      // Socket the procedural gun onto the right hand so it rides every clip for free.
-      if (handBone && !gunRef.current) {
-        const gun = makeGunMesh(gunId ?? STARTER_GUN_ID);
-        // Grip transform — seats the gun in the palm and points the barrel forward.
-        // First-pass values; fine-tune against the running app in slice 5.
-        gun.position.set(0, 0.02, 0.04);
-        gun.rotation.set(Math.PI / 2, 0, 0);
-        (handBone as THREE.Object3D).add(gun);
-        gunRef.current = gun;
-      } else if (!handBone) {
-        console.warn(`[Fighter:${classId}] no RightHand bone found — gun not socketed`);
-      }
+      if (!handBoneRef.current) console.warn(`[Fighter:${classId}] no RightHand bone — gun won't socket`);
       // Feed the rig's bind-pose hip height to the locomotion matcher so cadence
       // scales with leg length (kills foot-skate on taller/shorter fighters).
       if (hipsBone) {
@@ -136,6 +135,15 @@ export const FighterModel = memo(function FighterModel({
         }
         animMachine.init(mixerRef.current, combined);
         console.log(`[Fighter:${classId}] ${combined.length} clips ready (${mixamoClips.size} Mixamo + ${animations.length} GLB)`);
+
+        // Build the gun as a SIBLING (child of the outer group), never parented
+        // into the skeleton. Its matrix is driven from the hand bone each frame.
+        if (!gunRef.current) {
+          const gun = makeGunMesh(gunId ?? STARTER_GUN_ID);
+          gun.matrixAutoUpdate = false; // we set gun.matrix directly in the frame loop
+          groupRef.current.add(gun);
+          gunRef.current = gun;
+        }
       }
     }
 
@@ -206,6 +214,14 @@ export const FighterModel = memo(function FighterModel({
     }
 
     animMachine.update(dt);
+
+    // Drive the gun from the hand bone (it's a sibling, not parented into the rig).
+    // gun.matrix = groupRef⁻¹ · handBoneWorld · grip → renders exactly at the hand.
+    if (gunRef.current && handBoneRef.current) {
+      handBoneRef.current.updateWorldMatrix(true, false); // refresh hand + ancestors (incl. groupRef)
+      _gunScratch.copy(groupRef.current.matrixWorld).invert();
+      gunRef.current.matrix.multiplyMatrices(_gunScratch, handBoneRef.current.matrixWorld).multiply(GUN_GRIP);
+    }
   });
 
   return (
