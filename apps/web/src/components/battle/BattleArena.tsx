@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useAnimation } from 'framer-motion'
-import { Sword, Shield, Zap, Bot, Users, ChevronLeft, Swords, Smartphone } from 'lucide-react'
+import { Sword, Shield, Zap, Users, ChevronLeft, Smartphone, Crosshair, Target } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
@@ -341,7 +341,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             <div className="flex items-center gap-5 relative z-10">
               <div className="w-14 h-14 rounded-xl flex items-center justify-center"
                 style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
-                <Bot size={28} style={{ color: '#ef4444' }} strokeWidth={1.5} />
+                <Target size={28} style={{ color: '#ef4444' }} strokeWidth={1.5} />
               </div>
               <div>
                 <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Campaign</p>
@@ -401,10 +401,10 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             <div className="flex items-center gap-5 relative z-10">
               <div className="w-14 h-14 rounded-xl flex items-center justify-center"
                 style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
-                <Swords size={28} style={{ color: '#eab308' }} strokeWidth={1.5} />
+                <Crosshair size={28} style={{ color: '#eab308' }} strokeWidth={1.5} />
               </div>
               <div>
-                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Challenge a Warrior</p>
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Challenge a Player</p>
                 <p className="text-slate-500 text-sm mt-0.5">Search by name · Async duel · Share invite link</p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />

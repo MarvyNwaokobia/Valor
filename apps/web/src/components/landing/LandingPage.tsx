@@ -3,7 +3,7 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { useLogin } from '@privy-io/react-auth'
-import { Swords, Coins, Gem, ChevronDown } from 'lucide-react'
+import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 
 // ── Assets ────────────────────────────────────────────────────────────────────
@@ -34,13 +34,13 @@ function useEmbers(n = 18) {
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 const FEATURES = [
-  { Icon: Swords, label: 'Fight',  color: '#ef4444', desc: 'Turn-based combat where class, skill, and timing decide who wins. No pay-to-win.' },
+  { Icon: Crosshair, label: 'Fight',  color: '#ef4444', desc: 'Real-time gun duels — your weapon and dodge timing decide who walks away.' },
   { Icon: Coins,  label: 'Earn G$', color: '#eab308', desc: 'Every victory pays out GoodDollar tokens — real money that goes directly into your account.' },
   { Icon: Gem,    label: 'Own',    color: '#8b5cf6', desc: 'Weapons and gear are yours permanently. Buy, sell, and equip in the Armoury.' },
 ] as const
 
 const HOW_IT_WORKS = [
-  { num: '01', color: '#ef4444', title: 'Prove You\'re Human', desc: 'Connect via GoodDollar — the universal basic income protocol. One warrior per verified player. No bots.' },
+  { num: '01', color: '#ef4444', title: 'Prove You\'re Human', desc: 'Connect via GoodDollar — the universal basic income protocol. One fighter per verified player. No bots.' },
   { num: '02', color: '#3b82f6', title: 'Choose Your Class',  desc: 'Berserker, Sentinel, or Phantom. Your class is permanent — it defines your identity in the arena.' },
   { num: '03', color: '#8b5cf6', title: 'Battle & Earn',      desc: 'Climb the ranks. Every win pays out G$ tokens on Celo. Every loss teaches you something.' },
 ] as const
@@ -206,7 +206,7 @@ export default function LandingPage() {
             <motion.div className="flex items-center gap-2.5"
               initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:0.7, delay:0.25 }}>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to right, transparent, rgba(234,179,8,0.55))' }} />
-              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>One human. One warrior.</span>
+              <span className="font-display font-bold uppercase" style={{ fontSize:'clamp(7px,1.3vw,10px)', letterSpacing:'0.5em', color:'rgba(234,179,8,0.5)' }}>One human. One fighter.</span>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to left, transparent, rgba(234,179,8,0.55))' }} />
             </motion.div>
 
@@ -233,7 +233,7 @@ export default function LandingPage() {
 
             <p className="font-display font-bold uppercase"
               style={{ fontSize:'clamp(8px,1.5vw,10px)', letterSpacing:'0.35em', color:'rgba(100,116,139,0.72)' }}>
-              One verified human · One warrior · Forever
+              One verified human · One fighter · Forever
             </p>
 
             <div className="flex items-center gap-2">
@@ -322,7 +322,7 @@ export default function LandingPage() {
 
           <SectionHead
             eyebrow="Three Classes. One Covenant."
-            title="Choose Your Warrior"
+            title="Choose Your Fighter"
             sub="One class. Permanent. This is your identity in the arena — not a loadout, not a character slot."
           />
 
@@ -496,16 +496,16 @@ export default function LandingPage() {
 
           <p className="font-display font-bold uppercase"
             style={{ fontSize:10, letterSpacing:'0.48em', color:'rgba(234,179,8,0.55)' }}>
-            One human. One warrior.
+            One human. One fighter.
           </p>
 
           <h2 className="font-display font-black text-white leading-tight"
             style={{ fontSize:'clamp(2rem,7vw,3.4rem)', letterSpacing:'0.04em' }}>
-            Your Warrior<br />Awaits
+            Your Fighter<br />Awaits
           </h2>
 
           <p className="text-slate-500 leading-relaxed" style={{ fontSize:13, maxWidth:340 }}>
-            One human. One warrior. Every victory earns real G$ on Celo. No bots. No alts. Only you.
+            One human. One fighter. Every victory earns real G$ on Celo. No bots. No alts. Only you.
           </p>
 
           <div className="w-full flex flex-col items-center gap-3 mt-2">

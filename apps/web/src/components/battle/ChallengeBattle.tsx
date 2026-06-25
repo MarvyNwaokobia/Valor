@@ -56,7 +56,7 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
       const res = await fetch(`${API}/players/${query.toLowerCase()}`)
       setSearching(false)
       if (!res.ok) {
-        setError('No warrior found at that address.')
+        setError('No player found at that address.')
         return
       }
       const data = await res.json()
@@ -67,12 +67,12 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
       const res = await fetch(`${API}/players/search?q=${encodeURIComponent(query)}&exclude=${walletAddress}`)
       setSearching(false)
       if (!res.ok) {
-        setError(`No warrior named "${query}" found.`)
+        setError(`No player named "${query}" found.`)
         return
       }
       const results = await res.json() as Array<{ wallet_address: string; character_name: string }>
       if (!results.length) {
-        setError(`No warrior named "${query}" found.`)
+        setError(`No player named "${query}" found.`)
         return
       }
       setResolvedOpponent(results[0].wallet_address)
@@ -122,7 +122,7 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
         <button onClick={onBack} className="text-slate-500 hover:text-white transition-colors text-sm">
           ← Back
         </button>
-        <h2 className="font-display font-bold text-white text-lg flex-1">Challenge a Warrior</h2>
+        <h2 className="font-display font-bold text-white text-lg flex-1">Challenge a Player</h2>
         <button
           onClick={copyShareLink}
           className="flex items-center gap-1 text-xs font-bold transition-colors"

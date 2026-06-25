@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
 import { ShoppingBag } from 'lucide-react'
 import MarketplaceGrid from '@/components/marketplace/MarketplaceGrid'
+import ResaleBrowse from '@/components/marketplace/ResaleBrowse'
 import { useGBalance } from '@/hooks/useGBalance'
 
 export default function MarketplacePage() {
@@ -41,7 +42,7 @@ export default function MarketplacePage() {
             <div>
               <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-amber-500/60 mb-0.5">Valor Armoury</p>
               <h1 className="font-display font-black text-white text-2xl tracking-wide">Marketplace</h1>
-              <p className="text-slate-500 text-xs mt-0.5">Weapons · Shields · Boosters — yours to keep forever</p>
+              <p className="text-slate-500 text-xs mt-0.5">Guns · Gear — buy from the house or trade with other players</p>
             </div>
           </div>
           {gBalance && (
@@ -60,6 +61,14 @@ export default function MarketplacePage() {
         transition={{ duration: 0.45, delay: 0.12 }}
       >
         <MarketplaceGrid walletAddress={address} />
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, delay: 0.18 }}
+      >
+        <ResaleBrowse walletAddress={address} />
       </motion.div>
     </div>
   )
