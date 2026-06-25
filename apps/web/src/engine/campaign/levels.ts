@@ -69,3 +69,26 @@ export const CAMPAIGN_LENGTH = CAMPAIGN_LEVELS.length;
 export function getLevel(n: number): CampaignLevel | undefined {
   return CAMPAIGN_LEVELS.find((l) => l.level === n);
 }
+
+// ── Endless mode ────────────────────────────────────────────────────────────
+const ENDLESS_CLASSES: ClassId[] = ['berserker', 'sentinel', 'phantom'];
+const ENDLESS_STAGES: StageId[] = ['lava_arena', 'battle_arena', 'scifi_stage'];
+
+/**
+ * Synthetic, infinitely-scaling enemy for Endless wave `w` (1-based). Always the
+ * top-tier gun + Boss AI, with HP ramping each wave. Not a Campaign level — Endless
+ * tracks a leaderboard score (waves survived), not pve_level unlocks.
+ */
+export function endlessLevel(w: number): CampaignLevel {
+  return {
+    level: w,
+    name: `Wave ${w}`,
+    enemyClass: ENDLESS_CLASSES[w % ENDLESS_CLASSES.length],
+    enemyGun: 'legendary',
+    enemyHpMult: 1.8 + w * 0.22,
+    difficulty: AIDifficulty.Boss,
+    xpReward: 50,
+    isBoss: w % 5 === 0,
+    stageId: ENDLESS_STAGES[w % ENDLESS_STAGES.length],
+  };
+}
