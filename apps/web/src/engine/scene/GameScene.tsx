@@ -197,18 +197,21 @@ function BattleWorld({
     const clampedDt = Math.min(dt, 0.05);
     frameCountRef.current++;
 
-    // VFX live on through hit-stop.
+    // VFX live on through hit-stop. screenFx MUST tick every frame: its flashes/tints
+    // decay here, and the shooter doesn't use per-hit hit-stop — so if this only ran
+    // inside the hit-stop branch (as it once did), the first crit's gold flash would
+    // never decay and leave the whole screen washed yellow.
     tracerFX.update(clampedDt);
     particles.update(clampedDt);
     crowd.update(clampedDt);
     combatAudio.setCrowdEnergy(crowd.energy);
+    screenFx.update(clampedDt);
 
     if (battleEndedRef.current) return;
 
     // Hit-stop: freeze game logic but keep VFX + camera alive
     if (hitStopTimerRef.current > 0) {
       hitStopTimerRef.current -= clampedDt;
-      screenFx.update(clampedDt);
       battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
       if (hitStopTimerRef.current <= 0) {
         playerAnimMachine.resume();
