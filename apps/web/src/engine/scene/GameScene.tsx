@@ -34,6 +34,7 @@ interface GameSceneProps {
   // Equipped guns (the Campaign level sets the enemy's; defaults to the starter).
   playerGun?: GunId;
   enemyGun?: GunId;
+  enemyHpMult?: number; // Campaign level scales the bot's HP (1 = base 100).
   onDamageEvent?: (event: DamageEvent) => void;
   onComboUpdate?: (combo: ComboState | null) => void;
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
@@ -64,6 +65,7 @@ function BattleWorld({
   difficulty = AIDifficulty.Medium,
   playerGun = STARTER_GUN_ID,
   enemyGun = STARTER_GUN_ID,
+  enemyHpMult = 1,
   onDamageEvent,
   onPlayerStateUpdate,
   onEnemyStateUpdate,
@@ -95,10 +97,10 @@ function BattleWorld({
   // The one authoritative combat sim (the same render-free core a server runs).
   // In PvE the enemy (p2) is AI-driven inside the sim; the local player drives p1.
   const sim = useMemo(() => {
-    const s = new CombatSim(playerClass, enemyClass, { p1Gun: playerGun, p2Gun: enemyGun });
+    const s = new CombatSim(playerClass, enemyClass, { p1Gun: playerGun, p2Gun: enemyGun, p2HpMult: enemyHpMult });
     s.attachAI('p2', difficulty);
     return s;
-  }, [playerClass, enemyClass, difficulty, playerGun, enemyGun]);
+  }, [playerClass, enemyClass, difficulty, playerGun, enemyGun, enemyHpMult]);
   const playerController = sim.controller('p1');
   const enemyController = sim.controller('p2');
 

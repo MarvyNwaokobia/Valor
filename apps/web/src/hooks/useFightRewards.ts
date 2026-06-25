@@ -6,12 +6,13 @@ import type { Player } from '@/types'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export interface FightReward {
-  won:       boolean
-  xpAwarded: number
-  newXp:     number
-  rankedUp:  boolean
-  newRank:   Player['rank'] | null
-  gAwarded:  number
+  won:        boolean
+  xpAwarded:  number
+  newXp:      number
+  rankedUp:   boolean
+  newRank:    Player['rank'] | null
+  gAwarded:   number
+  firstClear: boolean
 }
 
 /**
@@ -31,7 +32,7 @@ export function useFightRewards() {
   const [error,   setError]   = useState<string | null>(null)
 
   const submitResult = useCallback(
-    async (won: boolean, durationSecs: number): Promise<FightReward | null> => {
+    async (won: boolean, durationSecs: number, level?: number): Promise<FightReward | null> => {
       if (!player) return null
       const wallet = player.wallet_address
 
@@ -41,7 +42,7 @@ export function useFightRewards() {
         const res = await fetch(`${API}/battles/fight/complete`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ wallet, won, duration_secs: durationSecs }),
+          body:    JSON.stringify({ wallet, won, duration_secs: durationSecs, level }),
         })
 
         if (!res.ok) {
@@ -62,6 +63,9 @@ export function useFightRewards() {
           storeUpdates.rank              = data.new_rank
           storeUpdates.g_earned_lifetime = player.g_earned_lifetime + data.g_awarded
         }
+        if (data.first_clear && level) {
+          storeUpdates.pve_level = Math.max(player.pve_level, level)
+        }
         updatePlayer(storeUpdates)
 
         // ── Fire-and-forget side effects ─────────────────────────────────
@@ -72,11 +76,12 @@ export function useFightRewards() {
 
         const result: FightReward = {
           won,
-          xpAwarded: data.xp_awarded,
-          newXp:     data.new_xp,
-          rankedUp:  data.ranked_up,
-          newRank:   data.new_rank ?? null,
-          gAwarded:  data.g_awarded,
+          xpAwarded:  data.xp_awarded,
+          newXp:      data.new_xp,
+          rankedUp:   data.ranked_up,
+          newRank:    data.new_rank ?? null,
+          gAwarded:   data.g_awarded,
+          firstClear: data.first_clear ?? false,
         }
         setReward(result)
         return result
