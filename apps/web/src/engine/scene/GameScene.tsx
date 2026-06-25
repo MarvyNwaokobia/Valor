@@ -6,16 +6,15 @@ import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
 import { ArenaStage, type StageId } from './ArenaStage';
 import { BattleCamera } from '../camera';
-import type { CharacterController } from '../character';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
 import { getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import type { DamageEvent } from '../combat/DamageSystem';
-import type { ComboState } from '../combat';
+import { type ComboState, STARTER_GUN_ID, type GunId } from '../combat';
 import { AIDifficulty } from '../combat/EnemyAI';
 import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
 import { ParticleSystem } from '../vfx/ParticleSystem';
-import { TrailRenderer } from '../vfx/TrailRenderer';
+import { TracerFX } from '../vfx/TracerFX';
 import { CombatAudio } from '../audio/CombatAudio';
 import { ScreenEffects } from '../vfx/ScreenEffects';
 import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
@@ -32,6 +31,9 @@ interface GameSceneProps {
   stageId?: StageId;
   enemyName?: string;
   difficulty?: AIDifficulty;
+  // Equipped guns (the Campaign level sets the enemy's; defaults to the starter).
+  playerGun?: GunId;
+  enemyGun?: GunId;
   onDamageEvent?: (event: DamageEvent) => void;
   onComboUpdate?: (combo: ComboState | null) => void;
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
@@ -48,12 +50,9 @@ const CLASS_ACCENTS: Record<string, string> = {
   phantom: '#aa44ff',
 };
 
-const HITSTOP_DURATION: Record<string, number> = {
-  light: 0.05,
-  heavy: 0.1,
-  special: 0.15,
-  kill: 0.35,
-};
+// Tracer colours so the player can tell their fire from the opponent's at a glance.
+const PLAYER_TRACER = 0x66ccff; // cyan
+const ENEMY_TRACER = 0xff7744;  // orange
 
 const FOOTSTEP_INTERVAL = 0.3;
 const FOOTSTEP_SPEED_THRESHOLD = 1.0;
@@ -63,8 +62,9 @@ function BattleWorld({
   enemyClass,
   stageId = 'lava_arena',
   difficulty = AIDifficulty.Medium,
+  playerGun = STARTER_GUN_ID,
+  enemyGun = STARTER_GUN_ID,
   onDamageEvent,
-  onComboUpdate,
   onPlayerStateUpdate,
   onEnemyStateUpdate,
   onBattleEnd,
@@ -95,10 +95,10 @@ function BattleWorld({
   // The one authoritative combat sim (the same render-free core a server runs).
   // In PvE the enemy (p2) is AI-driven inside the sim; the local player drives p1.
   const sim = useMemo(() => {
-    const s = new CombatSim(playerClass, enemyClass);
+    const s = new CombatSim(playerClass, enemyClass, { p1Gun: playerGun, p2Gun: enemyGun });
     s.attachAI('p2', difficulty);
     return s;
-  }, [playerClass, enemyClass, difficulty]);
+  }, [playerClass, enemyClass, difficulty, playerGun, enemyGun]);
   const playerController = sim.controller('p1');
   const enemyController = sim.controller('p2');
 
@@ -109,12 +109,11 @@ function BattleWorld({
   const particles = useMemo(() => new ParticleSystem(), []);
   const crowd = useMemo(() => new CrowdDirector(), []);
 
-  // Hit-stop
+  // Hit-stop (reserved for the kill freeze only — bullets don't freeze the game)
   const hitStopTimerRef = useRef(0);
 
-  // Weapon trails
-  const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 24, 0.18, 0.42), [playerClass]);
-  const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 24, 0.18, 0.42), [enemyClass]);
+  // Gunfire tracers + muzzle flashes, coloured per shooter for readability.
+  const tracerFX = useMemo(() => new TracerFX(), []);
 
   // Footstep timer
   const playerStepTimerRef = useRef(0);
@@ -135,88 +134,60 @@ function BattleWorld({
     [playerAnimMachine, enemyAnimMachine],
   );
 
-  // Render one authoritative hit into client feedback — animation clips, VFX,
-  // audio, camera kicks, hit-stop, HUD. The sim already applied the *gameplay*
-  // (damage, knockback, stagger, combo, KO); this only shows its consequences.
-  const processHit = useCallback((e: Extract<SimEvent, { kind: 'hit' }>) => {
+  // A shot left the muzzle — fire clip + gunshot + tracer/flash, and a small kick
+  // on the LOCAL player's own fire only (so the opponent's spray doesn't rattle the
+  // camera). The sim authored the shot; this just shows + sounds it.
+  const fireFX = useCallback((e: Extract<SimEvent, { kind: 'fire' }>) => {
+    const who = e.fighter;
+    animFor(who).transition(AnimState.Fire, true);
+    combatAudio.playGunshot();
+
+    const origin = new THREE.Vector3(e.origin[0], e.origin[1], e.origin[2]);
+    const target = new THREE.Vector3(e.target[0], e.target[1], e.target[2]);
+    tracerFX.fire(origin, target, who === 'p1' ? PLAYER_TRACER : ENEMY_TRACER);
+    particles.emitEnergy(origin, who === 'p1' ? CLASS_ACCENTS[playerClass] : CLASS_ACCENTS[enemyClass], 0.35);
+
+    if (who === 'p1') {
+      battleCamera.shake(0.03, 45);
+      battleCamera.punch(0.012);
+    }
+  }, [animFor, combatAudio, tracerFX, particles, battleCamera, playerClass, enemyClass]);
+
+  // A landed shot — the sim already applied damage/stagger; play the reaction clip
+  // and feed the HUD. No per-bullet hit-stop — a firefight has to keep flowing.
+  const onHit = useCallback((e: Extract<SimEvent, { kind: 'hit' }>) => {
     const ev = e.event;
     onDamageEvent?.(ev);
-    const attackerId = ev.attackerId as FighterId;
     const defenderId = ev.defenderId as FighterId;
-    const attackerClass = attackerId === 'p1' ? playerClass : enemyClass;
     const defenderAnim = animFor(defenderId);
-    const defenderCtrl = sim.controller(defenderId);
-
-    // Parry — the defender caught it clean; the sim stunned the attacker.
-    if (ev.parried) {
-      animFor(attackerId).transitionHit(AnimState.HitHeavy, 'front');
-      defenderAnim.transition(AnimState.BlockHit, true);
-      combatAudio.playParry();
-      screenFx.onCriticalHit();
-      battleCamera.shake(0.22, 30);
-      battleCamera.punch(0.08);
-      particles.emitSparks(ev.hitPosition, ev.knockbackDir, 1);
-      crowd.cheer(0.85);
-      combatAudio.crowdCheer(0.85);
-      hitStopTimerRef.current = Math.max(hitStopTimerRef.current, 0.1);
-      playerAnimMachine.pause();
-      enemyAnimMachine.pause();
-      return;
-    }
+    sim.controller(defenderId).state.impactPulse = ev.hitType === 'light' ? 0.5 : 0.85;
 
     combatAudio.onDamageEvent(ev);
-    // Camera kick scaled to hit weight, on the exact contact frame.
-    const weight = ev.hitType === 'light' ? 1 : ev.hitType === 'heavy' ? 2.2 : 3.2;
-    battleCamera.shake(0.09 * weight * (ev.critical ? 1.4 : 1), 32);
-    battleCamera.punch(0.035 * weight);
+    if (ev.killed) return; // the KO handler plays the death + ends the match
 
-    // Contact-point VFX + squash-punch on the struck fighter.
-    if (ev.blocked) {
-      particles.emitSparks(ev.hitPosition, ev.knockbackDir, 0.4);
-      defenderCtrl.state.impactPulse = 0.5;
-      crowd.boo(0.4);
-      combatAudio.crowdBoo(0.4);
-      screenFx.onBlock();
-      defenderAnim.transition(AnimState.BlockHit, true);
-    } else if (ev.killed) {
-      particles.emitKillBurst(ev.hitPosition, CLASS_ACCENTS[attackerClass] ?? '#ffffff');
-      particles.emitImpact(ev.hitPosition, ev.knockbackDir, ev.hitType);
-      defenderCtrl.state.impactPulse = 1;
-      crowd.roar();
-      combatAudio.crowdCheer(1);
-      screenFx.onKill(CLASS_ACCENTS[attackerClass] ?? '#ffffff');
+    if (ev.hitType === 'special') defenderAnim.transition(AnimState.Knockdown, true);
+    else defenderAnim.transitionHit(ev.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight, e.direction);
+
+    // Only crits/heavies nudge the camera + crowd; light hits stay quiet so a stream
+    // of bullets doesn't thrash the screen.
+    if (ev.critical || ev.hitType !== 'light') {
+      battleCamera.punch(0.02);
+      crowd.cheer(ev.hitType === 'special' ? 0.7 : 0.4);
+      if (ev.critical) screenFx.onCriticalHit();
+    }
+  }, [sim, animFor, combatAudio, crowd, screenFx, battleCamera, onDamageEvent]);
+
+  // A projectile arrived — spark on a hit, dust puff on a dodge/whiff.
+  const impactFX = useCallback((e: Extract<SimEvent, { kind: 'projectileHit' }>) => {
+    const pos = new THREE.Vector3(e.position[0], e.position[1], e.position[2]);
+    const dir = new THREE.Vector3().subVectors(pos, sim.controller(e.shooterId).state.position).setY(0).normalize();
+    if (e.hit) {
+      particles.emitImpact(pos, dir, e.crit ? 'special' : 'light');
+      particles.emitSparks(pos, dir, e.crit ? 0.8 : 0.4);
     } else {
-      particles.emitImpact(ev.hitPosition, ev.knockbackDir, ev.hitType);
-      defenderCtrl.state.impactPulse = ev.hitType === 'light' ? 0.7 : 1;
-      const hype = ev.hitType === 'light' ? 0.3 : ev.hitType === 'heavy' ? 0.6 : 0.9;
-      crowd.cheer(hype);
-      if (ev.hitType !== 'light') combatAudio.crowdCheer(hype);
-      if (ev.hitType === 'light') screenFx.onLightHit();
-      else if (ev.hitType === 'heavy') { screenFx.onHeavyHit(); if (ev.critical) screenFx.onCriticalHit(); }
-      else screenFx.onSpecialHit();
+      particles.emitDust(pos, 0.3);
     }
-
-    // Hit-reaction clip (the sim already applied the stagger/knockdown state),
-    // plus combo HUD/audio.
-    if (!ev.blocked) {
-      const knockdown = ev.hitType === 'special' || e.comboCount >= 5;
-      if (knockdown) defenderAnim.transition(AnimState.Knockdown, true);
-      else defenderAnim.transitionHit(ev.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight, e.direction);
-
-      const combo = sim.comboState(attackerId);
-      if (combo && combo.count >= 3 && combo.count % 5 === 0) combatAudio.playComboMilestone(combo.count);
-      if (e.comboCount >= 4) battleCamera.punch(0.05);
-      // The player combo HUD reflects the player's own string; clears if the player is hit.
-      onComboUpdate?.(defenderId === 'p1' ? null : sim.comboState('p1') ?? null);
-    }
-
-    // Hit-stop — freeze the sim + anim for a beat (the loop counts it down).
-    const hitStopDur = ev.killed ? HITSTOP_DURATION.kill : HITSTOP_DURATION[ev.hitType] ?? 0.05;
-    hitStopTimerRef.current = Math.max(hitStopTimerRef.current, hitStopDur);
-    playerAnimMachine.pause();
-    enemyAnimMachine.pause();
-  }, [sim, animFor, playerAnimMachine, enemyAnimMachine, combatAudio, particles, crowd,
-    screenFx, battleCamera, onDamageEvent, onComboUpdate, playerClass, enemyClass]);
+  }, [sim, particles]);
 
   const frameCountRef = useRef(0);
 
@@ -224,9 +195,8 @@ function BattleWorld({
     const clampedDt = Math.min(dt, 0.05);
     frameCountRef.current++;
 
-    // Always update trails + particles + crowd (they live on through hit-stop)
-    playerTrail.update(clampedDt, camera.position);
-    enemyTrail.update(clampedDt, camera.position);
+    // VFX live on through hit-stop.
+    tracerFX.update(clampedDt);
     particles.update(clampedDt);
     crowd.update(clampedDt);
     combatAudio.setCrowdEnergy(crowd.energy);
@@ -266,36 +236,30 @@ function BattleWorld({
 
     // --- Process Simulation Events ---
     events.forEach((e) => {
-      if (e.kind === 'attackStart') {
-        const who = e.fighter;
-        const animMachine = who === 'p1' ? playerAnimMachine : enemyAnimMachine;
-        // `e.chain` (this attack was a cancel) advances the combo-clip variety;
-        // a fresh press plays the base clip so single-taps read consistently.
-        animMachine.transition(e.anim, true, undefined, e.chain);
-        combatAudio.playSwing(who === 'p1' ? playerClass : enemyClass);
-        
-        // Start weapon trail
-        const trail = who === 'p1' ? playerTrail : enemyTrail;
-        trail.start();
+      if (e.kind === 'fire') {
+        fireFX(e);
+      } else if (e.kind === 'projectileHit') {
+        impactFX(e);
       } else if (e.kind === 'hit') {
-        processHit(e);
+        onHit(e);
       } else if (e.kind === 'ko') {
         if (!battleEndedRef.current) {
           battleEndedRef.current = true;
           combatActiveRef.current = false;
           combatAudio.stopAll();
-          
+
           const winner = e.winner === 'p1' ? 'player' : 'enemy';
           const loser = e.loser === 'p1' ? 'player' : 'enemy';
-          
-          // Trigger death animation
+
           const loserAnim = loser === 'player' ? playerAnimMachine : enemyAnimMachine;
+          const winnerAnim = winner === 'player' ? playerAnimMachine : enemyAnimMachine;
           loserAnim.transition(AnimState.Death, true);
-          
+          winnerAnim.transition(AnimState.Victory, true);
+
           const durationSecs = combatStartRef.current
             ? (performance.now() - combatStartRef.current) / 1000
             : 0;
-            
+
           setTimeout(() => {
             if (winner === 'player') combatAudio.playVictoryFanfare();
             else combatAudio.playDefeatMelody();
@@ -306,33 +270,19 @@ function BattleWorld({
     });
 
     // --- Synchronise Animation States Frame-by-Frame ---
+    // Skip the idle/locomotion sync while a one-shot Fire clip is mid-play so the
+    // muzzle animation isn't stomped every frame; reactions/dodge/death still
+    // interrupt it (they aren't in the skip set).
     const snapshot = sim.snapshot();
-    playerAnimMachine.transition(snapshot.fighters.p1.animState);
-    enemyAnimMachine.transition(snapshot.fighters.p2.animState);
-
-    // --- Weapon trail points ---
-    const emitTrail = (
-      id: FighterId,
-      ctrl: CharacterController,
-      trail: TrailRenderer,
-    ) => {
-      const attacking = ctrl.state.isAttacking;
-      if (!attacking) return;
-      const progress = sim.attackProgress(id);
-      if (progress < 0.08 || progress > 0.82) return; // skip wind-up / recovery
-      const s = ctrl.state;
-      const sin = Math.sin(s.rotation), cos = Math.cos(s.rotation);
-      const reach = 0.7 + progress * 0.7;
-      const sweep = (progress - 0.45) * 1.6;
-      const h = 1.45 - progress * 0.5;
-      const p = s.position.clone();
-      p.x += sin * reach + cos * sweep * 0.8;
-      p.z += cos * reach - sin * sweep * 0.8;
-      p.y += h;
-      trail.addPoint(p);
+    const syncAnim = (machine: AnimationStateMachine, animState: AnimState) => {
+      if (machine.state === AnimState.Fire &&
+          (animState === AnimState.Idle || animState === AnimState.Walk || animState === AnimState.Run)) {
+        return;
+      }
+      machine.transition(animState);
     };
-    emitTrail('p1', playerController, playerTrail);
-    emitTrail('p2', enemyController, enemyTrail);
+    syncAnim(playerAnimMachine, snapshot.fighters.p1.animState);
+    syncAnim(enemyAnimMachine, snapshot.fighters.p2.animState);
 
     // --- Footsteps + ground dust ---
     const playerSpeed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
@@ -370,10 +320,9 @@ function BattleWorld({
       <AmbientVFX stageId={stageId} />
       <ArenaStage stageId={stageId} />
       <Crowd director={crowd} />
-      <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} />
-      <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} />
-      <primitive object={playerTrail.object3d} />
-      <primitive object={enemyTrail.object3d} />
+      <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
+      <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
+      <primitive object={tracerFX.group} />
       <primitive object={particles.mesh} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
         <planeGeometry args={[30, 30]} />

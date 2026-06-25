@@ -3,6 +3,7 @@ export enum Action {
   MoveBack = 'MoveBack',
   MoveLeft = 'MoveLeft',
   MoveRight = 'MoveRight',
+  Fire = 'Fire',
   LightAttack = 'LightAttack',
   HeavyAttack = 'HeavyAttack',
   Special = 'Special',
@@ -27,7 +28,8 @@ const DEFAULT_BINDINGS: Record<string, Action> = {
   ArrowLeft: Action.MoveLeft,
   KeyD: Action.MoveRight,
   ArrowRight: Action.MoveRight,
-  KeyJ: Action.LightAttack,
+  // Shooter: Fire is held (auto-fire on the gun's cadence), Dodge is the defense.
+  KeyJ: Action.Fire,
   KeyK: Action.HeavyAttack,
   KeyL: Action.Special,
   ShiftLeft: Action.Block,

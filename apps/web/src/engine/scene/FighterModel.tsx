@@ -9,12 +9,15 @@ import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
 import { loadMixamoAnimations, getMixamoClips, isMixamoLoadComplete } from '../animation';
 import { makeBlobShadowTexture } from '../world/textures';
+import { makeGunMesh } from './GunMesh';
+import { STARTER_GUN_ID, type GunId } from '../combat';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
   state: CharacterState;
   animMachine: AnimationStateMachine;
   accent?: string;
+  gunId?: GunId;
 }
 
 const MODEL_PATHS: Record<string, string> = {
@@ -37,10 +40,12 @@ export const FighterModel = memo(function FighterModel({
   state,
   animMachine,
   accent,
+  gunId,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const modelRef = useRef<THREE.Group>(null);
   const shadowRef = useRef<THREE.Group>(null);
+  const gunRef = useRef<THREE.Group | null>(null);
   const lean = useRef({ x: 0, z: 0 });
   const lastPos = useRef<THREE.Vector3 | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -83,12 +88,28 @@ export const FighterModel = memo(function FighterModel({
 
       const boneNames: string[] = [];
       let hipsBone: THREE.Object3D | null = null;
+      let handBone: THREE.Object3D | null = null;
       groupRef.current.traverse((child) => {
         if ((child as THREE.Bone).isBone) {
           boneNames.push(child.name);
           if (!hipsBone && /hips/i.test(child.name)) hipsBone = child;
+          // The hand root ends in "RightHand"; finger bones (…RightHandThumb1) don't.
+          if (!handBone && /righthand$/i.test(child.name)) handBone = child;
         }
       });
+
+      // Socket the procedural gun onto the right hand so it rides every clip for free.
+      if (handBone && !gunRef.current) {
+        const gun = makeGunMesh(gunId ?? STARTER_GUN_ID);
+        // Grip transform — seats the gun in the palm and points the barrel forward.
+        // First-pass values; fine-tune against the running app in slice 5.
+        gun.position.set(0, 0.02, 0.04);
+        gun.rotation.set(Math.PI / 2, 0, 0);
+        (handBone as THREE.Object3D).add(gun);
+        gunRef.current = gun;
+      } else if (!handBone) {
+        console.warn(`[Fighter:${classId}] no RightHand bone found — gun not socketed`);
+      }
       // Feed the rig's bind-pose hip height to the locomotion matcher so cadence
       // scales with leg length (kills foot-skate on taller/shorter fighters).
       if (hipsBone) {

@@ -27,8 +27,7 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
     let twoPlayersEveryTick = true
 
     for (let i = 0; i < 3600 && !room.isOver; i++) {
-      room.applyInput('p1', inputState(1))   // advance toward p2
-      room.applyInput('p1', trigger('light')) // keep swinging
+      room.applyInput('p1', inputState(0, ['fire'])) // hold Fire (auto-fires on cadence)
       const r = room.step()
       if (r.state.players.length !== 2) twoPlayersEveryTick = false
       if (r.hits.length > 0) sawHit = true
@@ -60,26 +59,24 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
     expect(typeof back.seq).toBe('number')
   })
 
-  it('a held block (via InputState.actions) reduces incoming damage', () => {
-    // Run two short rooms in parallel: in one, p2 holds block; in the other it
-    // does not. p2's surviving HP should be higher when blocking.
-    const run = (block: boolean) => {
-      const room = new GameRoom(block ? 'rb' : 'rn', P1, P2)
+  it('a dodging defender survives with more HP than a standing one', () => {
+    // Run two short rooms: in one, p2 spams dodge (i-frames) while p1 fires; in the
+    // other p2 stands. p2's surviving HP should be higher when dodging.
+    const run = (dodge: boolean) => {
+      const room = new GameRoom(dodge ? 'rd' : 'rn', P1, P2)
       room.start()
       for (let i = 0; i < 240; i++) {
-        room.applyInput('p1', inputState(1))
-        room.applyInput('p1', trigger('light'))
-        room.applyInput('p2', inputState(0, block ? ['block'] : []))
+        room.applyInput('p1', inputState(0, ['fire']))
+        if (dodge) room.applyInput('p2', trigger('dodge')) // re-buffer to maximise i-frames
         const r = room.step()
         if (r.matchEnd) break
       }
-      // Read p2 health off the last state.
       const { state } = room.step()
       return state.players.find((p) => p.id === P2.wallet)!.health
     }
 
-    const hpBlocking = run(true)
+    const hpDodging = run(true)
     const hpOpen = run(false)
-    expect(hpBlocking).toBeGreaterThanOrEqual(hpOpen)
+    expect(hpDodging).toBeGreaterThanOrEqual(hpOpen)
   })
 })

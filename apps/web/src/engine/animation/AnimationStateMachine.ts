@@ -18,6 +18,7 @@ export enum AnimState {
   Idle = 'idle',
   Walk = 'walk',
   Run = 'run',
+  Fire = 'fire',
   LightAttack = 'lightAttack',
   HeavyAttack = 'heavyAttack',
   Special = 'special',
@@ -71,7 +72,7 @@ export interface AnimationMap {
 
 // --- Berserker: heavy, brutal, raw power ---
 const BERSERKER_ANIMS: AnimationMap = {
-  [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,     loop: true,  speed: 0.9,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
+  [AnimState.Idle]:        { clip: CLIP_NAMES.rifleIdle,     loop: true,  speed: 0.9,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,          loop: true,  speed: 1.0,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,           loop: true,  speed: 1.1,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   // Light mash flows as a brawler flurry; heavy alternates big swings.
@@ -90,12 +91,12 @@ const BERSERKER_ANIMS: AnimationMap = {
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUpAlt,  loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,  loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
   [AnimState.Victory]:     { clip: CLIP_NAMES.victory,       loop: false, speed: 1.0,  fadeIn: 0.2,  fadeOut: 0,    canInterrupt: false },
-  [AnimState.Intro]:       { clip: CLIP_NAMES.fightIdle,     loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Intro]:       { clip: CLIP_NAMES.rifleIdle,     loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
 };
 
 // --- Phantom: fast, agile, acrobatic ---
 const PHANTOM_ANIMS: AnimationMap = {
-  [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.1,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
+  [AnimState.Idle]:        { clip: CLIP_NAMES.rifleIdle,      loop: true,  speed: 1.1,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.1,  canInterrupt: true },
   [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.fistFight, CLIP_NAMES.hookPunch, CLIP_NAMES.rollKick], variant: 'chain', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
@@ -113,12 +114,12 @@ const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.GetUp]:       { clip: CLIP_NAMES.gettingUp,      loop: false, speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0,    canInterrupt: false },
   [AnimState.Victory]:     { clip: CLIP_NAMES.victoryAlt,     loop: false, speed: 1.0,  fadeIn: 0.15, fadeOut: 0,    canInterrupt: false },
-  [AnimState.Intro]:       { clip: CLIP_NAMES.fightIdle,      loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Intro]:       { clip: CLIP_NAMES.rifleIdle,      loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
 };
 
 // --- Sentinel: balanced, defensive, deliberate ---
 const SENTINEL_ANIMS: AnimationMap = {
-  [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.0,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
+  [AnimState.Idle]:        { clip: CLIP_NAMES.rifleIdle,      loop: true,  speed: 1.0,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 0.95, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch, CLIP_NAMES.fistFight, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
@@ -135,7 +136,7 @@ const SENTINEL_ANIMS: AnimationMap = {
   [AnimState.GetUp]:       { clip: CLIP_NAMES.standUp,        loop: false, speed: 1.0,  fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Death]:       { clip: CLIP_NAMES.deathForward,   loop: false, speed: 1.0,  fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
   [AnimState.Victory]:     { clip: CLIP_NAMES.victory,        loop: false, speed: 1.0,  fadeIn: 0.2,  fadeOut: 0,    canInterrupt: false },
-  [AnimState.Intro]:       { clip: CLIP_NAMES.fightIdle,      loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.Intro]:       { clip: CLIP_NAMES.rifleIdle,      loop: false, speed: 1.0,  fadeIn: 0.1,  fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
 };
 
 export const CLASS_ANIMATIONS: Record<string, AnimationMap> = {
@@ -143,6 +144,18 @@ export const CLASS_ANIMATIONS: Record<string, AnimationMap> = {
   sentinel: SENTINEL_ANIMS,
   phantom: PHANTOM_ANIMS,
 };
+
+// The Fire clip is class-agnostic (the gun stance is shared), so inject one config
+// into every class map. Played one-shot on each `fire` sim event (wired in slice 5),
+// returning to the rifle Idle. canInterrupt so movement/dodge can override it.
+const FIRE_CONFIG: AnimStateConfig = {
+  clip: CLIP_NAMES.gunplayShooting,
+  loop: false, speed: 1.0, fadeIn: 0.04, fadeOut: 0.08,
+  canInterrupt: true, nextState: AnimState.Idle,
+};
+for (const map of Object.values(CLASS_ANIMATIONS)) {
+  map[AnimState.Fire] = FIRE_CONFIG;
+}
 
 export class AnimationStateMachine {
   private currentState: AnimState = AnimState.Idle;
@@ -258,6 +271,7 @@ export class AnimationStateMachine {
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
+        [AnimState.Fire]: 'attack',
         [AnimState.LightAttack]: 'attack', [AnimState.HeavyAttack]: 'attack', [AnimState.Special]: 'attack',
         [AnimState.Block]: 'idle', [AnimState.Dodge]: 'idle',
         [AnimState.Jump]: 'idle', [AnimState.JumpAttack]: 'attack',

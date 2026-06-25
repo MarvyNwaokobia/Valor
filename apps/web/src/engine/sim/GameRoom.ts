@@ -32,6 +32,7 @@ export interface RoomPlayer {
 // Network action strings → engine actions. Attacks/dodge/jump are buffered
 // (one-shot ActionTrigger); block is held (carried in InputState.actions).
 const ACTION_MAP: Record<string, Action> = {
+  fire: Action.Fire,
   light: Action.LightAttack,
   heavy: Action.HeavyAttack,
   special: Action.Special,
@@ -39,7 +40,8 @@ const ACTION_MAP: Record<string, Action> = {
   dodge: Action.Dodge,
   jump: Action.Jump,
 };
-const HELD_ACTIONS = new Set<Action>([Action.Block]);
+// Held across frames (carried in InputState.actions): guard + auto-fire trigger.
+const HELD_ACTIONS = new Set<Action>([Action.Block, Action.Fire]);
 
 // Base XP; the authoritative award is applied server-side via the API's
 // finalize_fight path when MatchEnd is persisted (wired in a later step).

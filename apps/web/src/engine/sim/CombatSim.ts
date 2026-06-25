@@ -4,62 +4,67 @@ import { AnimState, type HitDirection } from '../animation';
 import { Action, InputSystem } from '../input/InputSystem';
 import {
   DamageSystem, type DamageEvent,
-  ComboSystem, MoveType, canGatlingCancel,
-  CLASS_FRAME_DATA, getHitboxWindow, hitboxHits, hitboxContactPoint,
-  getMoveForAction,
-  EnemyAI, AIDifficulty,
+  type ComboState,
+  getGun, STARTER_GUN_ID, type GunId, type GunStats,
+  RangedAI, AIDifficulty,
 } from '../combat';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
 
 /**
- * Headless, render-free authoritative combat core.
+ * Headless, render-free authoritative combat core — RANGED STAT-DUEL.
  *
- * This is the single source of truth for what happens in a fight. It runs with
- * no Three rendering, no AnimationMixer, no DOM/WebGL — only vector math — so the
- * exact same code can tick on a Node server (authoritative for ranked PvP, see
- * docs/PVP_NETCODE.md) and on the client for prediction. The attack timeline is
- * driven by frame data on the sim clock (replacing the AnimationStateMachine,
- * which on the client was acting as the hit clock). The sim emits DamageEvents +
- * per-fighter `animState`; the client maps those to animations, VFX, audio and
- * camera — none of which live here.
+ * This is the single source of truth for a shooter duel. It runs with no Three
+ * rendering, no AnimationMixer, no DOM/WebGL — only vector math — so the exact
+ * same code can tick on a Node server (authoritative for ranked PvP, see
+ * docs/PVP_NETCODE.md) and on the client for prediction.
  *
- * NOTE (migration): the client `GameScene` still runs its own copy of this loop.
- * The next slice migrates it to delegate here so there is exactly one combat
- * implementation. This module is built to be that single source.
+ * Combat is gun-driven (see engine/combat/GunStats.ts): a fighter holds Fire and
+ * the weapon shoots on its cadence (60/fireRate), spawning a TRAVELLING projectile
+ * (not hitscan). On arrival the shot resolves: if the target is dodging it whiffs
+ * (i-frames), otherwise an accuracy roll lands damage (± crit). The only player
+ * skill is dodge timing; gun stats supply the power. The sim emits DamageEvents +
+ * per-fighter `animState`; the client maps those to clips, VFX (muzzle/tracer/
+ * impact), screen-shake, audio and camera — none of which live here.
+ *
+ * Migration note: the legacy `attackStart` SimEvent + `attackProgress`/`comboState`
+ * accessors are retained as inert stubs so the unmigrated GameScene still compiles;
+ * slice 5 swaps GameScene onto the `fire`/`projectileHit` events and removes them.
  */
 
 export type FighterId = 'p1' | 'p2';
 export type ClassId = 'berserker' | 'sentinel' | 'phantom';
 
-const MOVE_STAMINA: Record<string, number> = {
-  [AnimState.LightAttack]: 5,
-  [AnimState.HeavyAttack]: 15,
-  [AnimState.Special]: 30,
-  [AnimState.JumpAttack]: 15,
-};
-
-const STAGGER_DURATION: Record<string, number> = {
-  light: 0.2,
-  heavy: 0.45,
-  special: 0.7,
-};
-
-const ANIM_TO_MOVE: Partial<Record<AnimState, MoveType>> = {
-  [AnimState.LightAttack]: MoveType.LightAttack,
-  [AnimState.HeavyAttack]: MoveType.HeavyAttack,
-  [AnimState.Special]: MoveType.Special,
-  [AnimState.JumpAttack]: MoveType.HeavyAttack,
-};
-
-// AI follow-up Action → the attack animation startAttack expects.
-const AI_ACTION_TO_ANIM: Partial<Record<Action, AnimState>> = {
-  [Action.LightAttack]: AnimState.LightAttack,
-  [Action.HeavyAttack]: AnimState.HeavyAttack,
-  [Action.Special]: AnimState.Special,
-};
+/** Per-fighter loadout/handicap the caller (Campaign level, PvP, tests) supplies. */
+export interface SimOptions {
+  p1Gun?: GunId;
+  p2Gun?: GunId;
+  p1HpMult?: number;
+  p2HpMult?: number;
+}
 
 const FIGHTER_SEPARATION = 1.5;
-const FIXED_DT = 1 / 60; // reference tick the frame data is authored against
+const FIXED_DT = 1 / 60;
+
+// Muzzle height (m) the tracer leaves from, and torso height the shot aims at.
+const MUZZLE_HEIGHT = 1.4;
+const TORSO_HEIGHT = 1.05;
+
+// Reaction by hit weight — drives stagger length, knockback and which clip plays.
+const STAGGER_DURATION: Record<'light' | 'heavy' | 'special', number> = {
+  light: 0.16,
+  heavy: 0.3,
+  special: 0.5,
+};
+const KNOCKBACK_FORCE: Record<'light' | 'heavy' | 'special', number> = {
+  light: 1.6,
+  heavy: 3.2,
+  special: 5,
+};
+const REACTION_ANIM: Record<'light' | 'heavy' | 'special', AnimState> = {
+  light: AnimState.HitLight,
+  heavy: AnimState.HitHeavy,
+  special: AnimState.Knockdown,
+};
 
 /** Serializable per-fighter snapshot — exactly what a StateUpdate carries. */
 export interface SimFighterState {
@@ -79,6 +84,11 @@ export interface SimFighterState {
   isStaggered: boolean;
   isGrounded: boolean;
   isDead: boolean;
+  // Gun/HUD state.
+  gunId: GunId;
+  ammo: number;
+  magazine: number;
+  reloading: boolean;
 }
 
 export interface SimSnapshot {
@@ -87,27 +97,49 @@ export interface SimSnapshot {
   winner: FighterId | null;
 }
 
-/** Authoritative event the client renders (hit sparks, KO, etc.). */
+/** Authoritative event the client renders (muzzle/tracer, impact, KO, …). */
 export type SimEvent =
-  | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
+  // Legacy melee event — never emitted by the ranged resolver; retained until
+  // GameScene migrates to `fire` in slice 5 (keeps the old consumer compiling).
   | { kind: 'attackStart'; fighter: FighterId; anim: AnimState; chain: boolean }
+  // A shot left the muzzle: renderer plays the fire clip + muzzle flash + gunshot
+  // + screen-shake and draws a tracer travelling origin→target over dist/speed.
+  | { kind: 'fire'; fighter: FighterId; gunId: GunId; origin: [number, number, number]; dir: [number, number, number]; speed: number; target: [number, number, number] }
+  // A landed shot — same shape as before so GameRoom/GameScene hit handling is unchanged.
+  | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
+  // A projectile reached the target (hit or whiff) — renderer shows impact / dust.
+  | { kind: 'projectileHit'; shooterId: FighterId; targetId: FighterId; hit: boolean; crit: boolean; position: [number, number, number] }
   | { kind: 'ko'; winner: FighterId; loser: FighterId };
 
-interface AttackTrack {
-  active: boolean;
-  anim: AnimState;
-  elapsed: number;   // seconds into the current attack
-  duration: number;  // total seconds (frame data total / 60)
-  consumed: Set<number>; // hitbox indices already landed this swing
-  chain: MoveType[]; // current cancel string, for gatling routing
+interface Weapon {
+  gun: GunStats;
+  cooldown: number;    // seconds until the next shot is allowed
+  ammo: number;        // rounds left in the magazine
+  reloading: boolean;
+  reloadTimer: number; // seconds left on the current reload
+}
+
+interface Projectile {
+  shooterId: FighterId;
+  targetId: FighterId;
+  damage: number;      // pre-rolled (incl. crit + range falloff), pre-defense
+  crit: boolean;
+  accuracy: number;    // hit chance at arrival when the target is NOT dodging
+  arriveIn: number;    // seconds of travel left before it resolves
+  impact: THREE.Vector3;
 }
 
 interface Fighter {
   id: FighterId;
   classId: ClassId;
   ctrl: CharacterController;
-  attack: AttackTrack;
+  weapon: Weapon;
   reactionAnim: AnimState; // hit-reaction clip to show while staggered
+  hitStreak: number;       // consecutive landed shots (HUD/`comboCount`)
+}
+
+function makeWeapon(gun: GunStats): Weapon {
+  return { gun, cooldown: 0, ammo: gun.magazine, reloading: false, reloadTimer: 0 };
 }
 
 // Where did the blow land relative to the defender's facing?
@@ -122,47 +154,41 @@ function hitDirection(defender: CharacterController, knockbackDir: THREE.Vector3
   return 'side';
 }
 
-function attackDuration(classId: ClassId, anim: AnimState): number {
-  const fdState = anim === AnimState.JumpAttack ? AnimState.HeavyAttack : anim;
-  const fd = CLASS_FRAME_DATA[classId]?.[fdState];
-  if (!fd) return 0.4;
-  return (fd.startup + fd.active + fd.recovery) / 60;
-}
-
 export class CombatSim {
   readonly damage = new DamageSystem();
-  readonly combos = new ComboSystem();
   readonly knockback = new KnockbackPhysics();
 
   private fighters: Record<FighterId, Fighter>;
-  private ais: Partial<Record<FighterId, EnemyAI>> = {};
+  private ais: Partial<Record<FighterId, RangedAI>> = {};
+  private projectiles: Projectile[] = [];
   private tick = 0;
   private winner: FighterId | null = null;
   private events: SimEvent[] = [];
 
-  constructor(p1Class: ClassId, p2Class: ClassId) {
-    const mk = (id: FighterId, classId: ClassId, x: number): Fighter => ({
-      id,
-      classId,
-      ctrl: new CharacterController(new THREE.Vector3(x, 0, 0)),
-      attack: { active: false, anim: AnimState.LightAttack, elapsed: 0, duration: 0, consumed: new Set(), chain: [] },
-      reactionAnim: AnimState.HitLight,
-    });
+  constructor(p1Class: ClassId, p2Class: ClassId, opts: SimOptions = {}) {
+    const mk = (id: FighterId, classId: ClassId, x: number, gunId: GunId, hpMult: number): Fighter => {
+      const ctrl = new CharacterController(new THREE.Vector3(x, 0, 0));
+      ctrl.state.maxHealth = Math.round(100 * hpMult);
+      ctrl.state.health = ctrl.state.maxHealth;
+      return {
+        id, classId, ctrl,
+        weapon: makeWeapon(getGun(gunId)),
+        reactionAnim: AnimState.HitLight,
+        hitStreak: 0,
+      };
+    };
 
     this.fighters = {
-      p1: mk('p1', p1Class, -2.5),
-      p2: mk('p2', p2Class, 2.5),
+      p1: mk('p1', p1Class, -2.5, opts.p1Gun ?? STARTER_GUN_ID, opts.p1HpMult ?? 1),
+      p2: mk('p2', p2Class, 2.5, opts.p2Gun ?? STARTER_GUN_ID, opts.p2HpMult ?? 1),
     };
 
     for (const id of ['p1', 'p2'] as FighterId[]) {
       this.damage.registerFighter(id, this.fighters[id].classId);
-      this.combos.register(id, this.fighters[id].classId);
       this.knockback.register(id);
     }
     this.fighters.p1.ctrl.setLockOnTarget(this.fighters.p2.ctrl);
     this.fighters.p2.ctrl.setLockOnTarget(this.fighters.p1.ctrl);
-
-    this.damage.onDamage((event) => this.onDamage(event));
   }
 
   get isOver(): boolean {
@@ -178,26 +204,22 @@ export class CombatSim {
     return this.fighters[id].ctrl;
   }
 
-  /** Normalized progress (0..1) of a fighter's current attack, or 0 if not
-   *  attacking — the renderer uses it to drive the weapon-trail arc. */
-  attackProgress(id: FighterId): number {
-    const a = this.fighters[id].attack;
-    if (!a.active || a.duration <= 0) return 0;
-    return Math.min(1, a.elapsed / a.duration);
+  /** Legacy melee accessor — no swing arc in a shooter, always 0 (slice-5 removal). */
+  attackProgress(_id: FighterId): number {
+    return 0;
   }
 
-  /** The combo state for a fighter (HUD count, etc.). */
-  comboState(id: FighterId) {
-    return this.combos.getState(id);
+  /** Legacy melee accessor — no combo system in the stat-duel (slice-5 removal). */
+  comboState(_id: FighterId): ComboState | null {
+    return null;
   }
 
   /**
-   * Make a fighter AI-controlled (PvE). The sim then drives that fighter's input
-   * and combo follow-ups internally; the caller need not provide its InputSystem.
-   * Leave a fighter un-attached for human/network control via `step`'s inputs.
+   * Make a fighter AI-controlled (PvE). The RangedAI holds Fire on a difficulty-
+   * scaled cadence and reactively dodges shots the sim reports via `onIncomingFire`.
    */
   attachAI(id: FighterId, difficulty: AIDifficulty) {
-    this.ais[id] = new EnemyAI(difficulty, this.fighters[id].classId);
+    this.ais[id] = new RangedAI(difficulty, this.fighters[id].classId);
   }
 
   private inputFor(id: FighterId, inputs: Partial<Record<FighterId, InputSystem>>): InputSystem {
@@ -225,7 +247,7 @@ export class CombatSim {
     const clampedDt = Math.min(dt, 0.05);
     const ids = ['p1', 'p2'] as FighterId[];
 
-    // 0. AI-controlled fighters decide their input first (movement + buffered attack).
+    // 0. AI-controlled fighters decide their input first (movement + dodge).
     for (const id of ids) {
       const ai = this.ais[id];
       if (ai) {
@@ -234,32 +256,29 @@ export class CombatSim {
       }
     }
 
-    // 1. Movement / dodge / block / jump. Camera-relative on the client (the local
-    //    player passes its camera yaw); the server passes none → world-frame (0).
+    // 1. Movement / dodge. Camera-relative on the client (the local player passes
+    //    its camera yaw); the server passes none → world-frame (0).
     for (const id of ids) {
       const f = this.fighters[id];
       if (!f.ctrl.state.isDead) f.ctrl.update(clampedDt, this.inputFor(id, inputs), cameraYaw[id] ?? 0);
     }
 
-    // 2. Attack triggers (buffered, cancel-window + gatling gating). AI fighters
-    //    also chain their queued combo follow-ups through the same cancel gate.
+    // 2. Weapons: tick cooldown/reload, then fire if Fire is held and ready.
     for (const id of ids) {
-      this.handleAttackInput(id, this.inputFor(id, inputs));
-      this.handleAiFollowup(id);
+      this.updateWeapon(id, clampedDt);
+      this.handleFire(id, this.inputFor(id, inputs));
     }
 
-    // 3. Keep bodies from overlapping.
+    // 3. Keep bodies from overlapping (they should stay at range, but just in case).
     this.fighters.p1.ctrl.separateFrom(this.fighters.p2.ctrl, FIGHTER_SEPARATION);
 
-    // 4. Advance attack timelines + resolve hits (animation-clock-free).
-    this.resolveAttack('p1', 'p2', clampedDt);
-    this.resolveAttack('p2', 'p1', clampedDt);
+    // 4. Advance in-flight projectiles and resolve any that arrive this step.
+    this.updateProjectiles(clampedDt);
 
     // 5. Systems.
     this.knockback.update(clampedDt, 'p1', this.fighters.p1.ctrl);
     this.knockback.update(clampedDt, 'p2', this.fighters.p2.ctrl);
     this.damage.updateStamina(clampedDt);
-    this.combos.update(clampedDt);
 
     // 6. Advance input frame edges.
     for (const id of ids) this.inputFor(id, inputs).update();
@@ -267,176 +286,174 @@ export class CombatSim {
     return this.events;
   }
 
-  // Chain an AI fighter's queued combo follow-ups via the same cancel gate the
-  // player uses (the AI builds class routes; we pull them one per cancel window).
-  private handleAiFollowup(id: FighterId) {
-    const ai = this.ais[id];
-    if (!ai) return;
-    if (!this.fighters[id].attack.active || !this.canCancel(id)) return;
-    const next = ai.takeFollowUp();
-    const anim = next ? AI_ACTION_TO_ANIM[next] : undefined;
-    if (anim) this.startAttack(id, anim, true);
-  }
+  // ── Weapon lifecycle ──────────────────────────────────────────────────────
 
-  // ── Attack lifecycle ──────────────────────────────────────────────────────
-
-  private canCancel(id: FighterId): boolean {
-    const f = this.fighters[id];
-    if (!f.attack.active) return true;
-    const progress = f.attack.duration > 0 ? f.attack.elapsed / f.attack.duration : 1;
-    const fdState = f.attack.anim === AnimState.JumpAttack ? AnimState.HeavyAttack : f.attack.anim;
-    const fd = CLASS_FRAME_DATA[f.classId]?.[fdState];
-    if (!fd) return progress > 0.5;
-    const total = fd.startup + fd.active + fd.recovery;
-    const activeStart = fd.startup / total;
-    const recoveryStart = (fd.startup + fd.active) / total;
-    // On a confirmed hit, cancel from the active frames; on a whiff, only in recovery.
-    return f.attack.consumed.size > 0 ? progress >= activeStart : progress >= recoveryStart;
-  }
-
-  private handleAttackInput(id: FighterId, input: InputSystem) {
-    const f = this.fighters[id];
-    const attacking = f.attack.active;
-    if (attacking && !this.canCancel(id)) return;
-
-    const onRoute = (mv: MoveType) => !attacking || canGatlingCancel(f.classId, f.attack.chain, mv);
-
-    if (onRoute(MoveType.LightAttack) && input.consumeBuffered(Action.LightAttack)) {
-      this.startAttack(id, AnimState.LightAttack, attacking);
-    } else if (onRoute(MoveType.HeavyAttack) && input.consumeBuffered(Action.HeavyAttack)) {
-      this.startAttack(id, AnimState.HeavyAttack, attacking);
-    } else if (onRoute(MoveType.Special) && input.consumeBuffered(Action.Special)) {
-      this.startAttack(id, AnimState.Special, attacking);
-    }
-  }
-
-  private startAttack(id: FighterId, animState: AnimState, isCancel: boolean) {
-    const f = this.fighters[id];
-    const s = f.ctrl.state;
-    if (s.isDodging || s.isStaggered || s.isDead) return;
-    if (s.isAttacking && !isCancel) return;
-
-    const move = s.isGrounded ? animState : AnimState.JumpAttack;
-
-    const cost = MOVE_STAMINA[move] ?? 10;
-    if (!this.damage.hasStamina(id, cost)) return;
-    this.damage.consumeStamina(id, cost);
-
-    s.isAttacking = true;
-    f.attack.active = true;
-    f.attack.anim = move;
-    f.attack.elapsed = 0;
-    f.attack.duration = attackDuration(f.classId, move);
-    f.attack.consumed.clear();
-
-    const mv = ANIM_TO_MOVE[move];
-    if (isCancel && mv) f.attack.chain = [...f.attack.chain, mv];
-    else f.attack.chain = mv ? [mv] : [];
-
-    // Committed step into the strike (front-loaded), then plants.
-    const target = this.fighters[id === 'p1' ? 'p2' : 'p1'].ctrl;
-    const lungeDir = new THREE.Vector3().subVectors(target.state.position, s.position).setY(0).normalize();
-    const dist = s.position.distanceTo(target.state.position);
-    const stepInto = move === AnimState.LightAttack ? 0.5 : move === AnimState.HeavyAttack ? 0.95 : 1.3;
-    const gap = Math.max(0, dist - 1.1);
-    f.ctrl.applyLunge(lungeDir, Math.min(stepInto, gap));
-    if (!s.isGrounded) s.velocity.y = Math.min(s.velocity.y, -3);
-
-    // Tell the renderer to (re)play the swing clip — needed so a cancel into the
-    // same move restarts the animation instead of holding the last pose. `chain`
-    // (this attack is a cancel) gates the combo-clip variety on the render side.
-    this.events.push({ kind: 'attackStart', fighter: id, anim: move, chain: isCancel });
-  }
-
-  private resolveAttack(attackerId: FighterId, defenderId: FighterId, dt: number) {
-    const atk = this.fighters[attackerId];
-    const def = this.fighters[defenderId];
-    if (!atk.attack.active) return;
-
-    atk.attack.elapsed += dt;
-    const progress = atk.attack.duration > 0 ? atk.attack.elapsed / atk.attack.duration : 1;
-
-    if (progress >= 1) {
-      // Clip finished → release control.
-      atk.attack.active = false;
-      atk.ctrl.state.isAttacking = false;
+  private updateWeapon(id: FighterId, dt: number) {
+    const w = this.fighters[id].weapon;
+    if (w.reloading) {
+      w.reloadTimer -= dt;
+      if (w.reloadTimer <= 0) {
+        w.reloading = false;
+        w.ammo = w.gun.magazine;
+      }
       return;
     }
+    if (w.cooldown > 0) w.cooldown -= dt;
+  }
 
-    const fdState = atk.attack.anim === AnimState.JumpAttack ? AnimState.HeavyAttack : atk.attack.anim;
-    const fd = CLASS_FRAME_DATA[atk.classId]?.[fdState];
-    const moveType = ANIM_TO_MOVE[atk.attack.anim];
-    const move = moveType ? getMoveForAction(atk.classId, moveType) : undefined;
-    if (!fd || !move) return;
+  private handleFire(id: FighterId, input: InputSystem) {
+    const s = this.fighters[id].ctrl.state;
+    if (s.isDead || s.isDodging || s.isStaggered) return;
+    const w = this.fighters[id].weapon;
+    if (w.reloading || w.cooldown > 0 || w.ammo <= 0) return;
+    if (!input.getAction(Action.Fire).held) return; // auto-fire while held, gated by cadence
+    this.fireShot(id);
+  }
 
-    fd.hitboxes.forEach((hb, i) => {
-      if (atk.attack.consumed.has(i)) return;
-      const win = getHitboxWindow(fd, hb);
-      if (progress < win.start || progress > win.end) return;
-      if (hitboxHits(hb, atk.ctrl.state.position, atk.ctrl.state.rotation, def.ctrl.state.position)) {
-        atk.attack.consumed.add(i);
-        const contact = hitboxContactPoint(hb, atk.ctrl.state.position, atk.ctrl.state.rotation);
-        this.damage.calculateAndApply(attackerId, defenderId, atk.ctrl, def.ctrl, hb, move, contact);
-      }
+  private fireShot(id: FighterId) {
+    const f = this.fighters[id];
+    const oppId: FighterId = id === 'p1' ? 'p2' : 'p1';
+    const target = this.fighters[oppId];
+    const gun = f.weapon.gun;
+
+    f.weapon.ammo -= 1;
+    f.weapon.cooldown = 60 / gun.fireRate;
+    if (f.weapon.ammo <= 0) {
+      f.weapon.reloading = true;
+      f.weapon.reloadTimer = gun.reloadTime;
+    }
+
+    const sPos = f.ctrl.state.position;
+    const tPos = target.ctrl.state.position;
+    const aim = new THREE.Vector3(tPos.x, TORSO_HEIGHT, tPos.z);
+    const planarDir = new THREE.Vector3(aim.x - sPos.x, 0, aim.z - sPos.z);
+    const planarDist = planarDir.length() || 1e-3;
+    planarDir.multiplyScalar(1 / planarDist);
+    // Muzzle sits at gun height, just in front of the shooter toward the target.
+    const origin = new THREE.Vector3(sPos.x, MUZZLE_HEIGHT, sPos.z).addScaledVector(planarDir, 0.4);
+    const dir = aim.clone().sub(origin);
+    const dist = dir.length() || 1e-3;
+    dir.multiplyScalar(1 / dist);
+
+    // Pre-roll crit (gun + a slice of the class crit rate) and range falloff.
+    const stats = this.damage.getStats(id);
+    const critChance = gun.critChance + (stats?.critRate ?? 0) * 0.5;
+    const crit = Math.random() < critChance;
+    const falloff = dist <= gun.range ? 1 : Math.max(0.45, 1 - (dist - gun.range) * 0.07);
+    const damage = gun.damage * (crit ? gun.critMult : 1) * falloff;
+    const arriveIn = dist / gun.projectileSpeed;
+
+    this.projectiles.push({
+      shooterId: id,
+      targetId: oppId,
+      damage,
+      crit,
+      accuracy: gun.accuracy,
+      arriveIn,
+      impact: aim,
+    });
+
+    // Let an AI target react (dodge timing is the skill that scales the duel).
+    this.ais[oppId]?.onIncomingFire(arriveIn, target.ctrl);
+
+    this.events.push({
+      kind: 'fire',
+      fighter: id,
+      gunId: gun.id,
+      origin: [origin.x, origin.y, origin.z],
+      dir: [dir.x, dir.y, dir.z],
+      speed: gun.projectileSpeed,
+      target: [aim.x, aim.y, aim.z],
     });
   }
 
-  // ── On-hit reactions (sim-affecting only; VFX live on the client) ───────────
+  // ── Projectile resolution ─────────────────────────────────────────────────
 
-  private onDamage(event: DamageEvent) {
-    const attacker = this.fighters[event.attackerId as FighterId];
-    const defender = this.fighters[event.defenderId as FighterId];
-    const dir = hitDirection(defender.ctrl, event.knockbackDir);
+  private updateProjectiles(dt: number) {
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      p.arriveIn -= dt;
+      if (p.arriveIn <= 0) {
+        this.resolveProjectile(p);
+        this.projectiles.splice(i, 1);
+      }
+    }
+  }
 
-    // Parry: attacker bounces off the guard, stunned.
-    if (event.parried) {
-      attacker.attack.active = false;
-      attacker.ctrl.state.isAttacking = false;
-      attacker.ctrl.applyStagger(0.7, 0.2);
-      attacker.reactionAnim = AnimState.HitHeavy;
-      this.events.push({ kind: 'hit', event, comboCount: 0, direction: dir });
+  private resolveProjectile(p: Projectile) {
+    const target = this.fighters[p.targetId];
+    const ts = target.ctrl.state;
+    const torso: [number, number, number] = [ts.position.x, TORSO_HEIGHT, ts.position.z];
+
+    if (ts.isDead) {
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: torso });
       return;
     }
 
-    if (!event.blocked) {
-      this.combos.registerHit(event.attackerId, event.hitType === 'light'
-        ? MoveType.LightAttack
-        : event.hitType === 'heavy' ? MoveType.HeavyAttack : MoveType.Special);
-      const comboCount = this.combos.getState(event.attackerId)?.count ?? 1;
-      const comboPush = 1 + Math.min(comboCount, 8) * 0.12;
-
-      this.knockback.applyKnockback(event.defenderId, {
-        direction: event.knockbackDir,
-        force: event.knockbackForce * comboPush,
-        hitType: event.hitType,
-        killed: event.killed,
-      });
-
-      // Reaction tier: special / deep combo → knockdown; heavy → stagger; light → flinch.
-      const knockdown = event.hitType === 'special' || comboCount >= 5;
-      if (knockdown) {
-        defender.reactionAnim = AnimState.Knockdown;
-        defender.ctrl.applyStagger(1.5, 0);
-      } else {
-        defender.reactionAnim = event.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight;
-        defender.ctrl.applyStagger(STAGGER_DURATION[event.hitType] ?? 0.3);
-      }
-
-      // The struck fighter's own attack + combo are interrupted.
-      defender.attack.active = false;
-      defender.ctrl.state.isAttacking = false;
-      this.combos.drop(event.defenderId);
-
-      this.events.push({ kind: 'hit', event, comboCount, direction: dir });
+    // Dodging = i-frames (the whole point of travel-time); else roll accuracy.
+    const landed = !ts.isDodging && Math.random() < p.accuracy;
+    if (landed) {
+      this.applyShotDamage(p);
     } else {
-      this.events.push({ kind: 'hit', event, comboCount: 0, direction: dir });
+      this.fighters[p.shooterId].hitStreak = 0;
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: torso });
     }
+  }
 
-    if (event.killed && this.winner === null) {
-      const winner = event.defenderId === 'p2' ? 'p1' : 'p2';
-      const loser = event.defenderId as FighterId;
-      this.winner = winner;
-      this.events.push({ kind: 'ko', winner, loser });
+  private applyShotDamage(p: Projectile) {
+    const atk = this.fighters[p.shooterId];
+    const def = this.fighters[p.targetId];
+    const defStats = this.damage.getStats(p.targetId);
+
+    const reduction = (defStats?.defense ?? 1) * 0.06;
+    const finalDamage = Math.max(1, Math.round(p.damage * (1 - reduction)));
+    const hitType: 'light' | 'heavy' | 'special' = p.crit ? 'special' : finalDamage >= 22 ? 'heavy' : 'light';
+
+    const knockbackDir = new THREE.Vector3()
+      .subVectors(def.ctrl.state.position, atk.ctrl.state.position)
+      .setY(0)
+      .normalize();
+    const force = KNOCKBACK_FORCE[hitType];
+    const hitPosition = new THREE.Vector3(def.ctrl.state.position.x, TORSO_HEIGHT, def.ctrl.state.position.z);
+
+    def.ctrl.applyDamage(finalDamage, knockbackDir, force);
+
+    // Reaction (the sim owns gameplay state; the client just plays the clip).
+    def.reactionAnim = REACTION_ANIM[hitType];
+    def.ctrl.applyStagger(STAGGER_DURATION[hitType]);
+    this.knockback.applyKnockback(p.targetId, {
+      direction: knockbackDir,
+      force,
+      hitType,
+      killed: def.ctrl.state.isDead,
+    });
+
+    atk.hitStreak += 1;
+    def.hitStreak = 0;
+    const dir = hitDirection(def.ctrl, knockbackDir);
+
+    const event: DamageEvent = {
+      attackerId: p.shooterId,
+      defenderId: p.targetId,
+      rawDamage: Math.round(p.damage),
+      finalDamage,
+      blocked: false,
+      parried: false,
+      critical: p.crit,
+      hitType,
+      knockbackDir,
+      knockbackForce: force,
+      hitStun: STAGGER_DURATION[hitType],
+      hitPosition,
+      killed: def.ctrl.state.isDead,
+    };
+
+    this.events.push({ kind: 'hit', event, comboCount: atk.hitStreak, direction: dir });
+    this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: true, crit: p.crit, position: [hitPosition.x, hitPosition.y, hitPosition.z] });
+
+    if (def.ctrl.state.isDead && this.winner === null) {
+      this.winner = p.shooterId;
+      this.events.push({ kind: 'ko', winner: p.shooterId, loser: p.targetId });
     }
   }
 
@@ -445,11 +462,8 @@ export class CombatSim {
   private animStateOf(f: Fighter): AnimState {
     const s = f.ctrl.state;
     if (s.isDead) return AnimState.Death;
-    if (f.attack.active) return f.attack.anim;
     if (s.isStaggered) return f.reactionAnim;
     if (s.isDodging) return AnimState.Dodge;
-    if (!s.isGrounded) return AnimState.Jump;
-    if (s.isBlocking) return AnimState.Block;
     const speed = Math.hypot(s.velocity.x, s.velocity.z);
     if (speed > 0.2) return s.isRunning ? AnimState.Run : AnimState.Walk;
     return AnimState.Idle;
@@ -458,6 +472,7 @@ export class CombatSim {
   private fighterState(f: Fighter): SimFighterState {
     const s = f.ctrl.state;
     const stats = this.damage.getStats(f.id);
+    const w = f.weapon;
     return {
       id: f.id,
       classId: f.classId,
@@ -469,12 +484,16 @@ export class CombatSim {
       stamina: stats?.stamina ?? 0,
       staminaMax: stats?.staminaMax ?? 100,
       animState: this.animStateOf(f),
-      isAttacking: f.attack.active,
+      isAttacking: false,
       isBlocking: s.isBlocking,
       isDodging: s.isDodging,
       isStaggered: s.isStaggered,
       isGrounded: s.isGrounded,
       isDead: s.isDead,
+      gunId: w.gun.id,
+      ammo: w.ammo,
+      magazine: w.gun.magazine,
+      reloading: w.reloading,
     };
   }
 
