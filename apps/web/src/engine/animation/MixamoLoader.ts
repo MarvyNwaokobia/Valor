@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
 // The clean shooter animation set — one clip per gameplay state the duel drives.
-// Idle/walk/run/fire/dodge + four damage reactions (light flinch, heavy flinch,
-// crit knockdown, get-up) + death + victory. Everything melee was retired with
-// the fighter→shooter pivot; see AnimationStateMachine for how these map to states.
+// Idle/walk/run/fire/dodge + two damage flinches (light, heavy — a crit reads as a
+// heavy flinch) + death + victory. Everything melee was retired with the
+// fighter→shooter pivot; see AnimationStateMachine for how these map to states.
 export const CLIP_NAMES = {
   rifleIdle: 'rifleIdle',           // Idle — stand at the ready with the gun
   gunplayShooting: 'gunplayShooting', // Fire — one-shot muzzle animation
@@ -12,9 +12,7 @@ export const CLIP_NAMES = {
   run: 'run',
   dodge: 'dodge',                   // Dodge — reactive roll / side-step
   hitReaction: 'hitReaction',       // HitLight — light flinch
-  gettingHit: 'gettingHit',         // HitHeavy — heavier flinch
-  shoulderFall: 'shoulderFall',     // Knockdown — crit puts the target down
-  gettingUp: 'gettingUp',           // GetUp — recover from a knockdown
+  gettingHit: 'gettingHit',         // HitHeavy — heavier flinch (also crits)
   deathForward: 'deathForward',     // Death — the loser
   victory: 'victory',               // Victory — the winner
 } as const;
@@ -27,8 +25,6 @@ const ALL_ANIMS: Record<string, string> = {
   [CLIP_NAMES.dodge]: '/characters/raw/Dodging.fbx',
   [CLIP_NAMES.hitReaction]: '/characters/raw/Hit Reaction.fbx',
   [CLIP_NAMES.gettingHit]: '/characters/raw/Getting Hit.fbx',
-  [CLIP_NAMES.shoulderFall]: '/characters/raw/Shoulder Hit And Fall.fbx',
-  [CLIP_NAMES.gettingUp]: '/characters/raw/Getting Up.fbx',
   [CLIP_NAMES.deathForward]: '/characters/raw/Standing Death Forward 02.fbx',
   [CLIP_NAMES.victory]: '/characters/raw/Victory.fbx',
 };

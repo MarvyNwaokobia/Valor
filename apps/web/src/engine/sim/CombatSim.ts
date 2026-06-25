@@ -60,10 +60,13 @@ const KNOCKBACK_FORCE: Record<'light' | 'heavy' | 'special', number> = {
   heavy: 3.2,
   special: 5,
 };
+// A crit ('special') still hits harder (longer stagger + more knockback above) but
+// reads as a heavy flinch, not a full knockdown — a stand-and-trade gun duel keeps
+// flowing rather than dropping a fighter to the floor every crit.
 const REACTION_ANIM: Record<'light' | 'heavy' | 'special', AnimState> = {
   light: AnimState.HitLight,
   heavy: AnimState.HitHeavy,
-  special: AnimState.Knockdown,
+  special: AnimState.HitHeavy,
 };
 
 /** Serializable per-fighter snapshot — exactly what a StateUpdate carries. */

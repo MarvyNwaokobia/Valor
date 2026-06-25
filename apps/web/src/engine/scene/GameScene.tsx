@@ -11,7 +11,7 @@ import { getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import type { DamageEvent } from '../combat/DamageSystem';
 import { type ComboState, STARTER_GUN_ID, type GunId } from '../combat';
-import { AIDifficulty } from '../combat/EnemyAI';
+import { AIDifficulty } from '../combat';
 import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
 import { ParticleSystem } from '../vfx/ParticleSystem';
 import { TracerFX } from '../vfx/TracerFX';
@@ -167,8 +167,7 @@ function BattleWorld({
     combatAudio.onDamageEvent(ev);
     if (ev.killed) return; // the KO handler plays the death + ends the match
 
-    if (ev.hitType === 'special') defenderAnim.transition(AnimState.Knockdown, true);
-    else defenderAnim.transitionHit(ev.hitType === 'heavy' ? AnimState.HitHeavy : AnimState.HitLight, e.direction);
+    defenderAnim.transitionHit(ev.hitType === 'light' ? AnimState.HitLight : AnimState.HitHeavy, e.direction);
 
     // Only crits/heavies nudge the camera + crowd; light hits stay quiet so a stream
     // of bullets doesn't thrash the screen.

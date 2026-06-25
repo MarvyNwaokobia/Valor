@@ -14,26 +14,19 @@ const MIN_BAKED_STRIDE = 1;
 // planted across differently-sized fighters.
 const REF_HIP_HEIGHT_M = 1.0;
 
+// The shooter's complete state set — exactly the states the stat-duel drives.
+// (Melee states, crit-knockdown and get-up were retired with the fighter→shooter
+// pivot; a crit now reads as a heavy flinch.)
 export enum AnimState {
   Idle = 'idle',
   Walk = 'walk',
   Run = 'run',
   Fire = 'fire',
-  LightAttack = 'lightAttack',
-  HeavyAttack = 'heavyAttack',
-  Special = 'special',
-  Block = 'block',
-  BlockHit = 'blockHit',
   Dodge = 'dodge',
-  Jump = 'jump',
-  JumpAttack = 'jumpAttack',
   HitLight = 'hitLight',
   HitHeavy = 'hitHeavy',
-  Knockdown = 'knockdown',
-  GetUp = 'getUp',
   Death = 'death',
   Victory = 'victory',
-  Intro = 'intro',
 }
 
 export type HitDirection = 'front' | 'back' | 'side';
@@ -86,8 +79,6 @@ function buildAnimMap(tempo: number): AnimationMap {
     [AnimState.Dodge]:     { clip: CLIP_NAMES.dodge,        loop: false, speed: 1.3,          fadeIn: 0.05, fadeOut: 0.12, duration: 0.5, canInterrupt: false, nextState: AnimState.Idle },
     [AnimState.HitLight]:  { clip: CLIP_NAMES.hitReaction,  loop: false, speed: 1.3,          fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
     [AnimState.HitHeavy]:  { clip: CLIP_NAMES.gettingHit,   loop: false, speed: 1.0,          fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
-    [AnimState.Knockdown]: { clip: CLIP_NAMES.shoulderFall, loop: false, speed: 0.85,         fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.GetUp },
-    [AnimState.GetUp]:     { clip: CLIP_NAMES.gettingUp,    loop: false, speed: 1.0,          fadeIn: 0.12, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
     [AnimState.Death]:     { clip: CLIP_NAMES.deathForward, loop: false, speed: 1.0,          fadeIn: 0.08, fadeOut: 0,    canInterrupt: false },
     [AnimState.Victory]:   { clip: CLIP_NAMES.victory,      loop: false, speed: 1.0,          fadeIn: 0.2,  fadeOut: 0,    canInterrupt: false },
   };
@@ -225,14 +216,9 @@ export class AnimationStateMachine {
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
-        [AnimState.Fire]: 'attack',
-        [AnimState.LightAttack]: 'attack', [AnimState.HeavyAttack]: 'attack', [AnimState.Special]: 'attack',
-        [AnimState.Block]: 'idle', [AnimState.Dodge]: 'idle',
-        [AnimState.Jump]: 'idle', [AnimState.JumpAttack]: 'attack',
-        [AnimState.HitLight]: 'hit', [AnimState.HitHeavy]: 'hit', [AnimState.Knockdown]: 'hit',
-        [AnimState.BlockHit]: 'hit', [AnimState.GetUp]: 'idle',
-        [AnimState.Victory]: 'idle', [AnimState.Intro]: 'idle',
-        [AnimState.Death]: 'death',
+        [AnimState.Fire]: 'attack', [AnimState.Dodge]: 'idle',
+        [AnimState.HitLight]: 'hit', [AnimState.HitHeavy]: 'hit',
+        [AnimState.Victory]: 'idle', [AnimState.Death]: 'death',
       };
       const fb = stateToGlb[newState];
       if (fb) clip = this.clips.get(fb);

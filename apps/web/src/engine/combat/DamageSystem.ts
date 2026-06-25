@@ -1,7 +1,4 @@
 import * as THREE from 'three';
-import type { CharacterController } from '../character';
-import type { HitboxData } from './HitboxSystem';
-import type { MoveDefinition } from './MoveRegistry';
 
 export interface DamageEvent {
   attackerId: string;
@@ -87,99 +84,6 @@ export class DamageSystem {
       const idx = this.listeners.indexOf(listener);
       if (idx >= 0) this.listeners.splice(idx, 1);
     };
-  }
-
-  calculateAndApply(
-    attackerId: string,
-    defenderId: string,
-    attacker: CharacterController,
-    defender: CharacterController,
-    hitbox: HitboxData,
-    move: MoveDefinition,
-    contactPoint?: THREE.Vector3
-  ): DamageEvent {
-    const atkStats = this.stats.get(attackerId);
-    const defStats = this.stats.get(defenderId);
-    if (!atkStats || !defStats) {
-      throw new Error(`Fighter stats not found: ${attackerId} or ${defenderId}`);
-    }
-
-    const critical = Math.random() < atkStats.critRate;
-    const critMult = critical ? atkStats.critMultiplier : 1;
-
-    const rawDamage = Math.round(hitbox.damage * atkStats.attack * critMult);
-
-    const blocked = defender.state.isBlocking && move.blockable;
-
-    // Parry — a hit caught in the guard's opening window. No damage, no
-    // knockback, no stamina cost: the defender stuffs it clean (the attacker's
-    // punish is applied by the caller).
-    if (blocked && defender.canParry()) {
-      const knockbackDir = new THREE.Vector3()
-        .subVectors(defender.state.position, attacker.state.position)
-        .setY(0)
-        .normalize();
-      const hitPosition = contactPoint
-        ? contactPoint.clone()
-        : defender.state.position.clone().setY(defender.state.position.y + 1.1);
-      const event: DamageEvent = {
-        attackerId, defenderId, rawDamage,
-        finalDamage: 0, blocked: true, parried: true, critical: false,
-        hitType: hitbox.type, knockbackDir, knockbackForce: 0, hitStun: 0,
-        hitPosition, killed: false,
-      };
-      for (const listener of this.listeners) listener(event);
-      return event;
-    }
-    const defenseReduction = blocked
-      ? defStats.blockEfficiency
-      : defStats.defense * 0.1;
-    const finalDamage = Math.max(1, Math.round(rawDamage * (1 - defenseReduction)));
-
-    if (blocked && defStats.stamina !== undefined) {
-      defStats.stamina = Math.max(0, defStats.stamina - rawDamage * 0.5);
-    }
-
-    const knockbackDir = new THREE.Vector3()
-      .subVectors(defender.state.position, attacker.state.position)
-      .setY(0)
-      .normalize();
-
-    const knockbackForce = blocked
-      ? hitbox.knockback * 0.3
-      : hitbox.knockback;
-
-    const hitStun = blocked ? hitbox.hitStun * 0.4 : hitbox.hitStun;
-
-    // Prefer the true contact point (the fist/weapon position); fall back to a
-    // point just in front of the defender's torso if none was supplied.
-    const hitPosition = contactPoint
-      ? contactPoint.clone()
-      : defender.state.position.clone().setY(defender.state.position.y + 1).addScaledVector(knockbackDir, -0.3);
-
-    const result = defender.applyDamage(finalDamage, knockbackDir, knockbackForce);
-
-    const event: DamageEvent = {
-      attackerId,
-      defenderId,
-      rawDamage,
-      finalDamage: result?.actualDamage ?? finalDamage,
-      blocked: result?.blocked ?? blocked,
-      parried: false,
-      critical,
-      hitType: hitbox.type,
-      knockbackDir,
-      knockbackForce,
-      hitStun,
-      hitPosition,
-      killed: defender.state.isDead,
-    };
-
-    for (const listener of this.listeners) {
-      listener(event);
-    }
-
-    return event;
   }
 
   updateStamina(dt: number) {
