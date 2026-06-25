@@ -11,6 +11,10 @@ export { AbilityManager, CLASS_ABILITIES } from './ClassAbilities';
 export type { AbilityState, ClassAbility } from './ClassAbilities';
 
 export { EnemyAI, AIState, AIDifficulty } from './EnemyAI';
+export { RangedAI } from './RangedAI';
 
 export { ComboSystem, CLASS_COMBO_ROUTES, getGatlingRoutes, canGatlingCancel } from './ComboSystem';
 export type { ComboState, ComboRoute } from './ComboSystem';
+
+export { GUN_CATALOG, gunDps, getGun, STARTER_GUN_ID } from './GunStats';
+export type { GunStats, GunId } from './GunStats';

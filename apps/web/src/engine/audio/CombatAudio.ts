@@ -131,6 +131,45 @@ export class CombatAudio {
     } catch {}
   }
 
+  /** A short gunshot — a high-passed noise crack over a quick low-sine punch.
+   *  Kept brief so rapid-fire weapons don't smear into a wall of sound. */
+  playGunshot() {
+    if (this.stopped) return;
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+
+      // Crack — short high-passed noise burst.
+      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.06), ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 1100;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.3, now);
+      ng.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      noise.connect(hp).connect(ng).connect(ctx.destination);
+      noise.start(now);
+      noise.stop(now + 0.07);
+
+      // Body — quick downward low-sine punch.
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(70, now + 0.08);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.22, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(og).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } catch {}
+  }
+
   /** Bright metallic clang for a parry / perfect guard. */
   playParry() {
     if (this.stopped) return;
