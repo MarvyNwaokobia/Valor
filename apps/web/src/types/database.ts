@@ -107,6 +107,7 @@ export interface Player {
   g_earned_lifetime: number
   wins: number
   losses: number
+  pve_level: number                            // highest PvE Campaign level cleared (0 = none)
 
   // Decay
   last_active: string

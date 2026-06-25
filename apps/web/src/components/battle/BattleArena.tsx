@@ -11,6 +11,7 @@ import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
 import BattlePvP from './BattlePvP'
 import ChallengeBattle from './ChallengeBattle'
+import CampaignSelect from './CampaignSelect'
 import BattleScene from './BattleScene'
 import ImpactBurst from './ImpactBurst'
 import HitSpark from './HitSpark'
@@ -67,6 +68,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   const router = useRouter()
   const [showChallenge,       setShowChallenge]       = useState(false)
   const [showDirectChallenge, setShowDirectChallenge] = useState(!!challengeTarget)
+  const [showCampaign,        setShowCampaign]        = useState(false)
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
 
   const { phase, playerHp, botHp, round, log, specialUsed, result, saveError, botClass, starting, submitting,
@@ -252,6 +254,10 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
   }
 
   // ── LIVE PVP ────────────────────────────────────────────────────────────
+  if (phase === 'idle' && showCampaign) {
+    return <CampaignSelect player={player} onBack={() => setShowCampaign(false)} />
+  }
+
   if (phase === 'idle' && showChallenge) {
     return <BattlePvP player={player} walletAddress={walletAddress} onBack={() => setShowChallenge(false)} />
   }
@@ -321,11 +327,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
             <p className="text-slate-500 text-sm mt-1">Win = +100 XP · Loss = +30 XP · Every fight counts.</p>
           </motion.div>
 
-          <motion.button onClick={() => {
-              const el = document.documentElement
-              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
-              router.push('/fight')
-            }}
+          <motion.button onClick={() => setShowCampaign(true)}
             disabled={starting}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all disabled:opacity-60 disabled:pointer-events-none"
             style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
@@ -342,9 +344,9 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
                 <Bot size={28} style={{ color: '#ef4444' }} strokeWidth={1.5} />
               </div>
               <div>
-                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Fight a Bot</p>
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Campaign</p>
                 <p className="text-slate-500 text-sm mt-0.5">
-                  {starting ? 'Finding an opponent...' : '5-round battle · Scales to your rank · Instant result'}
+                  15 levels · beat each to unlock the next · earn XP toward your rank
                 </p>
               </div>
               <ChevronLeft size={16} className="ml-auto rotate-180 text-slate-700 group-hover:text-white transition-colors" />

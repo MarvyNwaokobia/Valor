@@ -84,6 +84,7 @@ pub struct Player {
     pub decay_frozen_until: Option<DateTime<Utc>>,
     pub wins: i32,
     pub losses: i32,
+    pub pve_level: i32, // highest PvE Campaign level cleared (0 = none)
     pub created_at: DateTime<Utc>,
     pub character_claim_tx: Option<String>,
 }

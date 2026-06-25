@@ -2,10 +2,12 @@
 
 import { useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
+import { getLevel } from '@/engine/campaign/levels';
+import { AIDifficulty } from '@/engine/combat';
 import type { StageId } from '@/engine/scene/ArenaStage';
 
 const GameScene = dynamic(
@@ -52,27 +54,54 @@ export default function FightPage() {
   const player = usePlayerStore((s) => s.player);
   const inventory = usePlayerStore((s) => s.inventory);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { submitResult, reward, pending } = useFightRewards();
+
+  // ?level=N → a PvE Campaign fight; absent → a quick random bot fight.
+  const levelParam = searchParams.get('level');
+  const level = levelParam ? parseInt(levelParam, 10) : undefined;
 
   // The player fights with their equipped gun (or the starter sidearm).
   const playerGun = useMemo(() => equippedGunId(inventory), [inventory]);
 
   const handleBattleEnd = useCallback(
     (winner: 'player' | 'enemy', durationSecs: number) => {
-      submitResult(winner === 'player', durationSecs);
+      submitResult(winner === 'player', durationSecs, level);
     },
-    [submitResult]
+    [submitResult, level]
   );
 
-  const { playerClass, enemyClass, enemyName, stageId } = useMemo(() => {
+  const fight = useMemo(() => {
     const pc = CLASS_MAP[player?.character_class ?? 'Berserker'] ?? 'berserker';
+
+    // Campaign fight: the level defines the enemy class, gun, HP and difficulty.
+    const lvl = level ? getLevel(level) : undefined;
+    if (lvl) {
+      return {
+        playerClass: pc,
+        enemyClass: lvl.enemyClass,
+        enemyName: lvl.name,
+        stageId: lvl.stageId,
+        enemyGun: lvl.enemyGun,
+        enemyHpMult: lvl.enemyHpMult,
+        difficulty: lvl.difficulty,
+      };
+    }
+
+    // Quick fight: random enemy with the starter gun.
     const availableEnemies = ENEMY_CLASSES.filter((c) => c !== pc);
     const ec = availableEnemies[Math.floor(Math.random() * availableEnemies.length)];
     const names = ENEMY_NAMES[ec];
-    const name = names[Math.floor(Math.random() * names.length)];
-    const stage = CLASS_STAGES[ec];
-    return { playerClass: pc, enemyClass: ec, enemyName: name, stageId: stage };
-  }, [player?.character_class]);
+    return {
+      playerClass: pc,
+      enemyClass: ec,
+      enemyName: names[Math.floor(Math.random() * names.length)],
+      stageId: CLASS_STAGES[ec],
+      enemyGun: 'sidearm' as const,
+      enemyHpMult: 1,
+      difficulty: AIDifficulty.Medium,
+    };
+  }, [player?.character_class, level]);
 
   return (
     <div className="fixed inset-0 bg-black z-40">
@@ -90,11 +119,14 @@ export default function FightPage() {
       </div>
 
       <GameScene
-        playerClass={playerClass}
-        enemyClass={enemyClass}
-        enemyName={enemyName}
-        stageId={stageId}
+        playerClass={fight.playerClass}
+        enemyClass={fight.enemyClass}
+        enemyName={fight.enemyName}
+        stageId={fight.stageId}
         playerGun={playerGun}
+        enemyGun={fight.enemyGun}
+        enemyHpMult={fight.enemyHpMult}
+        difficulty={fight.difficulty}
         onBattleEnd={handleBattleEnd}
         reward={reward}
         rewardPending={pending}
