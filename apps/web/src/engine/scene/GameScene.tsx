@@ -116,10 +116,6 @@ function BattleWorld({
   const playerTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[playerClass], 24, 0.18, 0.42), [playerClass]);
   const enemyTrail = useMemo(() => new TrailRenderer(CLASS_ACCENTS[enemyClass], 24, 0.18, 0.42), [enemyClass]);
 
-  // Edge trackers: snap out of the hit clip on stagger-recovery; stop the weapon
-  // trail the instant a swing ends.
-
-
   // Footstep timer
   const playerStepTimerRef = useRef(0);
   const enemyStepTimerRef = useRef(0);
