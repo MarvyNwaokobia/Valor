@@ -1,5 +1,5 @@
 import type { EnemySpawn } from '../world/ZoneSystem';
-import { AIDifficulty } from '../combat/EnemyAI';
+import { AIDifficulty } from '../combat';
 
 export interface WaveConfig {
   enemies: WaveEnemy[];

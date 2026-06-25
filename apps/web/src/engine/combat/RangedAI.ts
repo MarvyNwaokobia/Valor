@@ -1,6 +1,15 @@
 import { Action, InputSystem } from '../input/InputSystem';
 import type { CharacterController } from '../character';
-import { AIDifficulty } from './EnemyAI';
+
+// PvE difficulty ladder. Climbs the Campaign (Easy → Boss): higher tiers fire a
+// larger share of the time, react faster, and dodge more incoming shots. Lives
+// here because RangedAI is the only AI the shooter runs.
+export enum AIDifficulty {
+  Easy = 'easy',
+  Medium = 'medium',
+  Hard = 'hard',
+  Boss = 'boss',
+}
 
 /**
  * Fire-and-dodge AI for the ranged stat-duel.
