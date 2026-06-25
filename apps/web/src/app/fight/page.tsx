@@ -18,7 +18,7 @@ const GameScene = dynamic(
       <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="text-center">
           <div className="text-2xl font-black text-white mb-2">LOADING ARENA</div>
-          <div className="text-sm text-white/40">Preparing combat...</div>
+          <div className="text-sm text-white/40">Locking in...</div>
           <div className="mt-4 w-48 h-1 bg-white/10 rounded-full overflow-hidden mx-auto">
             <div className="h-full bg-red-500 rounded-full animate-pulse w-2/3" />
           </div>
