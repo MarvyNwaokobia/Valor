@@ -435,6 +435,24 @@ pub struct LiveFightRequest {
     pub won:           bool,
     #[serde(default)]
     pub duration_secs: f64,
+    /// PvE Campaign level played (1-based), if this was a Campaign fight. Sets the
+    /// XP award and, on a first clear, advances the player's unlock.
+    #[serde(default)]
+    pub level:         Option<i32>,
+}
+
+const FIRST_CLEAR_BONUS_XP: i32 = 50;
+
+/// Base XP for clearing a Campaign level — mirrors CAMPAIGN_LEVELS.xpReward in
+/// apps/web/src/engine/campaign/levels.ts (keep the two in sync). Endless (>15) scales.
+fn campaign_base_xp(level: i32) -> i32 {
+    match level {
+        1 => 80,  2 => 90,  3 => 100, 4 => 115, 5 => 200,
+        6 => 120, 7 => 135, 8 => 150, 9 => 165, 10 => 250,
+        11 => 170, 12 => 185, 13 => 200, 14 => 220, 15 => 300,
+        n if n > 15 => 150 + (n - 15) * 10, // Endless
+        _ => 100,
+    }
 }
 
 /// Shortest real-time fight (seconds) that still earns rewards — blocks scripted
@@ -468,21 +486,51 @@ pub async fn complete_live_fight(
 
     let wallet = normalize_wallet(&body.wallet);
     let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
-    let base_xp = fight_xp(body.won);
 
-    match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, json!([])).await {
-        Ok(o) => HttpResponse::Ok().json(json!({
-            "won":           o.won,
-            "xp_awarded":    o.xp_earned,
-            "xp_multiplier": xp_multiplier,
-            "new_xp":        o.new_xp,
-            "ranked_up":     o.ranked_up,
-            "new_rank":      o.new_rank,
-            "g_awarded":     o.g_awarded,
-            "battle_id":     o.battle_id,
-        })),
-        Err(resp) => resp,
+    // A Campaign level (if any) sets the XP and unlock; otherwise it's a flat fight.
+    let (base_xp, first_clear) = match body.level {
+        Some(level) if body.won => {
+            let current: i32 = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
+                .bind(&wallet)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let first = level > current;
+            (campaign_base_xp(level) + if first { FIRST_CLEAR_BONUS_XP } else { 0 }, first)
+        }
+        Some(_) => (fight_xp(false), false), // lost the level — replayable, no unlock
+        None => (fight_xp(body.won), false),  // non-Campaign fight
+    };
+
+    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, json!([])).await {
+        Ok(o) => o,
+        Err(resp) => return resp,
+    };
+
+    // First clear advances the Campaign unlock (monotonic — never regresses).
+    if first_clear {
+        if let Some(level) = body.level {
+            let _ = sqlx::query("UPDATE players SET pve_level = $1 WHERE wallet_address = $2 AND pve_level < $1")
+                .bind(level)
+                .bind(&wallet)
+                .execute(&state.db)
+                .await;
+        }
     }
+
+    HttpResponse::Ok().json(json!({
+        "won":           outcome.won,
+        "xp_awarded":    outcome.xp_earned,
+        "xp_multiplier": xp_multiplier,
+        "new_xp":        outcome.new_xp,
+        "ranked_up":     outcome.ranked_up,
+        "new_rank":      outcome.new_rank,
+        "g_awarded":     outcome.g_awarded,
+        "battle_id":     outcome.battle_id,
+        "first_clear":   first_clear,
+    }))
 }
 
 #[derive(Deserialize)]
