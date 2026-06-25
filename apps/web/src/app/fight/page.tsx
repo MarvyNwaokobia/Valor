@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useFightRewards } from '@/hooks/useFightRewards';
+import { equippedGunId } from '@/lib/guns';
 import type { StageId } from '@/engine/scene/ArenaStage';
 
 const GameScene = dynamic(
@@ -49,8 +50,12 @@ const CLASS_STAGES: Record<ClassId, StageId> = {
 
 export default function FightPage() {
   const player = usePlayerStore((s) => s.player);
+  const inventory = usePlayerStore((s) => s.inventory);
   const router = useRouter();
   const { submitResult, reward, pending } = useFightRewards();
+
+  // The player fights with their equipped gun (or the starter sidearm).
+  const playerGun = useMemo(() => equippedGunId(inventory), [inventory]);
 
   const handleBattleEnd = useCallback(
     (winner: 'player' | 'enemy', durationSecs: number) => {
@@ -89,6 +94,7 @@ export default function FightPage() {
         enemyClass={enemyClass}
         enemyName={enemyName}
         stageId={stageId}
+        playerGun={playerGun}
         onBattleEnd={handleBattleEnd}
         reward={reward}
         rewardPending={pending}
