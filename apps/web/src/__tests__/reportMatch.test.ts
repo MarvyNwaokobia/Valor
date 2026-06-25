@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { reportPvpMatch } from '@/engine/sim/reportMatch'
 import { GameRoom, type RoomPlayer } from '@/engine/sim/GameRoom'
-import { NetMsgType, type MatchEndMsg, type InputStateMsg, type ActionTriggerMsg } from '@/engine/multiplayer/CombatProtocol'
+import { NetMsgType, type MatchEndMsg, type InputStateMsg } from '@/engine/multiplayer/CombatProtocol'
 
 const matchEnd = (winnerId: string, loserId: string): MatchEndMsg => ({
   type: NetMsgType.MatchEnd,
@@ -55,8 +55,8 @@ describe('reportPvpMatch (PvP → economy bridge)', () => {
 
     let end: MatchEndMsg | null = null
     for (let i = 0; i < 3600 && !room.isOver; i++) {
-      room.applyInput('p1', { type: NetMsgType.InputState, seq: i, timestamp: 0, moveX: 1, moveY: 0, rotation: 0, actions: [] } as InputStateMsg)
-      room.applyInput('p1', { type: NetMsgType.ActionTrigger, seq: i, action: 'light', position: [0, 0, 0], rotation: 0, timestamp: 0 } as ActionTriggerMsg)
+      // p1 holds Fire (auto-fires on cadence); p2 idle → p1 wins.
+      room.applyInput('p1', { type: NetMsgType.InputState, seq: i, timestamp: 0, moveX: 0, moveY: 0, rotation: 0, actions: ['fire'] } as InputStateMsg)
       const r = room.step()
       if (r.matchEnd) end = r.matchEnd
     }

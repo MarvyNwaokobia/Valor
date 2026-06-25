@@ -3,6 +3,10 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
 export const CLIP_NAMES = {
   fightIdle: 'fightIdle',
+  // Shooter stance + fire (the 6-clip ranged set; reactions/dodge/death/victory
+  // reuse the existing Mixamo clips below).
+  rifleIdle: 'rifleIdle',
+  gunplayShooting: 'gunplayShooting',
   walk: 'walk',
   run: 'run',
   jabCross: 'jabCross',
@@ -35,6 +39,8 @@ export const CLIP_NAMES = {
 
 const ALL_ANIMS: Record<string, string> = {
   [CLIP_NAMES.fightIdle]: '/characters/raw/Fighting Idle.fbx',
+  [CLIP_NAMES.rifleIdle]: '/characters/raw/Rifle Idle.fbx',
+  [CLIP_NAMES.gunplayShooting]: '/characters/raw/Gunplay Shooting.fbx',
   [CLIP_NAMES.walk]: '/characters/raw/Walking.fbx',
   [CLIP_NAMES.run]: '/characters/raw/Running.fbx',
   [CLIP_NAMES.jabCross]: '/characters/raw/Jab Cross.fbx',
