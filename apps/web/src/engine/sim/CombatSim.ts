@@ -90,7 +90,7 @@ export interface SimSnapshot {
 /** Authoritative event the client renders (hit sparks, KO, etc.). */
 export type SimEvent =
   | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
-  | { kind: 'attackStart'; fighter: FighterId; anim: AnimState }
+  | { kind: 'attackStart'; fighter: FighterId; anim: AnimState; chain: boolean }
   | { kind: 'ko'; winner: FighterId; loser: FighterId };
 
 interface AttackTrack {
@@ -343,8 +343,9 @@ export class CombatSim {
     if (!s.isGrounded) s.velocity.y = Math.min(s.velocity.y, -3);
 
     // Tell the renderer to (re)play the swing clip — needed so a cancel into the
-    // same move restarts the animation instead of holding the last pose.
-    this.events.push({ kind: 'attackStart', fighter: id, anim: move });
+    // same move restarts the animation instead of holding the last pose. `chain`
+    // (this attack is a cancel) gates the combo-clip variety on the render side.
+    this.events.push({ kind: 'attackStart', fighter: id, anim: move, chain: isCancel });
   }
 
   private resolveAttack(attackerId: FighterId, defenderId: FighterId, dt: number) {

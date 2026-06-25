@@ -269,7 +269,9 @@ function BattleWorld({
       if (e.kind === 'attackStart') {
         const who = e.fighter;
         const animMachine = who === 'p1' ? playerAnimMachine : enemyAnimMachine;
-        animMachine.transition(e.anim, true);
+        // `e.chain` (this attack was a cancel) advances the combo-clip variety;
+        // a fresh press plays the base clip so single-taps read consistently.
+        animMachine.transition(e.anim, true, undefined, e.chain);
         combatAudio.playSwing(who === 'p1' ? playerClass : enemyClass);
         
         // Start weapon trail

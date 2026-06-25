@@ -58,11 +58,12 @@ interface AnimStateConfig {
   onComplete?: () => void;
 }
 
-// How long a gap (seconds) between attacks before the combo chain restarts from
-// the top — matched to the combo window so a dropped combo resets the string.
-// Measured on the game clock (see `clockSec`), not wall time, so it freezes with
-// everything else during hitstop.
-const CHAIN_RESET_SEC = 1.0;
+// Safety reset (seconds) for the combo-chain cursor — matched to the combo window
+// (ComboSystem COMBO_WINDOW = 0.8). The chain is primarily gated on whether an
+// attack is an actual cancel (see resolveClipName's `comboChain`); this only
+// catches a stray cancel after a long gap. Measured on the game clock (`clockSec`),
+// so it freezes with everything else during hitstop.
+const CHAIN_RESET_SEC = 0.8;
 
 export interface AnimationMap {
   [state: string]: AnimStateConfig;
@@ -74,7 +75,7 @@ const BERSERKER_ANIMS: AnimationMap = {
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,          loop: true,  speed: 1.0,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,           loop: true,  speed: 1.1,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   // Light mash flows as a brawler flurry; heavy alternates big swings.
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.fistFight,     clips: [CLIP_NAMES.fistFight, CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch, CLIP_NAMES.roundhouseKick], variant: 'chain', loop: false, speed: 1.3,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.fistFight,     clips: [CLIP_NAMES.fistFight, CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch, CLIP_NAMES.roundhouseKick], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hook,          clips: [CLIP_NAMES.hook, CLIP_NAMES.roundhouseKick], variant: 'chain', loop: false, speed: 0.9,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseKick,clips: [CLIP_NAMES.roundhouseKick, CLIP_NAMES.roundhouseAlt], variant: 'random', loop: false, speed: 0.85, fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.bodyBlock,     loop: true,  speed: 1.0,  fadeIn: 0.08, fadeOut: 0.08, canInterrupt: true },
@@ -97,8 +98,8 @@ const PHANTOM_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.1,  fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.2,  fadeIn: 0.1,  fadeOut: 0.1,  canInterrupt: true },
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.fistFight, CLIP_NAMES.hookPunch, CLIP_NAMES.rollKick], variant: 'chain', loop: false, speed: 1.5,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
-  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.hookPunch, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.1,  fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.fistFight, CLIP_NAMES.hookPunch, CLIP_NAMES.rollKick], variant: 'chain', loop: false, speed: 1.2,  fadeIn: 0.04, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.HeavyAttack]: { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.hookPunch, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.05, fadeOut: 0.15, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Special]:     { clip: CLIP_NAMES.rollKick,       clips: [CLIP_NAMES.rollKick, CLIP_NAMES.roundhouseKick], variant: 'random', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
   [AnimState.BlockHit]:    { clip: CLIP_NAMES.reaction,       loop: false, speed: 1.5,  fadeIn: 0.03, fadeOut: 0.1,  canInterrupt: false, nextState: AnimState.Block },
@@ -120,7 +121,7 @@ const SENTINEL_ANIMS: AnimationMap = {
   [AnimState.Idle]:        { clip: CLIP_NAMES.fightIdle,      loop: true,  speed: 1.0,  fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
   [AnimState.Walk]:        { clip: CLIP_NAMES.walk,           loop: true,  speed: 0.95, fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
   [AnimState.Run]:         { clip: CLIP_NAMES.run,            loop: true,  speed: 1.0,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
-  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch, CLIP_NAMES.fistFight, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.2,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
+  [AnimState.LightAttack]: { clip: CLIP_NAMES.jabCross,       clips: [CLIP_NAMES.jabCross, CLIP_NAMES.hookPunch, CLIP_NAMES.fistFight, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.HeavyAttack]: { clip: CLIP_NAMES.hookPunch,      clips: [CLIP_NAMES.hook, CLIP_NAMES.roundhouseAlt], variant: 'chain', loop: false, speed: 1.0,  fadeIn: 0.06, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Special]:     { clip: CLIP_NAMES.roundhouseAlt,  clips: [CLIP_NAMES.roundhouseAlt, CLIP_NAMES.roundhouseKick], variant: 'random', loop: false, speed: 0.9,  fadeIn: 0.08, fadeOut: 0.2,  canInterrupt: false, nextState: AnimState.Idle },
   [AnimState.Block]:       { clip: CLIP_NAMES.outwardBlock,   loop: true,  speed: 1.0,  fadeIn: 0.06, fadeOut: 0.06, canInterrupt: true },
@@ -151,7 +152,7 @@ export class AnimationStateMachine {
   private animMap: AnimationMap;
   private onStateChange?: (from: AnimState, to: AnimState) => void;
   private paused = false;
-  private pendingTransition: { state: AnimState; force: boolean; dir?: HitDirection } | null = null;
+  private pendingTransition: { state: AnimState; force: boolean; dir?: HitDirection; comboChain?: boolean } | null = null;
   private previousAction: THREE.AnimationAction | null = null;
   // Combo-chain cursor for 'chain' variant pools (shared across attack states so
   // a light→heavy string keeps advancing), reset after a lull between hits.
@@ -187,7 +188,13 @@ export class AnimationStateMachine {
   // Picks which clip a state plays this entry: a directional reaction, a fixed
   // clip, the next in a combo chain, or a random variant — so moves and
   // reactions stop looking identical.
-  private resolveClipName(config: AnimStateConfig, dir?: HitDirection): string {
+  //
+  // `comboChain` gates the 'chain' variety: a STANDALONE attack (a fresh press,
+  // not a cancel) always plays the base clip (pool[0]) and re-arms the chain, so
+  // single-tapping Light reads as one consistent move. Only a confirmed cancel
+  // advances through the pool, so the jab→cross→hook→kick variety appears only
+  // inside an actual combo string.
+  private resolveClipName(config: AnimStateConfig, dir?: HitDirection, comboChain = false): string {
     if (dir && config.clipsByDir) {
       const pool = config.clipsByDir[dir] ?? config.clipsByDir.front;
       if (pool && pool.length > 0) {
@@ -200,7 +207,10 @@ export class AnimationStateMachine {
     if (pool.length === 1) return pool[0];
 
     if (config.variant === 'chain') {
-      if (this.clockSec - this.lastChainTime > CHAIN_RESET_SEC) this.chainIndex = 0;
+      // Fresh attack, or a cancel after a long gap → restart the string at pool[0].
+      if (!comboChain || this.clockSec - this.lastChainTime > CHAIN_RESET_SEC) {
+        this.chainIndex = 0;
+      }
       this.lastChainTime = this.clockSec;
       return pool[this.chainIndex++ % pool.length];
     }
@@ -212,6 +222,11 @@ export class AnimationStateMachine {
     return this.currentState;
   }
 
+  /** Name of the clip currently playing (which chain/random variant was picked). */
+  get currentClipName(): string | null {
+    return this.activeAction?.getClip().name ?? null;
+  }
+
   setOnStateChange(cb: (from: AnimState, to: AnimState) => void) {
     this.onStateChange = cb;
   }
@@ -221,11 +236,11 @@ export class AnimationStateMachine {
     this.transition(newState, true, dir);
   }
 
-  transition(newState: AnimState, force = false, dir?: HitDirection) {
+  transition(newState: AnimState, force = false, dir?: HitDirection, comboChain = false) {
     if (!this.mixer) return;
 
     if (this.paused) {
-      this.pendingTransition = { state: newState, force, dir };
+      this.pendingTransition = { state: newState, force, dir, comboChain };
       return;
     }
 
@@ -239,7 +254,7 @@ export class AnimationStateMachine {
     const config = this.animMap[newState];
     if (!config) return;
 
-    let clip = this.clips.get(this.resolveClipName(config, dir));
+    let clip = this.clips.get(this.resolveClipName(config, dir, comboChain));
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
@@ -358,14 +373,14 @@ export class AnimationStateMachine {
     this.paused = false;
     if (this.mixer) this.mixer.timeScale = 1;
     if (this.pendingTransition) {
-      const { state, dir } = this.pendingTransition;
+      const { state, dir, comboChain } = this.pendingTransition;
       this.pendingTransition = null;
       // Clean slate after freeze — stop everything so transition()
       // plays the new clip at full weight with no stale crossfades
       this.mixer?.stopAllAction();
       this.activeAction = null;
       this.previousAction = null;
-      this.transition(state, true, dir);
+      this.transition(state, true, dir, comboChain);
     }
   }
 
