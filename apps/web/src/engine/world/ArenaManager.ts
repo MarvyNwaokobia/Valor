@@ -85,6 +85,23 @@ const ARENAS: Record<StageId, ArenaConfig> = {
     skyColor: '#0c1a08',
     groundColor: '#1a2a10',
   },
+  industrial_hangar: {
+    id: 'industrial_hangar',
+    name: 'The Foundry',
+    description: 'A massive abandoned factory converted into a combat zone — cracked concrete, rusted steel, dusty light.',
+    classAffinity: null,
+    bounds: { minX: -20, maxX: 20, minZ: -16, maxZ: 16 },
+    spawnPoints: {
+      player: [-10, 0, 0],
+      enemy: [10, 0, 0],
+    },
+    ambientColor: '#c8b8a0',
+    fogColor: '#8a7a68',
+    fogNear: 35,
+    fogFar: 90,
+    skyColor: '#6b6055',
+    groundColor: '#3a3028',
+  },
 };
 
 export class ArenaManager {

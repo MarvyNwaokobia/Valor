@@ -8,6 +8,7 @@ import { type StageId } from './ArenaStage';
 import { StylizedArena } from './arenas/StylizedArena';
 import { RealisticArena } from './arenas/RealisticArena';
 import { ModelArena } from './arenas/ModelArena';
+import { IndustrialArena } from './arenas/IndustrialArena';
 import { CoverProps } from './arenas/CoverProps';
 import { BattleCamera } from '../camera';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
@@ -30,12 +31,13 @@ type ClassId = 'berserker' | 'sentinel' | 'phantom';
 // Art directions the player can live-toggle to compare the look (single deploy).
 // 'stylized'/'realistic' are procedural; the rest are real downloaded Sketchfab
 // fighting-arena models (see ModelArena). The toggle cycles through this order.
-export type ArenaVariant = 'stylized' | 'realistic' | 'scifi';
+export type ArenaVariant = 'stylized' | 'realistic' | 'scifi' | 'industrial';
 
 const ARENA_CYCLE: { id: ArenaVariant; label: string }[] = [
   { id: 'stylized', label: 'Stylized' },
   { id: 'realistic', label: 'Semi-Real' },
   { id: 'scifi', label: 'Sci-Fi · model' },
+  { id: 'industrial', label: 'Industrial' },
 ];
 
 interface GameSceneProps {
@@ -349,6 +351,7 @@ function BattleWorld({
       {arenaVariant === 'stylized' && <StylizedArena />}
       {arenaVariant === 'realistic' && <RealisticArena />}
       {arenaVariant === 'scifi' && <ModelArena variant="scifi" />}
+      {arenaVariant === 'industrial' && <IndustrialArena />}
       {/* The procedural variants ship their own seating; the real models include
           their own stands, so the instanced Crowd only sits on the procedural ones. */}
       {(arenaVariant === 'stylized' || arenaVariant === 'realistic') && <Crowd director={crowd} />}
