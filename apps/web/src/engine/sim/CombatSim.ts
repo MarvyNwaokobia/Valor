@@ -9,7 +9,7 @@ import {
   RangedAI, AIDifficulty,
 } from '../combat';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
-import { resolveCover, losHit } from './Cover';
+import { resolveCover, losHit, regenerateCover } from './Cover';
 
 /**
  * Headless, render-free authoritative combat core — RANGED STAT-DUEL.
@@ -197,6 +197,8 @@ export class CombatSim {
     }
     this.fighters.p1.ctrl.setLockOnTarget(this.fighters.p2.ctrl);
     this.fighters.p2.ctrl.setLockOnTarget(this.fighters.p1.ctrl);
+
+    regenerateCover();
   }
 
   get isOver(): boolean {
