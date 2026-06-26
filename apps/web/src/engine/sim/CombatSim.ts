@@ -187,8 +187,8 @@ export class CombatSim {
     };
 
     this.fighters = {
-      p1: mk('p1', p1Class, -2.5, opts.p1Gun ?? STARTER_GUN_ID, opts.p1HpMult ?? 1),
-      p2: mk('p2', p2Class, 2.5, opts.p2Gun ?? STARTER_GUN_ID, opts.p2HpMult ?? 1),
+      p1: mk('p1', p1Class, -8, opts.p1Gun ?? STARTER_GUN_ID, opts.p1HpMult ?? 1),
+      p2: mk('p2', p2Class, 8, opts.p2Gun ?? STARTER_GUN_ID, opts.p2HpMult ?? 1),
     };
 
     for (const id of ['p1', 'p2'] as FighterId[]) {

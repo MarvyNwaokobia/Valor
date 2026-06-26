@@ -28,11 +28,11 @@ function splitmix32(seed: number) {
   };
 }
 
-const ARENA_R = 7.5;
-const SPAWN_X = 2.5;
-const SPAWN_CLEAR = 1.8;   // no cover within this radius of a spawn point
-const PIECE_MARGIN = 0.6;  // min gap between any two pieces
-const ARENA_INSET = 1.0;   // keep pieces this far from the arena edge
+const ARENA_R = 18;
+const SPAWN_X = 8;
+const SPAWN_CLEAR = 3.0;   // no cover within this radius of a spawn point
+const PIECE_MARGIN = 1.5;  // min gap between any two pieces (spacious)
+const ARENA_INSET = 1.5;   // keep pieces this far from the arena edge
 
 interface PieceTemplate {
   hxRange: [number, number];
@@ -88,8 +88,8 @@ function generateLayout(seed: number): CoverBox[] {
   const rand = splitmix32(seed);
   const pieces: CoverBox[] = [];
 
-  // Optionally place a centre piece (~60% chance) — sits on the duel line.
-  if (rand() < 0.6) {
+  // Optionally place a centre piece (~40% chance) — sits on the duel line.
+  if (rand() < 0.4) {
     const t = TEMPLATES[Math.floor(rand() * TEMPLATES.length)];
     const box: CoverBox = {
       x: 0,
@@ -101,20 +101,25 @@ function generateLayout(seed: number): CoverBox[] {
     if (!tooCloseToSpawn(box)) pieces.push(box);
   }
 
-  // Place 4-7 symmetric pairs in the half-plane (x > 0, mirrored to -x, -z).
-  const pairCount = 4 + Math.floor(rand() * 4);
+  // Place 5-8 symmetric pairs spread across the arena (biased toward the outer
+  // half so the centre stays open and cover is encountered while traversing).
+  const pairCount = 5 + Math.floor(rand() * 4);
   let attempts = 0;
   let placed = 0;
 
-  while (placed < pairCount && attempts < 200) {
+  while (placed < pairCount && attempts < 300) {
     attempts++;
     const t = TEMPLATES[Math.floor(rand() * TEMPLATES.length)];
     const hx = lerp(t.hxRange[0], t.hxRange[1], rand());
     const hz = lerp(t.hzRange[0], t.hzRange[1], rand());
     const height = lerp(t.heightRange[0], t.heightRange[1], rand());
 
+    // Bias placement toward the outer ring — sqrt distribution pushes pieces
+    // outward so the centre stays open and cover sits in the corners/edges.
     const angle = rand() * Math.PI * 2;
-    const dist = 1.5 + rand() * (ARENA_R - ARENA_INSET - 2.0);
+    const minDist = 4;
+    const maxDist = ARENA_R - ARENA_INSET - 1;
+    const dist = minDist + Math.sqrt(rand()) * (maxDist - minDist);
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
 

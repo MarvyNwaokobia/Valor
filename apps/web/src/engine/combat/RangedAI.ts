@@ -106,17 +106,17 @@ export class RangedAI {
     const range = Math.hypot(tx, tz) || 1;
     tx /= range; tz /= range;
 
-    // Perpendicular = strafe; plus a range-keeping nudge toward/away (~6m ideal).
+    // Perpendicular = strafe; plus a range-keeping nudge toward/away (~10m ideal).
     let wx = -tz * this.strafeDir;
     let wz = tx * this.strafeDir;
-    const rangeBias = Math.max(-1, Math.min(1, (range - 6) * 0.4)) * 0.7;
+    const rangeBias = Math.max(-1, Math.min(1, (range - 10) * 0.3)) * 0.7;
     wx += tx * rangeBias;
     wz += tz * rangeBias;
 
     // Steer back from the arena edge, and flip the strafe when cornered.
     const distC = Math.hypot(sx, sz);
     this.strafeTimer -= dt;
-    if (distC > 6.3) {
+    if (distC > 15) {
       wx += (-sx / (distC || 1)) * 1.3;
       wz += (-sz / (distC || 1)) * 1.3;
       this.strafeTimer = Math.min(this.strafeTimer, 0.15);

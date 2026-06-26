@@ -40,7 +40,7 @@ interface ModelConfig {
 const MODELS: Record<ModelArenaId, ModelConfig> = {
   scifi: {
     url: '/models/environments/scifi_stage/scene.gltf',
-    fitRadius: 12, yOffset: 0,
+    fitRadius: 22, yOffset: 0,
     background: '#5f5294', fog: [55, 185], // bright dusk-violet sky
     ambient: { color: '#ab9ce0', intensity: 0.4 },
     hemi: { sky: '#bcaaf8', ground: '#3c3660', intensity: 0.95 },
@@ -158,7 +158,7 @@ export function ModelArena({ variant }: { variant: ModelArenaId }) {
 
       {/* Safety play-disc so fighters always have ground under them. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.04, 0]} receiveShadow>
-        <circleGeometry args={[9, 64]} />
+        <circleGeometry args={[20, 64]} />
         <meshStandardMaterial color={'#0c0c12'} roughness={0.95} metalness={0.1} />
       </mesh>
 

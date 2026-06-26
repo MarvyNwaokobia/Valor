@@ -18,9 +18,9 @@ interface Spectator {
 // Concentric tiers of seated spectators rising away from the pit. The y values
 // match the arena terrace tops so they sit on the stone steps.
 const TIERS = [
-  { radius: 12.5, y: 1.0, count: 46 },
-  { radius: 14.5, y: 2.0, count: 54 },
-  { radius: 16.8, y: 3.0, count: 62 },
+  { radius: 22.5, y: 1.0, count: 64 },
+  { radius: 25.5, y: 2.4, count: 76 },
+  { radius: 29, y: 3.8, count: 88 },
 ];
 
 const CLOTHING = ['#2a2730', '#33222a', '#222a33', '#3a3024', '#2c2238', '#243a2c', '#3a2424', '#1e2a3a'];
