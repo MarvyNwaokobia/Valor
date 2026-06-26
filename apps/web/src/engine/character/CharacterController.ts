@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: CharacterConfig = {
   // Fighters are clamped to this circle, kept well inside the pit floor (radius 11)
   // so they never walk off the edge into the crowd/void and stay within the
   // lock-on camera's frame. Tighter than the floor for a clear margin from the rim.
-  arenaRadius: 7.5,
+  arenaRadius: 18,
   arenaMinX: -12,
   arenaMaxX: 12,
   arenaMinZ: -8,

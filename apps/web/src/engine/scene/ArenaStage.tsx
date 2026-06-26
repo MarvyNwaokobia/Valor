@@ -63,9 +63,9 @@ function PitArena({ stageId }: { stageId: StageId }) {
   // Amphitheatre terraces: each steps up and out from the pit, giving the
   // crowd somewhere to stand. Tops align with the Crowd tier heights.
   const terraces = [
-    { inner: 11, outer: 13, top: 1.0, prev: 0.2 },
-    { inner: 13, outer: 15, top: 2.0, prev: 1.0 },
-    { inner: 15, outer: 17.5, top: 3.0, prev: 2.0 },
+    { inner: 21, outer: 24, top: 1.0, prev: 0.2 },
+    { inner: 24, outer: 27, top: 2.4, prev: 1.0 },
+    { inner: 27, outer: 31, top: 3.8, prev: 2.4 },
   ];
 
   const COLUMN_COUNT = 8;
@@ -88,12 +88,12 @@ function PitArena({ stageId }: { stageId: StageId }) {
     <group>
       {/* Pit floor — textured stone slab */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <circleGeometry args={[11, 64]} />
+        <circleGeometry args={[20, 64]} />
         <meshStandardMaterial map={tex.floor.map} bumpMap={tex.floor.bump} bumpScale={0.4} roughness={0.95} metalness={0.15} />
       </mesh>
 
       {/* Central combat emblem — faint glowing rings */}
-      {[2.2, 4.4, 7].map((r, i) => (
+      {[4, 9, 14].map((r, i) => (
         <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
           <ringGeometry args={[r - 0.06, r, 64]} />
           <meshStandardMaterial color={c.accent} emissive={c.accent} emissiveIntensity={0.4} transparent opacity={0.5} />
@@ -102,11 +102,11 @@ function PitArena({ stageId }: { stageId: StageId }) {
 
       {/* Pit rim / barrier wall around the fighting floor */}
       <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[11, 11, 1, 64, 1, true]} />
+        <cylinderGeometry args={[20, 20, 1, 64, 1, true]} />
         <meshStandardMaterial map={tex.rim.map} bumpMap={tex.rim.bump} bumpScale={0.5} roughness={0.9} metalness={0.2} side={THREE.DoubleSide} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1.0, 0]}>
-        <ringGeometry args={[10.9, 11.25, 64]} />
+        <ringGeometry args={[19.8, 20.3, 64]} />
         <meshStandardMaterial color={c.accent} emissive={c.accent} emissiveIntensity={0.7} roughness={0.4} side={THREE.DoubleSide} />
       </mesh>
 
@@ -127,7 +127,7 @@ function PitArena({ stageId }: { stageId: StageId }) {
       {/* Torch-lit columns ringing the pit, some hung with banners */}
       {Array.from({ length: COLUMN_COUNT }).map((_, i) => {
         const angle = (i / COLUMN_COUNT) * Math.PI * 2 + Math.PI / COLUMN_COUNT;
-        const dist = 11.4;
+        const dist = 21;
         const x = Math.cos(angle) * dist;
         const z = Math.sin(angle) * dist;
         const faceIn = Math.atan2(-x, -z);
