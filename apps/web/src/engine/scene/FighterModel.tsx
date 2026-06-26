@@ -45,6 +45,15 @@ const GUN_GRIP = new THREE.Matrix4().compose(
 );
 const _gunScratch = new THREE.Matrix4();
 
+// The Blender-exported GLB rigs carry a ~90° pitch offset on the root (Hips) bone vs
+// the Mixamo clips — the classic Z-up→Y-up export rotation — which lays the fighters
+// out FLAT/horizontal. The clips otherwise drive the rig correctly, so we cancel the
+// offset with a constant -90° X rotation premultiplied onto the Hips each frame after
+// the mixer runs. It's pure bone-quaternion math (the same thing the mixer does), so
+// it works in Safari — unlike rest-pose retargeting / baked clips, which load but
+// fail to drive the rig in real iOS/macOS WebKit.
+const HIPS_PITCH_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+
 export const FighterModel = memo(function FighterModel({
   classId,
   state,
@@ -57,6 +66,7 @@ export const FighterModel = memo(function FighterModel({
   const shadowRef = useRef<THREE.Group>(null);
   const gunRef = useRef<THREE.Group | null>(null);
   const handBoneRef = useRef<THREE.Object3D | null>(null);
+  const hipsBoneRef = useRef<THREE.Object3D | null>(null);
   const lean = useRef({ x: 0, z: 0 });
   const lastPos = useRef<THREE.Vector3 | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -102,7 +112,7 @@ export const FighterModel = memo(function FighterModel({
       groupRef.current.traverse((child) => {
         if ((child as THREE.Bone).isBone) {
           boneNames.push(child.name);
-          if (!hipsBone && /hips/i.test(child.name)) hipsBone = child;
+          if (!hipsBone && /hips/i.test(child.name)) { hipsBone = child; hipsBoneRef.current = child; }
           // The hand root ends in "RightHand"; finger bones (…RightHandThumb1) don't.
           // Stashed for the gun, attached AFTER the Mixamo bind (see below).
           if (!handBoneRef.current && /righthand$/i.test(child.name)) handBoneRef.current = child;
@@ -214,6 +224,11 @@ export const FighterModel = memo(function FighterModel({
     }
 
     animMachine.update(dt);
+
+    // Stand the fighter upright: cancel the rig's baked-in ~90° root pitch (see
+    // HIPS_PITCH_FIX). Runs after the mixer set the Hips from the clip; not cumulative
+    // because the mixer overwrites the Hips quaternion every frame.
+    if (hipsBoneRef.current) hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX);
 
     // Drive the gun from the hand bone (it's a sibling, not parented into the rig).
     // gun.matrix = groupRef⁻¹ · handBoneWorld · grip → renders exactly at the hand.
