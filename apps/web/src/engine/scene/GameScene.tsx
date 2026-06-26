@@ -4,7 +4,9 @@ import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'rea
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
-import { ArenaStage, type StageId } from './ArenaStage';
+import { type StageId } from './ArenaStage';
+import { StylizedArena } from './arenas/StylizedArena';
+import { RealisticArena } from './arenas/RealisticArena';
 import { BattleCamera } from '../camera';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
 import { getInputSystem } from '../input';
@@ -18,12 +20,13 @@ import { TracerFX } from '../vfx/TracerFX';
 import { CombatAudio } from '../audio/CombatAudio';
 import { ScreenEffects } from '../vfx/ScreenEffects';
 import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
-import { StageLighting } from '../world/StageLighting';
-import { AmbientVFX } from '../world/AmbientVFX';
 import { Crowd } from '../world/Crowd';
 import { CrowdDirector } from '../world/CrowdDirector';
 
 type ClassId = 'berserker' | 'sentinel' | 'phantom';
+
+// Two art directions the player can live-toggle to compare the look (single deploy).
+export type ArenaVariant = 'stylized' | 'realistic';
 
 interface GameSceneProps {
   playerClass: ClassId;
@@ -61,11 +64,11 @@ const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 function BattleWorld({
   playerClass,
   enemyClass,
-  stageId = 'lava_arena',
   difficulty = AIDifficulty.Medium,
   playerGun = STARTER_GUN_ID,
   enemyGun = STARTER_GUN_ID,
   enemyHpMult = 1,
+  arenaVariant,
   onDamageEvent,
   onPlayerStateUpdate,
   onEnemyStateUpdate,
@@ -73,7 +76,7 @@ function BattleWorld({
   onReady,
   combatActive = false,
   screenFx,
-}: GameSceneProps & { difficulty: AIDifficulty; onReady?: () => void; combatActive?: boolean; screenFx: ScreenEffects }) {
+}: GameSceneProps & { difficulty: AIDifficulty; arenaVariant: ArenaVariant; onReady?: () => void; combatActive?: boolean; screenFx: ScreenEffects }) {
   const { camera } = useThree();
   const perspCamera = camera as THREE.PerspectiveCamera;
   const battleEndedRef = useRef(false);
@@ -331,9 +334,9 @@ function BattleWorld({
 
   return (
     <>
-      <StageLighting stageId={stageId} />
-      <AmbientVFX stageId={stageId} />
-      <ArenaStage stageId={stageId} />
+      {/* Live-swappable arena — each variant is self-contained (its own lighting,
+          background and seating). Toggled from the HUD button for the A/B compare. */}
+      {arenaVariant === 'realistic' ? <RealisticArena /> : <StylizedArena />}
       <Crowd director={crowd} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
@@ -368,6 +371,15 @@ export function GameScene(props: GameSceneProps) {
   const [countdown, setCountdown] = useState<number | 'FIGHT' | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const combatStartedRef = useRef(false);
+
+  // Art-direction A/B: live-swaps the arena. Seeds from ?arena=realistic so a
+  // specific look can be deep-linked; defaults to stylized.
+  const [arenaVariant, setArenaVariant] = useState<ArenaVariant>(() => {
+    if (typeof window === 'undefined') return 'stylized';
+    return new URLSearchParams(window.location.search).get('arena') === 'realistic'
+      ? 'realistic'
+      : 'stylized';
+  });
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
@@ -407,6 +419,7 @@ export function GameScene(props: GameSceneProps) {
           <BattleWorld
             {...props}
             difficulty={difficulty}
+            arenaVariant={arenaVariant}
             combatActive={combatStartedRef.current}
             screenFx={screenFx}
             onDamageEvent={props.onDamageEvent}
@@ -420,6 +433,15 @@ export function GameScene(props: GameSceneProps) {
       </Canvas>
 
       <ScreenFlashOverlay screenEffects={screenFx} />
+
+      {/* Arena A/B toggle — live-swaps the environment mid-fight (single deploy).
+          Tap to flip Stylized <-> Semi-Real on the same fight to compare the look. */}
+      <button
+        onClick={() => setArenaVariant((v) => (v === 'stylized' ? 'realistic' : 'stylized'))}
+        className="fixed top-18 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-black/60 border border-white/25 text-white text-xs font-bold uppercase tracking-wider pointer-events-auto backdrop-blur-sm active:scale-95 transition shadow-lg"
+      >
+        Arena: <span className="text-cyan-300">{arenaVariant === 'stylized' ? 'Stylized' : 'Semi-Real'}</span> · tap to switch
+      </button>
 
       {/* HUD */}
       <div className="fixed inset-0 pointer-events-none z-30">
