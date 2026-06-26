@@ -281,6 +281,10 @@ export class CombatSim {
     // 5. Systems.
     this.knockback.update(clampedDt, 'p1', this.fighters.p1.ctrl);
     this.knockback.update(clampedDt, 'p2', this.fighters.p2.ctrl);
+    // Knockback slides the body AFTER the in-update arena clamp, so re-pin both
+    // inside the pit — a hard hit at the edge must not shove a fighter off the floor.
+    this.fighters.p1.ctrl.clampToBounds();
+    this.fighters.p2.ctrl.clampToBounds();
     this.damage.updateStamina(clampedDt);
 
     // 6. Advance input frame edges.

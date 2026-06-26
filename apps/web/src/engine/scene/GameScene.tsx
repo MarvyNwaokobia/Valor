@@ -206,7 +206,12 @@ function BattleWorld({
     combatAudio.setCrowdEnergy(crowd.energy);
     screenFx.update(clampedDt);
 
-    if (battleEndedRef.current) return;
+    if (battleEndedRef.current) {
+      // Keep framing the finish — the lock-on camera follows the bodies through the
+      // death/victory beat instead of freezing the instant someone is KO'd.
+      battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
+      return;
+    }
 
     // Hit-stop: freeze game logic but keep VFX + camera alive
     if (hitStopTimerRef.current > 0) {
@@ -272,6 +277,12 @@ function BattleWorld({
         }
       }
     });
+
+    // --- Camera follows the duel ---
+    // The lock-on camera frames both fighters and tracks them as they move, so a
+    // fighter can't stroll out of shot. Without this the camera sat frozen at the
+    // arena centre the whole fight (it was only ticked pre-combat and in hit-stop).
+    battleCamera.update(clampedDt, ps.position, enemyController.state.position);
 
     // --- Synchronise Animation States Frame-by-Frame ---
     // Skip the idle/locomotion sync while a one-shot Fire clip is mid-play so the

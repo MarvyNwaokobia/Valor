@@ -53,9 +53,10 @@ const DEFAULT_CONFIG: CharacterConfig = {
   dodgeCooldown: 0.8,
   turnSpeed: 10,
   gravity: -20,
-  // Fighters are clamped to this circle, kept inside the pit floor (radius 11)
-  // and its rim wall so they never walk off the edge or under the arena.
-  arenaRadius: 9.5,
+  // Fighters are clamped to this circle, kept well inside the pit floor (radius 11)
+  // so they never walk off the edge into the crowd/void and stay within the
+  // lock-on camera's frame. Tighter than the floor for a clear margin from the rim.
+  arenaRadius: 7.5,
   arenaMinX: -12,
   arenaMaxX: 12,
   arenaMinZ: -8,
@@ -401,6 +402,12 @@ export class CharacterController {
       this.state.velocity.y = 0;
       this.state.isGrounded = true;
     }
+  }
+
+  // Public arena clamp — re-pin a fighter inside the pit after an external
+  // displacement (knockback slide) that bypasses the in-update clamp.
+  clampToBounds() {
+    this.clampToArena();
   }
 
   // Keep the fighter inside the circular pit — the floor is round, so a
