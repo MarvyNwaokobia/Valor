@@ -104,9 +104,8 @@ function generateLayout(seed: number): CoverBox[] {
     if (!tooCloseToSpawn(box)) pieces.push(box);
   }
 
-  // Place 5-8 symmetric pairs spread across the arena (biased toward the outer
-  // half so the centre stays open and cover is encountered while traversing).
-  const pairCount = 5 + Math.floor(rand() * 4);
+  // Place 3-5 symmetric pairs — enough to break sightlines without cluttering.
+  const pairCount = 3 + Math.floor(rand() * 3);
   let attempts = 0;
   let placed = 0;
 
