@@ -93,21 +93,6 @@ export const FighterModel = memo(function FighterModel({
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        // Lift the fighter out of shadow so players can read it on dark stages —
-        // a gentle self-illumination keyed to the material's own albedo. This is
-        // character-ONLY (it edits the fighter's materials), never the arena.
-        const mats = Array.isArray(child.material) ? child.material : [child.material];
-        for (const mat of mats) {
-          const m = mat as THREE.MeshStandardMaterial;
-          if (!m?.isMeshStandardMaterial) continue;
-          if (m.emissiveMap) {
-            m.emissiveIntensity = Math.max(m.emissiveIntensity, 0.7);
-          } else if (m.color) {
-            m.emissive.copy(m.color);
-            m.emissiveIntensity = 0.15;
-          }
-          m.needsUpdate = true;
-        }
       }
     });
     return clone;
@@ -288,10 +273,11 @@ export const FighterModel = memo(function FighterModel({
           <primitive object={clonedScene} />
         </group>
         {/* Per-fighter lighting so the character stays readable on any stage:
-            an accent rim (class colour) + a neutral overhead fill that lifts the
-            tops/fronts the elevated camera sees. Short range → minimal arena spill. */}
-        <pointLight color={accentColor} intensity={2.4} distance={5.5} position={[0, 1.5, 0]} />
-        <pointLight color={'#ffffff'} intensity={1.5} distance={6} position={[0, 3.4, 0.4]} />
+            an accent rim (class colour) + a soft neutral overhead fill that lifts
+            the tops/fronts the elevated camera sees WITHOUT washing the model to
+            white. Short range → minimal arena spill. */}
+        <pointLight color={accentColor} intensity={2.2} distance={5.5} position={[0, 1.5, 0]} />
+        <pointLight color={'#dce6ff'} intensity={0.7} distance={6} position={[0, 3.4, 0.4]} />
       </group>
     </>
   );

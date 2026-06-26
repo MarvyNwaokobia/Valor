@@ -118,9 +118,16 @@ function FittedModel({ cfg }: { cfg: ModelConfig }) {
     // Seat the fighters on the real standing surface: raycast straight down at the
     // centre and take the topmost hit in the LOWER half of the stage (so a ceiling
     // or sky dome up top is ignored). Offset the stage so that surface lands on y=0.
+    //
+    // NB: heights here MUST be in the repositioned+scaled WRAPPER space. After the
+    // -box.min.y shift the stage spans [0, size.y*scale], so deriving topY/midY from
+    // the original box (which can be centred on the origin, i.e. negative min.y — the
+    // sci-fi stage) would put midY below the real floor, reject every hit, fall back
+    // to floorY=0 and bury the fighters under an elevated standing surface.
     const ray = new THREE.Raycaster();
-    const topY = box.max.y * scale + 5;
-    const midY = (box.min.y + (box.max.y - box.min.y) * 0.5) * scale;
+    const stageHeight = size.y * scale;
+    const topY = stageHeight + 5;
+    const midY = stageHeight * 0.5;
     ray.set(new THREE.Vector3(0, topY, 0), new THREE.Vector3(0, -1, 0));
     const hits = ray.intersectObject(wrapper, true).filter((h) => h.point.y <= midY);
     const floorY = hits.length ? Math.max(...hits.map((h) => h.point.y)) : 0;
