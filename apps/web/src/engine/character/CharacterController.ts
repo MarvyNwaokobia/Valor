@@ -53,10 +53,10 @@ const DEFAULT_CONFIG: CharacterConfig = {
   dodgeCooldown: 0.8,
   turnSpeed: 10,
   gravity: -20,
-  // Fighters are clamped to this circle, kept well inside the pit floor (radius 11)
-  // so they never walk off the edge into the crowd/void and stay within the
-  // lock-on camera's frame. Tighter than the floor for a clear margin from the rim.
-  arenaRadius: 18,
+  // Combat zone: fighters are clamped to this circle. Deliberately smaller than the
+  // visual platform — the stage stays spacious, but the fight (and the cover) stays
+  // in a readable ~20m zone the camera can frame closely, so characters read big.
+  arenaRadius: 10,
   arenaMinX: -12,
   arenaMaxX: 12,
   arenaMinZ: -8,
