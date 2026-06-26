@@ -28,11 +28,14 @@ function splitmix32(seed: number) {
   };
 }
 
-const ARENA_R = 18;
-const SPAWN_X = 8;
-const SPAWN_CLEAR = 3.0;   // no cover within this radius of a spawn point
-const PIECE_MARGIN = 1.5;  // min gap between any two pieces (spacious)
-const ARENA_INSET = 1.5;   // keep pieces this far from the arena edge
+// Cover lives in the COMBAT ZONE (fighters are clamped to radius 10), not the full
+// visual platform — so pieces sit where the fight actually happens, between and
+// around the fighters, rather than as decoration at the rim.
+const ARENA_R = 11;
+const SPAWN_X = 5;         // matches the sim's fighter spawn (±5)
+const SPAWN_CLEAR = 2.4;   // no cover within this radius of a spawn point
+const PIECE_MARGIN = 1.2;  // min gap between any two pieces
+const ARENA_INSET = 1.0;   // keep pieces this far from the zone edge
 
 interface PieceTemplate {
   hxRange: [number, number];
@@ -114,12 +117,13 @@ function generateLayout(seed: number): CoverBox[] {
     const hz = lerp(t.hzRange[0], t.hzRange[1], rand());
     const height = lerp(t.heightRange[0], t.heightRange[1], rand());
 
-    // Bias placement toward the outer ring — sqrt distribution pushes pieces
-    // outward so the centre stays open and cover sits in the corners/edges.
+    // Spread evenly through the combat zone (no outer-rim bias) so cover lands in
+    // the mid-field where fighters actually engage — close enough to use, not at
+    // the walls. Stay just off the spawns so the opening isn't point-blank.
     const angle = rand() * Math.PI * 2;
-    const minDist = 4;
-    const maxDist = ARENA_R - ARENA_INSET - 1;
-    const dist = minDist + Math.sqrt(rand()) * (maxDist - minDist);
+    const minDist = 1.5;
+    const maxDist = ARENA_R - ARENA_INSET;
+    const dist = minDist + rand() * (maxDist - minDist);
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
 

@@ -50,11 +50,11 @@ describe('Cover generator', () => {
       expect(mirror).toBeTruthy();
     }
 
-    // No piece intrudes on a spawn point (±8, 0).
+    // No piece intrudes on a spawn point (±5, 0).
     for (const p of layout) {
-      for (const sx of [-8, 8]) {
+      for (const sx of [-5, 5]) {
         const clearance = Math.hypot(p.x - sx, p.z) - Math.max(p.hx, p.hz);
-        expect(clearance).toBeGreaterThanOrEqual(3.0 - 1e-6);
+        expect(clearance).toBeGreaterThanOrEqual(2.4 - 1e-6);
       }
     }
   });
