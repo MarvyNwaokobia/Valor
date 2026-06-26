@@ -26,6 +26,9 @@ interface ModelConfig {
   ambient: { color: string; intensity: number };
   key: { color: string; intensity: number };
   fill: { color: string; intensity: number };
+  // Mesh-name pattern for the model's own sky/backdrop dome. It's hidden so it
+  // can't engulf the raised camera; the arena's own background + fog stand in.
+  backdrop?: RegExp;
   credit: string;
 }
 
@@ -46,6 +49,7 @@ const MODELS: Record<ModelArenaId, ModelConfig> = {
     ambient: { color: '#aa99ff', intensity: 0.9 },
     key: { color: '#ffffff', intensity: 2.4 },
     fill: { color: '#8866ff', intensity: 1.6 },
+    backdrop: /outer/i, // the nebula shell — engulfs the raised camera
     credit: '"Low Poly Sci-fi Fighting Stage" by Umar (Sketchfab Standard)',
   },
   lava: {
@@ -55,6 +59,7 @@ const MODELS: Record<ModelArenaId, ModelConfig> = {
     ambient: { color: '#ffb48a', intensity: 0.9 },
     key: { color: '#ffffff', intensity: 2.4 },
     fill: { color: '#ff7744', intensity: 1.8 },
+    backdrop: /sky/i,
     credit: '"Low Poly Lava Fighting Arena/Stage" by Umar (CC-BY-4.0)',
   },
 };
@@ -67,6 +72,10 @@ function FittedModel({ cfg }: { cfg: ModelConfig }) {
     const root = scene.clone(true);
     root.traverse((o) => {
       if (o instanceof THREE.Mesh) {
+        if (cfg.backdrop?.test(o.name)) {
+          o.visible = false; // engulfing sky/backdrop dome — arena bg/fog stands in
+          return;
+        }
         o.castShadow = true;
         o.receiveShadow = true;
       }
