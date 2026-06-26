@@ -23,6 +23,11 @@ Full per-model license text lives next to each model in its `license.txt`.
 - **RPG environment** (`rpg_environment`, not currently wired in) — "RPG Project
   environment (Lowpoly)" by **Bunnyyyy** (https://sketchfab.com/bunnylovesu) — CC-BY-4.0.
 
+## Weapons (`public/models/guns/`)
+
+- **Sci-fi blaster** (`blaster.glb`, in-hand gun) and **rifle** (`rifle.glb`, spare) —
+  from [Poly Pizza](https://poly.pizza), **CC0** (no attribution required).
+
 ## Lighting
 
 - **venice_sunset** HDRI (`public/hdri/venice_sunset_1k.hdr`) — from
