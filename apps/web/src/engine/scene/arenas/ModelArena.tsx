@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useGLTF } from '@react-three/drei';
+import { useGLTF, Sky } from '@react-three/drei';
 import * as THREE from 'three';
 
 /**
@@ -122,7 +122,17 @@ export function ModelArena({ variant }: { variant: ModelArenaId }) {
   const cfg = MODELS[variant];
   return (
     <group>
-      <color attach="background" args={[cfg.background]} />
+      {/* Outdoor sky dome — the model's own backdrop is hidden; this stands in */}
+      <Sky
+        distance={450000}
+        sunPosition={[40, 20, -60]}
+        inclination={0.48}
+        azimuth={0.15}
+        mieCoefficient={0.008}
+        mieDirectionalG={0.9}
+        rayleigh={2.5}
+        turbidity={6}
+      />
       <fog attach="fog" args={[cfg.background, cfg.fog[0], cfg.fog[1]]} />
 
       {/* Outdoor daylight: hemisphere (sky tint above / ground bounce below) + a

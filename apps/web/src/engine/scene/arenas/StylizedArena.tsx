@@ -2,22 +2,22 @@
 
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { Sky } from '@react-three/drei';
 import * as THREE from 'three';
 
 /**
- * STYLIZED art direction — bold, clean, low-poly.
+ * STYLIZED art direction — bold, clean, low-poly, OUTDOOR.
  *
- * Flat saturated materials, bright even lighting, crisp shadows, a light sky (no
- * void). The "polished mobile / Valorant-lite" look: readable and intentional
- * rather than photoreal. Self-contained — brings its own lights, background and
- * spectator seating (sized to the Crowd tiers at r=12.5/14.5/16.8).
+ * Open-air arena under a real procedural sky (drei Sky / Preetham model).
+ * Bright sunlit lighting, pushed-out atmospheric haze, and a warm sun position
+ * give it the feel of a rooftop or outdoor coliseum in late afternoon.
  */
 
-const FLOOR = '#27314f';      // deep slate-indigo
-const FLOOR_EDGE = '#1b2238';
+const FLOOR = '#3a4a6a';      // warm slate-blue (reads lighter under sunlight)
+const FLOOR_EDGE = '#2a3450';
 const ACCENT = '#22d3ee';     // bright cyan
 const ACCENT_2 = '#f472b6';   // magenta rim
-const SEAT_RISER = '#1b2238';
+const SEAT_RISER = '#2a3450';
 
 const SEAT_TIERS = [
   { inner: 11, outer: 13, y: 1.0 },
@@ -28,7 +28,6 @@ const SEAT_TIERS = [
 export function StylizedArena() {
   const ringRef = useRef<THREE.Mesh>(null);
 
-  // Slow pulse on the central emblem so the floor isn't dead-static.
   useFrame((state) => {
     if (ringRef.current) {
       const m = ringRef.current.material as THREE.MeshStandardMaterial;
@@ -36,32 +35,43 @@ export function StylizedArena() {
     }
   });
 
-  const seatColors = useMemo(() => ['#323c5e', '#2b3454', '#374267'], []);
+  const seatColors = useMemo(() => ['#3e4a6a', '#354060', '#404c72'], []);
 
   return (
     <group>
-      {/* Background + airy fog (NOT a black void — that's the stylized tell) */}
-      <color attach="background" args={['#141a30']} />
-      <fog attach="fog" args={['#1b2440', 30, 75]} />
+      {/* Outdoor sky + atmospheric haze */}
+      <Sky
+        distance={450000}
+        sunPosition={[80, 40, 30]}
+        inclination={0.52}
+        azimuth={0.25}
+        mieCoefficient={0.005}
+        mieDirectionalG={0.8}
+        rayleigh={1.5}
+        turbidity={8}
+      />
+      <fog attach="fog" args={['#b8cce8', 60, 180]} />
 
-      {/* ---- Lighting: bright, even, clean ---- */}
-      <hemisphereLight color={'#cfe0ff'} groundColor={'#3a4368'} intensity={1.15} />
-      <ambientLight color={'#9fb4e0'} intensity={0.5} />
+      {/* ---- Outdoor lighting: sun + sky hemisphere + fill ---- */}
+      <hemisphereLight color={'#87ceeb'} groundColor={'#5a6844'} intensity={1.0} />
+      <ambientLight color={'#c8daf0'} intensity={0.4} />
       <directionalLight
-        color={'#ffffff'}
-        intensity={2.6}
-        position={[6, 12, 5]}
+        color={'#fff4d6'}
+        intensity={2.8}
+        position={[8, 14, 5]}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={0.5}
-        shadow-camera-far={50}
-        shadow-camera-left={-16}
-        shadow-camera-right={16}
-        shadow-camera-top={16}
-        shadow-camera-bottom={-16}
+        shadow-camera-far={60}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={18}
+        shadow-camera-bottom={-18}
         shadow-bias={-0.0008}
       />
+      {/* Cool fill from the opposite side (sky bounce) */}
+      <directionalLight color={'#a0c0ff'} intensity={0.8} position={[-6, 8, -5]} />
       {/* Coloured rim accents for pop */}
       <pointLight color={ACCENT} intensity={2.2} distance={26} position={[-9, 4, -6]} />
       <pointLight color={ACCENT_2} intensity={2.0} distance={26} position={[9, 4, 6]} />
@@ -116,7 +126,7 @@ export function StylizedArena() {
           <group key={i} position={[x, 0, z]}>
             <mesh position={[0, 2.2, 0]} castShadow>
               <boxGeometry args={[0.7, 4.4, 0.7]} />
-              <meshStandardMaterial color={'#2b3454'} roughness={0.6} metalness={0.1} flatShading />
+              <meshStandardMaterial color={'#3a4664'} roughness={0.6} metalness={0.1} flatShading />
             </mesh>
             <mesh position={[0, 4.6, 0]}>
               <boxGeometry args={[0.95, 0.5, 0.95]} />
@@ -126,6 +136,12 @@ export function StylizedArena() {
           </group>
         );
       })}
+
+      {/* Ground plane extending beyond the arena so the sky meets terrain, not void */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
+        <circleGeometry args={[120, 64]} />
+        <meshStandardMaterial color={'#3a5040'} roughness={0.95} metalness={0} />
+      </mesh>
     </group>
   );
 }
