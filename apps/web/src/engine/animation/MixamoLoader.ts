@@ -75,15 +75,33 @@ function measureRootStride(clip: THREE.AnimationClip, name: string): void {
   }
 }
 
+// Conform a clip's bone-track name to the GLB rig's bone naming so PropertyBinding
+// can actually find its target node.
+//
+// FBXLoader yields colon-less track names ("mixamorigHips.quaternion") and Mixamo
+// sometimes numbers a duplicate skeleton ("mixamorig2Hips"). Critically, the GLB
+// rigs are loaded by three's GLTFLoader, which runs every node through
+// PropertyBinding.sanitizeNodeName — and that STRIPS the ":" out of Blender's
+// "mixamorig:Hips", so the actual bone is named "mixamorigHips". The clip tracks
+// must therefore be colon-LESS too; injecting a ":" (as this once did) makes
+// PropertyBinding find no target node → not a single track binds → the rig sits at
+// its bind pose = permanent T-pose. Normalize every mixamorig[N][:]Bone form to the
+// colon-less "mixamorigBone" the rig uses. (Exported for the regression test that
+// guards this binding contract.)
+export function normalizeBoneTrackName(trackName: string): string {
+  return trackName.replace(
+    /^mixamorig\d*:?(\w)/,
+    (_, first: string) => 'mixamorig' + first.toUpperCase(),
+  );
+}
+
 function retargetClip(clip: THREE.AnimationClip, name: string): THREE.AnimationClip {
   // Name the clip up front so the stride map keys by the same friendly name the
   // state machine looks clips up under.
   clip.name = name;
 
   for (const track of clip.tracks) {
-    track.name = track.name
-      .replace(/^mixamorig\d*(\w)/, (_, first: string) => 'mixamorig:' + first.toUpperCase())
-      .replace(/^mixamorig::/, 'mixamorig:');
+    track.name = normalizeBoneTrackName(track.name);
   }
 
   // Measure baked root travel before discarding it (used to kill foot-skate).
