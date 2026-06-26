@@ -17,8 +17,8 @@ const DEFAULT_CONFIG: CameraConfig = {
   followHeight: 4,
   lookAheadDistance: 3,
   smoothSpeed: 5,
-  lockOnDistance: 13,
-  lockOnHeight: 6,
+  lockOnDistance: 9,
+  lockOnHeight: 5.2,
   fovDefault: 55,
   fovCombat: 48,
   shakeDecay: 8,
@@ -154,7 +154,7 @@ export class BattleCamera {
     const separation = playerPos.distanceTo(targetPos);
     const dynamicDist = Math.max(
       this.config.lockOnDistance,
-      separation * 0.8 + 3
+      separation * 0.6 + 2
     );
 
     const toPlayer = new THREE.Vector3()
@@ -174,7 +174,7 @@ export class BattleCamera {
 
     this.targetPosition.copy(midpoint)
       .addScaledVector(cameraDir, dynamicDist)
-      .setY(midpoint.y + this.config.lockOnHeight + separation * 0.22);
+      .setY(midpoint.y + this.config.lockOnHeight + separation * 0.18);
 
     this.targetLookAt.copy(midpoint);
     this.targetLookAt.y += 1.2;
