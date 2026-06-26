@@ -72,7 +72,7 @@ export function getLevel(n: number): CampaignLevel | undefined {
 
 // ── Endless mode ────────────────────────────────────────────────────────────
 const ENDLESS_CLASSES: ClassId[] = ['berserker', 'sentinel', 'phantom'];
-const ENDLESS_STAGES: StageId[] = ['lava_arena', 'battle_arena', 'scifi_stage'];
+const ENDLESS_STAGES: StageId[] = ['lava_arena', 'battle_arena', 'scifi_stage', 'industrial_hangar'];
 
 /**
  * Synthetic, infinitely-scaling enemy for Endless wave `w` (1-based). Always the

@@ -69,6 +69,17 @@ const STAGE_VFX: Record<StageId, AmbientVFXConfig> = {
     emissive: false,
     drift: 0.6,
   },
+  industrial_hangar: {
+    count: 90,
+    color: '#c8b898',
+    size: 0.03,
+    speed: [0.02, 0.15],
+    area: [48, 25, 38],
+    direction: new THREE.Vector3(0, -0.05, 0),
+    life: [5, 12],
+    emissive: false,
+    drift: 0.15,
+  },
 };
 
 interface AmbientVFXProps {

@@ -51,6 +51,13 @@ const STAGE_LIGHTING: Record<StageId, LightConfig> = {
     rim: { color: '#bbcc99', intensity: 2, position: [-2, 3, -8] },
     ground: { color: '#99aa66', intensity: 0.8 },
   },
+  industrial_hangar: {
+    ambient: { color: '#c8b8a0', intensity: 1.2 },
+    key: { color: '#ffe8c0', intensity: 4.5, position: [18, 26, -6] },
+    fill: { color: '#e0d0b8', intensity: 1.8, position: [-16, 20, 5] },
+    rim: { color: '#c89060', intensity: 1.5, position: [0, 4, -10] },
+    ground: { color: '#b0a080', intensity: 0.6 },
+  },
 };
 
 interface StageLightingProps {
