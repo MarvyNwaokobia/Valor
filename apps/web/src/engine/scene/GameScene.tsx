@@ -360,7 +360,7 @@ function BattleWorld({
       <primitive object={tracerFX.group} />
       <primitive object={particles.mesh} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-        <planeGeometry args={[30, 30]} />
+        <planeGeometry args={[50, 50]} />
         <shadowMaterial opacity={0.3} />
       </mesh>
     </>

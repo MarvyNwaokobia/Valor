@@ -13,14 +13,12 @@ export interface CameraConfig {
 }
 
 const DEFAULT_CONFIG: CameraConfig = {
-  followDistance: 6,
-  followHeight: 3,
-  lookAheadDistance: 2,
+  followDistance: 8,
+  followHeight: 4,
+  lookAheadDistance: 3,
   smoothSpeed: 5,
-  // Raised + pulled back so the camera looks DOWN over the cover (chest-high
-  // pieces were occluding the fighters from the old low, close angle).
-  lockOnDistance: 9,
-  lockOnHeight: 4.6,
+  lockOnDistance: 13,
+  lockOnHeight: 6,
   fovDefault: 55,
   fovCombat: 48,
   shakeDecay: 8,
