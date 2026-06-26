@@ -6,13 +6,14 @@ import * as THREE from 'three';
 import React from 'react';
 import { makeStoneTexture } from '../world/textures';
 
-export type StageId = 'lava_arena' | 'scifi_stage' | 'battle_arena' | 'rpg_environment';
+export type StageId = 'lava_arena' | 'scifi_stage' | 'battle_arena' | 'rpg_environment' | 'industrial_hangar';
 
 const STAGE_COLORS: Record<StageId, { floor: string; stone: string; accent: string; glow: string; flame: string }> = {
   lava_arena:     { floor: '#241712', stone: '#2c2420', accent: '#ff6633', glow: '#ff8844', flame: '#ff7722' },
   scifi_stage:    { floor: '#15132a', stone: '#1c1b30', accent: '#8866ff', glow: '#aa88ff', flame: '#88aaff' },
   battle_arena:   { floor: '#141d28', stone: '#1e2630', accent: '#5599ff', glow: '#aaddff', flame: '#66ccff' },
-  rpg_environment:{ floor: '#1d2417', stone: '#26301f', accent: '#99bb55', glow: '#bbdd77', flame: '#ffaa44' },
+  rpg_environment:    { floor: '#1d2417', stone: '#26301f', accent: '#99bb55', glow: '#bbdd77', flame: '#ffaa44' },
+  industrial_hangar:  { floor: '#5a5248', stone: '#6b6055', accent: '#c89060', glow: '#ffe0b0', flame: '#ff9944' },
 };
 
 interface ArenaStageProps {
