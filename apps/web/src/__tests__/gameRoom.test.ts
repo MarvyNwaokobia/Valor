@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { GameRoom, type RoomPlayer } from '@/engine/sim/GameRoom'
 import { NetMsgType, type InputStateMsg, type ActionTriggerMsg } from '@/engine/multiplayer/CombatProtocol'
+import { setCover } from '@/engine/sim/Cover'
 
 // Proves the server-authoritative room runs end-to-end over CombatProtocol with
 // two "remote" inputs: ingest InputState/ActionTrigger → tick the headless sim →
@@ -21,10 +22,7 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
   it('resolves an aggressor-vs-idle match to a MatchEnd with the right winner', () => {
     const room = new GameRoom('r1', P1, P2)
     room.start()
-    // Clear lane, off the centre cover that blocks the spawn line (see Cover.ts),
-    // so this proves the wire path resolves a real exchange rather than a stalemate.
-    room.controller('p1').state.position.set(-2.5, 0, 5.5)
-    room.controller('p2').state.position.set(2.5, 0, 5.5)
+    setCover([]) // isolate the wire path from the procedural cover's line-of-sight
 
     let matchEnd = null as null | ReturnType<GameRoom['step']>['matchEnd']
     let sawHit = false
@@ -69,8 +67,7 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
     const run = (dodge: boolean) => {
       const room = new GameRoom(dodge ? 'rd' : 'rn', P1, P2)
       room.start()
-      room.controller('p1').state.position.set(-2.5, 0, 5.5)
-      room.controller('p2').state.position.set(2.5, 0, 5.5)
+      setCover([])
       for (let i = 0; i < 240; i++) {
         room.applyInput('p1', inputState(0, ['fire']))
         if (dodge) room.applyInput('p2', trigger('dodge')) // re-buffer to maximise i-frames

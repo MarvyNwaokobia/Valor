@@ -158,6 +158,11 @@ export function regenerateCover(seed?: number): CoverBox[] {
   return COVER;
 }
 
+/** Replace the active layout outright — for deterministic matches and tests. */
+export function setCover(boxes: CoverBox[]): void {
+  COVER = boxes;
+}
+
 // Shots travel between muzzle (~1.4m) and torso (~1.05m); every piece is taller
 // than that, so for v1 any box the sightline crosses in XZ blocks it.
 const SHOT_HEIGHT = 1.05;

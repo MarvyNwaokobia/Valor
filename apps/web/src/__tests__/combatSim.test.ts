@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { CombatSim, type FighterId } from '@/engine/sim/CombatSim'
 import { InputSystem, Action } from '@/engine/input/InputSystem'
 import { AIDifficulty } from '@/engine/combat'
+import { setCover } from '@/engine/sim/Cover'
 
 // Proves the ranged stat-duel core runs fully headless — no Three rendering, no
 // AnimationMixer, no WebGL/DOM — and resolves a real gunfight to a KO. Same sim
@@ -14,10 +15,7 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
     const inB = new InputSystem()
     const inputs: Record<FighterId, InputSystem> = { p1: inA, p2: inB }
 
-    // Stand both on a clear lane (off the centre cover that blocks the spawn line),
-    // so this exercises shot resolution rather than line-of-sight.
-    sim.controller('p1').state.position.set(-2.5, 0, 5.5)
-    sim.controller('p2').state.position.set(2.5, 0, 5.5)
+    setCover([]) // isolate shot resolution from the procedural cover's line-of-sight
 
     inA.triggerAction(Action.Fire) // p1 holds Fire; auto-fires on the gun's cadence
 
@@ -88,9 +86,7 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
       const inA = new InputSystem()
       const inB = new InputSystem()
       const inputs: Record<FighterId, InputSystem> = { p1: inA, p2: inB }
-      // Clear lane (off the centre cover) so we isolate dodge i-frames, not LoS.
-      sim.controller('p1').state.position.set(-2.5, 0, 5.5)
-      sim.controller('p2').state.position.set(2.5, 0, 5.5)
+      setCover([]) // isolate dodge i-frames from cover line-of-sight
       inA.triggerAction(Action.Fire)
       for (let i = 0; i < 180 && !sim.isOver; i++) {
         if (dodge) inB.triggerAction(Action.Dodge) // re-buffer to maximise i-frames

@@ -1,46 +1,65 @@
 import { describe, it, expect } from 'vitest';
-import { COVER, resolveCover, losHit } from '../engine/sim/Cover';
+import { setCover, regenerateCover, resolveCover, losHit } from '../engine/sim/Cover';
 
-describe('Cover line-of-sight', () => {
-  it('blocks the straight duel-line shot through the centre block', () => {
-    // Fighters spawn at ±2.5 on X, facing along z=0 — the centre piece sits there.
-    const hit = losHit(-2.5, 0, 2.5, 0);
+const CENTER = { x: 0, z: 0, hx: 1, hz: 1, height: 1.7 };
+
+describe('Cover geometry (explicit layout)', () => {
+  it('blocks a sightline that crosses a piece', () => {
+    setCover([CENTER]);
+    const hit = losHit(-3, 0, 3, 0);
     expect(hit).not.toBeNull();
-    expect(Math.abs(hit!.z)).toBeLessThan(0.001);
-    // First contact is the near (−x) face of the centre block.
-    expect(hit!.x).toBeLessThan(0);
+    expect(hit!.x).toBeLessThan(0); // enters at the near (−x) face
+    expect(Math.abs(hit!.z)).toBeLessThan(1e-6);
   });
 
-  it('clears a sightline that runs outside every piece', () => {
-    // Far down +Z, well clear of all cover footprints.
-    expect(losHit(-7, 7, 7, 7)).toBeNull();
+  it('clears a sightline that misses every piece', () => {
+    setCover([CENTER]);
+    expect(losHit(-3, 5, 3, 5)).toBeNull();
   });
 
-  it('clears once a fighter has peeked off the centre line', () => {
-    // Shooter steps wide; sightline skirts past the centre block.
-    expect(losHit(-2.5, 5, 2.5, 5)).toBeNull();
+  it('does not block a shot that flies over a short piece', () => {
+    setCover([{ ...CENTER, height: 0.8 }]); // shorter than the shot height
+    expect(losHit(-3, 0, 3, 0, 1.05)).toBeNull();
   });
-});
 
-describe('Cover collision', () => {
-  it('ejects a fighter standing inside a cover box', () => {
-    const c = COVER[0]; // centre block at origin
-    const [x, z] = resolveCover(c.x, c.z, 0.5);
-    const insideX = Math.abs(x - c.x) <= c.hx;
-    const insideZ = Math.abs(z - c.z) <= c.hz;
-    expect(insideX && insideZ).toBe(false); // no longer inside the footprint
+  it('ejects a fighter standing inside a piece', () => {
+    setCover([CENTER]);
+    const [x, z] = resolveCover(0, 0, 0.5);
+    const stillInside = Math.abs(x) <= CENTER.hx && Math.abs(z) <= CENTER.hz;
+    expect(stillInside).toBe(false);
   });
 
   it('leaves a fighter clear of cover untouched', () => {
-    const [x, z] = resolveCover(6, 6, 0.5);
-    expect(x).toBeCloseTo(6);
-    expect(z).toBeCloseTo(6);
+    setCover([CENTER]);
+    const [x, z] = resolveCover(5, 5, 0.5);
+    expect(x).toBeCloseTo(5);
+    expect(z).toBeCloseTo(5);
+  });
+});
+
+describe('Cover generator', () => {
+  it('is 180°-symmetric and keeps clear of both spawns', () => {
+    const layout = regenerateCover(12345);
+    expect(layout.length).toBeGreaterThan(0);
+
+    // Every piece has a mirror partner of equal size (rotational symmetry).
+    for (const p of layout) {
+      const mirror = layout.find(
+        (q) => Math.abs(q.x + p.x) < 1e-6 && Math.abs(q.z + p.z) < 1e-6 && Math.abs(q.hx - p.hx) < 1e-6,
+      );
+      expect(mirror).toBeTruthy();
+    }
+
+    // No piece intrudes on a spawn point (±8, 0).
+    for (const p of layout) {
+      for (const sx of [-8, 8]) {
+        const clearance = Math.hypot(p.x - sx, p.z) - Math.max(p.hx, p.hz);
+        expect(clearance).toBeGreaterThanOrEqual(3.0 - 1e-6);
+      }
+    }
   });
 
-  it('pushes a fighter out to at least its radius from the box face', () => {
-    const c = COVER[0];
-    // Just outside the +x face, overlapping by the radius.
-    const [x] = resolveCover(c.x + c.hx + 0.2, c.z, 0.5);
-    expect(x).toBeGreaterThanOrEqual(c.x + c.hx + 0.5 - 1e-6);
+  it('is reproducible from a seed', () => {
+    expect(regenerateCover(777)).toEqual(regenerateCover(777));
   });
 });
