@@ -17,8 +17,10 @@ const DEFAULT_CONFIG: CameraConfig = {
   followHeight: 3,
   lookAheadDistance: 2,
   smoothSpeed: 5,
-  lockOnDistance: 8,
-  lockOnHeight: 3,
+  // Raised + pulled back so the camera looks DOWN over the cover (chest-high
+  // pieces were occluding the fighters from the old low, close angle).
+  lockOnDistance: 9,
+  lockOnHeight: 4.6,
   fovDefault: 55,
   fovCombat: 48,
   shakeDecay: 8,
@@ -174,10 +176,10 @@ export class BattleCamera {
 
     this.targetPosition.copy(midpoint)
       .addScaledVector(cameraDir, dynamicDist)
-      .setY(midpoint.y + this.config.lockOnHeight + separation * 0.15);
+      .setY(midpoint.y + this.config.lockOnHeight + separation * 0.22);
 
     this.targetLookAt.copy(midpoint);
-    this.targetLookAt.y += 0.8;
+    this.targetLookAt.y += 1.2;
 
     this.yaw = Math.atan2(
       this.targetPosition.x - midpoint.x,
