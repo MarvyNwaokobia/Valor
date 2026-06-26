@@ -24,41 +24,49 @@ interface ModelConfig {
   background: string;
   fog: [number, number];
   ambient: { color: string; intensity: number };
+  // Hemisphere (sky tint above, ground bounce below) — the outdoor-daylight
+  // signature that makes the enclosed stages read as open-air.
+  hemi: { sky: string; ground: string; intensity: number };
   key: { color: string; intensity: number };
   fill: { color: string; intensity: number };
   // Mesh-name pattern for the model's own sky/backdrop dome. It's hidden so it
-  // can't engulf the raised camera; the arena's own background + fog stand in.
+  // can't engulf the raised camera; the arena's own sky background + haze stand in.
   backdrop?: RegExp;
   credit: string;
 }
 
+// Backgrounds are bright, sky-toned (per theme) and the fog is a far, matching
+// haze — together they read as open-air daylight rather than a dark, enclosed room.
 const MODELS: Record<ModelArenaId, ModelConfig> = {
   battle: {
     url: '/models/environments/battle_arena/scene.gltf',
     fitRadius: 13, yOffset: 0,
-    background: '#0a0b14', fog: [34, 85],
-    ambient: { color: '#9fb0d8', intensity: 0.9 },
-    key: { color: '#ffffff', intensity: 2.6 },
-    fill: { color: '#6688cc', intensity: 1.4 },
+    background: '#7c9cc6', fog: [80, 230], // overcast day sky; this stage's floor is near-white, so keep daylight gentle
+    ambient: { color: '#9fb6d8', intensity: 0.25 },
+    hemi: { sky: '#b6cdf0', ground: '#5c5648', intensity: 0.55 },
+    key: { color: '#fff4e2', intensity: 1.7 },
+    fill: { color: '#7aa0d8', intensity: 0.6 },
     credit: '"battle arena" by 3D Arena (CC-BY-4.0)',
   },
   scifi: {
     url: '/models/environments/scifi_stage/scene.gltf',
     fitRadius: 12, yOffset: 0,
-    background: '#0a0816', fog: [30, 80],
-    ambient: { color: '#aa99ff', intensity: 0.9 },
-    key: { color: '#ffffff', intensity: 2.4 },
-    fill: { color: '#8866ff', intensity: 1.6 },
+    background: '#5f5294', fog: [55, 185], // bright dusk-violet sky
+    ambient: { color: '#ab9ce0', intensity: 0.4 },
+    hemi: { sky: '#bcaaf8', ground: '#3c3660', intensity: 0.95 },
+    key: { color: '#fff3ff', intensity: 2.7 },
+    fill: { color: '#9a7ce0', intensity: 1.0 },
     backdrop: /outer/i, // the nebula shell — engulfs the raised camera
     credit: '"Low Poly Sci-fi Fighting Stage" by Umar (Sketchfab Standard)',
   },
   lava: {
     url: '/models/environments/lava_arena/scene.gltf',
     fitRadius: 12, yOffset: 0,
-    background: '#140a08', fog: [30, 80],
-    ambient: { color: '#ffb48a', intensity: 0.9 },
-    key: { color: '#ffffff', intensity: 2.4 },
-    fill: { color: '#ff7744', intensity: 1.8 },
+    background: '#8c4a2c', fog: [50, 165], // hazy volcanic horizon
+    ambient: { color: '#ffbf99', intensity: 0.4 },
+    hemi: { sky: '#ffae7c', ground: '#4e2216', intensity: 1.0 },
+    key: { color: '#fff0dc', intensity: 2.9 },
+    fill: { color: '#ff8a52', intensity: 1.2 },
     backdrop: /sky/i,
     credit: '"Low Poly Lava Fighting Arena/Stage" by Umar (CC-BY-4.0)',
   },
@@ -131,6 +139,9 @@ export function ModelArena({ variant }: { variant: ModelArenaId }) {
       <color attach="background" args={[cfg.background]} />
       <fog attach="fog" args={[cfg.background, cfg.fog[0], cfg.fog[1]]} />
 
+      {/* Outdoor daylight: hemisphere (sky tint above / ground bounce below) + a
+          bright directional sun — reads as open-air rather than a lit interior. */}
+      <hemisphereLight color={cfg.hemi.sky} groundColor={cfg.hemi.ground} intensity={cfg.hemi.intensity} />
       <ambientLight color={cfg.ambient.color} intensity={cfg.ambient.intensity} />
       <directionalLight
         color={cfg.key.color}
