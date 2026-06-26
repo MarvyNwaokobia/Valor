@@ -53,6 +53,9 @@ const _gunScratch = new THREE.Matrix4();
 // it works in Safari — unlike rest-pose retargeting / baked clips, which load but
 // fail to drive the rig in real iOS/macOS WebKit.
 const HIPS_PITCH_FIX = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+// Inverse of the correction, used to UNDO last frame's fix before the mixer runs so
+// the premultiply is idempotent — see the cumulative-spin note in the frame loop.
+const HIPS_PITCH_FIX_INV = HIPS_PITCH_FIX.clone().invert();
 
 export const FighterModel = memo(function FighterModel({
   classId,
@@ -67,6 +70,9 @@ export const FighterModel = memo(function FighterModel({
   const gunRef = useRef<THREE.Group | null>(null);
   const handBoneRef = useRef<THREE.Object3D | null>(null);
   const hipsBoneRef = useRef<THREE.Object3D | null>(null);
+  // Whether last frame already premultiplied HIPS_PITCH_FIX onto the Hips, so we can
+  // undo it before the next mixer pass and keep the correction from compounding.
+  const hipsFixApplied = useRef(false);
   const lean = useRef({ x: 0, z: 0 });
   const lastPos = useRef<THREE.Vector3 | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -223,12 +229,27 @@ export const FighterModel = memo(function FighterModel({
       }
     }
 
+    // UNDO last frame's pitch correction before the mixer runs, so re-applying it
+    // below is idempotent. This matters because a FINISHED one-shot clip (Death,
+    // Victory) STOPS re-writing the Hips every frame — three.js holds the clamped
+    // pose without re-evaluating the track. An unconditional premultiply would then
+    // compound -90°/frame and spin the body, flicking it between upright and flat:
+    // the "switching horizontally and vertically" glitch seen after a KO. (Looping
+    // clips never finish, so live play was unaffected — which is why it only showed
+    // once the fight ended.)
+    if (hipsBoneRef.current && hipsFixApplied.current) {
+      hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX_INV);
+    }
+
     animMachine.update(dt);
 
     // Stand the fighter upright: cancel the rig's baked-in ~90° root pitch (see
-    // HIPS_PITCH_FIX). Runs after the mixer set the Hips from the clip; not cumulative
-    // because the mixer overwrites the Hips quaternion every frame.
-    if (hipsBoneRef.current) hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX);
+    // HIPS_PITCH_FIX). Applied onto whatever the mixer left — a fresh clip pose while
+    // playing, or the held final pose once a one-shot clip has finished.
+    if (hipsBoneRef.current) {
+      hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX);
+      hipsFixApplied.current = true;
+    }
 
     // Drive the gun from the hand bone (it's a sibling, not parented into the rig).
     // gun.matrix = groupRef⁻¹ · handBoneWorld · grip → renders exactly at the hand.
