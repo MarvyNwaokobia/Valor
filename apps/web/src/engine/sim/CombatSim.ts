@@ -9,6 +9,7 @@ import {
   RangedAI, AIDifficulty,
 } from '../combat';
 import { KnockbackPhysics } from '../vfx/KnockbackPhysics';
+import { resolveCover, losHit } from './Cover';
 
 /**
  * Headless, render-free authoritative combat core — RANGED STAT-DUEL.
@@ -44,6 +45,9 @@ export interface SimOptions {
 
 const FIGHTER_SEPARATION = 1.5;
 const FIXED_DT = 1 / 60;
+
+// Fighter footprint used when shoving bodies out of cover.
+const COVER_FIGHTER_RADIUS = 0.5;
 
 // Muzzle height (m) the tracer leaves from, and torso height the shot aims at.
 const MUZZLE_HEIGHT = 1.4;
@@ -130,6 +134,7 @@ interface Projectile {
   accuracy: number;    // hit chance at arrival when the target is NOT dodging
   arriveIn: number;    // seconds of travel left before it resolves
   impact: THREE.Vector3;
+  blocked: boolean;    // sightline was obstructed by cover — absorbs into the wall
 }
 
 interface Fighter {
@@ -285,6 +290,16 @@ export class CombatSim {
     // inside the pit — a hard hit at the edge must not shove a fighter off the floor.
     this.fighters.p1.ctrl.clampToBounds();
     this.fighters.p2.ctrl.clampToBounds();
+
+    // Shove fighters out of any cover they walked/slid into, then re-pin to bounds.
+    for (const id of ids) {
+      const s = this.fighters[id].ctrl.state;
+      const [nx, nz] = resolveCover(s.position.x, s.position.z, COVER_FIGHTER_RADIUS);
+      s.position.x = nx;
+      s.position.z = nz;
+      this.fighters[id].ctrl.clampToBounds();
+    }
+
     this.damage.updateStamina(clampedDt);
 
     // 6. Advance input frame edges.
@@ -332,21 +347,31 @@ export class CombatSim {
 
     const sPos = f.ctrl.state.position;
     const tPos = target.ctrl.state.position;
-    const aim = new THREE.Vector3(tPos.x, TORSO_HEIGHT, tPos.z);
+
+    // Line of sight: a cover piece between shooter and target absorbs the shot.
+    // When blocked, the tracer stops at the cover face and no damage is dealt.
+    const block = losHit(sPos.x, sPos.z, tPos.x, tPos.z);
+    const blocked = block !== null;
+
+    const aim = blocked
+      ? new THREE.Vector3(block.x, TORSO_HEIGHT, block.z)
+      : new THREE.Vector3(tPos.x, TORSO_HEIGHT, tPos.z);
     const planarDir = new THREE.Vector3(aim.x - sPos.x, 0, aim.z - sPos.z);
     const planarDist = planarDir.length() || 1e-3;
     planarDir.multiplyScalar(1 / planarDist);
     // Muzzle sits at gun height, just in front of the shooter toward the target.
     const origin = new THREE.Vector3(sPos.x, MUZZLE_HEIGHT, sPos.z).addScaledVector(planarDir, 0.4);
     const dir = aim.clone().sub(origin);
-    const dist = dir.length() || 1e-3;
+    const dist = dir.length() || 1e-3; // to the aim point (clipped at cover if blocked)
     dir.multiplyScalar(1 / dist);
 
-    // Pre-roll crit (gun + a slice of the class crit rate) and range falloff.
+    // Pre-roll crit (gun + a slice of the class crit rate) and range falloff. Falloff
+    // uses the TRUE shooter→target distance, not the cover-clipped tracer length.
     const stats = this.damage.getStats(id);
     const critChance = gun.critChance + (stats?.critRate ?? 0) * 0.5;
     const crit = Math.random() < critChance;
-    const falloff = dist <= gun.range ? 1 : Math.max(0.45, 1 - (dist - gun.range) * 0.07);
+    const rangeDist = Math.hypot(tPos.x - sPos.x, tPos.z - sPos.z);
+    const falloff = rangeDist <= gun.range ? 1 : Math.max(0.45, 1 - (rangeDist - gun.range) * 0.07);
     const damage = gun.damage * (crit ? gun.critMult : 1) * falloff;
     const arriveIn = dist / gun.projectileSpeed;
 
@@ -358,10 +383,11 @@ export class CombatSim {
       accuracy: gun.accuracy,
       arriveIn,
       impact: aim,
+      blocked,
     });
 
-    // Let an AI target react (dodge timing is the skill that scales the duel).
-    this.ais[oppId]?.onIncomingFire(arriveIn, target.ctrl);
+    // Only warn the AI of a real threat — a shot eating cover isn't one.
+    if (!blocked) this.ais[oppId]?.onIncomingFire(arriveIn, target.ctrl);
 
     this.events.push({
       kind: 'fire',
@@ -391,6 +417,13 @@ export class CombatSim {
     const target = this.fighters[p.targetId];
     const ts = target.ctrl.state;
     const torso: [number, number, number] = [ts.position.x, TORSO_HEIGHT, ts.position.z];
+
+    // Shot ate cover — spark on the wall, no damage.
+    if (p.blocked) {
+      this.fighters[p.shooterId].hitStreak = 0;
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: [p.impact.x, p.impact.y, p.impact.z] });
+      return;
+    }
 
     if (ts.isDead) {
       this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: torso });

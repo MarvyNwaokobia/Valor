@@ -21,6 +21,10 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
   it('resolves an aggressor-vs-idle match to a MatchEnd with the right winner', () => {
     const room = new GameRoom('r1', P1, P2)
     room.start()
+    // Clear lane, off the centre cover that blocks the spawn line (see Cover.ts),
+    // so this proves the wire path resolves a real exchange rather than a stalemate.
+    room.controller('p1').state.position.set(-2.5, 0, 5.5)
+    room.controller('p2').state.position.set(2.5, 0, 5.5)
 
     let matchEnd = null as null | ReturnType<GameRoom['step']>['matchEnd']
     let sawHit = false
@@ -65,6 +69,8 @@ describe('GameRoom (server-authoritative match over CombatProtocol)', () => {
     const run = (dodge: boolean) => {
       const room = new GameRoom(dodge ? 'rd' : 'rn', P1, P2)
       room.start()
+      room.controller('p1').state.position.set(-2.5, 0, 5.5)
+      room.controller('p2').state.position.set(2.5, 0, 5.5)
       for (let i = 0; i < 240; i++) {
         room.applyInput('p1', inputState(0, ['fire']))
         if (dodge) room.applyInput('p2', trigger('dodge')) // re-buffer to maximise i-frames

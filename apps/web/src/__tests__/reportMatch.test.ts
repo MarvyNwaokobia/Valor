@@ -52,6 +52,9 @@ describe('reportPvpMatch (PvP → economy bridge)', () => {
     const P2: RoomPlayer = { id: 'p2', wallet: '0xBBB2', name: 'B', classId: 'phantom' }
     const room = new GameRoom('r', P1, P2)
     room.start()
+    // Clear lane, off the centre cover that blocks the spawn line (see Cover.ts).
+    room.controller('p1').state.position.set(-2.5, 0, 5.5)
+    room.controller('p2').state.position.set(2.5, 0, 5.5)
 
     let end: MatchEndMsg | null = null
     for (let i = 0; i < 3600 && !room.isOver; i++) {
