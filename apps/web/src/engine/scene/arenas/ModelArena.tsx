@@ -133,7 +133,7 @@ export function ModelArena({ variant }: { variant: ModelArenaId }) {
         rayleigh={2.5}
         turbidity={6}
       />
-      <fog attach="fog" args={[cfg.background, cfg.fog[0], cfg.fog[1]]} />
+      {/* Fog is set at scene level in BattleWorld */}
 
       {/* Outdoor daylight: hemisphere (sky tint above / ground bounce below) + a
           bright directional sun — reads as open-air rather than a lit interior. */}
