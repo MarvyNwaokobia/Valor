@@ -9,8 +9,11 @@ import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
 import { loadMixamoAnimations, getMixamoClips, isMixamoLoadComplete } from '../animation';
 import { makeBlobShadowTexture } from '../world/textures';
-import { makeGunMesh } from './GunMesh';
-import { STARTER_GUN_ID, type GunId } from '../combat';
+import { RIFLE_URL, buildRifle } from './GunModel';
+import { type GunId } from '../combat';
+
+// Preload the gun model so it's ready by the time the rig binds.
+useGLTF.preload(RIFLE_URL);
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -62,7 +65,6 @@ export const FighterModel = memo(function FighterModel({
   state,
   animMachine,
   accent,
-  gunId,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const modelRef = useRef<THREE.Group>(null);
@@ -85,6 +87,8 @@ export const FighterModel = memo(function FighterModel({
   const initTime = useRef(0);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
+  const gunGltf = useGLTF(RIFLE_URL);
+  const gunProto = useMemo(() => buildRifle(gunGltf.scene), [gunGltf.scene]);
   const blobTex = useMemo(() => makeBlobShadowTexture(), []);
 
   const clonedScene = useMemo(() => {
@@ -155,7 +159,7 @@ export const FighterModel = memo(function FighterModel({
         // Build the gun as a SIBLING (child of the outer group), never parented
         // into the skeleton. Its matrix is driven from the hand bone each frame.
         if (!gunRef.current) {
-          const gun = makeGunMesh(gunId ?? STARTER_GUN_ID);
+          const gun = gunProto.clone(true);
           gun.matrixAutoUpdate = false; // we set gun.matrix directly in the frame loop
           groupRef.current.add(gun);
           gunRef.current = gun;
