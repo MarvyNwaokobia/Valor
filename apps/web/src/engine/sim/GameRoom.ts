@@ -84,6 +84,11 @@ export class GameRoom {
     return this.phase === 'ended';
   }
 
+  /** The underlying authoritative controller for a fighter (inspection/tests). */
+  controller(id: FighterId) {
+    return this.sim.controller(id);
+  }
+
   /** Apply an inbound network message to a player's input. */
   applyInput(id: FighterId, msg: InputStateMsg | ActionTriggerMsg) {
     const input = this.inputs[id];

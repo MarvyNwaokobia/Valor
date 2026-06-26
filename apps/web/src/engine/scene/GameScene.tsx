@@ -8,6 +8,7 @@ import { type StageId } from './ArenaStage';
 import { StylizedArena } from './arenas/StylizedArena';
 import { RealisticArena } from './arenas/RealisticArena';
 import { ModelArena } from './arenas/ModelArena';
+import { CoverProps } from './arenas/CoverProps';
 import { BattleCamera } from '../camera';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
 import { getInputSystem } from '../input';
@@ -355,6 +356,9 @@ function BattleWorld({
       {/* The procedural variants ship their own seating; the real models include
           their own stands, so the instanced Crowd only sits on the procedural ones. */}
       {(arenaVariant === 'stylized' || arenaVariant === 'realistic') && <Crowd director={crowd} />}
+      {/* Cover obstacles — gameplay (collision + line-of-sight) lives in the sim;
+          this draws them, matched to that data, on every arena. */}
+      <CoverProps />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
       <primitive object={tracerFX.group} />

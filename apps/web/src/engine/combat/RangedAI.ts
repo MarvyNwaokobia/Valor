@@ -48,6 +48,9 @@ export class RangedAI {
   private firing = true;
   private cycleTimer = 0;
   private pendingDodge: number | null = null;
+  // Circle-strafe state — flips direction on a timer / near the arena edge.
+  private strafeDir = Math.random() < 0.5 ? 1 : -1;
+  private strafeTimer = 1 + Math.random() * 1.5;
 
   constructor(difficulty: AIDifficulty = AIDifficulty.Medium, _classId = 'berserker') {
     this.config = { ...RANGED_CONFIGS[difficulty] };
@@ -57,11 +60,14 @@ export class RangedAI {
     return this.input;
   }
 
-  update(dt: number, self: CharacterController, _opponent: CharacterController) {
+  update(dt: number, self: CharacterController, opponent: CharacterController) {
     if (self.state.isDead) {
       this.input.releaseAction(Action.Fire);
+      this.input.setStick(0, 0);
       return;
     }
+
+    this.updateMovement(dt, self, opponent);
 
     // Reactive dodge — fire the scheduled evade once its lead timer elapses.
     if (this.pendingDodge !== null) {
@@ -83,6 +89,46 @@ export class RangedAI {
     // No point holding the trigger mid-dodge (the sim blocks firing while dodging).
     if (this.firing && !self.state.isDodging) this.input.triggerAction(Action.Fire);
     else this.input.releaseAction(Action.Fire);
+  }
+
+  // Circle-strafe the opponent at a mid range so cover comes into play (a static
+  // bot would just trade in the open). The stick is world-frame (the AI is fed
+  // cameraYaw 0), so worldX→stick.x and worldZ→-stick.y.
+  private updateMovement(dt: number, self: CharacterController, opponent: CharacterController) {
+    if (self.state.isDodging) {
+      this.input.setStick(0, 0); // the roll owns movement; don't fight it
+      return;
+    }
+
+    const sx = self.state.position.x, sz = self.state.position.z;
+    const ox = opponent.state.position.x, oz = opponent.state.position.z;
+    let tx = ox - sx, tz = oz - sz;
+    const range = Math.hypot(tx, tz) || 1;
+    tx /= range; tz /= range;
+
+    // Perpendicular = strafe; plus a range-keeping nudge toward/away (~6m ideal).
+    let wx = -tz * this.strafeDir;
+    let wz = tx * this.strafeDir;
+    const rangeBias = Math.max(-1, Math.min(1, (range - 6) * 0.4)) * 0.7;
+    wx += tx * rangeBias;
+    wz += tz * rangeBias;
+
+    // Steer back from the arena edge, and flip the strafe when cornered.
+    const distC = Math.hypot(sx, sz);
+    this.strafeTimer -= dt;
+    if (distC > 6.3) {
+      wx += (-sx / (distC || 1)) * 1.3;
+      wz += (-sz / (distC || 1)) * 1.3;
+      this.strafeTimer = Math.min(this.strafeTimer, 0.15);
+    }
+    if (this.strafeTimer <= 0) {
+      this.strafeDir *= -1;
+      this.strafeTimer = 1.2 + Math.random() * 1.6;
+    }
+
+    const wlen = Math.hypot(wx, wz) || 1;
+    const speed = 0.78;
+    this.input.setStick((wx / wlen) * speed, -(wz / wlen) * speed);
   }
 
   /** Called by the sim when a shot is launched at this fighter — decide to evade. */
