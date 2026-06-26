@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { reportPvpMatch } from '@/engine/sim/reportMatch'
 import { GameRoom, type RoomPlayer } from '@/engine/sim/GameRoom'
 import { NetMsgType, type MatchEndMsg, type InputStateMsg } from '@/engine/multiplayer/CombatProtocol'
+import { setCover } from '@/engine/sim/Cover'
 
 const matchEnd = (winnerId: string, loserId: string): MatchEndMsg => ({
   type: NetMsgType.MatchEnd,
@@ -52,9 +53,7 @@ describe('reportPvpMatch (PvP → economy bridge)', () => {
     const P2: RoomPlayer = { id: 'p2', wallet: '0xBBB2', name: 'B', classId: 'phantom' }
     const room = new GameRoom('r', P1, P2)
     room.start()
-    // Clear lane, off the centre cover that blocks the spawn line (see Cover.ts).
-    room.controller('p1').state.position.set(-2.5, 0, 5.5)
-    room.controller('p2').state.position.set(2.5, 0, 5.5)
+    setCover([]) // isolate the PvP→economy path from cover line-of-sight
 
     let end: MatchEndMsg | null = null
     for (let i = 0; i < 3600 && !room.isOver; i++) {
