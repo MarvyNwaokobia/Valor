@@ -35,7 +35,7 @@ export function RealisticArena() {
         rayleigh={2}
         turbidity={10}
       />
-      <fog attach="fog" args={['#d4a574', 70, 200]} />
+      {/* Fog is set at scene level in BattleWorld */}
 
       <Suspense fallback={null}>
         <Environment files="/hdri/venice_sunset_1k.hdr" environmentIntensity={0.35} />

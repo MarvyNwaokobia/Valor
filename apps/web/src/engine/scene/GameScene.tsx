@@ -73,6 +73,13 @@ const ENEMY_TRACER = 0xff7744;  // orange
 const FOOTSTEP_INTERVAL = 0.3;
 const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 
+const ARENA_FOG: Record<ArenaVariant, { bg: string; fog: string; near: number; far: number }> = {
+  stylized:   { bg: '#b8cce8', fog: '#b8cce8', near: 80, far: 220 },
+  realistic:  { bg: '#d4a574', fog: '#d4a574', near: 70, far: 200 },
+  scifi:      { bg: '#5f5294', fog: '#5f5294', near: 55, far: 185 },
+  industrial: { bg: '#6b6055', fog: '#8a7a68', near: 40, far: 100 },
+};
+
 function BattleWorld({
   playerClass,
   enemyClass,
@@ -344,20 +351,21 @@ function BattleWorld({
     onEnemyStateUpdate?.(enemyController.state.health, enemyController.state.maxHealth);
   });
 
+  // Per-arena fog + background — set at scene level (not inside a <group>,
+  // where attach="fog" would bind to the group instead of the scene).
+  const arenaFog = ARENA_FOG[arenaVariant];
+
   return (
     <>
-      {/* Live-swappable arena — each variant is self-contained (its own lighting,
-          background and seating). Toggled from the HUD button for the A/B compare. */}
+      <color attach="background" args={[arenaFog.bg]} />
+      <fog attach="fog" args={[arenaFog.fog, arenaFog.near, arenaFog.far]} />
+
       {arenaVariant === 'stylized' && <StylizedArena />}
       {arenaVariant === 'realistic' && <RealisticArena />}
       {arenaVariant === 'scifi' && <ModelArena variant="scifi" />}
       {arenaVariant === 'industrial' && <IndustrialArena />}
-      {/* The procedural variants ship their own seating; the real models include
-          their own stands, so the instanced Crowd only sits on the procedural ones. */}
       {(arenaVariant === 'stylized' || arenaVariant === 'realistic') && <Crowd director={crowd} />}
-      {/* Cover obstacles — gameplay (collision + line-of-sight) lives in the sim;
-          this draws them, matched to that data, on every arena. */}
-      <CoverProps />
+      <CoverProps variant={arenaVariant} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
       <primitive object={tracerFX.group} />
@@ -438,8 +446,7 @@ export function GameScene(props: GameSceneProps) {
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.6 }}
         className="w-full h-full"
       >
-        <color attach="background" args={['#12111a']} />
-        <fog attach="fog" args={['#12111a', 25, 60]} />
+        {/* Per-arena fog + background are set in BattleWorld at the scene level. */}
         <Suspense fallback={<LoadingScreen />}>
           <BattleWorld
             {...props}

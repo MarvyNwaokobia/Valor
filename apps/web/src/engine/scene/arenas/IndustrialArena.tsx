@@ -160,8 +160,7 @@ export function IndustrialArena() {
 
   return (
     <group>
-      {/* No sky component — enclosed hangar. Background is dark concrete. */}
-      <fog attach="fog" args={['#8a7a68', 35, 90]} />
+      {/* No sky — enclosed hangar. Fog + background set at scene level. */}
 
       {/* ---- Lighting: warm natural sunlight through high windows ---- */}
       <hemisphereLight color={'#c8b8a0'} groundColor={'#3a3028'} intensity={0.6} />
