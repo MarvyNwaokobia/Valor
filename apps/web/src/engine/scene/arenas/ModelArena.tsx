@@ -15,7 +15,7 @@ import * as THREE from 'three';
  * mood + fog; the models' emissive textures add self-glow.
  */
 
-export type ModelArenaId = 'battle' | 'scifi' | 'lava';
+export type ModelArenaId = 'battle' | 'scifi';
 
 interface ModelConfig {
   url: string;
@@ -58,17 +58,6 @@ const MODELS: Record<ModelArenaId, ModelConfig> = {
     fill: { color: '#9a7ce0', intensity: 1.0 },
     backdrop: /outer/i, // the nebula shell — engulfs the raised camera
     credit: '"Low Poly Sci-fi Fighting Stage" by Umar (Sketchfab Standard)',
-  },
-  lava: {
-    url: '/models/environments/lava_arena/scene.gltf',
-    fitRadius: 12, yOffset: 0,
-    background: '#8c4a2c', fog: [50, 165], // hazy volcanic horizon
-    ambient: { color: '#ffbf99', intensity: 0.4 },
-    hemi: { sky: '#ffae7c', ground: '#4e2216', intensity: 1.0 },
-    key: { color: '#fff0dc', intensity: 2.9 },
-    fill: { color: '#ff8a52', intensity: 1.2 },
-    backdrop: /sky/i,
-    credit: '"Low Poly Lava Fighting Arena/Stage" by Umar (CC-BY-4.0)',
   },
 };
 
