@@ -7,10 +7,12 @@
  *   1. Blocks movement (fighters can't walk through it) — circle-vs-AABB push-out.
  *   2. Blocks line of sight (a shot through a piece is absorbed) — segment-vs-AABB.
  *
- * Pieces are axis-aligned boxes in the XZ plane, symmetric about the origin so
- * neither fighter is advantaged in the 1v1. The centre block sits on the duel line
- * (fighters spawn at ±2.5 on X) so the opening shot is blocked and both players
- * MUST move off the line to get an angle — the core "peek, don't stand" loop.
+ * Pieces are axis-aligned boxes in the XZ plane, laid out symmetric about the
+ * origin so neither fighter is advantaged in the 1v1. The layout is deliberately
+ * OPEN — a single thin wall across the duel line (fighters spawn at ±2.5 on X) so
+ * the opening shot is denied and you round its ends to get an angle, plus four
+ * pillars pushed out to the corners for flank/retreat cover. The middle ring is
+ * left clear so there's room to actually move ("peek, don't stand" without a cage).
  */
 export interface CoverBox {
   x: number;
@@ -21,11 +23,13 @@ export interface CoverBox {
 }
 
 export const COVER: CoverBox[] = [
-  { x: 0, z: 0, hx: 0.95, hz: 0.95, height: 1.7 }, // centre blocker on the duel line
-  { x: 2.7, z: 2.6, hx: 0.75, hz: 0.75, height: 1.25 },
-  { x: 2.7, z: -2.6, hx: 0.75, hz: 0.75, height: 1.25 },
-  { x: -2.7, z: 2.6, hx: 0.75, hz: 0.75, height: 1.25 },
-  { x: -2.7, z: -2.6, hx: 0.75, hz: 0.75, height: 1.25 },
+  // Thin wall across the duel line — round its ends (move in Z) to open a sightline.
+  { x: 0, z: 0, hx: 0.7, hz: 1.5, height: 1.5 },
+  // Corner pillars, pushed out so the centre ring stays open to move through.
+  { x: 3.9, z: 3.4, hx: 0.8, hz: 0.8, height: 1.25 },
+  { x: -3.9, z: -3.4, hx: 0.8, hz: 0.8, height: 1.25 },
+  { x: -3.9, z: 3.4, hx: 0.8, hz: 0.8, height: 1.25 },
+  { x: 3.9, z: -3.4, hx: 0.8, hz: 0.8, height: 1.25 },
 ];
 
 // Shots travel between muzzle (~1.4m) and torso (~1.05m); every piece is taller
