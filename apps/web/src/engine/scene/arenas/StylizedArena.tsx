@@ -50,7 +50,7 @@ export function StylizedArena() {
         rayleigh={1.5}
         turbidity={8}
       />
-      <fog attach="fog" args={['#b8cce8', 80, 220]} />
+      {/* Fog is set at scene level in BattleWorld */}
 
       {/* ---- Outdoor lighting ---- */}
       <hemisphereLight color={'#87ceeb'} groundColor={'#5a6844'} intensity={1.0} />

@@ -276,12 +276,8 @@ export const FighterModel = memo(function FighterModel({
         <group ref={modelRef}>
           <primitive object={clonedScene} />
         </group>
-        {/* Per-fighter lighting so the character stays readable on any stage:
-            an accent rim (class colour) + a soft neutral overhead fill that lifts
-            the tops/fronts the elevated camera sees WITHOUT washing the model to
-            white. Short range → minimal arena spill. */}
-        <pointLight color={accentColor} intensity={2.2} distance={5.5} position={[0, 1.5, 0]} />
-        <pointLight color={'#dce6ff'} intensity={0.7} distance={6} position={[0, 3.4, 0.4]} />
+        <pointLight color={accentColor} intensity={4.0} distance={7} position={[0, 1.5, 0]} />
+        <pointLight color={'#fff4e8'} intensity={2.0} distance={8} position={[0, 3.5, 0.6]} />
       </group>
     </>
   );
