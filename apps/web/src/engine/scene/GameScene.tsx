@@ -30,12 +30,11 @@ type ClassId = 'berserker' | 'sentinel' | 'phantom';
 // Art directions the player can live-toggle to compare the look (single deploy).
 // 'stylized'/'realistic' are procedural; the rest are real downloaded Sketchfab
 // fighting-arena models (see ModelArena). The toggle cycles through this order.
-export type ArenaVariant = 'stylized' | 'realistic' | 'battle' | 'scifi';
+export type ArenaVariant = 'stylized' | 'realistic' | 'scifi';
 
 const ARENA_CYCLE: { id: ArenaVariant; label: string }[] = [
   { id: 'stylized', label: 'Stylized' },
   { id: 'realistic', label: 'Semi-Real' },
-  { id: 'battle', label: 'Battle · model' },
   { id: 'scifi', label: 'Sci-Fi · model' },
 ];
 
@@ -349,9 +348,7 @@ function BattleWorld({
           background and seating). Toggled from the HUD button for the A/B compare. */}
       {arenaVariant === 'stylized' && <StylizedArena />}
       {arenaVariant === 'realistic' && <RealisticArena />}
-      {(arenaVariant === 'battle' || arenaVariant === 'scifi') && (
-        <ModelArena variant={arenaVariant} />
-      )}
+      {arenaVariant === 'scifi' && <ModelArena variant="scifi" />}
       {/* The procedural variants ship their own seating; the real models include
           their own stands, so the instanced Crowd only sits on the procedural ones. */}
       {(arenaVariant === 'stylized' || arenaVariant === 'realistic') && <Crowd director={crowd} />}

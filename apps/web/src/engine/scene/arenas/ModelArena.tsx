@@ -15,7 +15,7 @@ import * as THREE from 'three';
  * mood + fog; the models' emissive textures add self-glow.
  */
 
-export type ModelArenaId = 'battle' | 'scifi';
+export type ModelArenaId = 'scifi';
 
 interface ModelConfig {
   url: string;
@@ -38,16 +38,6 @@ interface ModelConfig {
 // Backgrounds are bright, sky-toned (per theme) and the fog is a far, matching
 // haze — together they read as open-air daylight rather than a dark, enclosed room.
 const MODELS: Record<ModelArenaId, ModelConfig> = {
-  battle: {
-    url: '/models/environments/battle_arena/scene.gltf',
-    fitRadius: 13, yOffset: 0,
-    background: '#7c9cc6', fog: [80, 230], // overcast day sky; this stage's floor is near-white, so keep daylight gentle
-    ambient: { color: '#9fb6d8', intensity: 0.25 },
-    hemi: { sky: '#b6cdf0', ground: '#5c5648', intensity: 0.55 },
-    key: { color: '#fff4e2', intensity: 1.7 },
-    fill: { color: '#7aa0d8', intensity: 0.6 },
-    credit: '"battle arena" by 3D Arena (CC-BY-4.0)',
-  },
   scifi: {
     url: '/models/environments/scifi_stage/scene.gltf',
     fitRadius: 12, yOffset: 0,
