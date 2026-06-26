@@ -2,23 +2,18 @@
 
 import { Suspense } from 'react';
 import * as THREE from 'three';
-import { Environment, MeshReflectorMaterial } from '@react-three/drei';
+import { Environment, MeshReflectorMaterial, Sky } from '@react-three/drei';
 
 /**
- * SEMI-REALISTIC art direction — moody, cinematic, PBR.
+ * SEMI-REALISTIC art direction — moody, cinematic, PBR, OUTDOOR.
  *
- * A real CC0 HDRI (PolyHaven "venice_sunset", self-hosted under /public/hdri)
- * drives image-based lighting + reflections; a polished reflective floor bounces
- * the fighters and the warm sky for a premium "real fighting game" feel. Dark,
- * fogged, dramatic key/rim lights. This is a DIRECTION sample (lighting does the
- * heavy lifting), not a final hand-built stage. Seating matches the Crowd tiers.
- *
- * Perf note: MeshReflectorMaterial renders an extra reflection pass — kept at a
- * modest resolution + blur so it stays mobile-friendly for the prototype.
+ * A sunset/golden-hour sky (drei Sky) with a real CC0 HDRI for PBR reflections,
+ * warm directional sun + cool sky fill, and a polished reflective floor that
+ * catches the sky colour. Open-air coliseum feel — no dark enclosure.
  */
 
-const STONE = '#1a1714';
-const STONE_RISER = '#0f0d0b';
+const STONE = '#2a2420';
+const STONE_RISER = '#1a1610';
 const EMBER = '#ff7a2e';
 
 const SEAT_TIERS = [
@@ -30,38 +25,49 @@ const SEAT_TIERS = [
 export function RealisticArena() {
   return (
     <group>
-      {/* Dark, enclosed, atmospheric — fog hides the rim so it reads as a stage */}
-      <color attach="background" args={['#08070a']} />
-      <fog attach="fog" args={['#08070a', 16, 52]} />
+      {/* Outdoor sky — golden-hour sun, warm turbidity */}
+      <Sky
+        distance={450000}
+        sunPosition={[50, 15, -40]}
+        inclination={0.49}
+        azimuth={0.25}
+        mieCoefficient={0.01}
+        mieDirectionalG={0.95}
+        rayleigh={2}
+        turbidity={10}
+      />
+      <fog attach="fog" args={['#d4a574', 50, 160]} />
 
-      {/* Image-based lighting + reflections from a real HDRI. Local Suspense with a
-          null fallback so loading it never blanks the whole scene on first switch. */}
+      {/* HDRI for PBR reflections (subtle — the sky dome does the visual work) */}
       <Suspense fallback={null}>
-        <Environment files="/hdri/venice_sunset_1k.hdr" environmentIntensity={0.55} />
+        <Environment files="/hdri/venice_sunset_1k.hdr" environmentIntensity={0.35} />
       </Suspense>
 
-      {/* ---- Dramatic key + rim, low ambient ---- */}
-      <ambientLight color={'#2a3550'} intensity={0.35} />
+      {/* ---- Outdoor sunset lighting ---- */}
+      <hemisphereLight color={'#ffd4a0'} groundColor={'#3a2820'} intensity={0.7} />
+      <ambientLight color={'#ffc890'} intensity={0.3} />
+      {/* Warm sun key */}
       <directionalLight
-        color={'#ffb070'}
-        intensity={3.2}
-        position={[7, 11, 4]}
+        color={'#ffb060'}
+        intensity={3.5}
+        position={[7, 12, -5]}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={0.5}
-        shadow-camera-far={50}
-        shadow-camera-left={-16}
-        shadow-camera-right={16}
-        shadow-camera-top={16}
-        shadow-camera-bottom={-16}
+        shadow-camera-far={60}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={18}
+        shadow-camera-bottom={-18}
         shadow-bias={-0.0008}
       />
-      <directionalLight color={'#4d6bff'} intensity={1.8} position={[-6, 5, -7]} />
-      <pointLight color={EMBER} intensity={2.4} distance={22} position={[0, 2, 9]} />
-      <pointLight color={EMBER} intensity={2.4} distance={22} position={[0, 2, -9]} />
+      {/* Cool sky fill from the opposite side */}
+      <directionalLight color={'#6688cc'} intensity={1.2} position={[-6, 8, 5]} />
+      <pointLight color={EMBER} intensity={2.0} distance={22} position={[0, 2, 9]} />
+      <pointLight color={EMBER} intensity={2.0} distance={22} position={[0, 2, -9]} />
 
-      {/* ---- Polished reflective floor (the premium tell) ---- */}
+      {/* ---- Polished reflective floor (catches the sky) ---- */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
         <circleGeometry args={[11, 96]} />
         <MeshReflectorMaterial
@@ -71,7 +77,7 @@ export function RealisticArena() {
           mixStrength={2.2}
           roughness={0.35}
           metalness={0.6}
-          color={'#15110e'}
+          color={'#201a14'}
           mirror={0}
           depthScale={0}
           minDepthThreshold={0.9}
@@ -87,7 +93,7 @@ export function RealisticArena() {
         </mesh>
       ))}
 
-      {/* Pit rim wall — dark PBR stone */}
+      {/* Pit rim wall — warm PBR stone */}
       <mesh position={[0, 0.6, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[11, 11, 1.2, 96, 1, true]} />
         <meshStandardMaterial color={STONE} roughness={0.7} metalness={0.25} side={THREE.DoubleSide} />
@@ -111,7 +117,7 @@ export function RealisticArena() {
         </group>
       ))}
 
-      {/* ---- Braziers ringing the pit for warm flickerless glow ---- */}
+      {/* ---- Braziers ringing the pit ---- */}
       {Array.from({ length: 8 }).map((_, i) => {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
         const x = Math.cos(a) * 11.7;
@@ -131,10 +137,10 @@ export function RealisticArena() {
         );
       })}
 
-      {/* Dark enclosure so the stage doesn't float in the HDRI sky */}
-      <mesh position={[0, 8, 0]}>
-        <cylinderGeometry args={[19, 19, 18, 48, 1, true]} />
-        <meshStandardMaterial color={'#050406'} roughness={1} metalness={0} side={THREE.BackSide} />
+      {/* Ground extending beyond the arena — sandy terrain under sunset light */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
+        <circleGeometry args={[120, 64]} />
+        <meshStandardMaterial color={'#4a3828'} roughness={0.95} metalness={0} />
       </mesh>
     </group>
   );
