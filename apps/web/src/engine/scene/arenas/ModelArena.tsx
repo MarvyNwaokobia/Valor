@@ -1,0 +1,154 @@
+'use client';
+
+import { useMemo } from 'react';
+import { useGLTF } from '@react-three/drei';
+import * as THREE from 'three';
+
+/**
+ * Loads a downloaded GLTF stage (real Sketchfab fighting-arena models that shipped
+ * in the repo but were never wired in) and drops it into the duel.
+ *
+ * These models arrive at arbitrary scale/origin, so we normalize from the bounding
+ * box: centre on XZ, sit the base on y=0, and scale so the stage spans `fitRadius`.
+ * A thin dark play-disc under the fighters guarantees they always have ground even
+ * if a model's own floor sits slightly off zero. Each variant brings its own light
+ * mood + fog; the models' emissive textures add self-glow.
+ */
+
+export type ModelArenaId = 'battle' | 'scifi' | 'lava';
+
+interface ModelConfig {
+  url: string;
+  fitRadius: number;          // half the stage's intended XZ span (metres)
+  yOffset: number;            // nudge after base-align (raise/lower the stage)
+  background: string;
+  fog: [number, number];
+  ambient: { color: string; intensity: number };
+  key: { color: string; intensity: number };
+  fill: { color: string; intensity: number };
+  credit: string;
+}
+
+const MODELS: Record<ModelArenaId, ModelConfig> = {
+  battle: {
+    url: '/models/environments/battle_arena/scene.gltf',
+    fitRadius: 13, yOffset: 0,
+    background: '#0a0b14', fog: [34, 85],
+    ambient: { color: '#9fb0d8', intensity: 0.9 },
+    key: { color: '#ffffff', intensity: 2.6 },
+    fill: { color: '#6688cc', intensity: 1.4 },
+    credit: '"battle arena" by 3D Arena (CC-BY-4.0)',
+  },
+  scifi: {
+    url: '/models/environments/scifi_stage/scene.gltf',
+    fitRadius: 12, yOffset: 0,
+    background: '#0a0816', fog: [30, 80],
+    ambient: { color: '#aa99ff', intensity: 0.9 },
+    key: { color: '#ffffff', intensity: 2.4 },
+    fill: { color: '#8866ff', intensity: 1.6 },
+    credit: '"Low Poly Sci-fi Fighting Stage" by Umar (Sketchfab Standard)',
+  },
+  lava: {
+    url: '/models/environments/lava_arena/scene.gltf',
+    fitRadius: 12, yOffset: 0,
+    background: '#140a08', fog: [30, 80],
+    ambient: { color: '#ffb48a', intensity: 0.9 },
+    key: { color: '#ffffff', intensity: 2.4 },
+    fill: { color: '#ff7744', intensity: 1.8 },
+    credit: '"Low Poly Lava Fighting Arena/Stage" by Umar (CC-BY-4.0)',
+  },
+};
+
+function FittedModel({ cfg }: { cfg: ModelConfig }) {
+  const { scene } = useGLTF(cfg.url);
+
+  const fitted = useMemo(() => {
+    // Static environment meshes (no skinning) — a plain deep clone is enough.
+    const root = scene.clone(true);
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    root.updateMatrixWorld(true);
+
+    // Fit to the STAGE, not the skybox — these Sketchfab models ship their own
+    // sky/background domes that would otherwise blow up the bounding box and
+    // shrink the actual arena to a dot. Measure only the non-sky meshes.
+    const stageBox = new THREE.Box3();
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh && !/sky|background|\bbg\b|star|space|dome|cloud/i.test(o.name)) {
+        stageBox.expandByObject(o);
+      }
+    });
+    const box = stageBox.isEmpty() ? new THREE.Box3().setFromObject(root) : stageBox;
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+    const horiz = Math.max(size.x, size.z) || 1;
+    const scale = (cfg.fitRadius * 2) / horiz;
+
+    // Centre on XZ; base to y=0 for now (floor re-seating happens after scaling).
+    root.position.set(-center.x, -box.min.y, -center.z);
+
+    const wrapper = new THREE.Group();
+    wrapper.add(root);
+    wrapper.scale.setScalar(scale);
+    wrapper.updateMatrixWorld(true);
+
+    // Seat the fighters on the real standing surface: raycast straight down at the
+    // centre and take the topmost hit in the LOWER half of the stage (so a ceiling
+    // or sky dome up top is ignored). Offset the stage so that surface lands on y=0.
+    const ray = new THREE.Raycaster();
+    const topY = box.max.y * scale + 5;
+    const midY = (box.min.y + (box.max.y - box.min.y) * 0.5) * scale;
+    ray.set(new THREE.Vector3(0, topY, 0), new THREE.Vector3(0, -1, 0));
+    const hits = ray.intersectObject(wrapper, true).filter((h) => h.point.y <= midY);
+    const floorY = hits.length ? Math.max(...hits.map((h) => h.point.y)) : 0;
+
+    wrapper.position.y = cfg.yOffset - floorY;
+    return wrapper;
+  }, [scene, cfg]);
+
+  return <primitive object={fitted} />;
+}
+
+export function ModelArena({ variant }: { variant: ModelArenaId }) {
+  const cfg = MODELS[variant];
+  return (
+    <group>
+      <color attach="background" args={[cfg.background]} />
+      <fog attach="fog" args={[cfg.background, cfg.fog[0], cfg.fog[1]]} />
+
+      <ambientLight color={cfg.ambient.color} intensity={cfg.ambient.intensity} />
+      <directionalLight
+        color={cfg.key.color}
+        intensity={cfg.key.intensity}
+        position={[6, 14, 5]}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-near={0.5}
+        shadow-camera-far={60}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={18}
+        shadow-camera-bottom={-18}
+        shadow-bias={-0.0008}
+      />
+      <directionalLight color={cfg.fill.color} intensity={cfg.fill.intensity} position={[-6, 7, -4]} />
+
+      {/* Safety play-disc so fighters always have ground under them. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.04, 0]} receiveShadow>
+        <circleGeometry args={[9, 64]} />
+        <meshStandardMaterial color={'#0c0c12'} roughness={0.95} metalness={0.1} />
+      </mesh>
+
+      <FittedModel cfg={cfg} />
+    </group>
+  );
+}
+
+// Preload nothing by default (heavy models load on first toggle to them).
