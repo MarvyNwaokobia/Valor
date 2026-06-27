@@ -1,8 +1,8 @@
 # Valor
 
-A Web3 character-based fighting game built on [GoodDollar](https://gooddollar.org) + [Celo](https://celo.org). One verified human. One warrior. Forever.
+A Web3 real-time 1v1 stat-duel SHOOTER built on [GoodDollar](https://gooddollar.org) + [Celo](https://celo.org). One verified human. One warrior. Forever.
 
-Players verify their identity via GoodDollar, choose a character class, battle bots and other players to earn XP and rank up, and buy gear from the on-chain marketplace using G$ — with no gas fees required.
+Players verify their identity via GoodDollar, choose a character class, and enter a 3D arena where two fighters stand at range and trade shots. The only player skill is dodge timing — better guns mean more power. Gun economy drives the marketplace. Earn XP and rank up, buy guns/ammo/attachments from the on-chain marketplace using G$ — with no gas fees required.
 
 **Live**: https://playvalor.vercel.app  
 **API**: https://valor-production.up.railway.app  
@@ -80,14 +80,18 @@ Three classes with base stats plus ±3 wallet-seeded variance per player:
 
 One character per wallet. Class is permanent. Username is editable at any time.
 
-### Battle
+### Combat — Stat-Duel Shooter
 
-- 5 rounds max. Each round: Attack / Defend / Special (once per battle)
-- **Damage**: `base(20) ± 20% variance × (1 + (ATK − DEF) × 0.01) × defMult(0.5 if defending)`
-- Special deals 2× base damage (40 base) and bypasses the defender's defence multiplier
-- Bot fights: client submits moves → server runs authoritative simulation
+Two fighters at range trade shots in a 3D arena. Dodge timing is the player skill.
+
+- **6 animation states**: idle, fire, stagger, dodge, death, victory
+- **Projectile-based** (not hitscan) — travelling bullets that can be dodged
+- **CombatSim** resolves: fire cadence from gun `fireRate`, accuracy roll, dodge i-frames, crit chance
+- **Campaign**: 15 levels across 3 zones (Ashfall, Proving Ground, The Rift), bosses every 5th level
+- **Endless mode** after level 15 with weekly leaderboards
+- Bot fights: client runs CombatSim → server validates result
 - Player challenges: fully server-side with a random seed
-- Equipped weapons boost ATK; shields boost DEF; boosters 2× XP
+- Equipped guns determine fire rate, damage, accuracy; ammo/attachments modify stats; boosters 2× XP
 
 ### Ranks & XP
 
@@ -95,9 +99,9 @@ One character per wallet. Class is permanent. Username is editable at any time.
 
 | Event | XP |
 |-------|----|
-| Win | +100 |
-| Loss | +30 |
-| Rank threshold | 1000 XP |
+| Win | +50 to +104 (scales per campaign level) |
+| Loss | +15 to +34 (scales per campaign level) |
+| Rank threshold | 1,000 XP (exactly 15 wins at max level) |
 
 XP resets to the remainder on rank-up. Rank-up triggers a G$ reward from `ValorRewardPool`.
 
@@ -112,14 +116,38 @@ XP resets to the remainder on rank-up. Rank-up triggers a G$ reward from `ValorR
 
 ### Items
 
+#### Guns
+
+| Gun | Price | Notes |
+|-----|-------|-------|
+| Standard Sidearm | Free | Starter weapon |
+| Compact SMG | 150 G$ | Fast fire rate, low damage |
+| Assault Rifle | 400 G$ | Balanced |
+| Marksman Rifle | 900 G$ | High damage, slow fire rate |
+| Valor Prototype | 2,000 G$ | Best-in-class stats |
+
+#### Ammo Types
+
+| Ammo | Effect |
+|------|--------|
+| Hollow Point | +20% DMG |
+| Armor Piercing | +10% DMG, +5% crit |
+| Tracer | +8% ACC, +30 RPM |
+| Incendiary | 3 HP/s burn DOT |
+
+#### Attachments
+
+4 slots (barrel, optic, grip, magazine) x 2 options each = 8 attachments total.
+
+#### Other Items
+
 | Category | Effect |
 |----------|--------|
-| Weapon | +ATK while equipped |
+| Booster | 2x XP from battles while equipped (XP Booster, Elite Booster) |
 | Shield | +DEF while equipped; can also freeze decay for 7 days |
-| Booster | 2× XP from battles while equipped |
-| Cosmetic | Visual only |
+| Legacy weapons | Iron Sword, Steel Blade, Void Edge — still exist from the melee era |
 
-Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, mirrored in the database for fast reads.
+All 25 items are registered on-chain (`on_chain_id` 1-25). Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, mirrored in the database for fast reads.
 
 ### GoodDollar Integration
 
@@ -128,6 +156,13 @@ Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, 
 - **Engagement Rewards**: Battle wins can earn additional G$ via the GoodDollar Engagement Rewards SDK (EIP-712 dual-signature: backend signs `AppClaim`, user signs `Claim`, frontend calls `nonContractAppClaim` on-chain). Requires portal approval — see *GoodDollar App Registration* below.
 - **Marketplace**: All purchases use G$ on Celo — gasless via EIP-2612 permit relay
 - **Rank rewards**: G$ distributed from `ValorRewardPool` on each rank-up
+
+### Navigation
+
+- **Home** (`/`) — character portrait + action cards
+- **Fight** (`/battle`) — mode select: Campaign, Challenge a Player, Live PvP
+- **Campaign** — CampaignSelect → `/fight?level=N` (3D combat arena)
+- **Post-fight** — Retry (same level), Next Level (on win), Return Home
 
 ---
 
@@ -265,6 +300,16 @@ forge test
 |--------|------|-------------|
 | `POST` | `/battles/bot` | Fight a bot (server-authoritative) |
 | `POST` | `/battles/challenge` | Challenge another player |
+| `POST` | `/battles/fight/complete` | Real-time fight reward (campaign + quick fight) |
+| `POST` | `/battles/pvp/complete` | PvP reward (server-authoritative) |
+
+### Endless Mode
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/endless/score` | Get player's endless mode score |
+| `POST` | `/endless/score` | Submit endless mode score |
+| `GET` | `/endless/leaderboard` | Weekly endless mode leaderboard |
 
 ### Items
 
@@ -315,6 +360,10 @@ forge script script/Deploy.s.sol \
 ITEMS_CONTRACT=<address> MARKETPLACE_CONTRACT=<address> \
   forge script script/Setup.s.sol --rpc-url $CELO_RPC_URL --broadcast
 
+# 2b. Register new items (guns, ammo, attachments) after initial setup
+ITEMS_CONTRACT=<address> MARKETPLACE_CONTRACT=<address> \
+  forge script script/RegisterNewItems.s.sol --rpc-url $CELO_RPC_URL --broadcast
+
 # 3. Copy proxy addresses into apps/web/.env.local and Railway env vars
 ```
 
@@ -329,14 +378,24 @@ railway up --detach
 
 Required Railway env vars: `DATABASE_URL`, `BACKEND_PRIVATE_KEY`, `GAME_RECORD_CONTRACT`, `MARKETPLACE_CONTRACT`, `CELO_RPC_URL`, `VALOR_APP_ADDRESS`, `DECAY_CRON_SECRET`.
 
-After deploying to a fresh database, run the migrations:
+After deploying to a fresh database, run the migrations in order:
 
 ```bash
 railway variables --service Postgres --json   # get DATABASE_PUBLIC_URL
-psql $DATABASE_PUBLIC_URL < migrations/init.sql
-psql $DATABASE_PUBLIC_URL < migrations/add_chain_tx_columns.sql
-psql $DATABASE_PUBLIC_URL < migrations/fix_decimal_columns.sql
+psql $DATABASE_PUBLIC_URL < migrations/init.sql               # 001 initial schema
+psql $DATABASE_PUBLIC_URL < migrations/add_chain_tx_columns.sql  # 002 RLS + chain tx columns
+psql $DATABASE_PUBLIC_URL < migrations/fix_decimal_columns.sql   # 003 fix decimal types
 ```
+
+Planned migrations (not yet in `migrations/` — apply when implemented):
+
+| # | Migration | Purpose |
+|---|-----------|---------|
+| 004 | guns | Gun items, fire rate, damage, accuracy columns |
+| 005 | pve_level | Campaign level tracking per player |
+| 006 | endless | Endless mode scores + weekly leaderboard |
+| 007 | remove_melee | Drop legacy melee-specific columns |
+| 008 | ammo_attachments | Ammo types + attachment slots |
 
 ### Frontend (Vercel)
 
@@ -365,8 +424,10 @@ Once approved, set `NEXT_PUBLIC_VALOR_APP_ADDRESS` (frontend) and `VALOR_BACKEND
 | Daily G$ UBI claim | Live | `ClaimSDK.claim()` wired in-app. Players claim GoodDollar UBI directly from the Daily Check-In button. |
 | Engagement Rewards | Pending approval | App submitted at `engagement-rewards.vercel.app`. Once approved, battle-win G$ distributions go live automatically. |
 | Identity gate | Live | Full-screen GoodDollar whitelist check. Already-whitelisted wallets pass instantly. Unverified wallets see an inline "Complete Verification" panel that redirects to GoodDollar face verification (same tab). Sign-out button available throughout. Nav is inaccessible until verified. |
+| Ammo/attachment equip | Not wired | `Loadout.ts` has `resolveGunStats` but CombatSim doesn't call it yet — ammo/attachment bonuses are defined but not applied in combat. |
+| Campaign level UX | Incomplete | No level context shown during fights — player doesn't see which level/zone they're in while fighting. |
+| Per-level arena | Not implemented | All fights use the same stylized arena regardless of campaign zone. |
 | GoodCollective rank pools | Not deployed | `RANK_POOL_*` env vars are placeholders. Deploy pools on `goodcollective.xyz` and grant `MANAGER_ROLE` to the backend signer to activate passive UBI drip for Silver+ ranks. |
-| Character 3D customization | Deferred | `character_customization` JSON is stored but not yet applied to GLB meshes. |
 | On-chain character claim | Deferred | `character_claim_tx` column exists and `ChainBadge` renders it, but character minting is not yet triggered in the onboarding flow. |
 | Mission signature auth | Not implemented | `x-wallet` header is trusted without EIP-712 sign. Acceptable for MVP. |
 | Inventory IDOR | Not implemented | Inventory endpoints don't require wallet signature. Acceptable for MVP. |
@@ -385,6 +446,16 @@ Valor/
 │   │       ├── app/              # App Router — layout, pages, providers
 │   │       ├── views/            # Page-level components (BattlePage, MarketplacePage, …)
 │   │       ├── components/       # Feature components (battle/, marketplace/, warrior/, ui/)
+│   │       │   └── marketplace/
+│   │       │       └── GunIcons.tsx   # Gun icon components for the marketplace
+│   │       ├── engine/
+│   │       │   ├── combat/
+│   │       │   │   ├── GunStats.ts    # Gun stat definitions + scaling
+│   │       │   │   └── Loadout.ts     # Loadout resolution (gun + ammo + attachments)
+│   │       │   ├── campaign/
+│   │       │   │   └── levels.ts      # 15-level campaign definition (zones, bosses, XP)
+│   │       │   └── sim/
+│   │       │       └── CombatSim.ts   # Core combat simulation (fire cadence, dodge, crit)
 │   │       ├── hooks/            # React hooks (useMarketplace, useBattle, useEngagementRewards, …)
 │   │       ├── stores/           # Zustand state (player, inventory)
 │   │       ├── lib/              # Constants, wagmi config, classes, GoodDollar SDK setup
@@ -409,6 +480,7 @@ Valor/
 │   ├── script/
 │   │   ├── Deploy.s.sol          # Deploy all contracts
 │   │   ├── Setup.s.sol           # Register + list items
+│   │   ├── RegisterNewItems.s.sol # Register guns, ammo, attachments
 │   │   └── UpgradeMarketplace.s.sol
 │   └── test/
 │       ├── ValorItems.t.sol
