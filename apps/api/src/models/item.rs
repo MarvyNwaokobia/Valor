@@ -19,4 +19,5 @@ pub struct Item {
     pub layer_asset_url: Option<String>,
     pub total_supply: Option<i32>,
     pub remaining_supply: Option<i32>,
+    pub weapon_stats: Option<serde_json::Value>,
 }

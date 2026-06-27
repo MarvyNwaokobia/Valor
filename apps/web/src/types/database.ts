@@ -3,7 +3,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json } | 
 export type Rank = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond'
 export type PlayStyle = 'Wanderer' | 'Fighter' | 'Champion'
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
-export type ItemCategory = 'weapon' | 'shield' | 'booster' | 'cosmetic'
+export type ItemCategory = 'weapon' | 'shield' | 'booster' | 'cosmetic' | 'ammo' | 'attachment'
 export type CharacterClass = 'Berserker' | 'Sentinel' | 'Phantom' | 'Warden' | 'Specter' | 'Vanguard'
 export type BattleMove = 'attack' | 'defend' | 'special'
 
@@ -134,6 +134,7 @@ export interface Item {
   layer_asset_url: string | null
   total_supply: number | null
   remaining_supply: number | null
+  weapon_stats: Record<string, unknown> | null
 }
 
 export interface InventoryItem {
