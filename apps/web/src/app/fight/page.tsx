@@ -105,18 +105,14 @@ export default function FightPage() {
 
   return (
     <div className="fixed inset-0 bg-black z-40">
-      {/* Back button */}
+      {/* Exit button — top-right, safe area aware */}
       <button
-        onClick={() => router.push('/')}
-        className="fixed top-4 left-4 z-50 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/60 text-sm rounded-lg transition-colors pointer-events-auto"
+        onClick={() => router.push('/battle')}
+        className="fixed top-3 right-3 z-50 px-3.5 py-1.5 bg-black/50 hover:bg-black/70 text-white/70 hover:text-white text-xs font-bold uppercase tracking-wider rounded-lg backdrop-blur-sm transition-colors pointer-events-auto"
+        style={{ paddingTop: 'max(6px, env(safe-area-inset-top, 6px))' }}
       >
         Exit
       </button>
-
-      {/* Build marker — confirms which deployed build this device is running */}
-      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 text-[10px] font-mono text-white/40 bg-black/40 px-2 py-0.5 rounded pointer-events-none select-none">
-        build {process.env.NEXT_PUBLIC_BUILD_SHA} · {process.env.NEXT_PUBLIC_BUILD_TIME}
-      </div>
 
       <GameScene
         playerClass={fight.playerClass}
