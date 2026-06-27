@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Crosshair, Shield, Zap } from 'lucide-react'
+import { Crosshair, Zap } from 'lucide-react'
 import { useMarketplaceItems } from '@/hooks/useMarketplace'
 import MarketplaceItem from './MarketplaceItem'
 import LimitedItemBanner from './LimitedItemBanner'
@@ -8,10 +8,9 @@ interface Props {
   walletAddress: string | undefined
 }
 
-const CATEGORIES = ['weapon', 'shield', 'booster'] as const
+const CATEGORIES = ['weapon', 'booster'] as const
 const CATEGORY_META = {
   weapon:  { label: 'Guns',     Icon: Crosshair },
-  shield:  { label: 'Shields',  Icon: Shield },
   booster: { label: 'Boosters', Icon: Zap    },
 } as const
 

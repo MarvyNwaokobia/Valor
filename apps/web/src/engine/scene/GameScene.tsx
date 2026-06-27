@@ -6,9 +6,6 @@ import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
 import { type StageId } from './ArenaStage';
 import { StylizedArena } from './arenas/StylizedArena';
-import { RealisticArena } from './arenas/RealisticArena';
-import { ModelArena } from './arenas/ModelArena';
-import { IndustrialArena } from './arenas/IndustrialArena';
 import { CoverProps } from './arenas/CoverProps';
 import { BattleCamera } from '../camera';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
@@ -28,17 +25,7 @@ import { CrowdDirector } from '../world/CrowdDirector';
 
 type ClassId = 'berserker' | 'sentinel' | 'phantom';
 
-// Art directions the player can live-toggle to compare the look (single deploy).
-// 'stylized'/'realistic' are procedural; the rest are real downloaded Sketchfab
-// fighting-arena models (see ModelArena). The toggle cycles through this order.
-export type ArenaVariant = 'stylized' | 'realistic' | 'scifi' | 'industrial';
-
-const ARENA_CYCLE: { id: ArenaVariant; label: string }[] = [
-  { id: 'stylized', label: 'Stylized' },
-  { id: 'realistic', label: 'Semi-Real' },
-  { id: 'scifi', label: 'Sci-Fi · model' },
-  { id: 'industrial', label: 'Industrial' },
-];
+export type ArenaVariant = 'stylized';
 
 interface GameSceneProps {
   playerClass: ClassId;
@@ -75,9 +62,6 @@ const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 
 const ARENA_FOG: Record<ArenaVariant, { bg: string; fog: string; near: number; far: number }> = {
   stylized:   { bg: '#b8cce8', fog: '#b8cce8', near: 80, far: 220 },
-  realistic:  { bg: '#d4a574', fog: '#d4a574', near: 70, far: 200 },
-  scifi:      { bg: '#5f5294', fog: '#5f5294', near: 55, far: 185 },
-  industrial: { bg: '#6b6055', fog: '#8a7a68', near: 40, far: 100 },
 };
 
 function BattleWorld({
@@ -360,11 +344,8 @@ function BattleWorld({
       <color attach="background" args={[arenaFog.bg]} />
       <fog attach="fog" args={[arenaFog.fog, arenaFog.near, arenaFog.far]} />
 
-      {arenaVariant === 'stylized' && <StylizedArena />}
-      {arenaVariant === 'realistic' && <RealisticArena />}
-      {arenaVariant === 'scifi' && <ModelArena variant="scifi" />}
-      {arenaVariant === 'industrial' && <IndustrialArena />}
-      {(arenaVariant === 'stylized' || arenaVariant === 'realistic') && <Crowd director={crowd} />}
+      <StylizedArena />
+      <Crowd director={crowd} />
       <CoverProps variant={arenaVariant} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
@@ -400,19 +381,7 @@ export function GameScene(props: GameSceneProps) {
   const [sceneReady, setSceneReady] = useState(false);
   const combatStartedRef = useRef(false);
 
-  // Art-direction A/B: live-swaps the arena. Seeds from ?arena=<id> so a specific
-  // look can be deep-linked; defaults to stylized. The button cycles ARENA_CYCLE.
-  const [arenaVariant, setArenaVariant] = useState<ArenaVariant>(() => {
-    if (typeof window === 'undefined') return 'stylized';
-    const q = new URLSearchParams(window.location.search).get('arena');
-    return ARENA_CYCLE.some((a) => a.id === q) ? (q as ArenaVariant) : 'stylized';
-  });
-  const cycleArena = useCallback(() => {
-    setArenaVariant((v) => {
-      const i = ARENA_CYCLE.findIndex((a) => a.id === v);
-      return ARENA_CYCLE[(i + 1) % ARENA_CYCLE.length].id;
-    });
-  }, []);
+  const arenaVariant: ArenaVariant = 'stylized';
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
@@ -465,15 +434,6 @@ export function GameScene(props: GameSceneProps) {
       </Canvas>
 
       <ScreenFlashOverlay screenEffects={screenFx} />
-
-      {/* Arena A/B toggle — live-swaps the environment mid-fight (single deploy).
-          Tap to flip Stylized <-> Semi-Real on the same fight to compare the look. */}
-      <button
-        onClick={cycleArena}
-        className="fixed top-18 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-black/60 border border-white/25 text-white text-xs font-bold uppercase tracking-wider pointer-events-auto backdrop-blur-sm active:scale-95 transition shadow-lg"
-      >
-        Arena: <span className="text-cyan-300">{ARENA_CYCLE.find((a) => a.id === arenaVariant)?.label}</span> · tap to switch
-      </button>
 
       {/* HUD */}
       <div className="fixed inset-0 pointer-events-none z-30">
