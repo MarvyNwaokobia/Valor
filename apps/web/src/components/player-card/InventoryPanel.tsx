@@ -14,8 +14,7 @@ interface Props {
 }
 
 const STAT_LABEL: Record<string, string> = {
-  weapon:   'ATK',
-  shield:   'DEF',
+  weapon:   'DPS',
   booster:  'XP',
   cosmetic: 'STY',
 }

@@ -2,25 +2,18 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sword, Shield, Zap, Sparkles, X } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { Zap, Sparkles, X, Crosshair } from 'lucide-react'
 import type { Item } from '@/types'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
-
-const CATEGORY_ICONS: Record<string, LucideIcon> = {
-  weapon:   Sword,
-  shield:   Shield,
-  booster:  Zap,
-  cosmetic: Sparkles,
-}
+import { GunIcon, gunIdFromItemId } from './GunIcons'
+import { gunDps, GUN_CATALOG } from '@/engine/combat/GunStats'
 
 const STAT_LABELS: Record<string, string> = {
-  weapon: 'ATK',
-  shield: 'DEF',
+  weapon: 'DPS',
   booster: 'XP×2',
 }
 
@@ -96,8 +89,11 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           style={{ background: `${rarityColor}0d`, borderColor: `${rarityColor}22` }}
         >
           {(() => {
-            const Icon = CATEGORY_ICONS[item.category] ?? Sword
-            return <Icon size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
+            const gid = gunIdFromItemId(item.id)
+            if (gid) return <GunIcon gunId={gid} size={56} color={rarityColor} />
+            if (item.category === 'booster') return <Zap size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
+            if (item.category === 'cosmetic') return <Sparkles size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
+            return <Crosshair size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
           })()}
         </div>
 
@@ -112,11 +108,25 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
         {/* Price + stat */}
         <div className="flex items-center justify-between mt-auto">
           <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)} G$</span>
-          {item.stat_boost > 0 && (
-            <span className="text-xs text-slate-400 font-bold">
-              +{item.stat_boost} {STAT_LABELS[item.category]}
-            </span>
-          )}
+          {(() => {
+            const gid = gunIdFromItemId(item.id)
+            if (gid) {
+              const gun = GUN_CATALOG[gid]
+              return (
+                <span className="text-xs text-slate-400 font-bold">
+                  {Math.round(gunDps(gun))} DPS · T{gun.tier}
+                </span>
+              )
+            }
+            if (item.stat_boost > 0) {
+              return (
+                <span className="text-xs text-slate-400 font-bold">
+                  +{item.stat_boost} {STAT_LABELS[item.category]}
+                </span>
+              )
+            }
+            return null
+          })()}
         </div>
 
         {error && <p className="text-red-400 text-xs">{error}</p>}
@@ -185,16 +195,32 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               {/* Item details */}
               <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: `${rarityColor}10`, border: `1px solid ${rarityColor}22` }}>
                 {(() => {
-                  const Icon = CATEGORY_ICONS[item.category] ?? Sword
-                  return <Icon size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
+                  const gid = gunIdFromItemId(item.id)
+                  if (gid) return <GunIcon gunId={gid} size={36} color={rarityColor} className="shrink-0" />
+                  if (item.category === 'booster') return <Zap size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
+                  return <Crosshair size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
                 })()}
                 <div className="min-w-0">
                   <p className="font-bold text-white text-sm truncate">{item.name}</p>
-                  {item.stat_boost > 0 && (
-                    <p className="text-xs mt-0.5" style={{ color: rarityColor }}>
-                      +{item.stat_boost} {STAT_LABELS[item.category]}
-                    </p>
-                  )}
+                  {(() => {
+                    const gid = gunIdFromItemId(item.id)
+                    if (gid) {
+                      const gun = GUN_CATALOG[gid]
+                      return (
+                        <p className="text-xs mt-0.5" style={{ color: rarityColor }}>
+                          {Math.round(gunDps(gun))} DPS · Tier {gun.tier}
+                        </p>
+                      )
+                    }
+                    if (item.stat_boost > 0) {
+                      return (
+                        <p className="text-xs mt-0.5" style={{ color: rarityColor }}>
+                          +{item.stat_boost} {STAT_LABELS[item.category]}
+                        </p>
+                      )
+                    }
+                    return null
+                  })()}
                 </div>
               </div>
 
