@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sword, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { Item } from '@/types'
 import { formatCountdown, formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { GunIcon, gunIdFromItemId } from './GunIcons'
+import { gunDps, GUN_CATALOG } from '@/engine/combat/GunStats'
 
 const SALE_END_TIMESTAMP =
   typeof window !== 'undefined'
@@ -79,7 +81,11 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
         <div className="relative z-10 p-6 flex flex-col sm:flex-row gap-6 items-center">
           {/* Icon */}
           <div className="w-24 h-24 rounded-2xl border-2 border-valor-gold/40 bg-valor-gold/10 flex items-center justify-center shrink-0">
-            <Sword size={48} className="text-valor-gold" strokeWidth={1.2} />
+            {(() => {
+              const gid = gunIdFromItemId(item.id)
+              if (gid) return <GunIcon gunId={gid} size={64} color="#eab308" />
+              return <GunIcon gunId="legendary" size={64} color="#eab308" />
+            })()}
           </div>
 
           {/* Info */}
@@ -104,7 +110,14 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               <span className="font-bold text-valor-gold text-lg">
                 {formatGDollarNumber(item.price_g)} G$
               </span>
-              <span className="text-sm text-slate-400 font-bold">+{item.stat_boost} ATK</span>
+              {(() => {
+                const gid = gunIdFromItemId(item.id)
+                if (gid) {
+                  const gun = GUN_CATALOG[gid]
+                  return <span className="text-sm text-slate-400 font-bold">{Math.round(gunDps(gun))} DPS · Tier {gun.tier}</span>
+                }
+                return <span className="text-sm text-slate-400 font-bold">+{item.stat_boost} PWR</span>
+              })()}
             </div>
           </div>
 
@@ -181,10 +194,21 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
 
               {/* Item details */}
               <div className="flex items-center gap-3 p-3 rounded-xl bg-valor-gold/10 border border-valor-gold/20">
-                <Sword size={28} strokeWidth={1.2} className="text-valor-gold shrink-0" />
+                {(() => {
+                  const gid = gunIdFromItemId(item.id)
+                  if (gid) return <GunIcon gunId={gid} size={36} color="#eab308" className="shrink-0" />
+                  return <GunIcon gunId="legendary" size={36} color="#eab308" className="shrink-0" />
+                })()}
                 <div className="min-w-0">
                   <p className="font-bold text-white text-sm truncate">{item.name}</p>
-                  <p className="text-xs text-valor-gold mt-0.5">+{item.stat_boost} ATK · LEGENDARY</p>
+                  {(() => {
+                    const gid = gunIdFromItemId(item.id)
+                    if (gid) {
+                      const gun = GUN_CATALOG[gid]
+                      return <p className="text-xs text-valor-gold mt-0.5">{Math.round(gunDps(gun))} DPS · Tier {gun.tier} · LEGENDARY</p>
+                    }
+                    return <p className="text-xs text-valor-gold mt-0.5">+{item.stat_boost} PWR · LEGENDARY</p>
+                  })()}
                 </div>
               </div>
 
