@@ -33,7 +33,7 @@ export default function MarketplacePage() {
           backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)',
         }}/>
 
-        <div className="relative z-10 flex items-center justify-between gap-4">
+        <div className="relative z-10 flex flex-col gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
               style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.25)' }}>
@@ -42,14 +42,14 @@ export default function MarketplacePage() {
             <div>
               <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-amber-500/60 mb-0.5">Valor Armoury</p>
               <h1 className="font-display font-black text-white text-2xl tracking-wide">Marketplace</h1>
-              <p className="text-slate-500 text-xs mt-0.5">Guns · Gear — buy from the house or trade with other players</p>
             </div>
           </div>
+          <p className="text-slate-500 text-xs">Guns · Ammo · Attachments — buy from the house or trade with other players</p>
           {gBalance && (
-            <div className="flex flex-col items-end shrink-0">
-              <p className="text-[9px] uppercase tracking-widest font-bold text-amber-500/60">Your Balance</p>
-              <p className="font-black text-amber-400 text-xl leading-tight">{gBalance}</p>
-              <p className="text-[9px] text-slate-600 mt-0.5">available to spend</p>
+            <div className="flex items-center justify-between px-4 py-3 rounded-xl"
+              style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
+              <p className="text-[10px] uppercase tracking-widest font-bold text-amber-500/60">Your Balance</p>
+              <p className="font-black text-amber-400 text-xl leading-tight">{gBalance} <span className="text-sm font-bold">G$</span></p>
             </div>
           )}
         </div>
