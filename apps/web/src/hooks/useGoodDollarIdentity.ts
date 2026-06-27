@@ -23,7 +23,7 @@ interface UseGoodDollarIdentityReturn {
   error: string | null
   identityExpiry: IdentityExpiry | null
   check: (address: `0x${string}`) => Promise<boolean>
-  getFaceVerifyUrl: (address: `0x${string}`) => Promise<string | null>
+  getFaceVerifyUrl: (address: `0x${string}`, callbackUrl?: string) => Promise<string | null>
   reset: () => void
 }
 
@@ -109,7 +109,7 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
     [publicClient, walletClient, chainId, switchChainAsync, status],
   )
 
-  const getFaceVerifyUrl = useCallback(async (address: `0x${string}`): Promise<string | null> => {
+  const getFaceVerifyUrl = useCallback(async (address: `0x${string}`, callbackUrl?: string): Promise<string | null> => {
     if (!publicClient || !walletClient) {
       console.warn('[Identity] getFaceVerifyUrl: publicClient or walletClient not available')
       return null
@@ -117,7 +117,7 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
     console.log('[Identity] getFaceVerifyUrl: starting link generation')
     try {
       const url = await withTimeout(
-        generateFaceVerifyLink(publicClient, walletClient, address),
+        generateFaceVerifyLink(publicClient, walletClient, address, callbackUrl),
         10000,
         'Generating verification link timed out.'
       )

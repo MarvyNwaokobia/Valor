@@ -26,7 +26,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
   async function handleReverify() {
     setReverifying(true)
     try {
-      const url = await getFaceVerifyUrl(walletAddress)
+      const url = await getFaceVerifyUrl(walletAddress, `${window.location.origin}/profile`)
       if (url) window.open(url, '_blank')
     } finally {
       setReverifying(false)
