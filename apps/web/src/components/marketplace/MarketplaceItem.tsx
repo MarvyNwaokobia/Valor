@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Sparkles, X, Crosshair } from 'lucide-react'
+import { Zap, Sparkles, X, Crosshair, CircleDot, Wrench } from 'lucide-react'
 import type { Item } from '@/types'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -11,6 +11,10 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
 import { GunIcon, gunIdFromItemId } from './GunIcons'
 import { gunDps, GUN_CATALOG, type GunStats } from '@/engine/combat/GunStats'
+
+const SLOT_LABEL: Record<string, string> = {
+  barrel: 'Barrel', optic: 'Optic', grip: 'Grip', magazine: 'Magazine',
+}
 
 function GunStatBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
   return (
@@ -41,6 +45,15 @@ function GunStatsPanel({ gun, color }: { gun: GunStats; color: string }) {
         <span>·</span>
         <span>{gun.reloadTime}s reload</span>
       </div>
+    </div>
+  )
+}
+
+function ModLine({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] text-slate-500">{label}</span>
+      <span className="text-[11px] font-black" style={{ color }}>{value}</span>
     </div>
   )
 }
@@ -111,7 +124,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           )}
         </div>
 
-        {/* Gun visual */}
+        {/* Item visual */}
         <div
           className="w-full rounded-xl flex items-center justify-center border py-4"
           style={{ background: `${rarityColor}08`, borderColor: `${rarityColor}18` }}
@@ -119,6 +132,8 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           {(() => {
             const gid = gunIdFromItemId(item.id)
             if (gid) return <GunIcon gunId={gid} size={72} color={rarityColor} />
+            if (item.category === 'ammo') return <CircleDot size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
+            if (item.category === 'attachment') return <Wrench size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
             if (item.category === 'booster') return <Zap size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
             if (item.category === 'cosmetic') return <Sparkles size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
             return <Crosshair size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
@@ -133,19 +148,39 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           </p>
         </div>
 
-        {/* Gun stats breakdown */}
+        {/* Stats breakdown */}
         {(() => {
           const gid = gunIdFromItemId(item.id)
           if (gid) {
             const gun = GUN_CATALOG[gid]
             return <GunStatsPanel gun={gun} color={rarityColor} />
           }
-          if (item.stat_boost > 0) {
+          const ws = item.weapon_stats as Record<string, unknown> | null
+          if (item.category === 'ammo' && ws) {
             return (
-              <div className="text-xs text-slate-400 font-bold">
-                +{item.stat_boost} {item.category === 'booster' ? 'XP multiplier' : 'Power'}
+              <div className="flex flex-col gap-1 mt-1">
+                {(ws.damageMult as number) > 1 && <ModLine label="Damage" value={`+${Math.round(((ws.damageMult as number) - 1) * 100)}%`} color="#ef4444" />}
+                {(ws.accuracyMod as number) > 0 && <ModLine label="Accuracy" value={`+${Math.round((ws.accuracyMod as number) * 100)}%`} color="#22c55e" />}
+                {(ws.fireRateMod as number) > 0 && <ModLine label="Fire Rate" value={`+${ws.fireRateMod} RPM`} color="#f59e0b" />}
+                {(ws.critChanceMod as number) > 0 && <ModLine label="Crit Chance" value={`+${Math.round((ws.critChanceMod as number) * 100)}%`} color="#a855f7" />}
+                {(ws.burnDps as number) > 0 && <ModLine label="Burn DPS" value={`${ws.burnDps} HP/s`} color="#f97316" />}
               </div>
             )
+          }
+          if (item.category === 'attachment' && ws) {
+            return (
+              <div className="flex flex-col gap-1 mt-1">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-600">{SLOT_LABEL[(ws.slot as string) ?? ''] ?? 'Slot'} attachment</span>
+                {(ws.accuracyMod as number) !== 0 && <ModLine label="Accuracy" value={`${(ws.accuracyMod as number) > 0 ? '+' : ''}${Math.round((ws.accuracyMod as number) * 100)}%`} color="#22c55e" />}
+                {(ws.fireRateMod as number) !== 0 && <ModLine label="Fire Rate" value={`${(ws.fireRateMod as number) > 0 ? '+' : ''}${ws.fireRateMod} RPM`} color="#f59e0b" />}
+                {(ws.rangeMod as number) !== 0 && <ModLine label="Range" value={`${(ws.rangeMod as number) > 0 ? '+' : ''}${ws.rangeMod}m`} color="#3b82f6" />}
+                {(ws.magazineMod as number) !== 0 && <ModLine label="Magazine" value={`+${ws.magazineMod} rounds`} color="#06b6d4" />}
+                {(ws.reloadTimeMod as number) !== 0 && <ModLine label="Reload" value={`${(ws.reloadTimeMod as number) > 0 ? '+' : ''}${ws.reloadTimeMod}s`} color={(ws.reloadTimeMod as number) < 0 ? '#22c55e' : '#ef4444'} />}
+              </div>
+            )
+          }
+          if (item.category === 'booster') {
+            return <div className="text-xs text-slate-400 font-bold">2× XP for 24 hours</div>
           }
           return null
         })()}
@@ -159,6 +194,8 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               const gun = GUN_CATALOG[gid]
               return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Tier {gun.tier}</span>
             }
+            if (item.category === 'ammo') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Ammo</span>
+            if (item.category === 'attachment') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>{SLOT_LABEL[(item.weapon_stats as Record<string, string> | null)?.slot ?? ''] ?? 'Part'}</span>
             return null
           })()}
         </div>
