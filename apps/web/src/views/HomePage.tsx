@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
 import { usePrivy } from '@privy-io/react-auth'
-import { Swords, ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
+import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LandingPage from '@/components/landing/LandingPage'
@@ -22,10 +22,9 @@ const CLASS_SOLO: Record<string, string> = {
 }
 
 const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [
-  { to: '/fight',       Icon: Flame,       label: 'Fight',       desc: 'Real-time 3D combat · Earn XP · Claim G$',  color: '#ff4422' },
-  { to: '/ranked',      Icon: Swords,      label: 'Ranked',      desc: 'Async PvP · Challenge any warrior · Earn XP', color: '#a855f7' },
-  { to: '/marketplace', Icon: ShoppingBag, label: 'Armoury',     desc: 'Weapons · Shields · Boosters',             color: '#eab308' },
-  { to: '/leaderboard', Icon: Trophy,      label: 'War Board',   desc: 'Top 50 warriors ranked by tier',           color: '#3b82f6' },
+  { to: '/battle',      Icon: Flame,       label: 'Fight',       desc: 'Campaign · PvP · Challenge a player',       color: '#ff4422' },
+  { to: '/marketplace', Icon: ShoppingBag, label: 'Armoury',     desc: 'Guns · Boosters · Player Listings',         color: '#eab308' },
+  { to: '/leaderboard', Icon: Trophy,      label: 'War Board',   desc: 'Top 50 warriors ranked by tier',            color: '#3b82f6' },
 ]
 
 export default function HomePage() {
