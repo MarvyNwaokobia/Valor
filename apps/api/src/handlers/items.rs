@@ -72,7 +72,7 @@ pub async fn purchase_item(
     }
 
     let _ = sqlx::query(
-        "UPDATE items SET remaining_supply = GREATEST(0, remaining_supply - 1) WHERE id = $1",
+        "UPDATE items SET remaining_supply = GREATEST(0, remaining_supply - 1) WHERE id = $1 AND remaining_supply IS NOT NULL",
     )
     .bind(item_id)
     .execute(&state.db)
@@ -176,7 +176,7 @@ pub async fn purchase_item_relay(
     .await;
 
     let _ = sqlx::query(
-        "UPDATE items SET remaining_supply = GREATEST(0, remaining_supply - 1) WHERE id = $1",
+        "UPDATE items SET remaining_supply = GREATEST(0, remaining_supply - 1) WHERE id = $1 AND remaining_supply IS NOT NULL",
     )
     .bind(item_id)
     .execute(&state.db)
