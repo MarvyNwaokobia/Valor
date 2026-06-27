@@ -117,7 +117,7 @@ export default function CampaignSelect({ player, onBack }: Props) {
                       {lvl.isBoss && <Skull size={14} className="text-red-400 shrink-0" />}
                     </div>
                     <p className="text-slate-500 text-xs mt-0.5 flex items-center gap-1.5">
-                      <Crosshair size={11} /> {gun.name} · {DIFFICULTY_LABEL[lvl.difficulty] ?? lvl.difficulty} · +{lvl.xpReward} XP
+                      <Crosshair size={11} /> {gun.name} · {DIFFICULTY_LABEL[lvl.difficulty] ?? lvl.difficulty} · <span className="text-green-400">W +{lvl.xpReward}</span> / <span className="text-red-400">L +{lvl.lossXp}</span> XP
                     </p>
                   </div>
                   {isNext && (
