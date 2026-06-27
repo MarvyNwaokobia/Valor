@@ -10,11 +10,39 @@ import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
 import { GunIcon, gunIdFromItemId } from './GunIcons'
-import { gunDps, GUN_CATALOG } from '@/engine/combat/GunStats'
+import { gunDps, GUN_CATALOG, type GunStats } from '@/engine/combat/GunStats'
 
-const STAT_LABELS: Record<string, string> = {
-  weapon: 'DPS',
-  booster: 'XP×2',
+function GunStatBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 w-12 shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.6)' }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (value / max) * 100)}%`, background: color }} />
+      </div>
+      <span className="text-[10px] font-black text-slate-400 w-8 text-right">{value}</span>
+    </div>
+  )
+}
+
+function GunStatsPanel({ gun, color }: { gun: GunStats; color: string }) {
+  return (
+    <div className="flex flex-col gap-1.5 mt-1">
+      <GunStatBar label="DMG" value={gun.damage} max={50} color="#ef4444" />
+      <GunStatBar label="RPM" value={gun.fireRate} max={600} color="#f59e0b" />
+      <GunStatBar label="ACC" value={Math.round(gun.accuracy * 100)} max={100} color="#22c55e" />
+      <GunStatBar label="RANGE" value={gun.range} max={16} color="#3b82f6" />
+      <GunStatBar label="CRIT" value={Math.round(gun.critChance * 100)} max={20} color="#a855f7" />
+      <div className="flex items-center justify-between mt-0.5 pt-1.5" style={{ borderTop: '1px solid rgba(42,42,58,0.5)' }}>
+        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Effective DPS</span>
+        <span className="text-xs font-black" style={{ color }}>{Math.round(gunDps(gun))}</span>
+      </div>
+      <div className="flex gap-2 text-[9px] text-slate-600">
+        <span>{gun.magazine} rounds</span>
+        <span>·</span>
+        <span>{gun.reloadTime}s reload</span>
+      </div>
+    </div>
+  )
 }
 
 function isUserRejection(err: unknown): boolean {
@@ -83,14 +111,14 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           )}
         </div>
 
-        {/* Icon */}
+        {/* Gun visual */}
         <div
-          className="w-full aspect-square rounded-xl flex items-center justify-center border"
-          style={{ background: `${rarityColor}0d`, borderColor: `${rarityColor}22` }}
+          className="w-full rounded-xl flex items-center justify-center border py-4"
+          style={{ background: `${rarityColor}08`, borderColor: `${rarityColor}18` }}
         >
           {(() => {
             const gid = gunIdFromItemId(item.id)
-            if (gid) return <GunIcon gunId={gid} size={56} color={rarityColor} />
+            if (gid) return <GunIcon gunId={gid} size={72} color={rarityColor} />
             if (item.category === 'booster') return <Zap size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
             if (item.category === 'cosmetic') return <Sparkles size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
             return <Crosshair size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
@@ -100,30 +128,36 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
         {/* Name + desc */}
         <div>
           <p className="font-bold text-white text-sm leading-tight">{item.name}</p>
-          <p className="text-xs text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">
+          <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
             {item.description}
           </p>
         </div>
 
-        {/* Price + stat */}
-        <div className="flex items-center justify-between mt-auto">
+        {/* Gun stats breakdown */}
+        {(() => {
+          const gid = gunIdFromItemId(item.id)
+          if (gid) {
+            const gun = GUN_CATALOG[gid]
+            return <GunStatsPanel gun={gun} color={rarityColor} />
+          }
+          if (item.stat_boost > 0) {
+            return (
+              <div className="text-xs text-slate-400 font-bold">
+                +{item.stat_boost} {item.category === 'booster' ? 'XP multiplier' : 'Power'}
+              </div>
+            )
+          }
+          return null
+        })()}
+
+        {/* Price */}
+        <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid rgba(42,42,58,0.4)' }}>
           <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)} G$</span>
           {(() => {
             const gid = gunIdFromItemId(item.id)
             if (gid) {
               const gun = GUN_CATALOG[gid]
-              return (
-                <span className="text-xs text-slate-400 font-bold">
-                  {Math.round(gunDps(gun))} DPS · T{gun.tier}
-                </span>
-              )
-            }
-            if (item.stat_boost > 0) {
-              return (
-                <span className="text-xs text-slate-400 font-bold">
-                  +{item.stat_boost} {STAT_LABELS[item.category]}
-                </span>
-              )
+              return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Tier {gun.tier}</span>
             }
             return null
           })()}
@@ -193,35 +227,43 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               </div>
 
               {/* Item details */}
-              <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: `${rarityColor}10`, border: `1px solid ${rarityColor}22` }}>
-                {(() => {
-                  const gid = gunIdFromItemId(item.id)
-                  if (gid) return <GunIcon gunId={gid} size={36} color={rarityColor} className="shrink-0" />
-                  if (item.category === 'booster') return <Zap size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
-                  return <Crosshair size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
-                })()}
-                <div className="min-w-0">
-                  <p className="font-bold text-white text-sm truncate">{item.name}</p>
+              <div className="p-3 rounded-xl" style={{ background: `${rarityColor}10`, border: `1px solid ${rarityColor}22` }}>
+                <div className="flex items-center gap-3">
                   {(() => {
                     const gid = gunIdFromItemId(item.id)
-                    if (gid) {
-                      const gun = GUN_CATALOG[gid]
-                      return (
-                        <p className="text-xs mt-0.5" style={{ color: rarityColor }}>
-                          {Math.round(gunDps(gun))} DPS · Tier {gun.tier}
-                        </p>
-                      )
-                    }
-                    if (item.stat_boost > 0) {
-                      return (
-                        <p className="text-xs mt-0.5" style={{ color: rarityColor }}>
-                          +{item.stat_boost} {STAT_LABELS[item.category]}
-                        </p>
-                      )
-                    }
-                    return null
+                    if (gid) return <GunIcon gunId={gid} size={44} color={rarityColor} className="shrink-0" />
+                    if (item.category === 'booster') return <Zap size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
+                    return <Crosshair size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
                   })()}
+                  <div className="min-w-0">
+                    <p className="font-bold text-white text-sm truncate">{item.name}</p>
+                    {(() => {
+                      const gid = gunIdFromItemId(item.id)
+                      if (gid) {
+                        const gun = GUN_CATALOG[gid]
+                        return <p className="text-[10px] mt-0.5" style={{ color: rarityColor }}>{Math.round(gunDps(gun))} DPS · {gun.damage} DMG · {gun.fireRate} RPM</p>
+                      }
+                      return null
+                    })()}
+                  </div>
                 </div>
+                {(() => {
+                  const gid = gunIdFromItemId(item.id)
+                  if (gid) {
+                    const gun = GUN_CATALOG[gid]
+                    return (
+                      <div className="grid grid-cols-3 gap-x-3 gap-y-1 mt-2 pt-2" style={{ borderTop: `1px solid ${rarityColor}15` }}>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Damage</span><span className="text-[11px] font-black text-white">{gun.damage}</span></div>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Fire Rate</span><span className="text-[11px] font-black text-white">{gun.fireRate}</span></div>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Accuracy</span><span className="text-[11px] font-black text-white">{Math.round(gun.accuracy * 100)}%</span></div>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Magazine</span><span className="text-[11px] font-black text-white">{gun.magazine}</span></div>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Crit</span><span className="text-[11px] font-black text-white">{Math.round(gun.critChance * 100)}%</span></div>
+                        <div className="text-center"><span className="text-[8px] text-slate-500 uppercase block">Range</span><span className="text-[11px] font-black text-white">{gun.range}m</span></div>
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
 
               {/* Price row */}
