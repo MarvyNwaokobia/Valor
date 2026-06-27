@@ -187,7 +187,7 @@ export default function ProfilePage() {
           <div>
             <p className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ Balance</p>
             <p className="font-black text-amber-400 text-lg">
-              {gBalanceFormatted ?? '—'}
+              {gBalanceFormatted ? `${gBalanceFormatted} G$` : '—'}
             </p>
           </div>
           <div className="text-right">

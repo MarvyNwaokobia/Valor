@@ -30,8 +30,8 @@ export function useGBalance(address: `0x${string}` | undefined) {
   const formatted = balance === null
     ? null
     : balance >= 1000
-      ? `${(balance / 1000).toFixed(1)}k G$`
-      : `${balance.toFixed(2)} G$`
+      ? `${(balance / 1000).toFixed(1)}k`
+      : balance.toFixed(2)
 
   return { balance, formatted, isLoading, refetch }
 }
