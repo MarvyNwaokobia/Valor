@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X } from 'lucide-react'
+import { X, RefreshCw } from 'lucide-react'
 import { useGoodDollarClaim } from '@/hooks/useGoodDollarClaim'
+import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { useGBalance } from '@/hooks/useGBalance'
 
 interface Props {
@@ -12,13 +13,25 @@ interface Props {
 
 export default function DailyClaimButton({ walletAddress }: Props) {
   const [showModal, setShowModal] = useState(false)
+  const [reverifying, setReverifying] = useState(false)
 
   const { refetch: refetchBalance } = useGBalance(walletAddress)
+  const { getFaceVerifyUrl } = useGoodDollarIdentity()
 
-  const { status, entitlement, nextClaimTime, claiming, claimStep, txHash, error, claim } =
+  const { status, entitlement, nextClaimTime, claiming, claimStep, txHash, error, claim, refresh } =
     useGoodDollarClaim(walletAddress, () => {
       refetchBalance()
     })
+
+  async function handleReverify() {
+    setReverifying(true)
+    try {
+      const url = await getFaceVerifyUrl(walletAddress)
+      if (url) window.open(url, '_blank')
+    } finally {
+      setReverifying(false)
+    }
+  }
 
   async function handleClaim() {
     await claim()
@@ -89,9 +102,30 @@ export default function DailyClaimButton({ walletAddress }: Props) {
         )}
 
         {status === 'not_whitelisted' && (
-          <p className="text-xs text-slate-500 text-center">
-            Complete identity verification to claim daily G$
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-amber-400/80 text-center">
+              Your GoodDollar identity has expired. Re-verify to claim daily G$.
+            </p>
+            <div className="flex gap-2">
+              <motion.button
+                onClick={handleReverify}
+                disabled={reverifying}
+                whileTap={{ scale: 0.97 }}
+                className="flex-1 py-2 text-xs font-bold rounded-lg transition-colors disabled:opacity-50"
+                style={{ background: '#00bf72', color: '#04030c' }}
+              >
+                {reverifying ? 'Opening...' : 'Re-verify Identity'}
+              </motion.button>
+              <button
+                onClick={() => refresh()}
+                className="px-2.5 py-2 rounded-lg text-slate-500 hover:text-white transition-colors"
+                style={{ background: 'rgba(255,255,255,0.05)' }}
+                title="Check again"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+          </div>
         )}
 
         {status === 'error' && (
