@@ -91,7 +91,7 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
     <div className="bg-valor-surface border border-valor-border rounded-xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display font-bold text-white">Battle History</h3>
-        <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Last 20</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Last 10</span>
       </div>
 
       <div className="flex flex-col gap-2">
