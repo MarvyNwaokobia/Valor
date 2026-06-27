@@ -10,7 +10,7 @@ use crate::utils::normalize_wallet;
 
 pub async fn list_items(state: web::Data<AppState>) -> HttpResponse {
     let result = sqlx::query_as::<_, Item>(
-        "SELECT * FROM items WHERE price_g > 0 ORDER BY price_g ASC",
+        "SELECT * FROM items ORDER BY price_g ASC",
     )
     .fetch_all(&state.db)
     .await;
@@ -113,12 +113,6 @@ pub async fn purchase_item_relay(
         Err(_) => return HttpResponse::InternalServerError().json(json!({"error": "Database error"})),
     };
 
-    let on_chain_id = match item.on_chain_id {
-        Some(id) => id as u64,
-        None => return HttpResponse::UnprocessableEntity()
-            .json(json!({"error": "Item not registered on-chain"})),
-    };
-
     if let Some(remaining) = item.remaining_supply {
         if remaining <= 0 {
             return HttpResponse::Conflict().json(json!({"error": "Item sold out"}));
@@ -139,30 +133,38 @@ pub async fn purchase_item_relay(
         return HttpResponse::Conflict().json(json!({"error": "Already owned"}));
     }
 
-    // Chain relay — buyer already signed a permit; we submit purchaseWithPermit
-    let chain = match state.chain.as_ref() {
-        Some(c) => c,
-        None => return HttpResponse::ServiceUnavailable()
-            .json(json!({"error": "Chain relay not available"})),
-    };
+    let tx_hash: String;
 
-    let buyer: Address = match wallet.parse() {
-        Ok(a) => a,
-        Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),
-    };
+    if let Some(on_chain_id) = item.on_chain_id {
+        // On-chain item — relay the permit to the marketplace contract
+        let chain = match state.chain.as_ref() {
+            Some(c) => c,
+            None => return HttpResponse::ServiceUnavailable()
+                .json(json!({"error": "Chain relay not available"})),
+        };
 
-    let tx_hash = match chain
-        .purchase_item_for(buyer, on_chain_id, body.deadline, body.v, &body.r, &body.s)
-        .await
-    {
-        Ok(hash) => format!("{:?}", hash),
-        Err(e) => {
-            tracing::warn!("purchase relay failed for {}: {}", wallet, e);
-            return HttpResponse::BadRequest().json(json!({"error": e}));
-        }
-    };
+        let buyer: Address = match wallet.parse() {
+            Ok(a) => a,
+            Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),
+        };
 
-    // Record inventory + decrement supply now that the chain confirmed
+        tx_hash = match chain
+            .purchase_item_for(buyer, on_chain_id as u64, body.deadline, body.v, &body.r, &body.s)
+            .await
+        {
+            Ok(hash) => format!("{:?}", hash),
+            Err(e) => {
+                tracing::warn!("purchase relay failed for {}: {}", wallet, e);
+                return HttpResponse::BadRequest().json(json!({"error": e}));
+            }
+        };
+    } else {
+        // Off-chain item (ammo, attachments, etc.) — the signed permit proves
+        // intent; we record the purchase directly without a contract call.
+        tx_hash = format!("offchain-{}", item_id);
+    }
+
+    // Record inventory + decrement supply
     let _ = sqlx::query(
         "INSERT INTO inventory (wallet_address, item_id, equipped, acquired_at)
          VALUES ($1, $2, false, now())
@@ -180,7 +182,7 @@ pub async fn purchase_item_relay(
     .execute(&state.db)
     .await;
 
-    tracing::info!("Relay purchase confirmed: item={} buyer={} tx={}", item_id, wallet, tx_hash);
+    tracing::info!("Purchase confirmed: item={} buyer={} tx={}", item_id, wallet, tx_hash);
 
     HttpResponse::Ok().json(json!({
         "success": true,
