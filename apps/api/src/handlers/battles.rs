@@ -441,17 +441,27 @@ pub struct LiveFightRequest {
     pub level:         Option<i32>,
 }
 
-const FIRST_CLEAR_BONUS_XP: i32 = 50;
-
-/// Base XP for clearing a Campaign level — mirrors CAMPAIGN_LEVELS.xpReward in
-/// apps/web/src/engine/campaign/levels.ts (keep the two in sync). Endless (>15) scales.
+/// Win XP per Campaign level — all 15 sum to exactly 1,000 (= one rank-up).
+/// Mirrors CAMPAIGN_LEVELS.xpReward in apps/web/src/engine/campaign/levels.ts.
 fn campaign_base_xp(level: i32) -> i32 {
     match level {
-        1 => 80,  2 => 90,  3 => 100, 4 => 115, 5 => 200,
-        6 => 120, 7 => 135, 8 => 150, 9 => 165, 10 => 250,
-        11 => 170, 12 => 185, 13 => 200, 14 => 220, 15 => 300,
-        n if n > 15 => 150 + (n - 15) * 10, // Endless
-        _ => 100,
+        1 => 50,  2 => 52,  3 => 54,  4 => 56,  5 => 68,
+        6 => 58,  7 => 60,  8 => 62,  9 => 65,  10 => 75,
+        11 => 68, 12 => 72, 13 => 76, 14 => 80, 15 => 104,
+        n if n > 15 => 50 + (n - 15) * 5, // Endless
+        _ => 50,
+    }
+}
+
+/// Loss XP per Campaign level — scaled per level so harder levels still reward
+/// the attempt. Mirrors CAMPAIGN_LEVELS.lossXp in levels.ts.
+fn campaign_loss_xp(level: i32) -> i32 {
+    match level {
+        1 => 15,  2 => 16,  3 => 17,  4 => 18,  5 => 22,
+        6 => 19,  7 => 20,  8 => 20,  9 => 21,  10 => 25,
+        11 => 22, 12 => 24, 13 => 25, 14 => 27, 15 => 34,
+        n if n > 15 => 15 + (n - 15) * 2, // Endless
+        _ => 15,
     }
 }
 
@@ -498,10 +508,10 @@ pub async fn complete_live_fight(
                 .flatten()
                 .unwrap_or(0);
             let first = level > current;
-            (campaign_base_xp(level) + if first { FIRST_CLEAR_BONUS_XP } else { 0 }, first)
+            (campaign_base_xp(level), first)
         }
-        Some(_) => (fight_xp(false), false), // lost the level — replayable, no unlock
-        None => (fight_xp(body.won), false),  // non-Campaign fight
+        Some(level) => (campaign_loss_xp(level), false), // lost — scaled XP per level
+        None => (fight_xp(body.won), false),              // non-Campaign fight
     };
 
     let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, json!([])).await {
