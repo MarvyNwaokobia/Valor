@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
-import { getLevel } from '@/engine/campaign/levels';
+import { getLevel, CAMPAIGN_LENGTH } from '@/engine/campaign/levels';
 import { AIDifficulty } from '@/engine/combat';
 import type { StageId } from '@/engine/scene/ArenaStage';
 
@@ -126,6 +126,44 @@ export default function FightPage() {
         onBattleEnd={handleBattleEnd}
         reward={reward}
         rewardPending={pending}
+        postFightActions={
+          <div className="mt-8 flex flex-col gap-3 w-full max-w-xs">
+            {/* Retry — same level */}
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full py-3 font-black text-sm uppercase tracking-wider rounded-xl transition-colors bg-white/10 hover:bg-white/20 text-white"
+            >
+              {level ? `Retry Level ${level}` : 'Retry'}
+            </button>
+
+            {/* Next Level — only on campaign win, if there's a next level */}
+            {level && reward?.won && level < CAMPAIGN_LENGTH && (
+              <button
+                onClick={() => router.push(`/fight?level=${level + 1}`)}
+                className="w-full py-3 font-black text-sm uppercase tracking-wider rounded-xl text-black transition-colors"
+                style={{ background: 'linear-gradient(135deg, #fde047, #eab308)' }}
+              >
+                Next Level →
+              </button>
+            )}
+
+            {/* Campaign complete */}
+            {level && reward?.won && level >= CAMPAIGN_LENGTH && (
+              <div className="text-center text-amber-400 text-sm font-bold py-2">
+                Campaign Complete — Endless Mode Unlocked
+              </div>
+            )}
+
+            {/* Return Home */}
+            <button
+              onClick={() => router.push('/battle')}
+              className="w-full py-3 font-bold text-sm uppercase tracking-wider rounded-xl border transition-colors text-slate-400 hover:text-white"
+              style={{ borderColor: 'rgba(42,42,58,0.6)', background: 'transparent' }}
+            >
+              Return Home
+            </button>
+          </div>
+        }
       />
     </div>
   );

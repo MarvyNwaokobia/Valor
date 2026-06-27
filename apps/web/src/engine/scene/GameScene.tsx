@@ -45,6 +45,8 @@ interface GameSceneProps {
   // Rewards earned this fight, shown on the victory screen (server-authoritative).
   rewardPending?: boolean;
   reward?: { won: boolean; xpAwarded: number; rankedUp: boolean; newRank: string | null; gAwarded: number } | null;
+  // Post-fight action buttons — rendered by the parent page (retry/next/home).
+  postFightActions?: React.ReactNode;
 }
 
 const CLASS_ACCENTS: Record<string, string> = {
@@ -525,7 +527,6 @@ export function GameScene(props: GameSceneProps) {
             {battleResult === 'player' ? 'Enemy has been slain' : `Slain by ${props.enemyName ?? props.enemyClass}`}
           </p>
 
-          {/* Server-authoritative rewards for this fight */}
           {props.rewardPending && (
             <div className="mt-5 text-sm text-white/50 animate-pulse">Recording result…</div>
           )}
@@ -543,9 +544,8 @@ export function GameScene(props: GameSceneProps) {
             </div>
           )}
 
-          <button onClick={() => window.location.reload()} className="mt-8 px-8 py-3 bg-white/10 hover:bg-white/20 text-white font-bold rounded-lg transition-colors">
-            {battleResult === 'player' ? 'FIGHT AGAIN' : 'RETRY'}
-          </button>
+          {/* Post-fight actions rendered by the parent page via postFightActions */}
+          {props.postFightActions}
         </div>
       )}
 
