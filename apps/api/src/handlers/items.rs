@@ -10,7 +10,7 @@ use crate::utils::normalize_wallet;
 
 pub async fn list_items(state: web::Data<AppState>) -> HttpResponse {
     let result = sqlx::query_as::<_, Item>(
-        "SELECT * FROM items ORDER BY price_g ASC",
+        "SELECT * FROM items WHERE price_g > 0 ORDER BY price_g ASC",
     )
     .fetch_all(&state.db)
     .await;
