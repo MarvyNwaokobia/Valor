@@ -564,7 +564,7 @@ pub async fn get_battles(
          FROM battles
          WHERE challenger_wallet = $1 OR opponent_wallet = $1
          ORDER BY created_at DESC
-         LIMIT 20",
+         LIMIT 10",
     )
     .bind(&wallet)
     .fetch_all(&state.db)
