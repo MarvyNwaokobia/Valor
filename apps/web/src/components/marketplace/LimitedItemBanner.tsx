@@ -110,15 +110,24 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               <span className="font-bold text-valor-gold text-lg">
                 {formatGDollarNumber(item.price_g)} G$
               </span>
-              {(() => {
-                const gid = gunIdFromItemId(item.id)
-                if (gid) {
-                  const gun = GUN_CATALOG[gid]
-                  return <span className="text-sm text-slate-400 font-bold">{Math.round(gunDps(gun))} DPS · Tier {gun.tier}</span>
-                }
-                return <span className="text-sm text-slate-400 font-bold">+{item.stat_boost} PWR</span>
-              })()}
             </div>
+            {(() => {
+              const gid = gunIdFromItemId(item.id)
+              if (gid) {
+                const gun = GUN_CATALOG[gid]
+                return (
+                  <div className="flex gap-3 flex-wrap text-[11px]">
+                    <span className="text-slate-400"><span className="font-black text-white">{gun.damage}</span> DMG</span>
+                    <span className="text-slate-400"><span className="font-black text-white">{gun.fireRate}</span> RPM</span>
+                    <span className="text-slate-400"><span className="font-black text-white">{Math.round(gun.accuracy * 100)}%</span> ACC</span>
+                    <span className="text-slate-400"><span className="font-black text-white">{gun.magazine}</span> MAG</span>
+                    <span className="text-slate-400"><span className="font-black text-white">{Math.round(gun.critChance * 100)}%</span> CRIT</span>
+                    <span className="text-slate-400"><span className="font-black text-valor-gold">{Math.round(gunDps(gun))}</span> DPS</span>
+                  </div>
+                )
+              }
+              return null
+            })()}
           </div>
 
           {/* CTA + countdown */}
@@ -193,22 +202,24 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               </div>
 
               {/* Item details */}
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-valor-gold/10 border border-valor-gold/20">
-                {(() => {
-                  const gid = gunIdFromItemId(item.id)
-                  if (gid) return <GunIcon gunId={gid} size={36} color="#eab308" className="shrink-0" />
-                  return <GunIcon gunId="legendary" size={36} color="#eab308" className="shrink-0" />
-                })()}
-                <div className="min-w-0">
-                  <p className="font-bold text-white text-sm truncate">{item.name}</p>
+              <div className="p-3 rounded-xl bg-valor-gold/10 border border-valor-gold/20">
+                <div className="flex items-center gap-3">
                   {(() => {
                     const gid = gunIdFromItemId(item.id)
-                    if (gid) {
-                      const gun = GUN_CATALOG[gid]
-                      return <p className="text-xs text-valor-gold mt-0.5">{Math.round(gunDps(gun))} DPS · Tier {gun.tier} · LEGENDARY</p>
-                    }
-                    return <p className="text-xs text-valor-gold mt-0.5">+{item.stat_boost} PWR · LEGENDARY</p>
+                    if (gid) return <GunIcon gunId={gid} size={44} color="#eab308" className="shrink-0" />
+                    return <GunIcon gunId="legendary" size={44} color="#eab308" className="shrink-0" />
                   })()}
+                  <div className="min-w-0">
+                    <p className="font-bold text-white text-sm truncate">{item.name}</p>
+                    {(() => {
+                      const gid = gunIdFromItemId(item.id)
+                      if (gid) {
+                        const gun = GUN_CATALOG[gid]
+                        return <p className="text-[10px] text-valor-gold mt-0.5">{Math.round(gunDps(gun))} DPS · {gun.damage} DMG · {gun.fireRate} RPM</p>
+                      }
+                      return null
+                    })()}
+                  </div>
                 </div>
               </div>
 
