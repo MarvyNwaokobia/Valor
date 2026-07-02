@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { usePrivy } from '@privy-io/react-auth'
+import { useWeb3AuthDisconnect } from '@web3auth/modal/react'
 import { useWalletClient } from 'wagmi'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -15,7 +15,7 @@ interface Props {
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified    = usePlayerStore((s) => s.setVerified)
   const isVerified     = usePlayerStore((s) => s.isVerified)
-  const { logout }     = usePrivy()
+  const { disconnect: logout } = useWeb3AuthDisconnect()
   const { data: walletClient } = useWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
@@ -102,7 +102,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
 
       {status !== 'whitelisted' && (
         <button
-          onClick={logout}
+          onClick={() => logout()}
           className="absolute top-5 right-5 z-20 text-xs text-slate-600 hover:text-slate-300 transition-colors font-medium tracking-wide"
         >
           Sign out

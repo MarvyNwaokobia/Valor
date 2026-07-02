@@ -1,10 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSignTypedData } from 'wagmi'
+import { useConfig, useSignTypedData } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { parseUnits, parseSignature } from 'viem'
 import { useState } from 'react'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
-import { wagmiConfig } from '@/lib/wagmi'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
@@ -53,6 +52,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const { checkAchievements } = useAchievements()
   const [pendingItemId, setPendingItemId] = useState<string | null>(null)
 
+  const config = useConfig()
   const { signTypedDataAsync } = useSignTypedData()
 
   const purchase = async (item: Item): Promise<string> => {
@@ -65,7 +65,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30) // 30-min window
 
       // Check G$ balance before attempting — surface a clear error instead of contract revert
-      const balance = await readContract(wagmiConfig, {
+      const balance = await readContract(config, {
         address: G_TOKEN_ADDRESS,
         abi: BALANCE_ABI,
         functionName: 'balanceOf',
@@ -76,14 +76,14 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       }
 
       // Read player's current permit nonce from the G$ token contract
-      const nonce = await readContract(wagmiConfig, {
+      const nonce = await readContract(config, {
         address: G_TOKEN_ADDRESS,
         abi: NONCES_ABI,
         functionName: 'nonces',
         args: [walletAddress as `0x${string}`],
       })
 
-      // Sign EIP-2612 permit — Privy shows "Sign message", zero gas for player
+      // Sign EIP-2612 permit — wallet shows "Sign message", zero gas for player
       const rawSig = await signTypedDataAsync({
         domain: {
           name: 'GoodDollar',

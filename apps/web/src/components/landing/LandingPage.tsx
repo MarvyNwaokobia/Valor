@@ -2,9 +2,17 @@
 
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { useLogin } from '@privy-io/react-auth'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
+
+// `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
+// `Web3AuthProvider` always constructs the modal-capable `Web3Auth` subclass
+// under the hood, which adds a zero-arg `connect()` that opens the full login
+// modal (email/wallet/Google) — not exposed in the public types.
+interface ModalCapableWeb3Auth {
+  connect(): Promise<unknown>
+}
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
@@ -116,7 +124,8 @@ function EnterButton({ onClick, delay = 0 }: { onClick: () => void; delay?: numb
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  const { login } = useLogin()
+  const { web3Auth } = useWeb3Auth()
+  const login = () => { (web3Auth as unknown as ModalCapableWeb3Auth)?.connect() }
   const embers    = useEmbers()
 
   return (
@@ -462,7 +471,7 @@ export default function LandingPage() {
             {[
               { label:'GoodDollar', sub:'Identity & Rewards', color:'#22c55e' },
               { label:'Celo',       sub:'Blockchain',         color:'#a3e635' },
-              { label:'Privy',      sub:'Wallet Auth',        color:'#6366f1' },
+              { label:'Web3Auth',   sub:'Wallet Auth',        color:'#6366f1' },
             ].map(({ label, sub, color }) => (
               <div key={label}
                 className="flex items-center gap-2.5 rounded-xl px-4 py-2.5"

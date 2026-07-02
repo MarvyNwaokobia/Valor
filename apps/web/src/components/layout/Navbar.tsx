@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
+import { ConnectButton } from '@/components/ui/ConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { useAudio } from '@/hooks/useAudio'
@@ -139,7 +139,7 @@ export default function Navbar() {
           )}
 
           <AudioToggle />
-          <PrivyConnectButton />
+          <ConnectButton />
         </div>
       </div>
     </nav>

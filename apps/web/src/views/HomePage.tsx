@@ -5,7 +5,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
-import { usePrivy } from '@privy-io/react-auth'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -28,7 +28,7 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
-  const { ready, authenticated } = usePrivy()
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
   const { address } = useAccount()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
@@ -45,7 +45,7 @@ export default function HomePage() {
     }
   }, [ready, authenticated, address, player, playerSynced, syncFailed, router])
 
-  // Privy still re-hydrating (~200ms on reload) — only unavoidable wait
+  // Web3Auth still re-hydrating (~200ms on reload) — only unavoidable wait
   if (!ready) return <LoadingScreen />
   // Unauthenticated
   if (!authenticated || !address) return <LandingPage />
