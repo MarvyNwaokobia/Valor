@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
-import { usePrivy } from '@privy-io/react-auth'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -14,7 +14,7 @@ import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { PrivyConnectButton } from '@/components/ui/PrivyConnectButton'
+import { ConnectButton } from '@/components/ui/ConnectButton'
 
 type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
@@ -28,7 +28,7 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { ready, authenticated } = usePrivy()
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
   const { address } = useAccount()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
@@ -42,7 +42,7 @@ export default function OnboardingPage() {
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
-  // Privy still hydrating — don't render or route yet.
+  // Web3Auth still hydrating — don't render or route yet.
   if (!ready) return <LoadingScreen />
 
   // Player sync in progress — wait; don't flash the verify screen.
@@ -58,7 +58,7 @@ export default function OnboardingPage() {
         <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
           Connect your wallet to enter Valor and forge your warrior.
         </p>
-        <PrivyConnectButton />
+        <ConnectButton />
       </div>
     )
   }

@@ -8,16 +8,23 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }))
 
-// Mock Privy auth
-vi.mock('@privy-io/react-auth', () => ({
-  usePrivy: () => ({ ready: true, authenticated: false, login: vi.fn(), logout: vi.fn(), user: null }),
-  PrivyProvider: ({ children }: { children: React.ReactNode }) => children,
+// Mock Web3Auth
+vi.mock('@web3auth/modal/react', () => ({
+  useWeb3Auth: () => ({ isInitialized: true, isConnected: false, web3Auth: { connect: vi.fn() } }),
+  useWeb3AuthConnect: () => ({ connect: vi.fn(), isConnected: false, loading: false }),
+  useWeb3AuthDisconnect: () => ({ disconnect: vi.fn(), loading: false }),
+  useWeb3AuthUser: () => ({ userInfo: null, loading: false }),
+  Web3AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+vi.mock('@web3auth/modal/react/wagmi', () => ({
+  WagmiProvider: ({ children }: { children: React.ReactNode }) => children,
 }))
 
 // Mock wagmi
 vi.mock('wagmi', () => ({
   useConnection: () => ({ address: undefined, isConnected: false }),
   useAccount: () => ({ address: undefined, isConnected: false }),
+  useConfig: () => ({}),
   WagmiProvider: ({ children }: { children: React.ReactNode }) => children,
 }))
 

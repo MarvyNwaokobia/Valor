@@ -1,8 +1,7 @@
 import { useCallback, useState } from 'react'
 import { writeContract, readContract, waitForTransactionReceipt } from '@wagmi/core'
-import { useSignTypedData } from 'wagmi'
+import { useConfig, useSignTypedData } from 'wagmi'
 import { parseUnits, parseSignature } from 'viem'
-import { wagmiConfig } from '@/lib/wagmi'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import type { Item } from '@/types'
 
@@ -57,12 +56,13 @@ export interface ResaleListing {
 }
 
 export function useResale(walletAddress?: string) {
+  const config = useConfig()
   const { signTypedDataAsync } = useSignTypedData()
   const [pending, setPending] = useState(false)
 
   const itemsAddress = useCallback(
-    () => readContract(wagmiConfig, { address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'items' }) as Promise<`0x${string}`>,
-    [],
+    () => readContract(config, { address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'items' }) as Promise<`0x${string}`>,
+    [config],
   )
 
   /** List an owned item for resale at `priceG` G$ (approves the marketplace first if needed). */
@@ -75,40 +75,40 @@ export function useResale(walletAddress?: string) {
     setPending(true)
     try {
       const items = await itemsAddress()
-      const approved = await readContract(wagmiConfig, {
+      const approved = await readContract(config, {
         address: items, abi: ITEMS_ABI, functionName: 'isApprovedForAll',
         args: [walletAddress as `0x${string}`, MARKETPLACE],
       })
       if (!approved) {
-        const ah = await writeContract(wagmiConfig, {
+        const ah = await writeContract(config, {
           address: items, abi: ITEMS_ABI, functionName: 'setApprovalForAll', args: [MARKETPLACE, true],
         })
-        await waitForTransactionReceipt(wagmiConfig, { hash: ah })
+        await waitForTransactionReceipt(config, { hash: ah })
       }
       const price = parseUnits(priceG.toString(), G_DECIMALS)
-      const hash = await writeContract(wagmiConfig, {
+      const hash = await writeContract(config, {
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'listForResale',
         args: [BigInt(item.on_chain_id), price],
       })
-      await waitForTransactionReceipt(wagmiConfig, { hash })
+      await waitForTransactionReceipt(config, { hash })
       return hash
     } finally {
       setPending(false)
     }
-  }, [walletAddress, itemsAddress])
+  }, [walletAddress, itemsAddress, config])
 
   const cancelResale = useCallback(async (resaleId: bigint): Promise<`0x${string}`> => {
     setPending(true)
     try {
-      const hash = await writeContract(wagmiConfig, {
+      const hash = await writeContract(config, {
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'cancelResale', args: [resaleId],
       })
-      await waitForTransactionReceipt(wagmiConfig, { hash })
+      await waitForTransactionReceipt(config, { hash })
       return hash
     } finally {
       setPending(false)
     }
-  }, [])
+  }, [config])
 
   /** Buy a resale listing — signs a G$ permit (no separate approve), then settles. */
   const buyResale = useCallback(async (resaleId: bigint, price: bigint): Promise<`0x${string}`> => {
@@ -116,7 +116,7 @@ export function useResale(walletAddress?: string) {
     setPending(true)
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30)
-      const nonce = await readContract(wagmiConfig, {
+      const nonce = await readContract(config, {
         address: G_TOKEN_ADDRESS, abi: NONCES_ABI, functionName: 'nonces', args: [walletAddress as `0x${string}`],
       })
       const rawSig = await signTypedDataAsync({
@@ -129,24 +129,24 @@ export function useResale(walletAddress?: string) {
         message: { owner: walletAddress as `0x${string}`, spender: MARKETPLACE, value: price, nonce, deadline },
       })
       const { v, r, s } = parseSignature(rawSig)
-      const hash = await writeContract(wagmiConfig, {
+      const hash = await writeContract(config, {
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'buyResaleWithPermit',
         args: [resaleId, deadline, Number(v), r, s],
       })
-      await waitForTransactionReceipt(wagmiConfig, { hash })
+      await waitForTransactionReceipt(config, { hash })
       return hash
     } finally {
       setPending(false)
     }
-  }, [walletAddress, signTypedDataAsync])
+  }, [walletAddress, signTypedDataAsync, config])
 
   /** All active resale listings on-chain (the marketplace reads this to show what's for sale). */
   const fetchListings = useCallback(async (): Promise<ResaleListing[]> => {
-    const [ids, entries] = await readContract(wagmiConfig, {
+    const [ids, entries] = await readContract(config, {
       address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'getActiveResales',
     }) as [readonly bigint[], readonly { seller: string; itemId: bigint; price: bigint; active: boolean }[]]
     return ids.map((id, i) => ({ resaleId: id, seller: entries[i].seller, itemId: entries[i].itemId, price: entries[i].price }))
-  }, [])
+  }, [config])
 
   return { listForResale, cancelResale, buyResale, fetchListings, pending }
 }

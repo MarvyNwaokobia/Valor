@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAccount } from 'wagmi'
-import { usePrivy } from '@privy-io/react-auth'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import ChallengeBattle from '@/components/battle/ChallengeBattle'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -14,7 +14,7 @@ import LoadingScreen from '@/components/ui/LoadingScreen'
  * retired turn-based "Classic" page; reuses the existing ChallengeBattle flow.
  */
 export default function RankedPage() {
-  const { ready, authenticated } = usePrivy()
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
   const { address } = useAccount()
   const router        = useRouter()
   const player        = usePlayerStore(s => s.player)

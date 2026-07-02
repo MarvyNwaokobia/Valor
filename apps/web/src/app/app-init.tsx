@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
-import { usePrivy } from '@privy-io/react-auth'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useValorAuth } from '@/hooks/useValorAuth'
@@ -17,7 +17,7 @@ import { CHARACTER_GLB } from '@/lib/classes'
 Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
-  const { ready, authenticated } = usePrivy()
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
   const { address } = useAccount()
   const { disconnect } = useDisconnect()
   const clearPlayer = usePlayerStore(s => s.clearPlayer)

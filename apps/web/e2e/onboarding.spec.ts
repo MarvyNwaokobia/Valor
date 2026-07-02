@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 /**
  * E2E: Onboarding flow smoke tests.
  * These run against the running dev server and test the covenant → select flow
- * with a mocked wallet (no real Privy auth in CI).
+ * with a mocked wallet (no real Web3Auth auth in CI).
  */
 
 test.describe('Landing page', () => {
