@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useWalletClient, useDisconnect } from 'wagmi'
+import { useWeb3AuthDisconnect } from '@web3auth/modal/react'
+import { useWalletClient } from 'wagmi'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -14,7 +15,7 @@ interface Props {
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified    = usePlayerStore((s) => s.setVerified)
   const isVerified     = usePlayerStore((s) => s.isVerified)
-  const { disconnect: logout } = useDisconnect()
+  const { disconnect: logout } = useWeb3AuthDisconnect()
   const { data: walletClient } = useWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)

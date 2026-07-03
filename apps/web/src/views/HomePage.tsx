@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -27,9 +28,8 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
-  const { address, status } = useAccount()
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
+  const { address } = useAccount()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const syncFailed   = usePlayerStore(s => s.syncFailed)

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Target, Users, Crosshair, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAccount } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
@@ -14,9 +15,8 @@ import ChallengeBattle from '@/components/battle/ChallengeBattle'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 export default function BattlePage() {
-  const { address, status } = useAccount()
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
+  const { address } = useAccount()
   const router = useRouter()
   const player = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)

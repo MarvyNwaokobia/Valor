@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { useAccount } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -13,7 +14,7 @@ import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import SignInPanel from '@/components/auth/SignInPanel'
+import { ConnectButton } from '@/components/ui/ConnectButton'
 
 type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
@@ -27,9 +28,8 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { address, status } = useAccount()
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
+  const { address } = useAccount()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -52,7 +52,15 @@ export default function OnboardingPage() {
   if (player) { router.replace('/'); return null }
 
   if (!authenticated || !address) {
-    return <SignInPanel />
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
+        <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
+        <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
+          Connect your wallet to enter Valor and forge your warrior.
+        </p>
+        <ConnectButton />
+      </div>
+    )
   }
 
   // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
