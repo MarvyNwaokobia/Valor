@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useWeb3Auth } from '@web3auth/modal/react'
-import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
+import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -14,7 +13,7 @@ import TutorialArena from '@/components/onboarding/TutorialArena'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
-import { ConnectButton } from '@/components/ui/ConnectButton'
+import SignInPanel from '@/components/auth/SignInPanel'
 
 type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
@@ -28,8 +27,9 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { isInitialized: ready } = useWeb3Auth()
-  const { address, status: addressStatus } = useWeb3AuthAddress()
+  const { address, status } = useAccount()
+  const ready = status !== 'connecting' && status !== 'reconnecting'
+  const authenticated = status === 'connected'
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -45,27 +45,14 @@ export default function OnboardingPage() {
   // Web3Auth still hydrating — don't render or route yet.
   if (!ready) return <LoadingScreen />
 
-  // Web3Auth reports connected, but the wallet address hasn't arrived yet
-  // (social-login MPC derivation can lag the connect event) — wait instead
-  // of flashing the "sign in" card at an already-authenticated user.
-  if (addressStatus === 'resolving') return <LoadingScreen />
-
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
 
   // Returning user: player loaded from API — send home.
   if (player) { router.replace('/'); return null }
 
-  if (addressStatus === 'unauthenticated' || addressStatus === 'failed' || !address) {
-    return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
-        <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
-        <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
-          Connect your wallet to enter Valor and forge your warrior.
-        </p>
-        <ConnectButton />
-      </div>
-    )
+  if (!authenticated || !address) {
+    return <SignInPanel />
   }
 
   // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
