@@ -2,8 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useWeb3Auth } from '@web3auth/modal/react'
-import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
+import { useAccount } from 'wagmi'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -26,16 +25,16 @@ import { useGBalance } from '@/hooks/useGBalance'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 export default function ProfilePage() {
-  const { isInitialized: ready } = useWeb3Auth()
-  const { address, status: addressStatus } = useWeb3AuthAddress()
+  const { address, status } = useAccount()
+  const ready = status !== 'connecting' && status !== 'reconnecting'
+  const authenticated = status === 'connected'
   const router      = useRouter()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const inventory    = usePlayerStore(s => s.inventory)
 
   if (!ready) return <LoadingScreen />
-  if (addressStatus === 'unauthenticated' || addressStatus === 'failed') { router.replace('/'); return null }
-  if (addressStatus === 'resolving' || !address) return <LoadingScreen />
+  if (!authenticated || !address) { router.replace('/'); return null }
   // No cache and sync not done yet — brief wait
   if (!player && !playerSynced) return <LoadingScreen />
   // Sync done, confirmed no player — let home page route them

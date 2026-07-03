@@ -22,9 +22,16 @@ const nextConfig: NextConfig = {
     // wagmi v3's tempo/Connectors.js has a dynamic `import('accounts')` for the
     // Tempo Wallet devtools connector — this module doesn't exist outside wagmi's
     // own monorepo. Alias it to a stub so webpack doesn't fail the build.
+    //
+    // `@wagmi/connectors`' porto() connector (also unused — Valor only wires up
+    // injected/metaMask/coinbaseWallet/walletConnect) pulls in `porto`, whose
+    // internal modules import `zod/mini`, an export path this repo's pinned zod
+    // version doesn't expose. Same fix: alias the whole package out.
     config.resolve.alias = {
       ...config.resolve.alias,
       accounts: path.resolve(__dirname, 'src/lib/stub/accounts.ts'),
+      porto$: path.resolve(__dirname, 'src/lib/stub/porto.ts'),
+      'porto/internal': path.resolve(__dirname, 'src/lib/stub/porto.ts'),
     }
     return config
   },

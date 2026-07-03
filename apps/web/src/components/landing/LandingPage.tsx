@@ -1,18 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { useWeb3Auth } from '@web3auth/modal/react'
 import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
-
-// `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
-// `Web3AuthProvider` always constructs the modal-capable `Web3Auth` subclass
-// under the hood, which adds a zero-arg `connect()` that opens the full login
-// modal (email/wallet/Google) — not exposed in the public types.
-interface ModalCapableWeb3Auth {
-  connect(): Promise<unknown>
-}
+import SignInPanel from '@/components/auth/SignInPanel'
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
@@ -124,11 +116,13 @@ function EnterButton({ onClick, delay = 0 }: { onClick: () => void; delay?: numb
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  const { web3Auth } = useWeb3Auth()
-  const login = () => { (web3Auth as unknown as ModalCapableWeb3Auth)?.connect() }
+  const [showSignIn, setShowSignIn] = useState(false)
+  const login = () => setShowSignIn(true)
   const embers    = useEmbers()
 
   return (
+    <>
+    {showSignIn && <SignInPanel onClose={() => setShowSignIn(false)} />}
     <div
       className="fixed inset-0 overflow-y-auto [&::-webkit-scrollbar]:hidden"
       style={{ background: '#04030c', scrollbarWidth: 'none' }}
@@ -528,5 +522,6 @@ export default function LandingPage() {
       </section>
 
     </div>
+    </>
   )
 }
