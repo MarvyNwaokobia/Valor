@@ -1,8 +1,8 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useAccount } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
+import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import ChallengeBattle from '@/components/battle/ChallengeBattle'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -14,8 +14,8 @@ import LoadingScreen from '@/components/ui/LoadingScreen'
  * retired turn-based "Classic" page; reuses the existing ChallengeBattle flow.
  */
 export default function RankedPage() {
-  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { isInitialized: ready } = useWeb3Auth()
+  const { address, status: addressStatus } = useWeb3AuthAddress()
   const router        = useRouter()
   const player        = usePlayerStore(s => s.player)
   const playerSynced  = usePlayerStore(s => s.playerSynced)
@@ -23,7 +23,8 @@ export default function RankedPage() {
   const challengeTarget = searchParams.get('challenge') ?? undefined
 
   if (!ready) return <LoadingScreen />
-  if (!authenticated || !address) { router.replace('/'); return null }
+  if (addressStatus === 'unauthenticated' || addressStatus === 'failed') { router.replace('/'); return null }
+  if (addressStatus === 'resolving' || !address) return <LoadingScreen />
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 

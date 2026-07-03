@@ -1,5 +1,6 @@
-import { useAccount, useDisconnect } from 'wagmi'
+import { useDisconnect } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
+import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
 import { motion } from 'framer-motion'
 
 // `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
@@ -11,16 +12,18 @@ interface ModalCapableWeb3Auth {
 }
 
 export function ConnectButton() {
-  const { isInitialized: ready, isConnected: authenticated, web3Auth } = useWeb3Auth()
+  const { isInitialized: ready, web3Auth } = useWeb3Auth()
   const { disconnect: logout } = useDisconnect()
-  const { address } = useAccount()
+  const { address, status: addressStatus } = useWeb3AuthAddress()
 
-  // Web3Auth not yet initialised — show skeleton to prevent layout shift
-  if (!ready) {
+  // Web3Auth not yet initialised, or connected but the address hasn't
+  // arrived yet (social-login MPC derivation can lag the connect event) —
+  // show skeleton instead of a stale "Enter Valor" / "—" button.
+  if (!ready || addressStatus === 'resolving') {
     return <div className="w-28 h-9 rounded-xl bg-valor-surface-2 animate-pulse" />
   }
 
-  if (!authenticated) {
+  if (addressStatus === 'unauthenticated' || addressStatus === 'failed') {
     const login = () => (web3Auth as unknown as ModalCapableWeb3Auth)?.connect()
     return (
       <motion.button

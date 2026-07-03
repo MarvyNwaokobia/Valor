@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
+import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
 import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -28,8 +28,9 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
-  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { isInitialized: ready } = useWeb3Auth()
+  const { address, status: addressStatus, retry: retryAddress } = useWeb3AuthAddress()
+  const authenticated = addressStatus !== 'unauthenticated'
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const syncFailed   = usePlayerStore(s => s.syncFailed)
@@ -48,7 +49,26 @@ export default function HomePage() {
   // Web3Auth still re-hydrating (~200ms on reload) — only unavoidable wait
   if (!ready) return <LoadingScreen />
   // Unauthenticated
-  if (!authenticated || !address) return <LandingPage />
+  if (addressStatus === 'unauthenticated') return <LandingPage />
+  // Web3Auth reports connected, but the wallet address hasn't arrived yet
+  // (social-login MPC derivation can lag the connect event) — wait instead
+  // of bouncing back to the sign-in screen.
+  if (addressStatus === 'resolving') return <LoadingScreen />
+  if (addressStatus === 'failed' || !address) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-4" style={{ background: '#04030c' }}>
+        <p className="text-white font-display font-black text-xl">Connection issue</p>
+        <p className="text-slate-500 text-sm">Couldn&apos;t load your wallet. Try again.</p>
+        <button
+          onClick={retryAddress}
+          className="mt-2 px-6 py-3 rounded-xl font-bold text-sm text-black"
+          style={{ background: '#eab308' }}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
   // Cached player from localStorage → render immediately, sync runs in background
   // No cached player + sync still running → brief wait only for genuinely new users
   if (!player && !playerSynced) return <LoadingScreen />
