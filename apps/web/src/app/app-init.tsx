@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useValorAuth } from '@/hooks/useValorAuth'
@@ -16,9 +17,8 @@ import { CHARACTER_GLB } from '@/lib/classes'
 Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
-  const { address, status } = useAccount()
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
+  const { address } = useAccount()
   const { disconnect } = useDisconnect()
   const clearPlayer = usePlayerStore(s => s.clearPlayer)
   const queryClient = useQueryClient()

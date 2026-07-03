@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { WagmiProvider } from 'wagmi'
+import { WEB3AUTH_NETWORK } from '@web3auth/modal'
+import { Web3AuthProvider } from '@web3auth/modal/react'
+import { WagmiProvider } from '@web3auth/modal/react/wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { wagmiConfig } from '@/lib/wagmi-config'
+import { celoChainConfig, celoAlfajoresChainConfig } from '@/lib/wagmi'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
 import AppInit from './app-init'
 
@@ -20,14 +22,40 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   )
 
+  const web3AuthClientId = process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID ?? 'placeholder'
+
   return (
     <ErrorBoundary>
-      <WagmiProvider config={wagmiConfig}>
+      <Web3AuthProvider
+        config={{
+          web3AuthOptions: {
+            clientId: web3AuthClientId,
+            web3AuthNetwork: WEB3AUTH_NETWORK.SAPPHIRE_MAINNET,
+            chains: [celoChainConfig, celoAlfajoresChainConfig],
+            defaultChainId: celoChainConfig.chainId,
+            uiConfig: {
+              appName: 'Enter Valor',
+              theme: { primary: '#eab308' },
+              mode: 'dark',
+              // Popup mode has a known race: Web3Auth's own wagmi bridge can
+              // report "connected" a beat before the MPC-derived wallet
+              // address for social logins is actually ready, leaving users
+              // bounced back to the sign-in screen. Redirect mode forces a
+              // full page round-trip, so on return the whole app boots fresh
+              // and rehydrates the session as one sequential flow instead of
+              // resuming mid-popup — avoiding that race entirely.
+              uxMode: 'redirect',
+            },
+          },
+        }}
+      >
         <QueryClientProvider client={queryClient}>
-          <AppInit />
-          {children}
+          <WagmiProvider>
+            <AppInit />
+            {children}
+          </WagmiProvider>
         </QueryClientProvider>
-      </WagmiProvider>
+      </Web3AuthProvider>
     </ErrorBoundary>
   )
 }

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -25,9 +26,8 @@ import { useGBalance } from '@/hooks/useGBalance'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 export default function ProfilePage() {
-  const { address, status } = useAccount()
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
+  const { address } = useAccount()
   const router      = useRouter()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)

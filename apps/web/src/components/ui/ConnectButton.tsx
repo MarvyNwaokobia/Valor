@@ -1,23 +1,19 @@
-'use client'
-
-import { useState } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { motion } from 'framer-motion'
-import SignInPanel, { OAUTH_PENDING_KEY } from '@/components/auth/SignInPanel'
+
+// `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
+// `Web3AuthProvider` always constructs the modal-capable `Web3Auth` subclass
+// under the hood, which adds a zero-arg `connect()` that opens the full login
+// modal (email/wallet/Google) — not exposed in the public types.
+interface ModalCapableWeb3Auth {
+  connect(): Promise<unknown>
+}
 
 export function ConnectButton() {
-  const { address, status } = useAccount()
-  const { disconnect } = useDisconnect()
-  // Redirect-mode OAuth does a full page navigation away and back — the whole
-  // React tree remounts on return, so a plain `useState(false)` here would
-  // never re-show the panel and its OAuth-return handling would never run.
-  // Re-derive from the pending flag SignInPanel itself sets before redirecting.
-  const [showSignIn, setShowSignIn] = useState(() =>
-    typeof window !== 'undefined' && !!sessionStorage.getItem(OAUTH_PENDING_KEY),
-  )
-
-  const ready = status !== 'connecting' && status !== 'reconnecting'
-  const authenticated = status === 'connected'
+  const { isInitialized: ready, isConnected: authenticated, web3Auth } = useWeb3Auth()
+  const { disconnect: logout } = useDisconnect()
+  const { address } = useAccount()
 
   // Web3Auth not yet initialised — show skeleton to prevent layout shift
   if (!ready) {
@@ -25,18 +21,16 @@ export function ConnectButton() {
   }
 
   if (!authenticated) {
+    const login = () => (web3Auth as unknown as ModalCapableWeb3Auth)?.connect()
     return (
-      <>
-        <motion.button
-          onClick={() => setShowSignIn(true)}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="px-4 py-2 bg-valor-gold text-black font-bold rounded-xl text-sm hover:bg-valor-gold-light transition-colors shadow-[0_0_12px_rgba(234,179,8,0.25)]"
-        >
-          Enter Valor
-        </motion.button>
-        {showSignIn && <SignInPanel onClose={() => setShowSignIn(false)} />}
-      </>
+      <motion.button
+        onClick={login}
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
+        className="px-4 py-2 bg-valor-gold text-black font-bold rounded-xl text-sm hover:bg-valor-gold-light transition-colors shadow-[0_0_12px_rgba(234,179,8,0.25)]"
+      >
+        Enter Valor
+      </motion.button>
     )
   }
 
@@ -50,7 +44,7 @@ export function ConnectButton() {
         {shortAddress}
       </span>
       <button
-        onClick={() => disconnect()}
+        onClick={() => logout()}
         className="text-xs text-slate-500 hover:text-red-400 transition-colors px-2 py-1.5 rounded-lg hover:bg-valor-surface-2"
       >
         Sign Out

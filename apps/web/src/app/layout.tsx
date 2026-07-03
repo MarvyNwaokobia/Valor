@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import Providers from './providers-dynamic'
+import { Providers } from './providers'
 import './globals.css'
 
 export const dynamic = 'force-dynamic'

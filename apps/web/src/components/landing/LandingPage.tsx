@@ -1,10 +1,18 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
-import SignInPanel, { OAUTH_PENDING_KEY } from '@/components/auth/SignInPanel'
+
+// `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
+// `Web3AuthProvider` always constructs the modal-capable `Web3Auth` subclass
+// under the hood, which adds a zero-arg `connect()` that opens the full login
+// modal (email/wallet/Google) — not exposed in the public types.
+interface ModalCapableWeb3Auth {
+  connect(): Promise<unknown>
+}
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
@@ -116,19 +124,11 @@ function EnterButton({ onClick, delay = 0 }: { onClick: () => void; delay?: numb
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  // Redirect-mode OAuth does a full page navigation away and back — the whole
-  // React tree remounts on return, so a plain `useState(false)` here would
-  // never re-show the panel and its OAuth-return handling would never run.
-  // Re-derive from the pending flag SignInPanel itself sets before redirecting.
-  const [showSignIn, setShowSignIn] = useState(() =>
-    typeof window !== 'undefined' && !!sessionStorage.getItem(OAUTH_PENDING_KEY),
-  )
-  const login = () => setShowSignIn(true)
+  const { web3Auth } = useWeb3Auth()
+  const login = () => { (web3Auth as unknown as ModalCapableWeb3Auth)?.connect() }
   const embers    = useEmbers()
 
   return (
-    <>
-    {showSignIn && <SignInPanel onClose={() => setShowSignIn(false)} />}
     <div
       className="fixed inset-0 overflow-y-auto [&::-webkit-scrollbar]:hidden"
       style={{ background: '#04030c', scrollbarWidth: 'none' }}
@@ -528,6 +528,5 @@ export default function LandingPage() {
       </section>
 
     </div>
-    </>
   )
 }
