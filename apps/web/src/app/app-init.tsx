@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useAccount, useDisconnect } from 'wagmi'
+import { useDisconnect } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useValorAuth } from '@/hooks/useValorAuth'
+import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
 import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
@@ -18,7 +19,7 @@ Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
   const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { address } = useWeb3AuthAddress()
   const { disconnect } = useDisconnect()
   const clearPlayer = usePlayerStore(s => s.clearPlayer)
   const queryClient = useQueryClient()

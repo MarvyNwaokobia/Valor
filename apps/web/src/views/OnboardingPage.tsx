@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
+import { useWeb3AuthAddress } from '@/hooks/useWeb3AuthAddress'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -28,8 +28,8 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { isInitialized: ready } = useWeb3Auth()
+  const { address, status: addressStatus } = useWeb3AuthAddress()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -45,13 +45,18 @@ export default function OnboardingPage() {
   // Web3Auth still hydrating — don't render or route yet.
   if (!ready) return <LoadingScreen />
 
+  // Web3Auth reports connected, but the wallet address hasn't arrived yet
+  // (social-login MPC derivation can lag the connect event) — wait instead
+  // of flashing the "sign in" card at an already-authenticated user.
+  if (addressStatus === 'resolving') return <LoadingScreen />
+
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
 
   // Returning user: player loaded from API — send home.
   if (player) { router.replace('/'); return null }
 
-  if (!authenticated || !address) {
+  if (addressStatus === 'unauthenticated' || addressStatus === 'failed' || !address) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
         <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
