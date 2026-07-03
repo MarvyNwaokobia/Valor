@@ -1,19 +1,27 @@
-import { usePrivy, useLogin, useLogout } from '@privy-io/react-auth'
-import { useAccount } from 'wagmi'
+import { useAccount, useDisconnect } from 'wagmi'
+import { useWeb3Auth } from '@web3auth/modal/react'
 import { motion } from 'framer-motion'
 
-export function PrivyConnectButton() {
-  const { ready, authenticated } = usePrivy()
-  const { login } = useLogin()
-  const { logout } = useLogout()
+// `useWeb3Auth().web3Auth` is typed as the base `Web3AuthNoModal`, but
+// `Web3AuthProvider` always constructs the modal-capable `Web3Auth` subclass
+// under the hood, which adds a zero-arg `connect()` that opens the full login
+// modal (email/wallet/Google) — not exposed in the public types.
+interface ModalCapableWeb3Auth {
+  connect(): Promise<unknown>
+}
+
+export function ConnectButton() {
+  const { isInitialized: ready, isConnected: authenticated, web3Auth } = useWeb3Auth()
+  const { disconnect: logout } = useDisconnect()
   const { address } = useAccount()
 
-  // Privy not yet initialised — show skeleton to prevent layout shift
+  // Web3Auth not yet initialised — show skeleton to prevent layout shift
   if (!ready) {
     return <div className="w-28 h-9 rounded-xl bg-valor-surface-2 animate-pulse" />
   }
 
   if (!authenticated) {
+    const login = () => (web3Auth as unknown as ModalCapableWeb3Auth)?.connect()
     return (
       <motion.button
         onClick={login}
