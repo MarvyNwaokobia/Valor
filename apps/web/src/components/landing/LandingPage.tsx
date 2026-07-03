@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
-import SignInPanel from '@/components/auth/SignInPanel'
+import SignInPanel, { OAUTH_PENDING_KEY } from '@/components/auth/SignInPanel'
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
@@ -116,7 +116,13 @@ function EnterButton({ onClick, delay = 0 }: { onClick: () => void; delay?: numb
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  const [showSignIn, setShowSignIn] = useState(false)
+  // Redirect-mode OAuth does a full page navigation away and back — the whole
+  // React tree remounts on return, so a plain `useState(false)` here would
+  // never re-show the panel and its OAuth-return handling would never run.
+  // Re-derive from the pending flag SignInPanel itself sets before redirecting.
+  const [showSignIn, setShowSignIn] = useState(() =>
+    typeof window !== 'undefined' && !!sessionStorage.getItem(OAUTH_PENDING_KEY),
+  )
   const login = () => setShowSignIn(true)
   const embers    = useEmbers()
 

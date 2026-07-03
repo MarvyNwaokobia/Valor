@@ -7,7 +7,7 @@ import { WALLET_ADAPTERS, ADAPTER_STATUS } from '@web3auth/base'
 import { LOGIN_PROVIDER } from '@web3auth/auth'
 import { getWeb3Auth, initWeb3Auth, getLastAdapterError } from '@/lib/wagmi-config'
 
-const OAUTH_PENDING_KEY = 'valor_oauth_pending'
+export const OAUTH_PENDING_KEY = 'valor_oauth_pending'
 
 function describeError(err: unknown): string {
   const msg = err instanceof Error ? err.message : ''

@@ -3,12 +3,18 @@
 import { useState } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { motion } from 'framer-motion'
-import SignInPanel from '@/components/auth/SignInPanel'
+import SignInPanel, { OAUTH_PENDING_KEY } from '@/components/auth/SignInPanel'
 
 export function ConnectButton() {
   const { address, status } = useAccount()
   const { disconnect } = useDisconnect()
-  const [showSignIn, setShowSignIn] = useState(false)
+  // Redirect-mode OAuth does a full page navigation away and back — the whole
+  // React tree remounts on return, so a plain `useState(false)` here would
+  // never re-show the panel and its OAuth-return handling would never run.
+  // Re-derive from the pending flag SignInPanel itself sets before redirecting.
+  const [showSignIn, setShowSignIn] = useState(() =>
+    typeof window !== 'undefined' && !!sessionStorage.getItem(OAUTH_PENDING_KEY),
+  )
 
   const ready = status !== 'connecting' && status !== 'reconnecting'
   const authenticated = status === 'connected'
