@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useAccount, useDisconnect } from 'wagmi'
+import { useDisconnect } from 'wagmi'
 import { useWeb3Auth } from '@web3auth/modal/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -10,6 +10,7 @@ import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useWalletBridgeGuard } from '@/hooks/useWalletBridgeGuard'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useGLTF } from '@react-three/drei'
 import { CHARACTER_GLB } from '@/lib/classes'
 
@@ -19,7 +20,6 @@ Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
   const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
   const { disconnect } = useDisconnect()
   const clearPlayer = usePlayerStore(s => s.clearPlayer)
   const queryClient = useQueryClient()
@@ -35,6 +35,9 @@ export default function AppInit() {
 
   useValorAuth()
   useWalletBridgeGuard()
+  // Ground-truth address from Web3Auth directly (via useWalletBridgeGuard),
+  // NOT wagmi's — player sync must not wait on wagmi's bridge to catch up.
+  const { address } = useResolvedAuth()
   usePlayerSync(address)
   useRealtimePlayer(address)
   useDecayMonitor()

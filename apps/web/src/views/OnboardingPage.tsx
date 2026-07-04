@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
-import { useWeb3Auth } from '@web3auth/modal/react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import SignInStalled from '@/components/auth/SignInStalled'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
@@ -28,8 +28,7 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { status, address } = useResolvedAuth()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -43,7 +42,14 @@ export default function OnboardingPage() {
   const [error,         setError]         = useState<string | null>(null)
 
   // Web3Auth still hydrating — don't render or route yet.
-  if (!ready) return <LoadingScreen />
+  if (status === 'initializing') return <LoadingScreen />
+
+  // Logged in, address still resolving (MPC-derived wallets aren't
+  // instant) — useWalletBridgeGuard is actively checking in the background.
+  if (status === 'resolving') return <LoadingScreen />
+
+  // Web3Auth's own session never produced a wallet — waiting won't help.
+  if (status === 'stalled') return <SignInStalled />
 
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
@@ -51,7 +57,7 @@ export default function OnboardingPage() {
   // Returning user: player loaded from API — send home.
   if (player) { router.replace('/'); return null }
 
-  if (!authenticated || !address) {
+  if (status === 'unauthenticated' || !address) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center" style={{ background: '#04030c' }}>
         <p className="font-display font-black text-white text-2xl">Sign In to Play</p>
