@@ -1,24 +1,24 @@
 import { create } from 'zustand'
 
-export type WalletBridgeStatus = 'idle' | 'verifying' | 'retrying' | 'stalled'
+export type WalletBridgeStatus = 'idle' | 'verifying' | 'retrying' | 'ready' | 'stalled'
 
-// 'web3auth-session-empty': Web3Auth itself reports connected but its own
-// provider never produces an account — not the wagmi race, something deeper
-// (MPC key reconstruction) failed.
-// 'wagmi-bridge-desync': Web3Auth has an account but wagmi never picked it up
-// even after manually re-running Web3Auth's own bridge sequence.
-export type WalletBridgeDiagnostic = 'web3auth-session-empty' | 'wagmi-bridge-desync' | null
+// 'web3auth-session-empty' is the only diagnostic now: Web3Auth reports
+// connected but its own provider never produces an account after every
+// retry — an MPC-derivation failure, not a wagmi timing issue.
+export type WalletBridgeDiagnostic = 'web3auth-session-empty' | null
 
 interface WalletBridgeState {
   status: WalletBridgeStatus
   diagnostic: WalletBridgeDiagnostic
-  setStatus: (status: WalletBridgeStatus, diagnostic?: WalletBridgeDiagnostic) => void
+  address: `0x${string}` | undefined
+  setState: (partial: Partial<Pick<WalletBridgeState, 'status' | 'diagnostic' | 'address'>>) => void
   reset: () => void
 }
 
 export const useWalletBridgeStore = create<WalletBridgeState>((set) => ({
   status: 'idle',
   diagnostic: null,
-  setStatus: (status, diagnostic = null) => set({ status, diagnostic }),
-  reset: () => set({ status: 'idle', diagnostic: null }),
+  address: undefined,
+  setState: (partial) => set(partial),
+  reset: () => set({ status: 'idle', diagnostic: null, address: undefined }),
 }))

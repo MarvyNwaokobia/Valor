@@ -4,13 +4,13 @@ import Link from 'next/link'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
-import { useWeb3Auth } from '@web3auth/modal/react'
 import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import SignInStalled from '@/components/auth/SignInStalled'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -28,8 +28,7 @@ const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; colo
 ]
 
 export default function HomePage() {
-  const { isInitialized: ready, isConnected: authenticated } = useWeb3Auth()
-  const { address } = useAccount()
+  const { status, address } = useResolvedAuth()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const syncFailed   = usePlayerStore(s => s.syncFailed)
@@ -39,16 +38,22 @@ export default function HomePage() {
     // Once sync confirms no player exists (and it's not a network failure),
     // send to onboarding. Only do this after sync — not during — to avoid
     // redirecting a returning user whose cached data is about to load.
-    if (!ready || !authenticated || !address) return
+    if (status !== 'ready' || !address) return
     if (playerSynced && !player && !syncFailed) {
       router.replace('/onboarding')
     }
-  }, [ready, authenticated, address, player, playerSynced, syncFailed, router])
+  }, [status, address, player, playerSynced, syncFailed, router])
 
   // Web3Auth still re-hydrating (~200ms on reload) — only unavoidable wait
-  if (!ready) return <LoadingScreen />
+  if (status === 'initializing') return <LoadingScreen />
   // Unauthenticated
-  if (!authenticated || !address) return <LandingPage />
+  if (status === 'unauthenticated') return <LandingPage />
+  // Logged in, address still resolving (MPC-derived wallets aren't instant) —
+  // useWalletBridgeGuard is actively checking; show a real wait, not the
+  // marketing landing page.
+  if (status === 'resolving') return <LoadingScreen />
+  // Web3Auth's own session never produced a wallet — waiting won't help.
+  if (status === 'stalled') return <SignInStalled />
   // Cached player from localStorage → render immediately, sync runs in background
   // No cached player + sync still running → brief wait only for genuinely new users
   if (!player && !playerSynced) return <LoadingScreen />
