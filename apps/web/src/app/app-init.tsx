@@ -9,6 +9,7 @@ import { useValorAuth } from '@/hooks/useValorAuth'
 import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
+import { useWalletBridgeGuard } from '@/hooks/useWalletBridgeGuard'
 import { useGLTF } from '@react-three/drei'
 import { CHARACTER_GLB } from '@/lib/classes'
 
@@ -33,6 +34,7 @@ export default function AppInit() {
   }, [ready, authenticated, disconnect, clearPlayer, queryClient])
 
   useValorAuth()
+  useWalletBridgeGuard()
   usePlayerSync(address)
   useRealtimePlayer(address)
   useDecayMonitor()
