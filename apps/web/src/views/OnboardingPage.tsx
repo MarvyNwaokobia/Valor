@@ -6,7 +6,6 @@ import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LoadingScreen from '@/components/ui/LoadingScreen'
-import SignInStalled from '@/components/auth/SignInStalled'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
@@ -40,16 +39,6 @@ export default function OnboardingPage() {
   const [nameInput,     setNameInput]     = useState('')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
-
-  // Web3Auth still hydrating — don't render or route yet.
-  if (status === 'initializing') return <LoadingScreen />
-
-  // Logged in, address still resolving (MPC-derived wallets aren't
-  // instant) — useWalletBridgeGuard is actively checking in the background.
-  if (status === 'resolving') return <LoadingScreen />
-
-  // Web3Auth's own session never produced a wallet — waiting won't help.
-  if (status === 'stalled') return <SignInStalled />
 
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
