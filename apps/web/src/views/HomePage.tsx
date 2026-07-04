@@ -10,7 +10,6 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
-import SignInStalled from '@/components/auth/SignInStalled'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -44,16 +43,8 @@ export default function HomePage() {
     }
   }, [status, address, player, playerSynced, syncFailed, router])
 
-  // Web3Auth still re-hydrating (~200ms on reload) — only unavoidable wait
-  if (status === 'initializing') return <LoadingScreen />
   // Unauthenticated
   if (status === 'unauthenticated') return <LandingPage />
-  // Logged in, address still resolving (MPC-derived wallets aren't instant) —
-  // useWalletBridgeGuard is actively checking; show a real wait, not the
-  // marketing landing page.
-  if (status === 'resolving') return <LoadingScreen />
-  // Web3Auth's own session never produced a wallet — waiting won't help.
-  if (status === 'stalled') return <SignInStalled />
   // Cached player from localStorage → render immediately, sync runs in background
   // No cached player + sync still running → brief wait only for genuinely new users
   if (!player && !playerSynced) return <LoadingScreen />

@@ -25,7 +25,6 @@ export default function BattlePage() {
     challengeTarget ? 'challenge' : 'menu'
   )
 
-  if (status === 'initializing' || status === 'resolving') return <LoadingScreen />
   if (status !== 'ready' || !address) { router.replace('/'); return null }
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
