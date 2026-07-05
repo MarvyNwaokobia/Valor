@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useDisconnect, useWalletClient } from 'wagmi'
+import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
+import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -14,8 +15,8 @@ interface Props {
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified    = usePlayerStore((s) => s.setVerified)
   const isVerified     = usePlayerStore((s) => s.isVerified)
-  const { disconnect: logout } = useDisconnect()
-  const { data: walletClient } = useWalletClient()
+  const { logout } = useMagicAuthContext()
+  const walletClient = useMagicWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
   const autoChecked = useRef(false)
@@ -72,7 +73,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
     }
   }
 
-  const isChecking = signing || status === 'checking' || status === 'switching_chain'
+  const isChecking = signing || status === 'checking'
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
@@ -162,9 +163,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
               transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
             />
             <div>
-              <p className="font-display font-black text-white text-xl">
-                {status === 'switching_chain' ? 'Switching to Celo...' : 'Checking your identity...'}
-              </p>
+              <p className="font-display font-black text-white text-xl">Checking your identity...</p>
               <p className="text-slate-500 text-sm mt-1">Check your wallet if prompted — this is free.</p>
             </div>
           </motion.div>

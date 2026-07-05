@@ -1,12 +1,12 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
 import { Trophy } from 'lucide-react'
 import LeaderboardTable from '@/components/leaderboard/LeaderboardTable'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 
 export default function LeaderboardPage() {
-  const { address } = useAccount()
+  const { address } = useResolvedAuth()
 
   return (
     <div className="flex flex-col gap-6">

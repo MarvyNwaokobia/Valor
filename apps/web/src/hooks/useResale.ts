@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react'
-import { writeContract, readContract, waitForTransactionReceipt } from '@wagmi/core'
-import { useConfig, useSignTypedData } from 'wagmi'
+import { readContract, waitForTransactionReceipt } from '@wagmi/core'
+import { useConfig } from 'wagmi'
+import { celo } from 'viem/chains'
 import { parseUnits, parseSignature } from 'viem'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
+import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
 import type { Item } from '@/types'
 
 /**
@@ -57,7 +59,7 @@ export interface ResaleListing {
 
 export function useResale(walletAddress?: string) {
   const config = useConfig()
-  const { signTypedDataAsync } = useSignTypedData()
+  const walletClient = useMagicWalletClient()
   const [pending, setPending] = useState(false)
 
   const itemsAddress = useCallback(
@@ -68,6 +70,7 @@ export function useResale(walletAddress?: string) {
   /** List an owned item for resale at `priceG` G$ (approves the marketplace first if needed). */
   const listForResale = useCallback(async (item: Item, priceG: number): Promise<`0x${string}`> => {
     if (!walletAddress) throw new Error('Not signed in')
+    if (!walletClient?.account) throw new Error('Wallet not connected')
     if (!MARKETPLACE) throw new Error('Marketplace not configured')
     if (item.on_chain_id == null) throw new Error('This item is not registered on-chain yet — can’t list it')
     if (!(priceG > 0)) throw new Error('Enter a price greater than 0')
@@ -80,13 +83,15 @@ export function useResale(walletAddress?: string) {
         args: [walletAddress as `0x${string}`, MARKETPLACE],
       })
       if (!approved) {
-        const ah = await writeContract(config, {
+        const ah = await walletClient.writeContract({
+          account: walletClient.account, chain: celo,
           address: items, abi: ITEMS_ABI, functionName: 'setApprovalForAll', args: [MARKETPLACE, true],
         })
         await waitForTransactionReceipt(config, { hash: ah })
       }
       const price = parseUnits(priceG.toString(), G_DECIMALS)
-      const hash = await writeContract(config, {
+      const hash = await walletClient.writeContract({
+        account: walletClient.account, chain: celo,
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'listForResale',
         args: [BigInt(item.on_chain_id), price],
       })
@@ -95,12 +100,14 @@ export function useResale(walletAddress?: string) {
     } finally {
       setPending(false)
     }
-  }, [walletAddress, itemsAddress, config])
+  }, [walletAddress, walletClient, itemsAddress, config])
 
   const cancelResale = useCallback(async (resaleId: bigint): Promise<`0x${string}`> => {
+    if (!walletClient?.account) throw new Error('Wallet not connected')
     setPending(true)
     try {
-      const hash = await writeContract(config, {
+      const hash = await walletClient.writeContract({
+        account: walletClient.account, chain: celo,
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'cancelResale', args: [resaleId],
       })
       await waitForTransactionReceipt(config, { hash })
@@ -108,18 +115,20 @@ export function useResale(walletAddress?: string) {
     } finally {
       setPending(false)
     }
-  }, [config])
+  }, [config, walletClient])
 
   /** Buy a resale listing — signs a G$ permit (no separate approve), then settles. */
   const buyResale = useCallback(async (resaleId: bigint, price: bigint): Promise<`0x${string}`> => {
     if (!walletAddress) throw new Error('Not signed in')
+    if (!walletClient?.account) throw new Error('Wallet not connected')
     setPending(true)
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30)
       const nonce = await readContract(config, {
         address: G_TOKEN_ADDRESS, abi: NONCES_ABI, functionName: 'nonces', args: [walletAddress as `0x${string}`],
       })
-      const rawSig = await signTypedDataAsync({
+      const rawSig = await walletClient.signTypedData({
+        account: walletClient.account,
         domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
         types: { Permit: [
           { name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' },
@@ -129,7 +138,8 @@ export function useResale(walletAddress?: string) {
         message: { owner: walletAddress as `0x${string}`, spender: MARKETPLACE, value: price, nonce, deadline },
       })
       const { v, r, s } = parseSignature(rawSig)
-      const hash = await writeContract(config, {
+      const hash = await walletClient.writeContract({
+        account: walletClient.account, chain: celo,
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'buyResaleWithPermit',
         args: [resaleId, deadline, Number(v), r, s],
       })
@@ -138,7 +148,7 @@ export function useResale(walletAddress?: string) {
     } finally {
       setPending(false)
     }
-  }, [walletAddress, signTypedDataAsync, config])
+  }, [walletAddress, walletClient, config])
 
   /** All active resale listings on-chain (the marketplace reads this to show what's for sale). */
   const fetchListings = useCallback(async (): Promise<ResaleListing[]> => {

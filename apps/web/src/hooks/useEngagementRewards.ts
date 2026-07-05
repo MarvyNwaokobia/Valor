@@ -1,8 +1,10 @@
 import { useMemo, useCallback } from 'react'
-import { usePublicClient, useWalletClient, useSignTypedData, useChainId } from 'wagmi'
+import { usePublicClient } from 'wagmi'
 import { EngagementRewardsSDK } from '@goodsdks/engagement-sdk'
 import { zeroAddress } from 'viem'
 import { ENGAGEMENT_REWARDS_CONTRACT, VALOR_APP_ADDRESS } from '@/lib/gooddollar'
+import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
+import { CELO_CHAIN_ID } from '@/lib/magic'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -16,9 +18,7 @@ interface SignClaimResponse {
 
 export function useValorEngagementRewards() {
   const publicClient = usePublicClient()
-  const { data: walletClient } = useWalletClient()
-  const { signTypedDataAsync } = useSignTypedData()
-  const chainId = useChainId()
+  const walletClient = useMagicWalletClient()
 
   const sdk = useMemo(() => {
     if (!publicClient || !walletClient) return null
@@ -62,11 +62,13 @@ export function useValorEngagementRewards() {
       const { app_signature, valid_until_block, description }: SignClaimResponse = await res.json()
 
       // Step 2: user signs Claim EIP-712 message
-      const userSignature = await signTypedDataAsync({
+      if (!walletClient?.account) throw new Error('Wallet not connected')
+      const userSignature = await walletClient.signTypedData({
+        account: walletClient.account,
         domain: {
           name: 'EngagementRewards',
           version: '1.0',
-          chainId,
+          chainId: CELO_CHAIN_ID,
           verifyingContract: ENGAGEMENT_REWARDS_CONTRACT,
         },
         types: {
@@ -95,7 +97,7 @@ export function useValorEngagementRewards() {
         app_signature,
       )
     },
-    [sdk, signTypedDataAsync, chainId],
+    [sdk, walletClient],
   )
 
   const getRewardAmount = useCallback(async (): Promise<bigint> => {

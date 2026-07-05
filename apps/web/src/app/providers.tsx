@@ -5,6 +5,7 @@ import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { wagmiConfig } from '@/lib/wagmi'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
+import { MagicAuthProvider } from '@/components/providers/MagicAuthProvider'
 import AppInit from './app-init'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -24,8 +25,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ErrorBoundary>
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
-          <AppInit />
-          {children}
+          <MagicAuthProvider>
+            <AppInit />
+            {children}
+          </MagicAuthProvider>
         </QueryClientProvider>
       </WagmiProvider>
     </ErrorBoundary>

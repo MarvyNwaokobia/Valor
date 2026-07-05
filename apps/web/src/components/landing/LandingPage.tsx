@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
-import { motion } from 'framer-motion'
+import { useMemo, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
+import SignInModal from '@/components/ui/SignInModal'
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
@@ -115,8 +116,8 @@ function EnterButton({ onClick, delay = 0 }: { onClick: () => void; delay?: numb
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  // Placeholder: login is being rebuilt from scratch (Web3Auth removed 2026-07-04).
-  const login = () => alert('Sign-in is being rebuilt — check back soon.')
+  const [showSignIn, setShowSignIn] = useState(false)
+  const login = () => setShowSignIn(true)
   const embers    = useEmbers()
 
   return (
@@ -124,6 +125,9 @@ export default function LandingPage() {
       className="fixed inset-0 overflow-y-auto [&::-webkit-scrollbar]:hidden"
       style={{ background: '#04030c', scrollbarWidth: 'none' }}
     >
+      <AnimatePresence>
+        {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}
+      </AnimatePresence>
 
       {/* ═══════════════════════════════════════════════════════════
           § 1  HERO

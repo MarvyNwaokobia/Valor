@@ -31,7 +31,8 @@ export default function ProfilePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const inventory    = usePlayerStore(s => s.inventory)
 
-  if (status !== 'ready' || !address) { router.replace('/'); return null }
+  if (status === 'loading') return <LoadingScreen />
+  if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   // No cache and sync not done yet — brief wait
   if (!player && !playerSynced) return <LoadingScreen />
   // Sync done, confirmed no player — let home page route them

@@ -20,7 +20,8 @@ export default function RankedPage() {
   const searchParams  = useSearchParams()
   const challengeTarget = searchParams.get('challenge') ?? undefined
 
-  if (status !== 'ready' || !address) { router.replace('/'); return null }
+  if (status === 'loading') return <LoadingScreen />
+  if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
