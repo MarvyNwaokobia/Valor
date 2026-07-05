@@ -1,15 +1,15 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { useAccount } from 'wagmi'
 import { ShoppingBag } from 'lucide-react'
 import MarketplaceGrid from '@/components/marketplace/MarketplaceGrid'
 import ResaleBrowse from '@/components/marketplace/ResaleBrowse'
 import { useGBalance } from '@/hooks/useGBalance'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 
 export default function MarketplacePage() {
-  const { address } = useAccount()
-  const { formatted: gBalance } = useGBalance(address as `0x${string}` | undefined)
+  const { address } = useResolvedAuth()
+  const { formatted: gBalance } = useGBalance(address)
 
   return (
     <div className="flex flex-col gap-6">

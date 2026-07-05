@@ -40,6 +40,9 @@ export default function OnboardingPage() {
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
 
+  // Auth session still resolving — wait; don't flash the sign-in screen.
+  if (status === 'loading') return <LoadingScreen />
+
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
 

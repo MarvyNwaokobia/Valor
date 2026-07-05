@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAccount } from 'wagmi'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { ConnectButton } from '@/components/ui/ConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -36,7 +36,7 @@ const NAV_LINKS = [
 export default function Navbar() {
   const pathname  = usePathname()
   const player    = usePlayerStore(s => s.player)
-  const { address } = useAccount()
+  const { address } = useResolvedAuth()
   const { formatted: gBalance } = useGBalance(address)
 
   const classDef = player?.character_class ? CLASS_DEFINITIONS[player.character_class] : null

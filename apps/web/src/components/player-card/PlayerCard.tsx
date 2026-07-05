@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useAccount } from 'wagmi'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import type { Player } from '@/types'
 import { XP_PER_RANK } from '@/lib/constants'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -34,7 +34,7 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
   // Only fetch live balance on the owner's own card (not public view)
   const [showUsernameSetup,   setShowUsernameSetup]   = useState(false)
   const [showCustomization,   setShowCustomization]   = useState(false)
-  const { address } = useAccount()
+  const { address } = useResolvedAuth()
   const isOwner = !isPublic && address?.toLowerCase() === player.wallet_address.toLowerCase()
   const { formatted: liveBalance } = useGBalance(isOwner ? (player.wallet_address as `0x${string}`) : undefined)
 

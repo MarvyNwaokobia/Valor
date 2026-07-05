@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { usePublicClient, useWalletClient, useChainId, useSwitchChain } from 'wagmi'
-import { celo } from 'wagmi/chains'
+import { usePublicClient } from 'wagmi'
+import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
 import {
   checkWhitelistStatus,
   generateFaceVerifyLink,
@@ -12,7 +12,6 @@ import {
 export type IdentityStatus =
   | 'idle'
   | 'checking'
-  | 'switching_chain'
   | 'whitelisted'
   | 'not_whitelisted'
   | 'error'
@@ -29,9 +28,10 @@ interface UseGoodDollarIdentityReturn {
 
 export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
   const publicClient = usePublicClient()
-  const { data: walletClient } = useWalletClient()
-  const chainId = useChainId()
-  const { switchChainAsync } = useSwitchChain()
+  // Magic's embedded wallet is initialized on Celo only, so there's no
+  // "wrong network" state to detect or switch away from like with a
+  // bring-your-own-wallet flow.
+  const walletClient = useMagicWalletClient()
 
   const [status, setStatus] = useState<IdentityStatus>('idle')
   const [faceVerifyUrl, setFaceVerifyUrl] = useState<string | null>(null)
@@ -46,26 +46,6 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         setError('Wallet not connected')
         setStatus('error')
         return false
-      }
-
-      // GoodDollar identity contracts live on Celo — switch if on another network
-      if (chainId !== celo.id) {
-        setStatus('switching_chain')
-        console.log('[Identity] Network is not Celo. Initiating switchChainAsync to chainId:', celo.id)
-        try {
-          await withTimeout(
-            switchChainAsync({ chainId: celo.id }),
-            15000,
-            'Wallet network switch request timed out. Please check your wallet.'
-          )
-          console.log('[Identity] Network switch completed successfully')
-        } catch (err) {
-          console.error('[Identity] Network switch failed or timed out:', err)
-          const msg = err instanceof Error ? err.message : 'Please switch your wallet to the Celo network and try again.'
-          setError(msg)
-          setStatus('error')
-          return false
-        }
       }
 
       setStatus('checking')
@@ -106,7 +86,7 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         return false
       }
     },
-    [publicClient, walletClient, chainId, switchChainAsync, status],
+    [publicClient, walletClient, status],
   )
 
   const getFaceVerifyUrl = useCallback(async (address: `0x${string}`, callbackUrl?: string): Promise<string | null> => {
@@ -143,4 +123,3 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
 
   return { status, faceVerifyUrl, error, identityExpiry, check, getFaceVerifyUrl, reset }
 }
-

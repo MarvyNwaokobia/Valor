@@ -1,13 +1,14 @@
 'use client'
 
-export type ResolvedAuthStatus = 'unauthenticated' | 'ready'
+import { useMagicAuthContext, type ResolvedAuthStatus } from '@/components/providers/MagicAuthProvider'
 
-// Placeholder: login is being rebuilt from scratch (Web3Auth removed
-// 2026-07-04). Every page reads auth through this hook, so wiring up a real
-// provider later only means changing what's returned here.
+export type { ResolvedAuthStatus }
+
+// Every page reads auth through this hook — it's the one seam that decides
+// what "signed in" means. Backed by MagicAuthProvider (Magic.link embedded
+// wallet); swapping providers later only means changing what that provider
+// puts in context.
 export function useResolvedAuth() {
-  return {
-    status: 'unauthenticated' as ResolvedAuthStatus,
-    address: undefined as `0x${string}` | undefined,
-  }
+  const { status, address } = useMagicAuthContext()
+  return { status, address }
 }

@@ -3,8 +3,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { useAccount } from 'wagmi';
 import { usePlayerStore } from '@/stores/usePlayerStore';
+import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
 import { endlessLevel } from '@/engine/campaign/levels';
@@ -29,7 +29,7 @@ const CLASS_MAP: Record<string, ClassId> = { Berserker: 'berserker', Sentinel: '
 export default function EndlessPage() {
   const player = usePlayerStore((s) => s.player);
   const inventory = usePlayerStore((s) => s.inventory);
-  const { address } = useAccount();
+  const { address } = useResolvedAuth();
   const router = useRouter();
   const { submitResult } = useFightRewards();
 
