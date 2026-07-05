@@ -22,6 +22,7 @@ export enum AnimState {
   Walk = 'walk',
   Run = 'run',
   Fire = 'fire',
+  Reload = 'reload',
   Dodge = 'dodge',
   HitLight = 'hitLight',
   HitHeavy = 'hitHeavy',
@@ -31,8 +32,29 @@ export enum AnimState {
 
 export type HitDirection = 'front' | 'back' | 'side';
 
+/** Which way the body is travelling relative to where it FACES (the enemy). */
+export type MoveDir = 'forward' | 'back' | 'left' | 'right';
+
+/**
+ * Classify planar velocity (projected on the fighter's facing) into a MoveDir.
+ * The currently-held axis gets 15% stickiness so diagonal movement doesn't
+ * flicker between a strafe and a walk every frame.
+ */
+export function classifyMoveDir(fwdAmt: number, rightAmt: number, current: MoveDir): MoveDir {
+  const af = Math.abs(fwdAmt);
+  const ar = Math.abs(rightAmt);
+  const onFwdAxis = current === 'forward' || current === 'back';
+  const fwdWins = onFwdAxis ? af * 1.15 >= ar : af >= ar * 1.15;
+  if (fwdWins) return fwdAmt >= 0 ? 'forward' : 'back';
+  return rightAmt >= 0 ? 'right' : 'left';
+}
+
 interface AnimStateConfig {
   clip: string;
+  // Directional locomotion: pick the clip by which way the body travels
+  // relative to its facing. A missing 'back' entry plays `clip` REVERSED
+  // (negative timeScale) — the standard backpedal trick when no clip exists.
+  clipsByMove?: Partial<Record<MoveDir, string>>;
   // Optional pool of alternate clips for this state. When present, the machine
   // picks one per entry so the move "switches up" instead of repeating:
   //   'chain'  → cycle through the pool across a combo (jab → cross → hook),
@@ -72,10 +94,16 @@ export interface AnimationMap {
 // Per-class flavour is just timing: Berserker leans heavier/slower, Phantom snappier,
 // Sentinel even. The clips themselves are shared so every fighter reads consistently.
 function buildAnimMap(tempo: number): AnimationMap {
+  const strafes = { left: CLIP_NAMES.strafeLeft, right: CLIP_NAMES.strafeRight };
   return {
     [AnimState.Idle]:      { clip: CLIP_NAMES.rifleIdle,    loop: true,  speed: tempo,        fadeIn: 0.2,  fadeOut: 0.2,  canInterrupt: true },
-    [AnimState.Walk]:      { clip: CLIP_NAMES.walk,         loop: true,  speed: 1.0,          fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
-    [AnimState.Run]:       { clip: CLIP_NAMES.run,          loop: true,  speed: 1.0 * tempo,  fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
+    [AnimState.Walk]:      { clip: CLIP_NAMES.walk,         clipsByMove: strafes, loop: true, speed: 1.0,   fadeIn: 0.15, fadeOut: 0.15, canInterrupt: true },
+    // No run-speed strafe clips exist — sideways running reuses the walk strafes
+    // with cadence over-cranked by matchLocomotionSpeed (clamped, reads fine).
+    [AnimState.Run]:       { clip: CLIP_NAMES.run,          clipsByMove: strafes, loop: true, speed: 1.0 * tempo, fadeIn: 0.12, fadeOut: 0.12, canInterrupt: true },
+    // Loops in case a heavy gun's reload outlasts the clip; the sim's reloading
+    // flag dropping is what exits the state (via the snapshot sync).
+    [AnimState.Reload]:    { clip: CLIP_NAMES.reloading,    loop: true,  speed: 1.15,         fadeIn: 0.1,  fadeOut: 0.12, canInterrupt: true },
     [AnimState.Dodge]:     { clip: CLIP_NAMES.dodge,        loop: false, speed: 1.3,          fadeIn: 0.05, fadeOut: 0.12, duration: 0.5, canInterrupt: false, nextState: AnimState.Idle },
     [AnimState.HitLight]:  { clip: CLIP_NAMES.hitReaction,  loop: false, speed: 1.3,          fadeIn: 0.04, fadeOut: 0.12, canInterrupt: false, nextState: AnimState.Idle },
     [AnimState.HitHeavy]:  { clip: CLIP_NAMES.gettingHit,   loop: false, speed: 1.0,          fadeIn: 0.04, fadeOut: 0.18, canInterrupt: false, nextState: AnimState.Idle },
@@ -119,6 +147,11 @@ export class AnimationStateMachine {
   // This fighter's hip height ÷ reference, so locomotion cadence accounts for
   // leg length (set once the rig is bound; 1 = same size as the clip's rig).
   private rigScale = 1;
+  // Travel direction relative to facing — picks strafe/backpedal locomotion clips.
+  private moveDir: MoveDir = 'forward';
+  // True while the current locomotion clip is being played REVERSED (backpedal
+  // with no dedicated back clip); flips the timeScale sign wherever it's set.
+  private locoReversed = false;
   // Accumulated game time (seconds), advanced by `update` only while unpaused, so
   // it freezes during hitstop. Single clock for all time-based animation logic.
   private clockSec = 0;
@@ -153,6 +186,15 @@ export class AnimationStateMachine {
   // advances through the pool, so the jab→cross→hook→kick variety appears only
   // inside an actual combo string.
   private resolveClipName(config: AnimStateConfig, dir?: HitDirection, comboChain = false): string {
+    // Directional locomotion: strafe clips sideways, reversed forward clip back.
+    if (config.clipsByMove) {
+      const chosen = config.clipsByMove[this.moveDir];
+      this.locoReversed = !chosen && this.moveDir === 'back';
+      if (chosen && this.clips.has(chosen)) return chosen;
+      return config.clip;
+    }
+    this.locoReversed = false;
+
     if (dir && config.clipsByDir) {
       const pool = config.clipsByDir[dir] ?? config.clipsByDir.front;
       if (pool && pool.length > 0) {
@@ -194,6 +236,20 @@ export class AnimationStateMachine {
     this.transition(newState, true, dir);
   }
 
+  /**
+   * Feed the fighter's planar velocity projected on its facing (forward and
+   * right components). If the travel direction flips axis while walking or
+   * running, the locomotion clip is swapped in place (strafe ↔ walk ↔ backpedal).
+   */
+  setMoveDirection(fwdAmt: number, rightAmt: number) {
+    const dir = classifyMoveDir(fwdAmt, rightAmt, this.moveDir);
+    if (dir === this.moveDir) return;
+    this.moveDir = dir;
+    if (this.currentState === AnimState.Walk || this.currentState === AnimState.Run) {
+      this.transition(this.currentState, true);
+    }
+  }
+
   transition(newState: AnimState, force = false, dir?: HitDirection, comboChain = false) {
     if (!this.mixer) return;
 
@@ -216,7 +272,7 @@ export class AnimationStateMachine {
     if (!clip) {
       const stateToGlb: Record<string, string> = {
         [AnimState.Idle]: 'idle', [AnimState.Walk]: 'idle', [AnimState.Run]: 'idle',
-        [AnimState.Fire]: 'attack', [AnimState.Dodge]: 'idle',
+        [AnimState.Fire]: 'attack', [AnimState.Reload]: 'idle', [AnimState.Dodge]: 'idle',
         [AnimState.HitLight]: 'hit', [AnimState.HitHeavy]: 'hit',
         [AnimState.Victory]: 'idle', [AnimState.Death]: 'death',
       };
@@ -234,7 +290,9 @@ export class AnimationStateMachine {
       config.loop ? Infinity : 1
     );
     newAction.clampWhenFinished = !config.loop;
-    newAction.timeScale = config.speed;
+    // A reversed locomotion clip (backpedal) plays with a negative timeScale;
+    // LoopRepeat wraps negative time, so it cycles cleanly.
+    newAction.timeScale = this.isLoco(newState) && this.locoReversed ? -config.speed : config.speed;
 
     if (config.duration) {
       newAction.setDuration(config.duration);
@@ -308,14 +366,20 @@ export class AnimationStateMachine {
     const s = this.currentState;
     if (s !== AnimState.Walk && s !== AnimState.Run) return;
 
+    // Backpedal plays the forward clip reversed — keep the sign while matching.
+    const sign = this.locoReversed ? -1 : 1;
     const stride = getClipStride(this.activeAction.getClip().name);
     if (stride && stride.groundSpeed > MIN_BAKED_STRIDE) {
       const bakedWorldSpeed = (stride.groundSpeed / MIXAMO_UNITS_PER_METER) * this.rigScale;
-      this.activeAction.timeScale = Math.min(1.7, Math.max(0.55, worldSpeed / bakedWorldSpeed));
+      this.activeAction.timeScale = sign * Math.min(1.7, Math.max(0.55, worldSpeed / bakedWorldSpeed));
     } else {
       // In-place clip — no baked travel to match; play at its authored speed.
-      this.activeAction.timeScale = this.animMap[s]?.speed ?? 1;
+      this.activeAction.timeScale = sign * (this.animMap[s]?.speed ?? 1);
     }
+  }
+
+  private isLoco(s: AnimState): boolean {
+    return s === AnimState.Walk || s === AnimState.Run;
   }
 
   pause() {

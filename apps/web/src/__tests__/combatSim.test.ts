@@ -87,15 +87,20 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
 
       let reloadEvent: { fighter: FighterId; duration: number } | null = null
       let sawProgress = 0
+      let sawReloadAnim = false
       for (let i = 0; i < 6 * 60; i++) {
         for (const e of sim.step(1 / 60, inputs)) {
           if (e.kind === 'reload') reloadEvent = e
         }
         const p1 = sim.snapshot().fighters.p1
-        if (p1.reloading) sawProgress = Math.max(sawProgress, p1.reloadProgress)
+        if (p1.reloading) {
+          sawProgress = Math.max(sawProgress, p1.reloadProgress)
+          if (p1.animState === 'reload') sawReloadAnim = true
+        }
       }
 
       expect(reloadEvent).not.toBeNull()
+      expect(sawReloadAnim).toBe(true) // a standing mag change plays the reload clip
       expect(reloadEvent!.fighter).toBe('p1')
       expect(reloadEvent!.duration).toBeCloseTo(1.6) // sidearm reloadTime
       expect(sawProgress).toBeGreaterThan(0.5) // progress visibly advanced mid-reload

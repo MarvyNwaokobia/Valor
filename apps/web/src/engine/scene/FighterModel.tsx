@@ -211,6 +211,16 @@ export const FighterModel = memo(function FighterModel({
     const planarSpeed = Math.sqrt(state.velocity.x ** 2 + state.velocity.z ** 2);
     animMachine.matchLocomotionSpeed(planarSpeed);
 
+    // Directional locomotion: project velocity on the facing (forward = (sinθ, cosθ),
+    // right = (-cosθ, sinθ)) so the machine can swap walk/strafe/backpedal clips.
+    // The fighter faces the enemy (lock-on), so sideways travel = a real strafe.
+    if (planarSpeed > 0.3) {
+      const fSin = Math.sin(state.rotation), fCos = Math.cos(state.rotation);
+      const fwdAmt = state.velocity.x * fSin + state.velocity.z * fCos;
+      const rightAmt = -state.velocity.x * fCos + state.velocity.z * fSin;
+      animMachine.setMoveDirection(fwdAmt, rightAmt);
+    }
+
     // Procedural lean — tilt into movement and recoil on impact, for weight.
     // Velocity is read from actual position delta so it also captures the
     // attack lunge (which moves position directly, not via state.velocity).

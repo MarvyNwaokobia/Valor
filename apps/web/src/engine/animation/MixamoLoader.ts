@@ -8,8 +8,11 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 export const CLIP_NAMES = {
   rifleIdle: 'rifleIdle',           // Idle — stand at the ready with the gun
   gunplayShooting: 'gunplayShooting', // Fire — one-shot muzzle animation
-  walk: 'walk',
-  run: 'run',
+  walk: 'walk',                     // rifle-held walk (forward; reversed = backpedal)
+  run: 'run',                       // rifle-held run
+  strafeLeft: 'strafeLeft',         // sideways locomotion, soft-lock camera era
+  strafeRight: 'strafeRight',
+  reloading: 'reloading',           // mag change — plays while the sim reloads
   dodge: 'dodge',                   // Dodge — reactive roll / side-step
   hitReaction: 'hitReaction',       // HitLight — light flinch
   gettingHit: 'gettingHit',         // HitHeavy — heavier flinch (also crits)
@@ -20,8 +23,15 @@ export const CLIP_NAMES = {
 const ALL_ANIMS: Record<string, string> = {
   [CLIP_NAMES.rifleIdle]: '/characters/raw/Rifle Idle.fbx',
   [CLIP_NAMES.gunplayShooting]: '/characters/raw/Gunplay Shooting.fbx',
+  // NOTE: the Slim Shooter Pack's 'walking.fbx' / 'rifle run.fbx' fail in
+  // FBXLoader ("Unknown property type") — pack-exported FBX variant. Keep the
+  // known-good originals until rifle walk/run are re-downloaded INDIVIDUALLY
+  // from Mixamo (individual downloads, like the strafes, parse fine).
   [CLIP_NAMES.walk]: '/characters/raw/Walking.fbx',
   [CLIP_NAMES.run]: '/characters/raw/Running.fbx',
+  [CLIP_NAMES.strafeLeft]: '/characters/raw/Strafe Left.fbx',
+  [CLIP_NAMES.strafeRight]: '/characters/raw/Strafe Right.fbx',
+  [CLIP_NAMES.reloading]: '/characters/raw/Slim Shooter Pack/reloading.fbx',
   [CLIP_NAMES.dodge]: '/characters/raw/Dodging.fbx',
   [CLIP_NAMES.hitReaction]: '/characters/raw/Hit Reaction.fbx',
   [CLIP_NAMES.gettingHit]: '/characters/raw/Getting Hit.fbx',
@@ -143,7 +153,8 @@ export async function loadMixamoAnimations(): Promise<Map<string, THREE.Animatio
       })
     );
 
-    const loco = [CLIP_NAMES.walk, CLIP_NAMES.run].filter((n) => clipStride.has(n));
+    const loco = [CLIP_NAMES.walk, CLIP_NAMES.run, CLIP_NAMES.strafeLeft, CLIP_NAMES.strafeRight]
+      .filter((n) => clipStride.has(n));
     console.log(
       `[MixamoLoader] Loaded ${allClips.size}/${entries.length} animations` +
       (loco.length
