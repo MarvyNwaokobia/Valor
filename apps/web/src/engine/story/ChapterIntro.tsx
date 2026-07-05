@@ -2,16 +2,22 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { Chapter } from '../world/ZoneSystem';
 
 interface ChapterIntroProps {
-  chapter: Chapter;
-  chapterNumber: number;
+  zoneNumber: number;
+  zoneName: string;
+  tagline: string;
   onComplete: () => void;
 }
 
-export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntroProps) {
-  const [phase, setPhase] = useState<'title' | 'description' | 'ready'>('title');
+export function ChapterIntro({ zoneNumber, zoneName, tagline, onComplete }: ChapterIntroProps) {
+  const [phase, setPhase] = useState<'title' | 'tagline' | 'ready'>('title');
+
+  const advance = () => {
+    if (phase === 'title')   setPhase('tagline');
+    else if (phase === 'tagline') setPhase('ready');
+    else onComplete();
+  };
 
   return (
     <motion.div
@@ -19,11 +25,7 @@ export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntr
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black"
-      onClick={() => {
-        if (phase === 'title') setPhase('description');
-        else if (phase === 'description') setPhase('ready');
-        else onComplete();
-      }}
+      onClick={advance}
     >
       <AnimatePresence mode="wait">
         {phase === 'title' && (
@@ -41,7 +43,7 @@ export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntr
               transition={{ delay: 0.3 }}
               className="text-sm uppercase tracking-[0.3em] text-white/40 mb-4"
             >
-              Chapter {chapterNumber}
+              Zone {zoneNumber}
             </motion.div>
             <motion.h1
               initial={{ opacity: 0, y: 30 }}
@@ -49,7 +51,7 @@ export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntr
               transition={{ delay: 0.6, duration: 0.8 }}
               className="text-5xl md:text-7xl font-bold text-white tracking-tight"
             >
-              {chapter.name}
+              {zoneName}
             </motion.h1>
             <motion.div
               initial={{ scaleX: 0 }}
@@ -60,9 +62,9 @@ export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntr
           </motion.div>
         )}
 
-        {phase === 'description' && (
+        {phase === 'tagline' && (
           <motion.div
-            key="desc"
+            key="tagline"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -70,7 +72,7 @@ export function ChapterIntro({ chapter, chapterNumber, onComplete }: ChapterIntr
             className="text-center max-w-lg px-8"
           >
             <p className="text-lg md:text-xl text-white/70 leading-relaxed font-light italic">
-              &quot;{chapter.description}&quot;
+              &quot;{tagline}&quot;
             </p>
           </motion.div>
         )}
