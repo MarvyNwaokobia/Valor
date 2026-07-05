@@ -116,7 +116,8 @@ export type SimEvent =
   // A landed shot — same shape as before so GameRoom/GameScene hit handling is unchanged.
   | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
   // A projectile reached the target (hit or whiff) — renderer shows impact / dust.
-  | { kind: 'projectileHit'; shooterId: FighterId; targetId: FighterId; hit: boolean; crit: boolean; position: [number, number, number] }
+  // `dodged` = the miss was earned by i-frames (celebrate it), not a wide shot.
+  | { kind: 'projectileHit'; shooterId: FighterId; targetId: FighterId; hit: boolean; crit: boolean; dodged: boolean; position: [number, number, number] }
   // The magazine ran dry and a reload started — renderer plays the mag-change
   // sound and the HUD shows the reload bar (progress rides the snapshot).
   | { kind: 'reload'; fighter: FighterId; duration: number }
@@ -135,7 +136,7 @@ interface Projectile {
   targetId: FighterId;
   damage: number;      // pre-rolled (incl. crit + range falloff), pre-defense
   crit: boolean;
-  accuracy: number;    // hit chance at arrival when the target is NOT dodging
+  willHit: boolean;    // accuracy PRE-ROLLED at fire time so a miss can visibly fly wide
   arriveIn: number;    // seconds of travel left before it resolves
   impact: THREE.Vector3;
   blocked: boolean;    // sightline was obstructed by cover — absorbs into the wall
@@ -360,9 +361,31 @@ export class CombatSim {
     const block = losHit(sPos.x, sPos.z, tPos.x, tPos.z);
     const blocked = block !== null;
 
-    const aim = blocked
-      ? new THREE.Vector3(block.x, TORSO_HEIGHT, block.z)
-      : new THREE.Vector3(tPos.x, TORSO_HEIGHT, tPos.z);
+    // Accuracy is PRE-ROLLED here (not at arrival) so a missing round can be
+    // AIMED wide — the player literally sees what the accuracy stat buys.
+    // Dodge i-frames still override at arrival; that's the dodge mechanic.
+    const willHit = Math.random() < gun.accuracy;
+
+    let aim: THREE.Vector3;
+    if (blocked) {
+      aim = new THREE.Vector3(block.x, TORSO_HEIGHT, block.z);
+    } else if (willHit) {
+      aim = new THREE.Vector3(tPos.x, TORSO_HEIGHT, tPos.z);
+    } else {
+      // A wide shot: shove the aim point past the target's shoulder (random
+      // side), vary the height, and let it carry a few metres beyond them so
+      // the tracer visibly flies PAST rather than evaporating on the torso.
+      const toT = new THREE.Vector3(tPos.x - sPos.x, 0, tPos.z - sPos.z);
+      const d = toT.length() || 1e-3;
+      toT.multiplyScalar(1 / d);
+      const perp = new THREE.Vector3(-toT.z, 0, toT.x);
+      const sideSign = Math.random() < 0.5 ? -1 : 1;
+      const wide = new THREE.Vector3(tPos.x, 0, tPos.z)
+        .addScaledVector(perp, sideSign * (0.55 + Math.random() * 0.6))
+        .addScaledVector(toT, 2.5); // overshoot past the target
+      wide.y = TORSO_HEIGHT + (Math.random() - 0.35) * 0.7;
+      aim = wide;
+    }
     const planarDir = new THREE.Vector3(aim.x - sPos.x, 0, aim.z - sPos.z);
     const planarDist = planarDir.length() || 1e-3;
     planarDir.multiplyScalar(1 / planarDist);
@@ -387,13 +410,14 @@ export class CombatSim {
       targetId: oppId,
       damage,
       crit,
-      accuracy: gun.accuracy,
+      willHit,
       arriveIn,
       impact: aim,
       blocked,
     });
 
-    // Only warn the AI of a real threat — a shot eating cover isn't one.
+    // Only warn the AI of a real threat — a shot eating cover isn't one. Wide
+    // shots still warn (the defender can't know a round will miss mid-flight).
     if (!blocked) this.ais[oppId]?.onIncomingFire(arriveIn, target.ctrl);
 
     this.events.push({
@@ -428,22 +452,26 @@ export class CombatSim {
     // Shot ate cover — spark on the wall, no damage.
     if (p.blocked) {
       this.fighters[p.shooterId].hitStreak = 0;
-      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: [p.impact.x, p.impact.y, p.impact.z] });
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, dodged: false, position: [p.impact.x, p.impact.y, p.impact.z] });
       return;
     }
 
     if (ts.isDead) {
-      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: torso });
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, dodged: false, position: torso });
       return;
     }
 
-    // Dodging = i-frames (the whole point of travel-time); else roll accuracy.
-    const landed = !ts.isDodging && Math.random() < p.accuracy;
+    // Dodging = i-frames (the whole point of travel-time); else the pre-rolled
+    // accuracy decides. A dodge whiffs at the body (the round passes through
+    // where they were); a wide shot whiffs out at its own aim point.
+    const dodged = ts.isDodging;
+    const landed = !dodged && p.willHit;
     if (landed) {
       this.applyShotDamage(p);
     } else {
       this.fighters[p.shooterId].hitStreak = 0;
-      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, position: torso });
+      const at: [number, number, number] = dodged ? torso : [p.impact.x, p.impact.y, p.impact.z];
+      this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: false, crit: false, dodged, position: at });
     }
   }
 
@@ -498,7 +526,7 @@ export class CombatSim {
     };
 
     this.events.push({ kind: 'hit', event, comboCount: atk.hitStreak, direction: dir });
-    this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: true, crit: p.crit, position: [hitPosition.x, hitPosition.y, hitPosition.z] });
+    this.events.push({ kind: 'projectileHit', shooterId: p.shooterId, targetId: p.targetId, hit: true, crit: p.crit, dodged: false, position: [hitPosition.x, hitPosition.y, hitPosition.z] });
 
     if (def.ctrl.state.isDead && this.winner === null) {
       this.winner = p.shooterId;

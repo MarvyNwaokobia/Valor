@@ -108,6 +108,71 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
     }
   })
 
+  it('pre-rolled misses fly visibly wide instead of evaporating on the torso', () => {
+    // 0.99 > sidearm accuracy 0.80 → every shot is a pre-rolled miss.
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    try {
+      const sim = new CombatSim('berserker', 'phantom') // p1 at x=-5, p2 at x=+5
+      const inputs: Record<FighterId, InputSystem> = { p1: new InputSystem(), p2: new InputSystem() }
+      setCover([])
+      inputs.p1.triggerAction(Action.Fire)
+
+      let fire: Extract<ReturnType<CombatSim['step']>[number], { kind: 'fire' }> | null = null
+      let whiff: Extract<ReturnType<CombatSim['step']>[number], { kind: 'projectileHit' }> | null = null
+      for (let i = 0; i < 240 && !whiff; i++) {
+        for (const e of sim.step(1 / 60, inputs)) {
+          if (e.kind === 'fire' && !fire) fire = e
+          if (e.kind === 'projectileHit') whiff = e
+        }
+      }
+
+      // The tracer's aim point diverges laterally from the duel line (z=0) and
+      // overshoots past the target (x > 5) — the round visibly flies wide.
+      expect(fire).not.toBeNull()
+      expect(Math.abs(fire!.target[2])).toBeGreaterThan(0.5)
+      expect(fire!.target[0]).toBeGreaterThan(5)
+      // And it resolves as a plain miss out at that wide point, not a dodge.
+      expect(whiff).not.toBeNull()
+      expect(whiff!.hit).toBe(false)
+      expect(whiff!.dodged).toBe(false)
+      expect(Math.abs(whiff!.position[2])).toBeGreaterThan(0.5)
+    } finally {
+      rng.mockRestore()
+    }
+  })
+
+  it('flags a whiff as dodged when i-frames earn it (not as a wide shot)', () => {
+    // 0.5 < accuracy 0.80 → the shot WOULD hit; only the dodge can save p2.
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    try {
+      const sim = new CombatSim('berserker', 'phantom')
+      const inA = new InputSystem()
+      const inB = new InputSystem()
+      const inputs: Record<FighterId, InputSystem> = { p1: inA, p2: inB }
+      setCover([])
+      inA.triggerAction(Action.Fire)
+
+      let fired = false
+      let sinceFire = 0
+      let result: Extract<ReturnType<CombatSim['step']>[number], { kind: 'projectileHit' }> | null = null
+      for (let i = 0; i < 120 && !result; i++) {
+        const events = sim.step(1 / 60, inputs)
+        for (const e of events) {
+          if (e.kind === 'fire') { fired = true; inA.releaseAction(Action.Fire) } // one shot only
+          if (e.kind === 'projectileHit') result = e
+        }
+        if (fired && ++sinceFire === 6) inB.triggerAction(Action.Dodge) // roll ~0.1s into the flight
+      }
+
+      expect(result).not.toBeNull()
+      expect(result!.hit).toBe(false)
+      expect(result!.dodged).toBe(true)
+      expect(sim.snapshot().fighters.p2.health).toBe(100) // i-frames ate the round
+    } finally {
+      rng.mockRestore()
+    }
+  })
+
   it('produces serializable snapshots (StateUpdate-ready, no class instances leaking)', () => {
     const sim = new CombatSim('sentinel', 'berserker')
     const inputs: Record<FighterId, InputSystem> = { p1: new InputSystem(), p2: new InputSystem() }

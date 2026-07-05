@@ -13,3 +13,6 @@ export type { KnockbackEvent, KnockbackState } from './KnockbackPhysics';
 
 export { CombatPostProcessing } from './PostProcessing';
 export { ScreenFlashOverlay } from './ScreenFlashOverlay';
+
+export { DamageNumbers } from './DamageNumbers';
+export type { FloatTextOptions } from './DamageNumbers';

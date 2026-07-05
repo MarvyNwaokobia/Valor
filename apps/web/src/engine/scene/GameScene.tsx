@@ -17,6 +17,7 @@ import { AIDifficulty } from '../combat';
 import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
 import { ParticleSystem } from '../vfx/ParticleSystem';
 import { TracerFX } from '../vfx/TracerFX';
+import { DamageNumbers } from '../vfx/DamageNumbers';
 import { CombatAudio } from '../audio/CombatAudio';
 import { ScreenEffects } from '../vfx/ScreenEffects';
 import { ScreenFlashOverlay } from '../vfx/ScreenFlashOverlay';
@@ -42,6 +43,9 @@ interface GameSceneProps {
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
   onEnemyStateUpdate?: (health: number, maxHealth: number) => void;
   onAmmoUpdate?: (ammo: number, magazine: number, reloading: boolean, reloadProgress: number) => void;
+  onEnemyReloadUpdate?: (reloading: boolean, reloadProgress: number) => void;
+  // The LOCAL player landed a shot — the page-level hitmarker flashes on this.
+  onHitmarker?: (crit: boolean) => void;
   onBattleEnd?: (winner: 'player' | 'enemy', durationSecs: number) => void;
   // Rewards earned this fight, shown on the victory screen (server-authoritative).
   rewardPending?: boolean;
@@ -79,6 +83,8 @@ function BattleWorld({
   onPlayerStateUpdate,
   onEnemyStateUpdate,
   onAmmoUpdate,
+  onEnemyReloadUpdate,
+  onHitmarker,
   onBattleEnd,
   onReady,
   combatActive = false,
@@ -126,6 +132,9 @@ function BattleWorld({
 
   // Gunfire tracers + muzzle flashes, coloured per shooter for readability.
   const tracerFX = useMemo(() => new TracerFX(), []);
+
+  // Floating combat text — damage numbers, crits, DODGE tags.
+  const damageNumbers = useMemo(() => new DamageNumbers(), []);
 
   // Footstep timer
   const playerStepTimerRef = useRef(0);
@@ -188,6 +197,24 @@ function BattleWorld({
     const defenderAnim = animFor(defenderId);
     sim.controller(defenderId).state.impactPulse = ev.hitType === 'light' ? 0.5 : 0.85;
 
+    // Show the dice: every landed shot prints its number. Crits pop big and
+    // gold; damage on YOU reads red so incoming pain is legible at a glance.
+    damageNumbers.spawn(
+      ev.hitPosition,
+      String(ev.finalDamage),
+      ev.critical
+        ? { color: '#ffd24a', scale: 1.6 }
+        : defenderId === 'p1'
+          ? { color: '#ff7a7a', scale: 0.95 }
+          : { color: '#ffffff', scale: 1.05 },
+    );
+
+    // Hitmarker (visual + tick) only for the local player's own landed shots.
+    if (ev.attackerId === 'p1') {
+      onHitmarker?.(ev.critical);
+      combatAudio.playHitmarker(ev.critical);
+    }
+
     combatAudio.onDamageEvent(ev);
     if (ev.killed) return; // the KO handler plays the death + ends the match
 
@@ -200,19 +227,34 @@ function BattleWorld({
       crowd.cheer(ev.hitType === 'special' ? 0.7 : 0.4);
       if (ev.critical) screenFx.onCriticalHit();
     }
-  }, [sim, animFor, combatAudio, crowd, screenFx, battleCamera, onDamageEvent]);
+  }, [sim, animFor, combatAudio, crowd, screenFx, battleCamera, onDamageEvent, damageNumbers, onHitmarker]);
 
-  // A projectile arrived — spark on a hit, dust puff on a dodge/whiff.
+  // A projectile arrived — spark on a hit, dust on a whiff, and a celebration
+  // when the miss was EARNED by dodge i-frames (that's the game's one skill).
   const impactFX = useCallback((e: Extract<SimEvent, { kind: 'projectileHit' }>) => {
     const pos = new THREE.Vector3(e.position[0], e.position[1], e.position[2]);
     const dir = new THREE.Vector3().subVectors(pos, sim.controller(e.shooterId).state.position).setY(0).normalize();
     if (e.hit) {
       particles.emitImpact(pos, dir, e.crit ? 'special' : 'light');
       particles.emitSparks(pos, dir, e.crit ? 0.8 : 0.4);
+    } else if (e.dodged) {
+      if (e.targetId === 'p1') {
+        // YOU read the shot and slipped it: whoosh, a quick FOV pull that
+        // snaps back, and a teal shimmer where the round passed through.
+        combatAudio.playSwing();
+        battleCamera.setSlowMoFov(-7);
+        setTimeout(() => battleCamera.setSlowMoFov(0), 220);
+        particles.emitEnergy(pos, '#6ef7d8', 0.6);
+      } else {
+        // The enemy i-framed your shot — label it so a dodge never reads as
+        // your gun randomly missing.
+        damageNumbers.spawn(pos, 'DODGE', { color: '#8fd3ff', scale: 0.75 });
+        particles.emitDust(pos, 0.3);
+      }
     } else {
       particles.emitDust(pos, 0.3);
     }
-  }, [sim, particles]);
+  }, [sim, particles, combatAudio, battleCamera, damageNumbers]);
 
   const frameCountRef = useRef(0);
 
@@ -226,6 +268,7 @@ function BattleWorld({
     // never decay and leave the whole screen washed yellow.
     tracerFX.update(clampedDt);
     particles.update(clampedDt);
+    damageNumbers.update(clampedDt);
     crowd.update(clampedDt);
     combatAudio.setCrowdEnergy(crowd.energy);
     screenFx.update(clampedDt);
@@ -370,6 +413,8 @@ function BattleWorld({
     onEnemyStateUpdate?.(enemyController.state.health, enemyController.state.maxHealth);
     const p1Snap = snapshot.fighters.p1;
     onAmmoUpdate?.(p1Snap.ammo, p1Snap.magazine, p1Snap.reloading, p1Snap.reloadProgress);
+    const p2Snap = snapshot.fighters.p2;
+    onEnemyReloadUpdate?.(p2Snap.reloading, p2Snap.reloadProgress);
   });
 
   // Per-arena fog + background — set at scene level (not inside a <group>,
@@ -388,6 +433,7 @@ function BattleWorld({
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
       <primitive object={tracerFX.group} />
       <primitive object={particles.mesh} />
+      <primitive object={damageNumbers.group} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
         <planeGeometry args={[50, 50]} />
         <shadowMaterial opacity={0.3} />
@@ -414,6 +460,10 @@ export function GameScene(props: GameSceneProps) {
   const [enemyMaxHP, setEnemyMaxHP] = useState(100);
   const [combo, setCombo] = useState<ComboState | null>(null);
   const [ammoHud, setAmmoHud] = useState({ ammo: 0, magazine: 0, reloading: false, progress: 0 });
+  const [enemyReload, setEnemyReload] = useState({ reloading: false, progress: 0 });
+  // Keyed by id so each landed hit re-mounts the marker and restarts its animation.
+  const [hitmarker, setHitmarker] = useState<{ id: number; crit: boolean } | null>(null);
+  const hitmarkerId = useRef(0);
   const [battleResult, setBattleResult] = useState<'player' | 'enemy' | null>(null);
   const [countdown, setCountdown] = useState<number | 'FIGHT' | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
@@ -473,6 +523,12 @@ export function GameScene(props: GameSceneProps) {
                 prev.reloading === reloading && prev.progress === progress
                   ? prev
                   : { ammo, magazine, reloading, progress })}
+            onEnemyReloadUpdate={(reloading, progress) =>
+              setEnemyReload((prev) =>
+                prev.reloading === reloading && prev.progress === progress
+                  ? prev
+                  : { reloading, progress })}
+            onHitmarker={(crit) => setHitmarker({ id: ++hitmarkerId.current, crit })}
             onBattleEnd={(w, d) => { setBattleResult(w); props.onBattleEnd?.(w, d); }}
             onReady={startCountdown}
           />
@@ -508,7 +564,54 @@ export function GameScene(props: GameSceneProps) {
             }} />
           </div>
           <div className="text-xs text-white/50 font-mono mt-0.5">{enemyHP}/{enemyMaxHP}</div>
+          {/* Their mag is out — this is your window to push. */}
+          {enemyReload.reloading && !battleResult && (
+            <div className="mt-1 flex items-center justify-end gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400 animate-pulse">
+                Reloading
+              </span>
+              <div className="w-16 h-1 rounded-full bg-black/50 overflow-hidden">
+                <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.round(enemyReload.progress * 100)}%` }} />
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Hitmarker — X ticks at screen centre (the OTS camera keeps the enemy
+            there); re-mounts per hit via the key to restart the animation. */}
+        {hitmarker && !battleResult && (
+          <div
+            key={hitmarker.id}
+            className="absolute left-1/2 top-1/2"
+            style={{ animation: 'hitmarker 220ms ease-out forwards' }}
+          >
+            <div className="relative w-7 h-7">
+              {([
+                { top: 0, left: 0, rot: -45 },
+                { top: 0, right: 0, rot: 45 },
+                { bottom: 0, left: 0, rot: 45 },
+                { bottom: 0, right: 0, rot: -45 },
+              ] as const).map((p, i) => (
+                <span
+                  key={i}
+                  style={{
+                    position: 'absolute',
+                    width: 3,
+                    height: 11,
+                    borderRadius: 1,
+                    background: hitmarker.crit ? '#ffd24a' : 'rgba(255,255,255,0.95)',
+                    boxShadow: '0 0 5px rgba(0,0,0,0.7)',
+                    transform: `rotate(${p.rot}deg)`,
+                    ...('top' in p ? { top: p.top } : {}),
+                    ...('bottom' in p ? { bottom: p.bottom } : {}),
+                    ...('left' in p ? { left: p.left } : {}),
+                    ...('right' in p ? { right: p.right } : {}),
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
         {combo && combo.count >= 2 && (
           <div className="absolute top-1/3 right-8 text-center">
             <div className="text-4xl font-black text-yellow-400">{combo.count}</div>
