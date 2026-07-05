@@ -543,6 +543,8 @@ export class CombatSim {
     if (s.isDodging) return AnimState.Dodge;
     const speed = Math.hypot(s.velocity.x, s.velocity.z);
     if (speed > 0.2) return s.isRunning ? AnimState.Run : AnimState.Walk;
+    // Standing mag change reads as the reload clip; on the move, locomotion wins.
+    if (f.weapon.reloading) return AnimState.Reload;
     return AnimState.Idle;
   }
 
