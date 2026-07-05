@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { usePublicClient } from 'wagmi'
-import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import {
   checkWhitelistStatus,
   generateFaceVerifyLink,
@@ -31,7 +31,7 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
   // Magic's embedded wallet is initialized on Celo only, so there's no
   // "wrong network" state to detect or switch away from like with a
   // bring-your-own-wallet flow.
-  const walletClient = useMagicWalletClient()
+  const walletClient = useActiveWalletClient()
 
   const [status, setStatus] = useState<IdentityStatus>('idle')
   const [faceVerifyUrl, setFaceVerifyUrl] = useState<string | null>(null)

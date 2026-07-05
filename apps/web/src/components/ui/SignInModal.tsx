@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Wallet } from 'lucide-react'
+import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 
 interface Props {
@@ -10,11 +12,32 @@ interface Props {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+const CONNECTOR_LABELS: Record<string, string> = {
+  injected: 'Browser Wallet',
+}
+
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
+  const { connectors, connect } = useConnect()
   const [email, setEmail] = useState('')
-  const [pending, setPending] = useState<'email' | 'google' | null>(null)
+  const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  async function handleConnectWallet(connectorId: string) {
+    if (pending) return
+    const connector = connectors.find((c) => c.id === connectorId)
+    if (!connector) return
+    setPending(connectorId)
+    setError(null)
+    try {
+      await connect({ connector })
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not connect wallet — try again.')
+    } finally {
+      setPending(null)
+    }
+  }
 
   async function handleEmail() {
     if (!EMAIL_RE.test(email) || pending) return
@@ -105,6 +128,30 @@ export default function SignInModal({ onClose }: Props) {
             {pending === 'email' ? 'Sending code…' : 'Continue with Email'}
           </button>
         </div>
+
+        {connectors.length > 0 && (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-valor-border" />
+              <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold">or connect a wallet</span>
+              <div className="flex-1 h-px bg-valor-border" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {connectors.map((connector) => (
+                <button
+                  key={connector.id}
+                  onClick={() => handleConnectWallet(connector.id)}
+                  disabled={!!pending}
+                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors disabled:opacity-60"
+                >
+                  <Wallet size={16} />
+                  {pending === connector.id ? 'Connecting…' : (CONNECTOR_LABELS[connector.id] ?? connector.name)}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         <AnimatePresence>
           {error && (

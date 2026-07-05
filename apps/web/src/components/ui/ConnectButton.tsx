@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { LogOut } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
-import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
+import { useSignOut } from '@/hooks/useSignOut'
 import SignInModal from './SignInModal'
 
 function truncate(address: string) {
@@ -13,13 +13,13 @@ function truncate(address: string) {
 
 export function ConnectButton() {
   const { status, address } = useResolvedAuth()
-  const { logout } = useMagicAuthContext()
+  const signOut = useSignOut()
   const [showModal, setShowModal] = useState(false)
 
   if (status === 'ready' && address) {
     return (
       <button
-        onClick={logout}
+        onClick={signOut}
         title="Sign out"
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:text-white transition-colors"
         style={{ background: 'rgba(26,26,40,0.8)', border: '1px solid rgba(42,42,58,0.8)' }}

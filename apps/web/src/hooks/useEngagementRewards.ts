@@ -3,7 +3,7 @@ import { usePublicClient } from 'wagmi'
 import { EngagementRewardsSDK } from '@goodsdks/engagement-sdk'
 import { zeroAddress } from 'viem'
 import { ENGAGEMENT_REWARDS_CONTRACT, VALOR_APP_ADDRESS } from '@/lib/gooddollar'
-import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { CELO_CHAIN_ID } from '@/lib/magic'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
@@ -18,7 +18,7 @@ interface SignClaimResponse {
 
 export function useValorEngagementRewards() {
   const publicClient = usePublicClient()
-  const walletClient = useMagicWalletClient()
+  const walletClient = useActiveWalletClient()
 
   const sdk = useMemo(() => {
     if (!publicClient || !walletClient) return null

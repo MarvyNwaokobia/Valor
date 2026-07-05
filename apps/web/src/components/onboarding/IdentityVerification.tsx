@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
-import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { useSignOut } from '@/hooks/useSignOut'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
@@ -15,8 +15,8 @@ interface Props {
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified    = usePlayerStore((s) => s.setVerified)
   const isVerified     = usePlayerStore((s) => s.isVerified)
-  const { logout } = useMagicAuthContext()
-  const walletClient = useMagicWalletClient()
+  const signOut = useSignOut()
+  const walletClient = useActiveWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
   const autoChecked = useRef(false)
@@ -102,7 +102,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
 
       {status !== 'whitelisted' && (
         <button
-          onClick={() => logout()}
+          onClick={() => signOut()}
           className="absolute top-5 right-5 z-20 text-xs text-slate-600 hover:text-slate-300 transition-colors font-medium tracking-wide"
         >
           Sign out

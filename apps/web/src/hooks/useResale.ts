@@ -4,7 +4,7 @@ import { useConfig } from 'wagmi'
 import { celo } from 'viem/chains'
 import { parseUnits, parseSignature } from 'viem'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
-import { useMagicWalletClient } from '@/hooks/useMagicWalletClient'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import type { Item } from '@/types'
 
 /**
@@ -59,7 +59,7 @@ export interface ResaleListing {
 
 export function useResale(walletAddress?: string) {
   const config = useConfig()
-  const walletClient = useMagicWalletClient()
+  const walletClient = useActiveWalletClient()
   const [pending, setPending] = useState(false)
 
   const itemsAddress = useCallback(
