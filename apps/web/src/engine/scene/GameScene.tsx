@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { FighterModel } from './FighterModel';
 import { type StageId } from './ArenaStage';
 import { StylizedArena } from './arenas/StylizedArena';
+import { AshfallArena } from './arenas/AshfallArena';
 import { CoverProps } from './arenas/CoverProps';
 import { BattleCamera } from '../camera';
 import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation';
@@ -26,7 +27,18 @@ import { CrowdDirector } from '../world/CrowdDirector';
 
 type ClassId = 'berserker' | 'sentinel' | 'phantom';
 
-export type ArenaVariant = 'stylized';
+export type ArenaVariant = 'stylized' | 'ashfall';
+
+// Which environment each campaign stage renders. Zone 1 (levels 1-5 ship
+// stageId 'lava_arena') fights in the Ashfall burned village; everything else
+// stays in the stylized colosseum until its own environment lands.
+const STAGE_VARIANTS: Record<StageId, ArenaVariant> = {
+  lava_arena: 'ashfall',
+  scifi_stage: 'stylized',
+  battle_arena: 'stylized',
+  rpg_environment: 'stylized',
+  industrial_hangar: 'stylized',
+};
 
 interface GameSceneProps {
   playerClass: ClassId;
@@ -78,6 +90,8 @@ const KO_RESULT_AT = 2.6;     // fanfare/defeat sting + result overlay
 
 const ARENA_FOG: Record<ArenaVariant, { bg: string; fog: string; near: number; far: number }> = {
   stylized:   { bg: '#b8cce8', fog: '#b8cce8', near: 80, far: 220 },
+  // Ash haze: pale and warm, melting the burned treeline into the horizon.
+  ashfall:    { bg: '#b3a08a', fog: '#b3a08a', near: 20, far: 110 },
 };
 
 function BattleWorld({
@@ -101,6 +115,7 @@ function BattleWorld({
 }: GameSceneProps & { difficulty: AIDifficulty; arenaVariant: ArenaVariant; onReady?: () => void; combatActive?: boolean; screenFx: ScreenEffects }) {
   const { camera } = useThree();
   const perspCamera = camera as THREE.PerspectiveCamera;
+  const hasCrowd = arenaVariant === 'stylized';
   const battleEndedRef = useRef(false);
   const combatActiveRef = useRef(false);
   combatActiveRef.current = combatActive;
@@ -354,7 +369,10 @@ function BattleWorld({
       bgmStartedRef.current = true;
       combatStartRef.current = performance.now();
       combatAudio.startBGM();
-      combatAudio.startCrowdAmbience();
+      // Colosseum breathes with its crowd; the battlefield breathes with wind
+      // and the crackle of what's still burning.
+      if (hasCrowd) combatAudio.startCrowdAmbience();
+      else combatAudio.startWindAmbience();
       // FIGHT: swing from the wide duel framing in behind the player's shoulder.
       battleCamera.setMode('ots');
     }
@@ -378,9 +396,10 @@ function BattleWorld({
         if (!battleEndedRef.current) {
           battleEndedRef.current = true;
           combatActiveRef.current = false;
-          // BGM cuts dead; the crowd stays live and ERUPTS over the killcam.
+          // BGM cuts dead; in the colosseum the crowd stays live and ERUPTS
+          // over the killcam. On a battlefield the wind just keeps blowing.
           combatAudio.stopMusic();
-          combatAudio.crowdCheer(1);
+          if (hasCrowd) combatAudio.crowdCheer(1);
           crowd.cheer(1);
 
           const winner = e.winner === 'p1' ? 'player' : 'enemy';
@@ -495,8 +514,9 @@ function BattleWorld({
       <color attach="background" args={[arenaFog.bg]} />
       <fog attach="fog" args={[arenaFog.fog, arenaFog.near, arenaFog.far]} />
 
-      <StylizedArena />
-      <Crowd director={crowd} />
+      {arenaVariant === 'ashfall' ? <AshfallArena /> : <StylizedArena />}
+      {/* Battlefield stages have no stadium; the crowd only exists in the colosseum. */}
+      {hasCrowd && <Crowd director={crowd} />}
       <CoverProps variant={arenaVariant} />
       <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
       <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
@@ -538,7 +558,7 @@ export function GameScene(props: GameSceneProps) {
   const [sceneReady, setSceneReady] = useState(false);
   const combatStartedRef = useRef(false);
 
-  const arenaVariant: ArenaVariant = 'stylized';
+  const arenaVariant: ArenaVariant = STAGE_VARIANTS[props.stageId ?? 'battle_arena'];
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
   const inputAttached = useRef(false);
