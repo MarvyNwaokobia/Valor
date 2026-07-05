@@ -32,7 +32,12 @@ export default function SignInModal({ onClose }: Props) {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
-  const visibleConnectors = connectors.filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
+  const visibleConnectors = connectors
+    .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
+    // A wallet the player already has installed connects in one click, no
+    // QR code — put those first. WalletConnect goes last, as the fallback
+    // for "mine isn't in the list above."
+    .sort((a, b) => (a.type === 'injected' ? 0 : 1) - (b.type === 'injected' ? 0 : 1))
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
