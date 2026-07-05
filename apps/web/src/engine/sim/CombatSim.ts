@@ -458,7 +458,9 @@ export class CombatSim {
     const force = KNOCKBACK_FORCE[hitType];
     const hitPosition = new THREE.Vector3(def.ctrl.state.position.x, TORSO_HEIGHT, def.ctrl.state.position.z);
 
-    def.ctrl.applyDamage(finalDamage, knockbackDir, force);
+    // Bullets ignore the (legacy melee) guard — dodge i-frames are the only
+    // defense in the stat-duel, so holding Block must not reduce shot damage.
+    def.ctrl.applyDamage(finalDamage, knockbackDir, force, false);
 
     // Reaction (the sim owns gameplay state; the client just plays the clip).
     def.reactionAnim = REACTION_ANIM[hitType];

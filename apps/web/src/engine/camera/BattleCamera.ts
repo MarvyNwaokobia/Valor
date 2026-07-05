@@ -1,4 +1,14 @@
 import * as THREE from 'three';
+import { losHit } from '../sim/Cover';
+
+/**
+ * duel — cinematic side framing of both fighters (intro countdown + KO beat).
+ * ots  — over-the-shoulder soft-lock behind the local player: the fight is seen
+ *        from behind your own gun, enemy tracers fly AT the screen, and W always
+ *        walks toward the enemy (the yaw feeds camera-relative movement).
+ * follow — legacy free-orbit follow (unused in the duel flow, kept for tools).
+ */
+export type CameraMode = 'duel' | 'ots' | 'follow';
 
 export interface CameraConfig {
   followDistance: number;
@@ -7,8 +17,14 @@ export interface CameraConfig {
   smoothSpeed: number;
   lockOnDistance: number;
   lockOnHeight: number;
+  otsDistance: number;
+  otsHeight: number;
+  otsShoulder: number;
+  otsLookHeight: number;
+  otsSmoothSpeed: number;
   fovDefault: number;
   fovCombat: number;
+  fovOts: number;
   shakeDecay: number;
 }
 
@@ -19,10 +35,24 @@ const DEFAULT_CONFIG: CameraConfig = {
   smoothSpeed: 5,
   lockOnDistance: 9,
   lockOnHeight: 5.2,
+  // OTS: close enough that the fighter reads big in the lower corner, high enough
+  // to see over every low/medium cover template (≤1.6m) without a raycast.
+  otsDistance: 3.4,
+  otsHeight: 2.05,
+  otsShoulder: 0.85,
+  otsLookHeight: 1.35,
+  otsSmoothSpeed: 9,
   fovDefault: 55,
   fovCombat: 48,
+  fovOts: 58,
   shakeDecay: 8,
 };
+
+// Only cover at least this tall can occlude the OTS camera (it sits at ~2m and
+// looks slightly down); shorter pieces are seen over, no pull-in needed.
+const OTS_BLOCK_HEIGHT = 1.6;
+// Never spring-arm closer to the player than this (avoids clipping the rig).
+const OTS_MIN_DISTANCE = 1.2;
 
 export class BattleCamera {
   private camera: THREE.PerspectiveCamera;
@@ -36,6 +66,7 @@ export class BattleCamera {
   private yaw = 0;
   private pitch = 0.3;
   private lockedOn = false;
+  private mode: CameraMode = 'follow';
 
   private shakeOffset = new THREE.Vector3();
   private shakeIntensity = 0;
@@ -65,12 +96,21 @@ export class BattleCamera {
     return this.lockedOn;
   }
 
+  get currentMode(): CameraMode {
+    return this.mode;
+  }
+
+  setMode(mode: CameraMode) {
+    this.mode = mode;
+    this.lockedOn = mode === 'duel';
+  }
+
   setLockedOn(locked: boolean) {
-    this.lockedOn = locked;
+    this.setMode(locked ? 'duel' : 'follow');
   }
 
   toggleLockOn() {
-    this.lockedOn = !this.lockedOn;
+    this.setLockedOn(!this.lockedOn);
   }
 
   rotateMouse(dx: number, dy: number, sensitivity = 0.003) {
@@ -84,7 +124,9 @@ export class BattleCamera {
     playerPos: THREE.Vector3,
     targetPos?: THREE.Vector3
   ) {
-    if (this.lockedOn && targetPos) {
+    if (this.mode === 'ots' && targetPos) {
+      this.updateOverShoulder(dt, playerPos, targetPos);
+    } else if (this.lockedOn && targetPos) {
       this.updateLockedOn(dt, playerPos, targetPos);
     } else {
       this.updateFreeFollow(dt, playerPos);
@@ -100,9 +142,11 @@ export class BattleCamera {
     this.camera.position.copy(finalPos);
     this.camera.lookAt(this.currentLookAt);
 
-    const targetFov = this.lockedOn
-      ? this.config.fovCombat
-      : this.config.fovDefault;
+    const targetFov = this.mode === 'ots'
+      ? this.config.fovOts
+      : this.lockedOn
+        ? this.config.fovCombat
+        : this.config.fovDefault;
     this.camera.fov = THREE.MathUtils.lerp(
       this.camera.fov,
       targetFov + this.slowMoFov,
@@ -138,6 +182,61 @@ export class BattleCamera {
     this.targetLookAt.y += 1.2;
 
     const t = 1 - Math.exp(-this.config.smoothSpeed * dt);
+    this.currentPosition.lerp(this.targetPosition, t);
+    this.currentLookAt.lerp(this.targetLookAt, t);
+  }
+
+  /**
+   * Over-the-shoulder soft lock: sit behind the player's right shoulder, aim at
+   * the enemy's chest. Purely derived from the two fighter positions (no mouse
+   * aiming — the stat-duel stays auto-aim), so `cameraYaw` always means
+   * "W walks at the enemy" for camera-relative movement in the sim.
+   */
+  private updateOverShoulder(
+    dt: number,
+    playerPos: THREE.Vector3,
+    targetPos: THREE.Vector3
+  ) {
+    const fwd = new THREE.Vector3().subVectors(targetPos, playerPos).setY(0);
+    if (fwd.lengthSq() < 1e-6) {
+      // Degenerate (stacked fighters) — keep the previous heading.
+      fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    }
+    fwd.normalize();
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+
+    this.targetPosition.copy(playerPos)
+      .addScaledVector(fwd, -this.config.otsDistance)
+      .addScaledVector(right, this.config.otsShoulder);
+    this.targetPosition.y = playerPos.y + this.config.otsHeight;
+
+    // Spring arm: if tall cover crosses the player→camera line, pull the camera
+    // in just in front of the blocking face so the player is never occluded.
+    const block = losHit(
+      playerPos.x, playerPos.z,
+      this.targetPosition.x, this.targetPosition.z,
+      OTS_BLOCK_HEIGHT,
+    );
+    if (block) {
+      const arm = new THREE.Vector3(
+        this.targetPosition.x - playerPos.x, 0, this.targetPosition.z - playerPos.z);
+      const full = arm.length() || 1e-3;
+      const hitDist = Math.hypot(block.x - playerPos.x, block.z - playerPos.z);
+      const pulled = Math.max(OTS_MIN_DISTANCE, hitDist - 0.35);
+      if (pulled < full) {
+        arm.multiplyScalar(pulled / full);
+        this.targetPosition.x = playerPos.x + arm.x;
+        this.targetPosition.z = playerPos.z + arm.z;
+      }
+    }
+
+    this.targetLookAt.set(targetPos.x, this.config.otsLookHeight, targetPos.z);
+
+    // Movement yaw: controller forward is (-sin yaw, -cos yaw) — solve so that
+    // "forward" is exactly the player→enemy direction.
+    this.yaw = Math.atan2(-fwd.x, -fwd.z);
+
+    const t = 1 - Math.exp(-this.config.otsSmoothSpeed * dt);
     this.currentPosition.lerp(this.targetPosition, t);
     this.currentLookAt.lerp(this.targetLookAt, t);
   }

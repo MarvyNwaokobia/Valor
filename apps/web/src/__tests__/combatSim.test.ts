@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { CombatSim, type FighterId } from '@/engine/sim/CombatSim'
 import { InputSystem, Action } from '@/engine/input/InputSystem'
 import { AIDifficulty } from '@/engine/combat'
@@ -41,6 +41,39 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
     expect(snap.fighters.p2.isDead).toBe(true)
     expect(snap.fighters.p1.health).toBeGreaterThan(0)
     expect(hits).toBeGreaterThan(5) // it landed real shots along the way
+  })
+
+  it('bullets ignore Block — holding guard must not reduce shot damage (dodge is the only defense)', () => {
+    // Fix Math.random mid-range: no crits, every accuracy roll lands (sidearm .80).
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    try {
+      const sim = new CombatSim('berserker', 'berserker')
+      const inA = new InputSystem()
+      const inB = new InputSystem()
+      const inputs: Record<FighterId, InputSystem> = { p1: inA, p2: inB }
+
+      setCover([])
+      inA.triggerAction(Action.Fire)
+      inB.triggerAction(Action.Block) // p2 turtles behind the legacy melee guard
+
+      let firstHit: { finalDamage: number; hpBefore: number; hpAfter: number } | null = null
+      for (let i = 0; i < 600 && !firstHit; i++) {
+        const hpBefore = sim.snapshot().fighters.p2.health
+        const events = sim.step(1 / 60, inputs)
+        const hit = events.find((e) => e.kind === 'hit')
+        if (hit && hit.kind === 'hit') {
+          firstHit = { finalDamage: hit.event.finalDamage, hpBefore, hpAfter: sim.snapshot().fighters.p2.health }
+        }
+      }
+
+      expect(firstHit).not.toBeNull()
+      expect(sim.snapshot().fighters.p2.isBlocking).toBe(true) // the guard really was up
+      // Full damage went through — not the old blocked 25% chip.
+      expect(firstHit!.hpBefore - firstHit!.hpAfter).toBe(firstHit!.finalDamage)
+      expect(firstHit!.finalDamage).toBeGreaterThan(0)
+    } finally {
+      rng.mockRestore()
+    }
   })
 
   it('produces serializable snapshots (StateUpdate-ready, no class instances leaking)', () => {
