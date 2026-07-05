@@ -65,6 +65,30 @@ describe('BattleCamera OTS mode', () => {
     expect(planar).toBeGreaterThan(1) // but never inside the player
   })
 
+  it('killcam orbits the focused fighter at portrait distance, looking at them', () => {
+    settle(cam, player, enemy) // start from the OTS shot, like a real KO
+    cam.startKillcam('target') // enemy won — orbit the second update() argument
+
+    const azimuth = () =>
+      Math.atan2(three.position.x - enemy.x, three.position.z - enemy.z)
+
+    settle(cam, player, enemy, 120) // 2s — converge onto the orbit ring
+    const a1 = azimuth()
+    const d1 = Math.hypot(three.position.x - enemy.x, three.position.z - enemy.z)
+    expect(d1).toBeGreaterThan(2.5)
+    expect(d1).toBeLessThan(4.5)
+
+    const dir = three.getWorldDirection(new THREE.Vector3())
+    const toFocus = new THREE.Vector3(enemy.x, 1.15, enemy.z).sub(three.position).normalize()
+    expect(dir.dot(toFocus)).toBeGreaterThan(0.98)
+
+    settle(cam, player, enemy, 120) // 2 more seconds — the orbit must ADVANCE
+    let swept = azimuth() - a1
+    while (swept > Math.PI) swept -= Math.PI * 2
+    while (swept < -Math.PI) swept += Math.PI * 2
+    expect(Math.abs(swept)).toBeGreaterThan(0.4) // ~0.8 rad expected at 0.4 rad/s
+  })
+
   it('setMode(duel) returns to the wide framing that watches the midpoint (KO beat)', () => {
     settle(cam, player, enemy)
     cam.setMode('duel')

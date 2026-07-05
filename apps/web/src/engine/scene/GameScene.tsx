@@ -67,6 +67,15 @@ const ENEMY_TRACER = 0xff7744;  // orange
 const FOOTSTEP_INTERVAL = 0.3;
 const FOOTSTEP_SPEED_THRESHOLD = 1.0;
 
+// ── The kill moment ─────────────────────────────────────────────────────────
+// KO beat timeline (seconds from the killing shot): hold the impact frame,
+// then let the death/victory clips play in slow motion under the killcam
+// orbit, then return to speed and land the result screen with the sting.
+const KO_FREEZE_SEC = 0.24;   // both bodies held on the killing frame
+const KO_SLOWMO_SCALE = 0.35; // mixer timeScale during the slow-mo beat
+const KO_SLOWMO_UNTIL = 1.7;  // slow-mo ends (timeline seconds)
+const KO_RESULT_AT = 2.6;     // fanfare/defeat sting + result overlay
+
 const ARENA_FOG: Record<ArenaVariant, { bg: string; fog: string; near: number; far: number }> = {
   stylized:   { bg: '#b8cce8', fog: '#b8cce8', near: 80, far: 220 },
 };
@@ -143,6 +152,21 @@ function BattleWorld({
   // Reload tracking — the sim event marks the start; the snapshot flag dropping
   // back to false marks the mag-in "chunk" moment.
   const wasReloadingRef = useRef({ p1: false, p2: false });
+
+  // KO beat timeline state (null until someone dies).
+  const koBeatRef = useRef<{
+    t: number;
+    winner: 'player' | 'enemy';
+    durationSecs: number;
+    resumed: boolean;
+    slowmoEnded: boolean;
+    resultFired: boolean;
+  } | null>(null);
+
+  // Silence everything (crowd loop included) when the scene unmounts — the
+  // crowd now outlives the KO (it roars through the killcam), so the page
+  // exit has to be the thing that finally stops it.
+  useEffect(() => () => combatAudio.stopAll(), [combatAudio]);
 
   // Background music
   const bgmStartedRef = useRef(false);
@@ -274,8 +298,34 @@ function BattleWorld({
     screenFx.update(clampedDt);
 
     if (battleEndedRef.current) {
-      // Keep framing the finish — the lock-on camera follows the bodies through the
-      // death/victory beat instead of freezing the instant someone is KO'd.
+      // The kill moment: freeze → slow-mo under the killcam orbit → result.
+      const beat = koBeatRef.current;
+      if (beat) {
+        beat.t += clampedDt;
+        if (!beat.resumed && beat.t >= KO_FREEZE_SEC) {
+          beat.resumed = true;
+          // resume() replays the queued Death/Victory transitions; slow the
+          // mixers AFTER resume (resume resets timeScale to 1). FOV tightens.
+          playerAnimMachine.resume();
+          enemyAnimMachine.resume();
+          playerAnimMachine.setTimeScale(KO_SLOWMO_SCALE);
+          enemyAnimMachine.setTimeScale(KO_SLOWMO_SCALE);
+          battleCamera.setSlowMoFov(-8);
+        }
+        if (!beat.slowmoEnded && beat.t >= KO_SLOWMO_UNTIL) {
+          beat.slowmoEnded = true;
+          playerAnimMachine.setTimeScale(1);
+          enemyAnimMachine.setTimeScale(1);
+          battleCamera.setSlowMoFov(0);
+        }
+        if (!beat.resultFired && beat.t >= KO_RESULT_AT) {
+          beat.resultFired = true;
+          if (beat.winner === 'player') combatAudio.playVictoryFanfare();
+          else combatAudio.playDefeatMelody();
+          onBattleEnd?.(beat.winner, beat.durationSecs);
+        }
+      }
+      // The killcam keeps orbiting the winner through (and behind) the result.
       battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
       return;
     }
@@ -328,27 +378,46 @@ function BattleWorld({
         if (!battleEndedRef.current) {
           battleEndedRef.current = true;
           combatActiveRef.current = false;
-          combatAudio.stopAll();
-          // Pull back out to the wide duel framing for the death/victory beat.
-          battleCamera.setMode('duel');
+          // BGM cuts dead; the crowd stays live and ERUPTS over the killcam.
+          combatAudio.stopMusic();
+          combatAudio.crowdCheer(1);
+          crowd.cheer(1);
 
           const winner = e.winner === 'p1' ? 'player' : 'enemy';
           const loser = e.loser === 'p1' ? 'player' : 'enemy';
 
+          // Freeze the killing frame — both bodies hold while the burst pops.
+          // The Death/Victory transitions queue behind the pause and start
+          // playing (in slow-mo) when the beat timeline resumes the machines.
+          playerAnimMachine.pause();
+          enemyAnimMachine.pause();
           const loserAnim = loser === 'player' ? playerAnimMachine : enemyAnimMachine;
           const winnerAnim = winner === 'player' ? playerAnimMachine : enemyAnimMachine;
           loserAnim.transition(AnimState.Death, true);
           winnerAnim.transition(AnimState.Victory, true);
 
-          const durationSecs = combatStartRef.current
-            ? (performance.now() - combatStartRef.current) / 1000
-            : 0;
+          const loserPos = sim.controller(e.loser).state.position;
+          particles.emitKillBurst(
+            new THREE.Vector3(loserPos.x, 1.0, loserPos.z),
+            CLASS_ACCENTS[loser === 'player' ? playerClass : enemyClass],
+          );
+          battleCamera.shake(0.09, 30);
+          battleCamera.punch(0.05);
+          screenFx.onCriticalHit();
 
-          setTimeout(() => {
-            if (winner === 'player') combatAudio.playVictoryFanfare();
-            else combatAudio.playDefeatMelody();
-            onBattleEnd?.(winner, durationSecs);
-          }, 1500);
+          // Killcam: melt from the shoulder cam into a slow orbit of the winner.
+          battleCamera.startKillcam(winner === 'player' ? 'player' : 'target');
+
+          koBeatRef.current = {
+            t: 0,
+            winner,
+            durationSecs: combatStartRef.current
+              ? (performance.now() - combatStartRef.current) / 1000
+              : 0,
+            resumed: false,
+            slowmoEnded: false,
+            resultFired: false,
+          };
         }
       }
     });

@@ -473,14 +473,13 @@ export class CombatAudio {
     }, ms);
   }
 
-  stopAll() {
-    this.stopped = true;
-    Howler.stop();
-    if (this.crowdSource) {
-      try { this.crowdSource.stop(); } catch {}
-      this.crowdSource = null;
-    }
-    this.crowdGain = null;
+  /**
+   * Stop ONLY the combat music bed. Crowd ambience and one-shots stay live —
+   * this is the KO beat, where the BGM cuts, the crowd roars, and the
+   * victory/defeat sting still has to play. (The old KO path called stopAll(),
+   * whose `stopped` flag silently gated the fanfare off — it never played.)
+   */
+  stopMusic() {
     if (this.bgmIntervalId) {
       clearInterval(this.bgmIntervalId);
       this.bgmIntervalId = null;
@@ -492,6 +491,18 @@ export class CombatAudio {
       this.bgmCtx.close().catch(() => {});
       this.bgmCtx = null;
     }
+  }
+
+  /** Full shutdown (page/unmount): silences everything, including future one-shots. */
+  stopAll() {
+    this.stopped = true;
+    Howler.stop();
+    if (this.crowdSource) {
+      try { this.crowdSource.stop(); } catch {}
+      this.crowdSource = null;
+    }
+    this.crowdGain = null;
+    this.stopMusic();
   }
 
   private sharedCtx: AudioContext | null = null;

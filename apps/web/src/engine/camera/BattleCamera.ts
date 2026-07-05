@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import { losHit } from '../sim/Cover';
 
 /**
- * duel — cinematic side framing of both fighters (intro countdown + KO beat).
+ * duel — cinematic side framing of both fighters (intro countdown).
  * ots  — over-the-shoulder soft-lock behind the local player: the fight is seen
  *        from behind your own gun, enemy tracers fly AT the screen, and W always
  *        walks toward the enemy (the yaw feeds camera-relative movement).
+ * killcam — slow orbit around one fighter (the winner) for the KO beat.
  * follow — legacy free-orbit follow (unused in the duel flow, kept for tools).
  */
-export type CameraMode = 'duel' | 'ots' | 'follow';
+export type CameraMode = 'duel' | 'ots' | 'killcam' | 'follow';
 
 export interface CameraConfig {
   followDistance: number;
@@ -22,6 +23,9 @@ export interface CameraConfig {
   otsShoulder: number;
   otsLookHeight: number;
   otsSmoothSpeed: number;
+  killcamDistance: number;
+  killcamHeight: number;
+  killcamOrbitSpeed: number; // rad/s the killcam circles the winner
   fovDefault: number;
   fovCombat: number;
   fovOts: number;
@@ -42,6 +46,9 @@ const DEFAULT_CONFIG: CameraConfig = {
   otsShoulder: 0.85,
   otsLookHeight: 1.35,
   otsSmoothSpeed: 9,
+  killcamDistance: 3.6,
+  killcamHeight: 2.0,
+  killcamOrbitSpeed: 0.4,
   fovDefault: 55,
   fovCombat: 48,
   fovOts: 58,
@@ -67,6 +74,13 @@ export class BattleCamera {
   private pitch = 0.3;
   private lockedOn = false;
   private mode: CameraMode = 'follow';
+
+  // Killcam: which update() argument to orbit, the current orbit azimuth, and
+  // whether the azimuth has been seeded from the camera's live position (so the
+  // orbit picks up exactly where the OTS camera was — no cut).
+  private killcamFocus: 'player' | 'target' = 'player';
+  private killcamAngle = 0;
+  private killcamSeeded = false;
 
   private shakeOffset = new THREE.Vector3();
   private shakeIntensity = 0;
@@ -109,6 +123,14 @@ export class BattleCamera {
     this.setMode(locked ? 'duel' : 'follow');
   }
 
+  /** Enter the KO killcam: slow orbit around `focus` ('player' = the first
+   *  position passed to update(), 'target' = the second). */
+  startKillcam(focus: 'player' | 'target') {
+    this.killcamFocus = focus;
+    this.killcamSeeded = false;
+    this.setMode('killcam');
+  }
+
   toggleLockOn() {
     this.setLockedOn(!this.lockedOn);
   }
@@ -124,7 +146,9 @@ export class BattleCamera {
     playerPos: THREE.Vector3,
     targetPos?: THREE.Vector3
   ) {
-    if (this.mode === 'ots' && targetPos) {
+    if (this.mode === 'killcam' && targetPos) {
+      this.updateKillcam(dt, this.killcamFocus === 'player' ? playerPos : targetPos);
+    } else if (this.mode === 'ots' && targetPos) {
       this.updateOverShoulder(dt, playerPos, targetPos);
     } else if (this.lockedOn && targetPos) {
       this.updateLockedOn(dt, playerPos, targetPos);
@@ -144,7 +168,7 @@ export class BattleCamera {
 
     const targetFov = this.mode === 'ots'
       ? this.config.fovOts
-      : this.lockedOn
+      : this.mode === 'killcam' || this.lockedOn
         ? this.config.fovCombat
         : this.config.fovDefault;
     this.camera.fov = THREE.MathUtils.lerp(
@@ -237,6 +261,34 @@ export class BattleCamera {
     this.yaw = Math.atan2(-fwd.x, -fwd.z);
 
     const t = 1 - Math.exp(-this.config.otsSmoothSpeed * dt);
+    this.currentPosition.lerp(this.targetPosition, t);
+    this.currentLookAt.lerp(this.targetLookAt, t);
+  }
+
+  /**
+   * KO killcam: a slow, level orbit around the winner at portrait distance.
+   * The azimuth is seeded from wherever the camera already is, so entering the
+   * killcam is a continuous move (the OTS shot melts into the orbit, no cut).
+   */
+  private updateKillcam(dt: number, focus: THREE.Vector3) {
+    if (!this.killcamSeeded) {
+      this.killcamSeeded = true;
+      this.killcamAngle = Math.atan2(
+        this.currentPosition.x - focus.x,
+        this.currentPosition.z - focus.z,
+      );
+    }
+    this.killcamAngle += dt * this.config.killcamOrbitSpeed;
+
+    this.targetPosition.set(
+      focus.x + Math.sin(this.killcamAngle) * this.config.killcamDistance,
+      focus.y + this.config.killcamHeight,
+      focus.z + Math.cos(this.killcamAngle) * this.config.killcamDistance,
+    );
+    this.targetLookAt.set(focus.x, focus.y + 1.15, focus.z);
+    this.yaw = this.killcamAngle;
+
+    const t = 1 - Math.exp(-this.config.smoothSpeed * dt);
     this.currentPosition.lerp(this.targetPosition, t);
     this.currentLookAt.lerp(this.targetLookAt, t);
   }
