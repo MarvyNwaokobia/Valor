@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
@@ -19,14 +19,20 @@ const CONNECTOR_LABELS: Record<string, string> = {
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
   const { connectors, connect } = useConnect()
-  // wagmi auto-discovers every real wallet extension present (EIP-6963) and
-  // lists each by name (MetaMask, Coinbase Wallet, Brave Wallet, ...). The
-  // bare `injected` connector is a legacy window.ethereum fallback for
-  // wallets that don't support that discovery — redundant, and ambiguous
-  // (which extension does it even target?) once named ones exist. Only show
-  // it when nothing more specific was found.
+  // wagmi's static config always includes the generic `injected` connector,
+  // regardless of whether a provider actually exists for it to target — on
+  // a plain mobile browser (no wallet app, no extension) there's no
+  // window.ethereum at all, so it'd show a button that can never work.
+  // wagmi auto-discovers real wallet extensions individually by name via
+  // EIP-6963 (MetaMask, Coinbase Wallet, Brave Wallet, ...); only fall back
+  // to the generic one if a legacy (non-EIP-6963) provider is actually
+  // present, and hide it entirely once a named one exists.
+  const [hasLegacyProvider, setHasLegacyProvider] = useState(false)
+  useEffect(() => {
+    setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
+  }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
-  const visibleConnectors = connectors.filter((c) => c.id !== 'injected' || !hasNamedInjected)
+  const visibleConnectors = connectors.filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
