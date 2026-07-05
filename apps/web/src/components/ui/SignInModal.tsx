@@ -19,6 +19,14 @@ const CONNECTOR_LABELS: Record<string, string> = {
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
   const { connectors, connect } = useConnect()
+  // wagmi auto-discovers every real wallet extension present (EIP-6963) and
+  // lists each by name (MetaMask, Coinbase Wallet, Brave Wallet, ...). The
+  // bare `injected` connector is a legacy window.ethereum fallback for
+  // wallets that don't support that discovery — redundant, and ambiguous
+  // (which extension does it even target?) once named ones exist. Only show
+  // it when nothing more specific was found.
+  const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
+  const visibleConnectors = connectors.filter((c) => c.id !== 'injected' || !hasNamedInjected)
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -129,7 +137,7 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {connectors.length > 0 && (
+        {visibleConnectors.length > 0 && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -138,7 +146,7 @@ export default function SignInModal({ onClose }: Props) {
             </div>
 
             <div className="flex flex-col gap-2">
-              {connectors.map((connector) => (
+              {visibleConnectors.map((connector) => (
                 <button
                   key={connector.id}
                   onClick={() => handleConnectWallet(connector.id)}
