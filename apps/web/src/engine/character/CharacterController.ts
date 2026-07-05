@@ -203,10 +203,12 @@ export class CharacterController {
     this.staggerTechTime = duration * (1 - techFraction);
   }
 
-  applyDamage(amount: number, knockbackDir: THREE.Vector3, knockbackForce: number) {
+  // `blockable: false` = the hit ignores the guard entirely (bullets — the
+  // stat-duel's only defense is dodge i-frames; block must not chip-reduce shots).
+  applyDamage(amount: number, knockbackDir: THREE.Vector3, knockbackForce: number, blockable = true) {
     if (this.state.isDodging) return;
 
-    const blocked = this.state.isBlocking;
+    const blocked = blockable && this.state.isBlocking;
     const actualDamage = blocked ? Math.floor(amount * 0.25) : amount;
 
     this.state.health = Math.max(0, this.state.health - actualDamage);
@@ -300,6 +302,10 @@ export class CharacterController {
       this.state.velocity.z *= decay;
       if (Math.abs(this.state.velocity.x) < 0.01) this.state.velocity.x = 0;
       if (Math.abs(this.state.velocity.z) < 0.01) this.state.velocity.z = 0;
+      // A gunfighter squares up: keep turning to face the opponent even while
+      // standing still (previously idle fighters froze at their last heading —
+      // invisible from the old side camera, obviously wrong over the shoulder).
+      this.faceLockOn(dt);
       return;
     }
 
@@ -343,6 +349,17 @@ export class CharacterController {
     );
 
     this.state.position.addScaledVector(this.state.velocity, dt);
+    this.state.facingRight = Math.sin(this.state.rotation) > 0;
+  }
+
+  private faceLockOn(dt: number) {
+    if (!this.lockOnTarget) return;
+    const toTarget = new THREE.Vector3()
+      .subVectors(this.lockOnTarget.state.position, this.state.position)
+      .setY(0);
+    if (toTarget.lengthSq() < 1e-6) return;
+    this.targetRotation = Math.atan2(toTarget.x, toTarget.z);
+    this.state.rotation = lerpAngle(this.state.rotation, this.targetRotation, this.config.turnSpeed * dt);
     this.state.facingRight = Math.sin(this.state.rotation) > 0;
   }
 

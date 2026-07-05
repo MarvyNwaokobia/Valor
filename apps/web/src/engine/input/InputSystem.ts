@@ -70,6 +70,8 @@ export class InputSystem {
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('keyup', this.onKeyUp);
     target.addEventListener('mousemove', this.onMouseMove);
+    target.addEventListener('mousedown', this.onMouseDown);
+    target.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     return () => this.detach(el);
   }
@@ -79,6 +81,8 @@ export class InputSystem {
     target.removeEventListener('keydown', this.onKeyDown);
     target.removeEventListener('keyup', this.onKeyUp);
     target.removeEventListener('mousemove', this.onMouseMove);
+    target.removeEventListener('mousedown', this.onMouseDown);
+    target.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
   }
 
@@ -180,6 +184,22 @@ export class InputSystem {
       ke.preventDefault();
       this.keys.delete(action);
     }
+  };
+
+  // Left mouse button = Fire (held, auto-fires on the gun's cadence — same as J).
+  // Clicks on real UI (buttons/links/inputs) are ignored so post-fight menus and
+  // nav don't squeeze off rounds; mouseup always releases so Fire can't stick.
+  private onMouseDown = (e: Event) => {
+    const me = e as MouseEvent;
+    if (me.button !== 0) return;
+    const el = me.target as HTMLElement | null;
+    if (el?.closest?.('button, a, input, select, textarea, [role="button"]')) return;
+    this.keys.add(Action.Fire);
+  };
+
+  private onMouseUp = (e: Event) => {
+    if ((e as MouseEvent).button !== 0) return;
+    this.keys.delete(Action.Fire);
   };
 
   private onMouseMove = (e: Event) => {

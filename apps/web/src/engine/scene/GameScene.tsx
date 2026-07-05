@@ -134,9 +134,11 @@ function BattleWorld({
   // Wall-clock start of live combat, for the fight-duration reward guard.
   const combatStartRef = useRef(0);
 
-  // The sim wires lock-on between fighters; here we just lock the camera onto the duel.
+  // Camera choreography: wide duel framing for the intro countdown, then the
+  // camera swings in behind the player's shoulder when combat starts (the swing
+  // itself is just the OTS lerp converging), and pulls back out for the KO beat.
   useEffect(() => {
-    battleCamera.setLockedOn(true);
+    battleCamera.setMode('duel');
   }, [battleCamera]);
 
   const animFor = useCallback(
@@ -246,6 +248,8 @@ function BattleWorld({
       combatStartRef.current = performance.now();
       combatAudio.startBGM();
       combatAudio.startCrowdAmbience();
+      // FIGHT: swing from the wide duel framing in behind the player's shoulder.
+      battleCamera.setMode('ots');
     }
 
     // --- Advance Simulation Headless ---
@@ -264,6 +268,8 @@ function BattleWorld({
           battleEndedRef.current = true;
           combatActiveRef.current = false;
           combatAudio.stopAll();
+          // Pull back out to the wide duel framing for the death/victory beat.
+          battleCamera.setMode('duel');
 
           const winner = e.winner === 'p1' ? 'player' : 'enemy';
           const loser = e.loser === 'p1' ? 'player' : 'enemy';
@@ -474,14 +480,11 @@ export function GameScene(props: GameSceneProps) {
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 hidden md:flex gap-3">
           {[
             { key: 'WASD', label: 'Move' },
-            { key: 'J', label: 'Light', color: '#ff6644' },
-            { key: 'K', label: 'Heavy', color: '#ff8800' },
-            { key: 'L', label: 'Special', color: '#aa44ff' },
-            { key: '⇧', label: 'Block', color: '#4488ff' },
+            { key: 'LMB / J', label: 'Fire', color: '#ff6644' },
             { key: '␣', label: 'Dodge', color: '#22cc66' },
           ].map(({ key, label, color }) => (
             <div key={key} className="flex flex-col items-center gap-1">
-              <div className="w-10 h-10 rounded-lg border flex items-center justify-center text-xs font-mono font-bold bg-black/60"
+              <div className="min-w-10 px-2 h-10 rounded-lg border flex items-center justify-center text-xs font-mono font-bold bg-black/60"
                 style={{ borderColor: color ?? '#555', color: color ?? '#aaa' }}>{key}</div>
               <span className="text-[9px] uppercase tracking-wider text-white/40">{label}</span>
             </div>
