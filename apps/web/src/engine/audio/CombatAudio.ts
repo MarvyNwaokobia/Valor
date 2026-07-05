@@ -208,6 +208,13 @@ export class CombatAudio {
     } catch {}
   }
 
+  /** Crisp confirmation tick when YOUR shot lands — crits get a double tick. */
+  playHitmarker(crit = false) {
+    if (this.stopped) return;
+    this.mechTick(crit ? 3200 : 2400, 0.12, 0);
+    if (crit) this.mechTick(4200, 0.1, 0.05);
+  }
+
   /** Short filtered-noise click — the building block of weapon-handling foley. */
   private mechTick(freq: number, vol: number, delay: number) {
     try {

@@ -98,6 +98,14 @@ body {
   90%, 94%                  { opacity: 1; }
 }
 
+/* Hitmarker X at screen centre — pops slightly large, settles, fades out.
+   The translate lives here because the animation owns `transform`. */
+@keyframes hitmarker {
+  0%   { opacity: 1; transform: translate(-50%, -50%) scale(1.35); }
+  60%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+}
+
 @keyframes ember-rise {
   0%   { transform: translateY(0)   translateX(0)   scale(1);   opacity: 0; }
   15%  { opacity: 0.9; }
