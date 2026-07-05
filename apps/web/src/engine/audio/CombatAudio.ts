@@ -375,6 +375,101 @@ export class CombatAudio {
     } catch {}
   }
 
+  // --- Environment ambience (procedural) ---
+  // Battlefield stages have no crowd; they breathe instead: a looped wind bed
+  // that gusts on a slow LFO, plus sparse ember crackles from what still burns.
+  private windSource: AudioBufferSourceNode | null = null;
+  private windLfo: OscillatorNode | null = null;
+  private emberIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  startWindAmbience() {
+    if (this.stopped || this.windSource) return;
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+
+      // Wind bed: brown noise through a low-pass reads as moving air, not hiss.
+      const seconds = 4;
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < data.length; i++) {
+        last = (last + (Math.random() * 2 - 1) * 0.05) * 0.98;
+        data[i] = last;
+      }
+
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 420;
+
+      const gain = ctx.createGain();
+      gain.gain.value = 0.055;
+
+      // Gusts: the LFO wobbles the bed between lulls and pushes (~14s period).
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.07;
+      const lfoDepth = ctx.createGain();
+      lfoDepth.gain.value = 0.035;
+      lfo.connect(lfoDepth).connect(gain.gain);
+      lfo.start();
+
+      src.connect(filter).connect(gain).connect(ctx.destination);
+      src.start();
+
+      this.windSource = src;
+      this.windLfo = lfo;
+
+      this.emberIntervalId = setInterval(() => {
+        if (this.stopped || Math.random() < 0.45) return;
+        this.emberCrackle();
+      }, 700);
+    } catch {}
+  }
+
+  private emberCrackle() {
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const dur = 0.03 + Math.random() * 0.05;
+      const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 2200 + Math.random() * 2600;
+      bp.Q.value = 4;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.014 + Math.random() * 0.028, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      src.connect(bp).connect(g).connect(ctx.destination);
+      src.start(now);
+      src.stop(now + dur);
+    } catch {}
+  }
+
+  private stopWindAmbience() {
+    if (this.emberIntervalId) {
+      clearInterval(this.emberIntervalId);
+      this.emberIntervalId = null;
+    }
+    if (this.windLfo) {
+      try { this.windLfo.stop(); } catch {}
+      this.windLfo = null;
+    }
+    if (this.windSource) {
+      try { this.windSource.stop(); } catch {}
+      this.windSource = null;
+    }
+  }
+
   private bgmCtx: AudioContext | null = null;
   private bgmGain: GainNode | null = null;
   private bgmIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -502,6 +597,7 @@ export class CombatAudio {
       this.crowdSource = null;
     }
     this.crowdGain = null;
+    this.stopWindAmbience();
     this.stopMusic();
   }
 
