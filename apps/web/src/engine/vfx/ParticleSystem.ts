@@ -172,6 +172,23 @@ export class ParticleSystem {
     });
   }
 
+  /** A single brass casing kicked out of the breech — arcs, drops, bounces on
+   *  the floor (the existing y<0 bounce handles the clink-and-settle). */
+  emitCasing(position: THREE.Vector3, sideDir: THREE.Vector3) {
+    this.emit({
+      position,
+      direction: new THREE.Vector3(sideDir.x * 0.8, 1.4, sideDir.z * 0.8),
+      count: 1,
+      speed: [1.6, 2.6],
+      spread: 0.3,
+      life: [0.8, 1.2],
+      size: [0.045, 0.055],
+      color: '#d9a441',
+      gravity: -12,
+      drag: 0.995,
+    });
+  }
+
   emitImpact(position: THREE.Vector3, direction: THREE.Vector3, hitType: 'light' | 'heavy' | 'special') {
     const intensity = hitType === 'light' ? 0.3 : hitType === 'heavy' ? 0.7 : 1;
 

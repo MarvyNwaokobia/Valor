@@ -12,8 +12,18 @@ import * as THREE from 'three';
 const BEAM_LIFE = 0.09;   // seconds the streak stays visible
 const FLASH_LIFE = 0.06;  // seconds the muzzle flash stays visible
 
+/** Per-gun look of a shot — thicker tracers and brighter flashes on big guns. */
+export interface TracerVisual {
+  beamScale?: number;      // tracer thickness multiplier (1 = sidearm)
+  flashScale?: number;     // muzzle flash size multiplier
+  lightIntensity?: number; // muzzle point-light peak intensity
+}
+
 interface Beam { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number }
-interface Flash { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; light: THREE.PointLight; life: number }
+interface Flash {
+  mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; light: THREE.PointLight; life: number;
+  baseScale: number; peakIntensity: number;
+}
 
 export class TracerFX {
   readonly group = new THREE.Group();
@@ -47,16 +57,22 @@ export class TracerFX {
       const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), mat);
       mesh.visible = false;
-      const light = new THREE.PointLight(0xffffff, 0, 4);
+      // Distance 7 + decay 1.6 so the flash genuinely licks the shooter's body
+      // and nearby cover for a frame or two, instead of being a private glow.
+      const light = new THREE.PointLight(0xffffff, 0, 7, 1.6);
       this.group.add(mesh);
       this.group.add(light);
-      f = { mesh, mat, light, life: 0 };
+      f = { mesh, mat, light, life: 0, baseScale: 1, peakIntensity: 6 };
       this.flashes.push(f);
     }
     return f;
   }
 
-  fire(origin: THREE.Vector3, target: THREE.Vector3, color = 0xffdd88) {
+  fire(origin: THREE.Vector3, target: THREE.Vector3, color = 0xffdd88, vis: TracerVisual = {}) {
+    const beamScale = vis.beamScale ?? 1;
+    const flashScale = vis.flashScale ?? 1;
+    const lightIntensity = vis.lightIntensity ?? 6;
+
     // Streak.
     const b = this.acquireBeam();
     this.dir.subVectors(target, origin);
@@ -66,22 +82,24 @@ export class TracerFX {
     this.quat.setFromUnitVectors(this.up, this.dir);
     b.mesh.position.copy(this.mid);
     b.mesh.quaternion.copy(this.quat);
-    b.mesh.scale.set(1, len, 1);
+    b.mesh.scale.set(beamScale, len, beamScale);
     b.mat.color.setHex(color);
     b.mat.opacity = 0.9;
     b.mesh.visible = true;
     b.life = BEAM_LIFE;
 
-    // Muzzle flash.
+    // Muzzle flash + light pop.
     const f = this.acquireFlash();
     f.mesh.position.copy(origin);
     f.light.position.copy(origin);
     f.mat.color.setHex(color);
     f.mat.opacity = 1;
-    f.mesh.scale.setScalar(1);
+    f.baseScale = flashScale;
+    f.peakIntensity = lightIntensity;
+    f.mesh.scale.setScalar(flashScale);
     f.mesh.visible = true;
     f.light.color.setHex(color);
-    f.light.intensity = 3;
+    f.light.intensity = lightIntensity;
     f.life = FLASH_LIFE;
   }
 
@@ -98,8 +116,8 @@ export class TracerFX {
       f.life -= dt;
       const t = Math.max(0, f.life / FLASH_LIFE);
       f.mat.opacity = t;
-      f.light.intensity = 3 * t;
-      f.mesh.scale.setScalar(0.6 + 0.8 * (1 - t)); // pops outward as it fades
+      f.light.intensity = f.peakIntensity * t;
+      f.mesh.scale.setScalar(f.baseScale * (0.6 + 0.8 * (1 - t))); // pops outward as it fades
       if (f.life <= 0) {
         f.mesh.visible = false;
         f.light.intensity = 0;

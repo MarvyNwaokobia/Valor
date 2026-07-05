@@ -12,7 +12,7 @@ import { AnimationStateMachine, AnimState, CLASS_ANIMATIONS } from '../animation
 import { getInputSystem } from '../input';
 import { TouchControls } from '../input/TouchControls';
 import type { DamageEvent } from '../combat/DamageSystem';
-import { type ComboState, STARTER_GUN_ID, type GunId } from '../combat';
+import { type ComboState, STARTER_GUN_ID, type GunId, GUN_FEEL } from '../combat';
 import { AIDifficulty } from '../combat';
 import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
 import { ParticleSystem } from '../vfx/ParticleSystem';
@@ -41,6 +41,7 @@ interface GameSceneProps {
   onComboUpdate?: (combo: ComboState | null) => void;
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
   onEnemyStateUpdate?: (health: number, maxHealth: number) => void;
+  onAmmoUpdate?: (ammo: number, magazine: number, reloading: boolean, reloadProgress: number) => void;
   onBattleEnd?: (winner: 'player' | 'enemy', durationSecs: number) => void;
   // Rewards earned this fight, shown on the victory screen (server-authoritative).
   rewardPending?: boolean;
@@ -77,6 +78,7 @@ function BattleWorld({
   onDamageEvent,
   onPlayerStateUpdate,
   onEnemyStateUpdate,
+  onAmmoUpdate,
   onBattleEnd,
   onReady,
   combatActive = false,
@@ -129,6 +131,10 @@ function BattleWorld({
   const playerStepTimerRef = useRef(0);
   const enemyStepTimerRef = useRef(0);
 
+  // Reload tracking — the sim event marks the start; the snapshot flag dropping
+  // back to false marks the mag-in "chunk" moment.
+  const wasReloadingRef = useRef({ p1: false, p2: false });
+
   // Background music
   const bgmStartedRef = useRef(false);
   // Wall-clock start of live combat, for the fight-duration reward guard.
@@ -146,24 +152,32 @@ function BattleWorld({
     [playerAnimMachine, enemyAnimMachine],
   );
 
-  // A shot left the muzzle — fire clip + gunshot + tracer/flash, and a small kick
-  // on the LOCAL player's own fire only (so the opponent's spray doesn't rattle the
-  // camera). The sim authored the shot; this just shows + sounds it.
+  // A shot left the muzzle — fire clip + the GUN'S OWN voice/flash/tracer from its
+  // feel profile, a brass casing, a recoil kick on the rig, and a camera kick on
+  // the LOCAL player's fire only (the opponent's spray must not rattle the view).
+  // The sim authored the shot; this just shows + sounds it.
   const fireFX = useCallback((e: Extract<SimEvent, { kind: 'fire' }>) => {
     const who = e.fighter;
+    const feel = GUN_FEEL[e.gunId];
     animFor(who).transition(AnimState.Fire, true);
-    combatAudio.playGunshot();
+    combatAudio.playGunshot(feel.audio, who === 'p1' ? 1 : 0.75);
 
     const origin = new THREE.Vector3(e.origin[0], e.origin[1], e.origin[2]);
     const target = new THREE.Vector3(e.target[0], e.target[1], e.target[2]);
-    tracerFX.fire(origin, target, who === 'p1' ? PLAYER_TRACER : ENEMY_TRACER);
-    particles.emitEnergy(origin, who === 'p1' ? CLASS_ACCENTS[playerClass] : CLASS_ACCENTS[enemyClass], 0.35);
+    tracerFX.fire(origin, target, who === 'p1' ? PLAYER_TRACER : ENEMY_TRACER, feel);
+
+    // Brass out of the breech, to the shooter's right of the shot line.
+    const side = new THREE.Vector3(e.dir[2], 0, -e.dir[0]).normalize();
+    particles.emitCasing(origin, side);
+
+    // Body recoil (decayed by FighterModel), scaled by the gun's kick.
+    sim.controller(who).state.recoilPulse = Math.min(1, feel.kick);
 
     if (who === 'p1') {
-      battleCamera.shake(0.03, 45);
-      battleCamera.punch(0.012);
+      battleCamera.shake(feel.camShake, 45);
+      battleCamera.punch(feel.camPunch);
     }
-  }, [animFor, combatAudio, tracerFX, particles, battleCamera, playerClass, enemyClass]);
+  }, [animFor, combatAudio, tracerFX, particles, battleCamera, sim]);
 
   // A landed shot — the sim already applied damage/stagger; play the reaction clip
   // and feed the HUD. No per-bullet hit-stop — a firefight has to keep flowing.
@@ -263,6 +277,10 @@ function BattleWorld({
         impactFX(e);
       } else if (e.kind === 'hit') {
         onHit(e);
+      } else if (e.kind === 'reload') {
+        // Enemy reloads are quieter but audible — hearing their mag drop is
+        // tactical information (your window to push).
+        combatAudio.playReloadStart(e.fighter === 'p1' ? 1 : 0.5);
       } else if (e.kind === 'ko') {
         if (!battleEndedRef.current) {
           battleEndedRef.current = true;
@@ -337,10 +355,21 @@ function BattleWorld({
       enemyStepTimerRef.current = 0;
     }
 
+    // --- Reload finish: the mag-in "chunk" when reloading flips back off ---
+    for (const id of ['p1', 'p2'] as const) {
+      const now = snapshot.fighters[id].reloading;
+      if (wasReloadingRef.current[id] && !now) {
+        combatAudio.playReloadEnd(id === 'p1' ? 1 : 0.5);
+      }
+      wasReloadingRef.current[id] = now;
+    }
+
     // --- Update HUD Stats ---
     const playerStats = sim.damage.getStats('p1');
     onPlayerStateUpdate?.(ps.health, ps.maxHealth, playerStats?.stamina ?? 100, playerStats?.staminaMax ?? 100);
     onEnemyStateUpdate?.(enemyController.state.health, enemyController.state.maxHealth);
+    const p1Snap = snapshot.fighters.p1;
+    onAmmoUpdate?.(p1Snap.ammo, p1Snap.magazine, p1Snap.reloading, p1Snap.reloadProgress);
   });
 
   // Per-arena fog + background — set at scene level (not inside a <group>,
@@ -384,6 +413,7 @@ export function GameScene(props: GameSceneProps) {
   const [enemyHP, setEnemyHP] = useState(100);
   const [enemyMaxHP, setEnemyMaxHP] = useState(100);
   const [combo, setCombo] = useState<ComboState | null>(null);
+  const [ammoHud, setAmmoHud] = useState({ ammo: 0, magazine: 0, reloading: false, progress: 0 });
   const [battleResult, setBattleResult] = useState<'player' | 'enemy' | null>(null);
   const [countdown, setCountdown] = useState<number | 'FIGHT' | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
@@ -435,6 +465,14 @@ export function GameScene(props: GameSceneProps) {
             onComboUpdate={setCombo}
             onPlayerStateUpdate={(h, mh, s, sm) => { setPlayerHP(h); setPlayerMaxHP(mh); setPlayerStamina(s); setPlayerStaminaMax(sm); }}
             onEnemyStateUpdate={(h, mh) => { setEnemyHP(h); setEnemyMaxHP(mh); }}
+            onAmmoUpdate={(ammo, magazine, reloading, progress) =>
+              // Bail out (return the same object) unless something changed — this
+              // fires every frame and must not re-render the HUD at 60fps.
+              setAmmoHud((prev) =>
+                prev.ammo === ammo && prev.magazine === magazine &&
+                prev.reloading === reloading && prev.progress === progress
+                  ? prev
+                  : { ammo, magazine, reloading, progress })}
             onBattleEnd={(w, d) => { setBattleResult(w); props.onBattleEnd?.(w, d); }}
             onReady={startCountdown}
           />
@@ -475,6 +513,40 @@ export function GameScene(props: GameSceneProps) {
           <div className="absolute top-1/3 right-8 text-center">
             <div className="text-4xl font-black text-yellow-400">{combo.count}</div>
             <div className="text-sm font-bold uppercase text-yellow-300/80">HIT COMBO</div>
+          </div>
+        )}
+
+        {/* Ammo / reload — the gun's own status line. Sits clear of the mobile
+            touch stick (left) and fire button (right). */}
+        {ammoHud.magazine > 0 && !battleResult && (
+          <div className="absolute bottom-6 md:bottom-24 left-1/2 -translate-x-1/2 text-center">
+            {ammoHud.reloading ? (
+              <div className="w-44">
+                <div className="text-xs font-black uppercase tracking-[0.2em] text-amber-400 animate-pulse mb-1">
+                  Reloading
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden bg-black/60 border border-white/10">
+                  <div
+                    className="h-full rounded-full bg-amber-400"
+                    style={{ width: `${Math.round(ammoHud.progress * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div
+                className="font-mono font-black text-3xl leading-none drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]"
+                style={{
+                  color: ammoHud.ammo === 0
+                    ? '#f87171'
+                    : ammoHud.ammo <= Math.max(1, Math.floor(ammoHud.magazine * 0.25))
+                      ? '#fbbf24'
+                      : 'rgba(255,255,255,0.92)',
+                }}
+              >
+                {ammoHud.ammo}
+                <span className="text-base font-bold text-white/40"> / {ammoHud.magazine}</span>
+              </div>
+            )}
           </div>
         )}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 hidden md:flex gap-3">

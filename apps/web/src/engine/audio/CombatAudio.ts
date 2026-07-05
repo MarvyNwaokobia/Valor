@@ -1,5 +1,11 @@
 import { Howl, Howler } from 'howler';
 import type { DamageEvent } from '../combat/DamageSystem';
+import type { GunShotAudio } from '../combat/GunFeel';
+
+// Fallback shot voice when no per-gun profile is passed (≈ the old generic crack).
+const DEFAULT_SHOT: GunShotAudio = {
+  noiseDur: 0.06, hpFreq: 1100, bodyF0: 180, bodyF1: 70, bodyDur: 0.08, vol: 0.55,
+};
 
 interface SoundBank {
   sounds: Howl[];
@@ -131,42 +137,98 @@ export class CombatAudio {
     } catch {}
   }
 
-  /** A short gunshot — a high-passed noise crack over a quick low-sine punch.
-   *  Kept brief so rapid-fire weapons don't smear into a wall of sound. */
-  playGunshot() {
+  /** A gunshot voiced per weapon (crack + body from the gun's GunShotAudio profile).
+   *  Kept brief so rapid-fire weapons don't smear into a wall of sound. `volumeScale`
+   *  lets the opponent's fire sit a little behind your own in the mix. */
+  playGunshot(shot: GunShotAudio = DEFAULT_SHOT, volumeScale = 1) {
     if (this.stopped) return;
     try {
       const ctx = this.getSharedContext();
       if (!ctx) return;
       const now = ctx.currentTime;
+      const vol = shot.vol * volumeScale;
 
-      // Crack — short high-passed noise burst.
-      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.06), ctx.sampleRate);
+      // Crack — high-passed noise burst; cutoff/length are the gun's signature.
+      const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * shot.noiseDur)), ctx.sampleRate);
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
       const noise = ctx.createBufferSource();
       noise.buffer = buf;
       const hp = ctx.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 1100;
+      hp.frequency.value = shot.hpFreq;
       const ng = ctx.createGain();
-      ng.gain.setValueAtTime(0.3, now);
-      ng.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      ng.gain.setValueAtTime(0.55 * vol, now);
+      ng.gain.exponentialRampToValueAtTime(0.001, now + shot.noiseDur + 0.01);
       noise.connect(hp).connect(ng).connect(ctx.destination);
       noise.start(now);
-      noise.stop(now + 0.07);
+      noise.stop(now + shot.noiseDur + 0.01);
 
-      // Body — quick downward low-sine punch.
+      // Body — downward sine punch; big guns sweep lower and longer.
       const osc = ctx.createOscillator();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(180, now);
-      osc.frequency.exponentialRampToValueAtTime(70, now + 0.08);
+      osc.frequency.setValueAtTime(shot.bodyF0, now);
+      osc.frequency.exponentialRampToValueAtTime(shot.bodyF1, now + shot.bodyDur);
       const og = ctx.createGain();
-      og.gain.setValueAtTime(0.22, now);
-      og.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      og.gain.setValueAtTime(0.4 * vol, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + shot.bodyDur + 0.01);
       osc.connect(og).connect(ctx.destination);
       osc.start(now);
+      osc.stop(now + shot.bodyDur + 0.02);
+
+      // Sub-thump for the heavy weapons — the shot you feel in the chest.
+      if (shot.thump) this.subThump(110, 35, 0.7 * volumeScale, 0.2);
+    } catch {}
+  }
+
+  /** Mag-out: two quick mechanical ticks at reload start. */
+  playReloadStart(volumeScale = 1) {
+    if (this.stopped) return;
+    this.mechTick(2600, 0.14 * volumeScale, 0);
+    this.mechTick(1800, 0.11 * volumeScale, 0.09);
+  }
+
+  /** Mag-in "chunk" when the reload completes — the gun is live again. */
+  playReloadEnd(volumeScale = 1) {
+    if (this.stopped) return;
+    this.mechTick(1200, 0.16 * volumeScale, 0);
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime + 0.03;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = 620;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.12 * volumeScale, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(now);
       osc.stop(now + 0.1);
+    } catch {}
+  }
+
+  /** Short filtered-noise click — the building block of weapon-handling foley. */
+  private mechTick(freq: number, vol: number, delay: number) {
+    try {
+      const ctx = this.getSharedContext();
+      if (!ctx) return;
+      const now = ctx.currentTime + delay;
+      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.03), ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = freq;
+      bp.Q.value = 1.4;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+      noise.connect(bp).connect(g).connect(ctx.destination);
+      noise.start(now);
+      noise.stop(now + 0.04);
     } catch {}
   }
 
