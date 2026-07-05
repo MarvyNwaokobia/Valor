@@ -14,6 +14,7 @@ interface MagicAuthContextValue extends MagicAuthState {
   loginWithEmailOTP: (email: string) => Promise<void>
   loginWithGoogle: () => Promise<void>
   logout: () => Promise<void>
+  refresh: () => Promise<void>
 }
 
 const MagicAuthContext = createContext<MagicAuthContextValue | null>(null)
@@ -75,7 +76,7 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <MagicAuthContext.Provider value={{ ...state, loginWithEmailOTP, loginWithGoogle, logout }}>
+    <MagicAuthContext.Provider value={{ ...state, loginWithEmailOTP, loginWithGoogle, logout, refresh }}>
       {children}
     </MagicAuthContext.Provider>
   )
