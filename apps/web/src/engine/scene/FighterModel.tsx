@@ -38,6 +38,15 @@ const CLASS_ACCENTS: Record<string, string> = {
 // Seconds for the impact squash to spring fully back to rest.
 const IMPACT_DECAY = 0.13;
 
+// Procedural recoil: max chest pitch (radians) at a full-strength kick, and how
+// fast the kick springs back. Driven by state.recoilPulse (set per shot from the
+// gun's feel profile), applied to the spine AFTER the mixer like HIPS_PITCH_FIX —
+// pure bone-quaternion math, so it's Safari-safe where baked clips are not.
+const RECOIL_MAX_PITCH = 0.16;
+const RECOIL_DECAY = 0.11;
+const _recoilEuler = new THREE.Euler();
+const _recoilQuat = new THREE.Quaternion();
+
 // The gun is driven from the right-hand bone each frame rather than PARENTED into
 // the skeleton — parenting a child into the rig corrupted the animation bind and
 // left the fighter in its T-pose. GUN_GRIP is the gun's offset relative to the hand.
@@ -72,6 +81,11 @@ export const FighterModel = memo(function FighterModel({
   const gunRef = useRef<THREE.Group | null>(null);
   const handBoneRef = useRef<THREE.Object3D | null>(null);
   const hipsBoneRef = useRef<THREE.Object3D | null>(null);
+  const spineBoneRef = useRef<THREE.Object3D | null>(null);
+  // Recoil applied to the spine last frame — undone before the next mixer pass
+  // (same idempotency dance as the Hips pitch fix below).
+  const recoilUndoQuat = useRef(new THREE.Quaternion());
+  const recoilApplied = useRef(false);
   // Whether last frame already premultiplied HIPS_PITCH_FIX onto the Hips, so we can
   // undo it before the next mixer pass and keep the correction from compounding.
   const hipsFixApplied = useRef(false);
@@ -126,6 +140,9 @@ export const FighterModel = memo(function FighterModel({
           // The hand root ends in "RightHand"; finger bones (…RightHandThumb1) don't.
           // Stashed for the gun, attached AFTER the Mixamo bind (see below).
           if (!handBoneRef.current && /righthand$/i.test(child.name)) handBoneRef.current = child;
+          // Chest bone for the recoil kick — prefer Spine2, fall back down the chain.
+          if (/spine2$/i.test(child.name)) spineBoneRef.current = child;
+          else if (!spineBoneRef.current && /spine1?$/i.test(child.name)) spineBoneRef.current = child;
         }
       });
       if (!handBoneRef.current) console.warn(`[Fighter:${classId}] no RightHand bone — gun won't socket`);
@@ -244,6 +261,12 @@ export const FighterModel = memo(function FighterModel({
     if (hipsBoneRef.current && hipsFixApplied.current) {
       hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX_INV);
     }
+    // Undo last frame's recoil kick for the same reason (a finished one-shot clip
+    // stops rewriting bones, so an unconditional premultiply would compound).
+    if (spineBoneRef.current && recoilApplied.current) {
+      spineBoneRef.current.quaternion.premultiply(recoilUndoQuat.current);
+      recoilApplied.current = false;
+    }
 
     animMachine.update(dt);
 
@@ -253,6 +276,19 @@ export const FighterModel = memo(function FighterModel({
     if (hipsBoneRef.current) {
       hipsBoneRef.current.quaternion.premultiply(HIPS_PITCH_FIX);
       hipsFixApplied.current = true;
+    }
+
+    // Recoil kick — pitch the chest back proportional to the shot's kick, then
+    // spring to rest. Frozen during hit-stop, like the impact squash.
+    if (spineBoneRef.current && state.recoilPulse > 0) {
+      const kick = state.recoilPulse * RECOIL_MAX_PITCH;
+      _recoilQuat.setFromEuler(_recoilEuler.set(-kick, 0, 0));
+      spineBoneRef.current.quaternion.premultiply(_recoilQuat);
+      recoilUndoQuat.current.copy(_recoilQuat).invert();
+      recoilApplied.current = true;
+      if (!animMachine.isPaused) {
+        state.recoilPulse = Math.max(0, state.recoilPulse - dt / RECOIL_DECAY);
+      }
     }
 
     // Drive the gun from the hand bone (it's a sibling, not parented into the rig).

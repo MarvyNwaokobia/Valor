@@ -96,6 +96,7 @@ export interface SimFighterState {
   ammo: number;
   magazine: number;
   reloading: boolean;
+  reloadProgress: number; // 0 when not reloading, else 0..1 fraction complete
 }
 
 export interface SimSnapshot {
@@ -116,6 +117,9 @@ export type SimEvent =
   | { kind: 'hit'; event: DamageEvent; comboCount: number; direction: HitDirection }
   // A projectile reached the target (hit or whiff) — renderer shows impact / dust.
   | { kind: 'projectileHit'; shooterId: FighterId; targetId: FighterId; hit: boolean; crit: boolean; position: [number, number, number] }
+  // The magazine ran dry and a reload started — renderer plays the mag-change
+  // sound and the HUD shows the reload bar (progress rides the snapshot).
+  | { kind: 'reload'; fighter: FighterId; duration: number }
   | { kind: 'ko'; winner: FighterId; loser: FighterId };
 
 interface Weapon {
@@ -345,6 +349,7 @@ export class CombatSim {
     if (f.weapon.ammo <= 0) {
       f.weapon.reloading = true;
       f.weapon.reloadTimer = gun.reloadTime;
+      this.events.push({ kind: 'reload', fighter: id, duration: gun.reloadTime });
     }
 
     const sPos = f.ctrl.state.position;
@@ -538,6 +543,9 @@ export class CombatSim {
       ammo: w.ammo,
       magazine: w.gun.magazine,
       reloading: w.reloading,
+      reloadProgress: w.reloading
+        ? Math.min(1, Math.max(0, 1 - w.reloadTimer / w.gun.reloadTime))
+        : 0,
     };
   }
 

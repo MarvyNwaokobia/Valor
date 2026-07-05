@@ -76,6 +76,38 @@ describe('CombatSim (headless ranged stat-duel core)', () => {
     }
   })
 
+  it('emits a reload event when the mag runs dry and reports reloadProgress in the snapshot', () => {
+    // Fix Math.random high: every accuracy roll misses (no stagger noise) and no crits.
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    try {
+      const sim = new CombatSim('berserker', 'phantom')
+      const inputs: Record<FighterId, InputSystem> = { p1: new InputSystem(), p2: new InputSystem() }
+      setCover([])
+      inputs.p1.triggerAction(Action.Fire) // sidearm: 12 rounds at 180rpm → dry in ~4s
+
+      let reloadEvent: { fighter: FighterId; duration: number } | null = null
+      let sawProgress = 0
+      for (let i = 0; i < 6 * 60; i++) {
+        for (const e of sim.step(1 / 60, inputs)) {
+          if (e.kind === 'reload') reloadEvent = e
+        }
+        const p1 = sim.snapshot().fighters.p1
+        if (p1.reloading) sawProgress = Math.max(sawProgress, p1.reloadProgress)
+      }
+
+      expect(reloadEvent).not.toBeNull()
+      expect(reloadEvent!.fighter).toBe('p1')
+      expect(reloadEvent!.duration).toBeCloseTo(1.6) // sidearm reloadTime
+      expect(sawProgress).toBeGreaterThan(0.5) // progress visibly advanced mid-reload
+      // 6s is enough to fire 12, reload (1.6s), and be shooting again on a full mag path.
+      const p1 = sim.snapshot().fighters.p1
+      expect(p1.reloading ? p1.reloadProgress : 0).toBeLessThanOrEqual(1)
+      expect(p1.ammo).toBeGreaterThan(0)
+    } finally {
+      rng.mockRestore()
+    }
+  })
+
   it('produces serializable snapshots (StateUpdate-ready, no class instances leaking)', () => {
     const sim = new CombatSim('sentinel', 'berserker')
     const inputs: Record<FighterId, InputSystem> = { p1: new InputSystem(), p2: new InputSystem() }

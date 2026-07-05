@@ -19,6 +19,8 @@ export interface CharacterState {
   comboCount: number;
   /** VFX-only: 0..1 squash-and-stretch impulse set on being hit, decayed by the renderer. */
   impactPulse: number;
+  /** VFX-only: 0..1 recoil impulse set when this fighter fires, decayed by the renderer. */
+  recoilPulse: number;
 }
 
 export interface CharacterConfig {
@@ -116,6 +118,7 @@ export class CharacterController {
       specialMeter: 0,
       comboCount: 0,
       impactPulse: 0,
+      recoilPulse: 0,
     };
   }
 
