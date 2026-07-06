@@ -150,9 +150,17 @@ export default function DailyClaimButton({ walletAddress }: Props) {
         )}
 
         {status === 'error' && (
-          <p className="text-xs text-red-400 text-center">
-            Could not load claim status
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-red-400">Could not load claim status</p>
+            <button
+              onClick={() => refresh()}
+              className="px-2.5 py-2 rounded-lg text-slate-500 hover:text-white transition-colors shrink-0"
+              style={{ background: 'rgba(255,255,255,0.05)' }}
+              title="Try again"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
         )}
       </div>
 

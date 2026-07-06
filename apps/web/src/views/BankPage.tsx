@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Copy, Check, LogOut, ArrowUpRight } from 'lucide-react'
+import Link from 'next/link'
+import { Copy, Check, LogOut, ArrowUpRight, ArrowLeft } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useSignOut } from '@/hooks/useSignOut'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -77,10 +78,18 @@ export default function BankPage() {
       <motion.div
         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="flex flex-col gap-0.5"
+        className="flex flex-col gap-2"
       >
-        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Bank</p>
-        <h1 className="font-display font-black text-white text-2xl tracking-wide">Your G$</h1>
+        <Link
+          href="/profile"
+          className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-white transition-colors w-fit"
+        >
+          <ArrowLeft size={14} /> Profile
+        </Link>
+        <div className="flex flex-col gap-0.5">
+          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Bank</p>
+          <h1 className="font-display font-black text-white text-2xl tracking-wide">Your G$</h1>
+        </div>
       </motion.div>
 
       {/* Wallet + sign out */}
