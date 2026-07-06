@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { usePublicClient } from 'wagmi'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { createClaimSDK, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
+import { claimUBI, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -38,18 +37,15 @@ export function useGoodDollarClaim(
   walletAddress: `0x${string}` | undefined,
   onClaimSuccess?: () => void,
 ): UseGoodDollarClaimReturn {
-  const publicClient = usePublicClient()
   const walletClient = useActiveWalletClient()
 
   const [status, setStatus]               = useState<GDClaimStatus>('loading')
   const [entitlement, setEntitlement]     = useState('0')
   const [nextClaimTime, setNextClaimTime] = useState<Date | null>(null)
   const [claiming, setClaiming]           = useState(false)
-  const [claimStep, setClaimStep]         = useState('Confirm in your wallet')
+  const [claimStep, setClaimStep]         = useState('Confirm the claim in your wallet')
   const [txHash, setTxHash]               = useState<string | null>(null)
   const [error, setError]                 = useState<string | null>(null)
-
-  const sdkReady = !!publicClient && !!walletClient && !!walletAddress
 
   // Status check is read-only — it must NOT wait on the Magic wallet client
   // (undefined/slow on mobile Safari). Only the wallet ADDRESS is needed; the
@@ -92,21 +88,18 @@ export function useGoodDollarClaim(
   useEffect(() => { refresh() }, [refresh])
 
   const claim = useCallback(async () => {
-    if (!sdkReady || !publicClient || !walletClient || !walletAddress) return
+    if (!walletClient?.account || !walletAddress) return
     setClaiming(true)
     setError(null)
     setTxHash(null)
-    setClaimStep('Confirm in your wallet')
+    setClaimStep('Confirm the claim in your wallet')
 
     try {
-      const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
+      // Single in-app signature — gas is provisioned automatically (native CELO,
+      // paid in G$, or via GoodDollar's free faucet). No second "top-up" prompt.
+      const hash = await claimUBI(walletClient, walletAddress)
 
-      const receipt = await sdk.claim(() => {
-        // SDK fires this before requesting a gas top-up tx
-        setClaimStep('Gas top-up needed · Sign once more')
-      })
-
-      setTxHash(receipt.transactionHash)
+      setTxHash(hash)
       setStatus('already_claimed')
       setEntitlement('0')
 
@@ -122,7 +115,7 @@ export function useGoodDollarClaim(
       fetch(`${API}/players/${walletAddress}/daily-claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: entitlement, tx_hash: receipt.transactionHash }),
+        body: JSON.stringify({ amount: entitlement, tx_hash: hash }),
       }).catch(() => {})
 
       onClaimSuccess?.()
@@ -134,15 +127,17 @@ export function useGoodDollarClaim(
           setError('No G$ available to claim right now. Try again tomorrow.')
         } else if (raw.includes('verification')) {
           setError('Identity verification required. Complete it in onboarding.')
+        } else if (raw.includes('gas')) {
+          setError('Could not get gas for the claim. Please try again in a moment.')
         } else {
           setError('Claim failed. Please try again.')
         }
       }
     } finally {
       setClaiming(false)
-      setClaimStep('Confirm in your wallet')
+      setClaimStep('Confirm the claim in your wallet')
     }
-  }, [sdkReady, publicClient, walletClient, walletAddress, onClaimSuccess, entitlement])
+  }, [walletClient, walletAddress, onClaimSuccess, entitlement])
 
   return {
     status,
