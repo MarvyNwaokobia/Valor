@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useSignOut } from '@/hooks/useSignOut'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -15,20 +13,17 @@ interface Props {
 
 export default function IdentityVerification({ walletAddress, onVerified }: Props) {
   const setVerified    = usePlayerStore((s) => s.setVerified)
-  const isVerified     = usePlayerStore((s) => s.isVerified)
   const signOut = useSignOut()
-  const walletClient = useActiveWalletClient()
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
-  const [signing, setSigning] = useState(false)
+  // Start in the checking state: the mount effect auto-runs the whitelist
+  // check immediately, so we show the spinner rather than flashing the
+  // "Verification Required" button for a frame first.
+  const [signing, setSigning] = useState(true)
   const autoChecked = useRef(false)
-  const searchParams = useSearchParams()
-  // Set on the callback URL we hand GoodDollar's face-verify page — present
-  // when we're landing back here after that flow, whether or not GD's own
-  // page actually completed its redirect (its "please wait" screen sometimes
-  // hangs). Lets us skip straight to checking instead of showing the
-  // "Verify Identity" button again.
-  const returningFromFaceVerify = searchParams?.get('fv') === '1'
 
+  // Detection only: read-only whitelist check keyed to the wallet address.
+  // Needs no Magic wallet / signature, so it works on every device and lets
+  // an already-verified account skip straight through without re-verifying.
   async function handleVerify() {
     console.log('[IdentityVerification] handleVerify started')
     setSigning(true)
@@ -39,8 +34,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
         setVerified(true)
         setTimeout(onVerified, 900)
       } else {
-        console.log('[IdentityVerification] handleVerify: not whitelisted, retrieving face verify URL')
-        await getFaceVerifyUrl(walletAddress)
+        console.log('[IdentityVerification] handleVerify: not whitelisted')
       }
     } catch (err) {
       console.error('[IdentityVerification] handleVerify encountered unexpected error:', err)
@@ -50,17 +44,31 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
     }
   }
 
-  // Returning verified users, or anyone bounced back from GoodDollar's
-  // face-verify page, auto-run the whitelist check as soon as the wallet
-  // client is ready — no button click needed. If they're already
-  // whitelisted they pass straight through; if not, the normal flow shows.
+  // Generating the face-verify link requires a wallet SIGNATURE (Magic), so it
+  // stays behind an explicit click rather than running on mount.
+  async function handleContinueVerification() {
+    setSigning(true)
+    try {
+      const url = faceVerifyUrl ?? (await getFaceVerifyUrl(walletAddress))
+      if (url) window.location.href = url
+    } catch (err) {
+      console.error('[IdentityVerification] handleContinueVerification error:', err)
+    } finally {
+      setSigning(false)
+    }
+  }
+
+  // Auto-detect verification for EVERYONE on mount — no button click needed.
+  // Already-whitelisted accounts (verified before, on any device / session)
+  // pass straight through to character select; unverified accounts fall into
+  // the normal face-verify flow.
   useEffect(() => {
-    if ((isVerified || returningFromFaceVerify) && walletClient && status === 'idle' && !autoChecked.current) {
+    if (status === 'idle' && !autoChecked.current) {
       autoChecked.current = true
-      console.log('[IdentityVerification] Auto-check triggered', { isVerified, returningFromFaceVerify })
+      console.log('[IdentityVerification] Auto-check triggered on mount')
       handleVerify()
     }
-  }, [walletClient, isVerified, returningFromFaceVerify, status])
+  }, [status])
 
   // GoodDollar's own "please wait, redirecting when complete" page sometimes
   // never redirects. If the user gives up and switches back to this tab
@@ -222,7 +230,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             </div>
 
             <motion.button
-              onClick={() => { if (faceVerifyUrl) window.location.href = faceVerifyUrl }}
+              onClick={handleContinueVerification}
               whileHover={{ scale: 1.02, filter: 'brightness(1.1)' }}
               whileTap={{ scale: 0.97 }}
               className="w-full py-4 font-display font-black uppercase tracking-widest text-sm rounded-xl"
