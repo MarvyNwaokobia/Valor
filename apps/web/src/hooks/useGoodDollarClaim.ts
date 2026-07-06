@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { createClaimSDK } from '@/lib/gooddollar'
+import { createClaimSDK, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -60,7 +60,11 @@ export function useGoodDollarClaim(
     setError(null)
     try {
       const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
-      const walletStatus = await sdk.getWalletClaimStatus()
+      const walletStatus = await withTimeout(
+        sdk.getWalletClaimStatus(),
+        12000,
+        'GoodDollar claim status check timed out'
+      )
 
       if (walletStatus.status === 'can_claim') {
         setStatus('can_claim')
