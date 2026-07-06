@@ -1,6 +1,7 @@
 import { IdentitySDK, ClaimSDK, chainConfigs, SupportedChains, type contractEnv } from '@goodsdks/citizen-sdk'
 import { REWARDS_CONTRACT } from '@goodsdks/engagement-sdk'
-import type { PublicClient, WalletClient, Address } from 'viem'
+import { createPublicClient, createWalletClient, http, type PublicClient, type WalletClient, type Address } from 'viem'
+import { celo } from 'viem/chains'
 
 export const GD_ENV: contractEnv =
   (process.env.NEXT_PUBLIC_GOODDOLLAR_ENV as contractEnv) ?? 'production'
@@ -97,6 +98,32 @@ export async function createClaimSDK(
   account: Address,
 ): Promise<ClaimSDK> {
   const identitySDK = await createIdentitySDK(publicClient, walletClient, account)
+  return new ClaimSDK({ account, publicClient, walletClient, identitySDK, env: GD_ENV })
+}
+
+// Celo mainnet public RPC — Magic's embedded wallet talks to this same node.
+const CELO_RPC_URL = 'https://forno.celo.org'
+
+// A ClaimSDK backed entirely by plain HTTP Celo clients, with NO Magic /
+// wallet-provider dependency. Checking claim status (whitelist + entitlement +
+// next-claim-time) is fully read-only and routes through the public client, so
+// it must not hinge on useActiveWalletClient() — that Magic-backed client is
+// slow or never-ready on mobile Safari (ITP / private-mode storage
+// partitioning), which otherwise leaves the daily-claim card stuck loading
+// forever. The SDK constructor still requires a walletClient with an account
+// attached, so we hand it a signer-less HTTP one: good enough for reads, and
+// the real Magic client is only needed for the actual claim signature.
+export function createReadOnlyClaimSDK(account: Address): ClaimSDK {
+  const publicClient = createPublicClient({
+    chain: celo,
+    transport: http(CELO_RPC_URL),
+  }) as PublicClient
+  const walletClient = createWalletClient({
+    account,
+    chain: celo,
+    transport: http(CELO_RPC_URL),
+  })
+  const identitySDK = new IdentitySDK({ account, publicClient, walletClient, env: GD_ENV })
   return new ClaimSDK({ account, publicClient, walletClient, identitySDK, env: GD_ENV })
 }
 
