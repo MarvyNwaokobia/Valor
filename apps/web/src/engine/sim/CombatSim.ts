@@ -41,6 +41,17 @@ export interface SimOptions {
   p2Gun?: GunId;
   p1HpMult?: number;
   p2HpMult?: number;
+  // Mission encounters: the fight starts where the enemy was FOUND, not at the
+  // arena origin — spawn positions, the combat zone, and HP carried in from a
+  // previous encounter in the chain.
+  p1Pos?: [number, number];
+  p2Pos?: [number, number];
+  /** Absolute starting HP for p1 (clamped to maxHealth); missions carry health across a chain. */
+  p1Health?: number;
+  zone?: { cx: number; cz: number; radius: number };
+  /** Skip debris regeneration — the caller already laid the zone's cover out
+   *  (missions generate it when the objective appears, not at the standoff). */
+  keepCover?: boolean;
 }
 
 const FIGHTER_SEPARATION = 1.5;
@@ -179,8 +190,12 @@ export class CombatSim {
   private events: SimEvent[] = [];
 
   constructor(p1Class: ClassId, p2Class: ClassId, opts: SimOptions = {}) {
-    const mk = (id: FighterId, classId: ClassId, x: number, gunId: GunId, hpMult: number): Fighter => {
-      const ctrl = new CharacterController(new THREE.Vector3(x, 0, 0));
+    const zone = opts.zone ?? { cx: 0, cz: 0, radius: 10 };
+    const mk = (id: FighterId, classId: ClassId, pos: [number, number], gunId: GunId, hpMult: number): Fighter => {
+      const ctrl = new CharacterController(new THREE.Vector3(pos[0], 0, pos[1]), {
+        arenaRadius: zone.radius,
+        arenaCenter: [zone.cx, zone.cz],
+      });
       ctrl.state.maxHealth = Math.round(100 * hpMult);
       ctrl.state.health = ctrl.state.maxHealth;
       return {
@@ -191,10 +206,16 @@ export class CombatSim {
       };
     };
 
+    const p1Pos = opts.p1Pos ?? [zone.cx - 5, zone.cz];
+    const p2Pos = opts.p2Pos ?? [zone.cx + 5, zone.cz];
     this.fighters = {
-      p1: mk('p1', p1Class, -5, opts.p1Gun ?? STARTER_GUN_ID, opts.p1HpMult ?? 1),
-      p2: mk('p2', p2Class, 5, opts.p2Gun ?? STARTER_GUN_ID, opts.p2HpMult ?? 1),
+      p1: mk('p1', p1Class, p1Pos, opts.p1Gun ?? STARTER_GUN_ID, opts.p1HpMult ?? 1),
+      p2: mk('p2', p2Class, p2Pos, opts.p2Gun ?? STARTER_GUN_ID, opts.p2HpMult ?? 1),
     };
+    if (opts.p1Health !== undefined) {
+      const p1 = this.fighters.p1.ctrl.state;
+      p1.health = Math.max(1, Math.min(p1.maxHealth, Math.round(opts.p1Health)));
+    }
 
     for (const id of ['p1', 'p2'] as FighterId[]) {
       this.damage.registerFighter(id, this.fighters[id].classId);
@@ -203,7 +224,15 @@ export class CombatSim {
     this.fighters.p1.ctrl.setLockOnTarget(this.fighters.p2.ctrl);
     this.fighters.p2.ctrl.setLockOnTarget(this.fighters.p1.ctrl);
 
-    regenerateCover();
+    // Debris regenerates around the zone, staying clear of both fighters' feet
+    // (a mission encounter can begin anywhere, not just at the ±5 duel spawns).
+    if (!opts.keepCover) {
+      regenerateCover(undefined, {
+        ...zone,
+        radius: Math.max(zone.radius + 1, 6),
+        clear: [p1Pos, p2Pos],
+      });
+    }
   }
 
   get isOver(): boolean {

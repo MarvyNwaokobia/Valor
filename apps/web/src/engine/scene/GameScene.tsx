@@ -16,6 +16,10 @@ import type { DamageEvent } from '../combat/DamageSystem';
 import { type ComboState, STARTER_GUN_ID, type GunId, GUN_FEEL } from '../combat';
 import { AIDifficulty } from '../combat';
 import { CombatSim, type FighterId, type SimEvent } from '../sim/CombatSim';
+import { CharacterController } from '../character';
+import { regenerateCover, resolveCover, setStaticCover } from '../sim/Cover';
+import { villageColliders, ROAM_RADIUS } from './arenas/ashfallLayout';
+import type { MissionConfig, MissionEncounter } from '../campaign/missions';
 import { ParticleSystem } from '../vfx/ParticleSystem';
 import { TracerFX } from '../vfx/TracerFX';
 import { DamageNumbers } from '../vfx/DamageNumbers';
@@ -50,6 +54,11 @@ interface GameSceneProps {
   playerGun?: GunId;
   enemyGun?: GunId;
   enemyHpMult?: number; // Campaign level scales the bot's HP (1 = base 100).
+  // Walk-to-find mission staging (campaign levels with a real environment):
+  // spawn at the level edge, find the enemy, fight where you found them.
+  mission?: MissionConfig;
+  /** Retries/replays spawn closer so repeat attempts skip the hike. */
+  missionRetry?: boolean;
   onDamageEvent?: (event: DamageEvent) => void;
   onComboUpdate?: (combo: ComboState | null) => void;
   onPlayerStateUpdate?: (health: number, maxHealth: number, stamina: number, staminaMax: number) => void;
@@ -94,6 +103,55 @@ const ARENA_FOG: Record<ArenaVariant, { bg: string; fog: string; near: number; f
   ashfall:    { bg: '#b3a08a', fog: '#b3a08a', near: 20, far: 110 },
 };
 
+// Floating beacon over the current objective — visible through walls (it reads
+// as UI, not as a thing in the world) with a pulsing ground ring at its feet.
+function ObjectiveMarker({ x, z }: { x: number; z: number }) {
+  const diamond = useRef<THREE.Group>(null);
+  const ring = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    if (diamond.current) {
+      diamond.current.position.y = 2.7 + Math.sin(t * 2.2) * 0.22;
+      diamond.current.rotation.y = t * 1.6;
+    }
+    if (ring.current) {
+      ring.current.scale.setScalar(1 + (Math.sin(t * 2.6) * 0.5 + 0.5) * 0.3);
+    }
+  });
+  return (
+    <group position={[x, 0, z]}>
+      <group ref={diamond} position={[0, 2.7, 0]}>
+        <mesh renderOrder={999}>
+          <octahedronGeometry args={[0.32, 0]} />
+          <meshStandardMaterial color="#ffc14d" emissive="#ffb020" emissiveIntensity={2} toneMapped={false} transparent opacity={0.95} depthTest={false} />
+        </mesh>
+      </group>
+      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} renderOrder={998}>
+        <ringGeometry args={[0.85, 1.05, 40]} />
+        <meshStandardMaterial color="#ffb020" emissive="#ffb020" emissiveIntensity={1.2} transparent opacity={0.65} depthTest={false} toneMapped={false} />
+      </mesh>
+    </group>
+  );
+}
+
+// Ember ring marking the live combat zone — the fight happens where you found
+// them, so the boundary cue follows the encounter instead of the arena centre.
+function ZoneRing({ cx, cz, radius }: { cx: number; cz: number; radius: number }) {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    if (ref.current) {
+      const m = ref.current.material as THREE.MeshStandardMaterial;
+      m.emissiveIntensity = 0.4 + Math.sin(state.clock.elapsedTime * 1.3) * 0.15;
+    }
+  });
+  return (
+    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[cx, 0.012, cz]}>
+      <ringGeometry args={[radius - 0.22, radius, 64]} />
+      <meshStandardMaterial color="#ff6a2a" emissive="#ff6a2a" emissiveIntensity={0.4} transparent opacity={0.4} />
+    </mesh>
+  );
+}
+
 function BattleWorld({
   playerClass,
   enemyClass,
@@ -101,6 +159,8 @@ function BattleWorld({
   playerGun = STARTER_GUN_ID,
   enemyGun = STARTER_GUN_ID,
   enemyHpMult = 1,
+  mission,
+  missionRetry = false,
   arenaVariant,
   onDamageEvent,
   onPlayerStateUpdate,
@@ -110,9 +170,21 @@ function BattleWorld({
   onHitmarker,
   onBattleEnd,
   onReady,
+  onObjective,
+  onEncounterStart,
+  onEncounterCleared,
   combatActive = false,
   screenFx,
-}: GameSceneProps & { difficulty: AIDifficulty; arenaVariant: ArenaVariant; onReady?: () => void; combatActive?: boolean; screenFx: ScreenEffects }) {
+}: GameSceneProps & {
+  difficulty: AIDifficulty;
+  arenaVariant: ArenaVariant;
+  onReady?: () => void;
+  onObjective?: (text: string, dist: number) => void;
+  onEncounterStart?: (enc: MissionEncounter, index: number) => void;
+  onEncounterCleared?: (index: number) => void;
+  combatActive?: boolean;
+  screenFx: ScreenEffects;
+}) {
   const { camera } = useThree();
   const perspCamera = camera as THREE.PerspectiveCamera;
   const hasCrowd = arenaVariant === 'stylized';
@@ -134,18 +206,72 @@ function BattleWorld({
   const input = useMemo(() => getInputSystem(), []);
   const battleCamera = useMemo(() => new BattleCamera(perspCamera), [perspCamera]);
 
+  const missionMode = !!mission;
+
+  // Mission flow: roam (find the enemy) ↔ combat (the encounter fight, where
+  // you found them). A ref drives the frame loop; mirrored state drives JSX.
+  const phaseRef = useRef<'roam' | 'combat'>(missionMode ? 'roam' : 'combat');
+  const [phase, setPhase] = useState<'roam' | 'combat'>(phaseRef.current);
+  const encIdxRef = useRef(0);
+  const [encIdx, setEncIdx] = useState(0);
+  const healthCarryRef = useRef<number | null>(null);
+  const zoneRef = useRef<{ cx: number; cz: number; radius: number } | null>(null);
+  const [, setSimVersion] = useState(0);
+  const bumpSim = useCallback(() => setSimVersion((v) => v + 1), []);
+
   // The one authoritative combat sim (the same render-free core a server runs).
   // In PvE the enemy (p2) is AI-driven inside the sim; the local player drives p1.
-  const sim = useMemo(() => {
+  // Quick fights build it up front; missions build one per encounter at the
+  // moment the enemy is FOUND (see startEncounter).
+  const initialSim = useMemo(() => {
+    if (missionMode) return null;
     const s = new CombatSim(playerClass, enemyClass, { p1Gun: playerGun, p2Gun: enemyGun, p2HpMult: enemyHpMult });
     s.attachAI('p2', difficulty);
     return s;
-  }, [playerClass, enemyClass, difficulty, playerGun, enemyGun, enemyHpMult]);
-  const playerController = sim.controller('p1');
-  const enemyController = sim.controller('p2');
+  }, [missionMode, playerClass, enemyClass, difficulty, playerGun, enemyGun, enemyHpMult]);
+  const simRef = useRef<CombatSim | null>(initialSim);
+  if (!missionMode) simRef.current = initialSim;
+
+  // Roam-phase body: same controller class the sim uses, bounded by the village
+  // instead of a combat zone, colliding with the environment via resolveCover.
+  const roamCtrl = useMemo(() => {
+    if (!mission) return null;
+    const spawn = missionRetry ? mission.retrySpawn : mission.playerSpawn;
+    const c = new CharacterController(new THREE.Vector3(spawn[0], 0, spawn[1]), {
+      arenaRadius: ROAM_RADIUS,
+      arenaCenter: [0, 0],
+    });
+    c.state.rotation = Math.atan2(-spawn[0], -spawn[1]); // face the village
+    return c;
+  }, [mission, missionRetry]);
+
+  // Debris for the FIRST encounter zone is laid out up front so the player
+  // walks past real cover on the way in (the sim keeps it via keepCover).
+  useMemo(() => {
+    if (!mission) return;
+    const spawn = missionRetry ? mission.retrySpawn : mission.playerSpawn;
+    const enc = mission.encounters[0];
+    regenerateCover(undefined, {
+      cx: enc.pos[0], cz: enc.pos[1], radius: enc.zoneRadius + 1,
+      clear: [spawn, enc.pos],
+    });
+  }, [mission, missionRetry]);
+
+  // One display unit per encounter enemy: a dummy controller (idle placement,
+  // then corpse) plus its own animation machine, so dropped targets stay where
+  // they fell while the next one waits down the road.
+  const enemyUnits = useMemo(() => {
+    const count = mission ? mission.encounters.length : 1;
+    const facing = mission ? (missionRetry ? mission.retrySpawn : mission.playerSpawn) : [-5, 0];
+    return Array.from({ length: count }, (_, i) => {
+      const pos: [number, number] = mission ? mission.encounters[i].pos : [5, 0];
+      const ctrl = new CharacterController(new THREE.Vector3(pos[0], 0, pos[1]));
+      ctrl.state.rotation = Math.atan2(facing[0] - pos[0], facing[1] - pos[1]);
+      return { ctrl, machine: new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]) };
+    });
+  }, [mission, missionRetry, enemyClass]);
 
   const playerAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[playerClass]), [playerClass]);
-  const enemyAnimMachine = useMemo(() => new AnimationStateMachine(CLASS_ANIMATIONS[enemyClass]), [enemyClass]);
 
   const combatAudio = useMemo(() => new CombatAudio(), []);
   const particles = useMemo(() => new ParticleSystem(), []);
@@ -168,7 +294,8 @@ function BattleWorld({
   // back to false marks the mag-in "chunk" moment.
   const wasReloadingRef = useRef({ p1: false, p2: false });
 
-  // KO beat timeline state (null until someone dies).
+  // KO beat timeline state (null until someone dies). `final` = this KO ends
+  // the whole fight/mission; a mid-chain kill loops back into roam instead.
   const koBeatRef = useRef<{
     t: number;
     winner: 'player' | 'enemy';
@@ -176,6 +303,7 @@ function BattleWorld({
     resumed: boolean;
     slowmoEnded: boolean;
     resultFired: boolean;
+    final: boolean;
   } | null>(null);
 
   // Silence everything (crowd loop included) when the scene unmounts — the
@@ -188,16 +316,17 @@ function BattleWorld({
   // Wall-clock start of live combat, for the fight-duration reward guard.
   const combatStartRef = useRef(0);
 
-  // Camera choreography: wide duel framing for the intro countdown, then the
-  // camera swings in behind the player's shoulder when combat starts (the swing
-  // itself is just the OTS lerp converging), and pulls back out for the KO beat.
+  // Camera choreography: missions open over the shoulder looking down-range at
+  // the objective (the roam camera); quick fights open on the wide duel framing
+  // for the countdown. Combat start swings in behind the player's shoulder, and
+  // the KO beat pulls back out into the killcam orbit.
   useEffect(() => {
-    battleCamera.setMode('duel');
-  }, [battleCamera]);
+    battleCamera.setMode(missionMode ? 'ots' : 'duel');
+  }, [battleCamera, missionMode]);
 
   const animFor = useCallback(
-    (id: FighterId) => (id === 'p1' ? playerAnimMachine : enemyAnimMachine),
-    [playerAnimMachine, enemyAnimMachine],
+    (id: FighterId) => (id === 'p1' ? playerAnimMachine : enemyUnits[encIdxRef.current].machine),
+    [playerAnimMachine, enemyUnits],
   );
 
   // A shot left the muzzle — fire clip + the GUN'S OWN voice/flash/tracer from its
@@ -219,13 +348,14 @@ function BattleWorld({
     particles.emitCasing(origin, side);
 
     // Body recoil (decayed by FighterModel), scaled by the gun's kick.
-    sim.controller(who).state.recoilPulse = Math.min(1, feel.kick);
+    const s = simRef.current;
+    if (s) s.controller(who).state.recoilPulse = Math.min(1, feel.kick);
 
     if (who === 'p1') {
       battleCamera.shake(feel.camShake, 45);
       battleCamera.punch(feel.camPunch);
     }
-  }, [animFor, combatAudio, tracerFX, particles, battleCamera, sim]);
+  }, [animFor, combatAudio, tracerFX, particles, battleCamera]);
 
   // A landed shot — the sim already applied damage/stagger; play the reaction clip
   // and feed the HUD. No per-bullet hit-stop — a firefight has to keep flowing.
@@ -234,7 +364,8 @@ function BattleWorld({
     onDamageEvent?.(ev);
     const defenderId = ev.defenderId as FighterId;
     const defenderAnim = animFor(defenderId);
-    sim.controller(defenderId).state.impactPulse = ev.hitType === 'light' ? 0.5 : 0.85;
+    const s = simRef.current;
+    if (s) s.controller(defenderId).state.impactPulse = ev.hitType === 'light' ? 0.5 : 0.85;
 
     // Show the dice: every landed shot prints its number. Crits pop big and
     // gold; damage on YOU reads red so incoming pain is legible at a glance.
@@ -266,13 +397,15 @@ function BattleWorld({
       crowd.cheer(ev.hitType === 'special' ? 0.7 : 0.4);
       if (ev.critical) screenFx.onCriticalHit();
     }
-  }, [sim, animFor, combatAudio, crowd, screenFx, battleCamera, onDamageEvent, damageNumbers, onHitmarker]);
+  }, [animFor, combatAudio, crowd, screenFx, battleCamera, onDamageEvent, damageNumbers, onHitmarker]);
 
   // A projectile arrived — spark on a hit, dust on a whiff, and a celebration
   // when the miss was EARNED by dodge i-frames (that's the game's one skill).
   const impactFX = useCallback((e: Extract<SimEvent, { kind: 'projectileHit' }>) => {
+    const s = simRef.current;
+    if (!s) return;
     const pos = new THREE.Vector3(e.position[0], e.position[1], e.position[2]);
-    const dir = new THREE.Vector3().subVectors(pos, sim.controller(e.shooterId).state.position).setY(0).normalize();
+    const dir = new THREE.Vector3().subVectors(pos, s.controller(e.shooterId).state.position).setY(0).normalize();
     if (e.hit) {
       particles.emitImpact(pos, dir, e.crit ? 'special' : 'light');
       particles.emitSparks(pos, dir, e.crit ? 0.8 : 0.4);
@@ -293,7 +426,88 @@ function BattleWorld({
     } else {
       particles.emitDust(pos, 0.3);
     }
-  }, [sim, particles, combatAudio, battleCamera, damageNumbers]);
+  }, [particles, combatAudio, battleCamera, damageNumbers]);
+
+  // ── Mission flow ────────────────────────────────────────────────────────────
+
+  const roamTargetVec = useRef(new THREE.Vector3());
+
+  // The player FOUND the enemy: build this encounter's sim where both bodies
+  // actually stand, swing to the standoff framing, and hand the bark/countdown
+  // to the page overlay. Combat itself starts when the countdown flips
+  // combatActive (the existing wait-for-combat branch holds the standoff).
+  const startEncounter = useCallback(() => {
+    if (!mission || !roamCtrl) return;
+    const i = encIdxRef.current;
+    const enc = mission.encounters[i];
+    const p = roamCtrl.state.position;
+    const s = new CombatSim(playerClass, enemyClass, {
+      p1Gun: playerGun, p2Gun: enemyGun, p2HpMult: enemyHpMult,
+      p1Pos: [p.x, p.z], p2Pos: enc.pos,
+      p1Health: healthCarryRef.current ?? undefined,
+      zone: { cx: enc.pos[0], cz: enc.pos[1], radius: enc.zoneRadius },
+      keepCover: true, // the zone's debris was laid out when the objective appeared
+    });
+    s.attachAI('p2', difficulty);
+    s.controller('p1').state.rotation = roamCtrl.state.rotation;
+    s.controller('p2').state.rotation = enemyUnits[i].ctrl.state.rotation;
+    simRef.current = s;
+    zoneRef.current = { cx: enc.pos[0], cz: enc.pos[1], radius: enc.zoneRadius };
+    phaseRef.current = 'combat';
+    setPhase('combat');
+    battleCamera.setMode('duel');
+    // Fresh enemy vitals for the standoff HUD; without this the bar shows the
+    // PREVIOUS encounter's corpse (0 HP, mid-reload) until the first sim tick.
+    const p2 = s.controller('p2').state;
+    onEnemyStateUpdate?.(p2.health, p2.maxHealth);
+    onEnemyReloadUpdate?.(false, 0);
+    onEncounterStart?.(enc, i);
+    bumpSim();
+  }, [mission, roamCtrl, playerClass, enemyClass, playerGun, enemyGun, enemyHpMult, difficulty, enemyUnits, battleCamera, onEncounterStart, onEnemyStateUpdate, onEnemyReloadUpdate, bumpSim]);
+
+  // Mid-chain target down: leave the corpse where it fell, patch the player up
+  // a little, lay out the next zone's debris, and drop back into roam with the
+  // next objective armed. Only the FINAL encounter reaches the result screen.
+  const advanceEncounter = useCallback(() => {
+    const s = simRef.current;
+    if (!s || !mission || !roamCtrl) return;
+    const i = encIdxRef.current;
+
+    const dead = s.controller('p2').state;
+    const unit = enemyUnits[i];
+    unit.ctrl.state.position.copy(dead.position);
+    unit.ctrl.state.rotation = dead.rotation;
+    unit.ctrl.state.isDead = true;
+
+    const pc = s.controller('p1').state;
+    roamCtrl.state.position.copy(pc.position);
+    roamCtrl.state.rotation = pc.rotation;
+    roamCtrl.state.velocity.set(0, 0, 0);
+    healthCarryRef.current = Math.min(pc.maxHealth, pc.health + Math.round(pc.maxHealth * 0.35));
+    onPlayerStateUpdate?.(healthCarryRef.current, pc.maxHealth, 100, 100);
+
+    const next = mission.encounters[i + 1];
+    regenerateCover(undefined, {
+      cx: next.pos[0], cz: next.pos[1], radius: next.zoneRadius + 1,
+      clear: [[pc.position.x, pc.position.z], next.pos],
+    });
+
+    encIdxRef.current = i + 1;
+    setEncIdx(i + 1);
+    simRef.current = null;
+    battleEndedRef.current = false;
+    koBeatRef.current = null;
+    wasReloadingRef.current = { p1: false, p2: false };
+    playerAnimMachine.setTimeScale(1);
+    unit.machine.setTimeScale(1);
+    playerAnimMachine.transition(AnimState.Idle, true);
+    bgmStartedRef.current = false; // music re-arms at the next FIGHT
+    battleCamera.setMode('ots');   // shoulder cam aimed down-range at the next objective
+    phaseRef.current = 'roam';
+    setPhase('roam');
+    onEncounterCleared?.(i);
+    bumpSim();
+  }, [mission, roamCtrl, enemyUnits, playerAnimMachine, battleCamera, onEncounterCleared, onPlayerStateUpdate, bumpSim]);
 
   const frameCountRef = useRef(0);
 
@@ -312,7 +526,10 @@ function BattleWorld({
     combatAudio.setCrowdEnergy(crowd.energy);
     screenFx.update(clampedDt);
 
-    if (battleEndedRef.current) {
+    const sim = simRef.current;
+    const enemyMachine = animFor('p2');
+
+    if (battleEndedRef.current && sim) {
       // The kill moment: freeze → slow-mo under the killcam orbit → result.
       const beat = koBeatRef.current;
       if (beat) {
@@ -322,41 +539,99 @@ function BattleWorld({
           // resume() replays the queued Death/Victory transitions; slow the
           // mixers AFTER resume (resume resets timeScale to 1). FOV tightens.
           playerAnimMachine.resume();
-          enemyAnimMachine.resume();
+          enemyMachine.resume();
           playerAnimMachine.setTimeScale(KO_SLOWMO_SCALE);
-          enemyAnimMachine.setTimeScale(KO_SLOWMO_SCALE);
+          enemyMachine.setTimeScale(KO_SLOWMO_SCALE);
           battleCamera.setSlowMoFov(-8);
         }
         if (!beat.slowmoEnded && beat.t >= KO_SLOWMO_UNTIL) {
           beat.slowmoEnded = true;
           playerAnimMachine.setTimeScale(1);
-          enemyAnimMachine.setTimeScale(1);
+          enemyMachine.setTimeScale(1);
           battleCamera.setSlowMoFov(0);
         }
         if (!beat.resultFired && beat.t >= KO_RESULT_AT) {
           beat.resultFired = true;
-          if (beat.winner === 'player') combatAudio.playVictoryFanfare();
-          else combatAudio.playDefeatMelody();
-          onBattleEnd?.(beat.winner, beat.durationSecs);
+          if (beat.final) {
+            if (beat.winner === 'player') combatAudio.playVictoryFanfare();
+            else combatAudio.playDefeatMelody();
+            onBattleEnd?.(beat.winner, beat.durationSecs);
+          } else {
+            // Target down mid-chain — back to the hunt.
+            advanceEncounter();
+            return;
+          }
         }
       }
       // The killcam keeps orbiting the winner through (and behind) the result.
-      battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
+      battleCamera.update(clampedDt, sim.controller('p1').state.position, sim.controller('p2').state.position);
       return;
     }
 
     // Hit-stop: freeze game logic but keep VFX + camera alive
-    if (hitStopTimerRef.current > 0) {
+    if (hitStopTimerRef.current > 0 && sim) {
       hitStopTimerRef.current -= clampedDt;
-      battleCamera.update(clampedDt, playerController.state.position, enemyController.state.position);
+      battleCamera.update(clampedDt, sim.controller('p1').state.position, sim.controller('p2').state.position);
       if (hitStopTimerRef.current <= 0) {
         playerAnimMachine.resume();
-        enemyAnimMachine.resume();
+        enemyMachine.resume();
       }
       return;
     }
 
-    // --- Wait for combat to start ---
+    // --- Roam: walk the level, find the enemy ---
+    if (phaseRef.current === 'roam' && mission && roamCtrl) {
+      const enc = mission.encounters[encIdxRef.current];
+      const rs = roamCtrl.state;
+      roamCtrl.update(clampedDt, input, battleCamera.cameraYaw);
+      // Collide with the world: village walls, debris, props.
+      const [nx, nz] = resolveCover(rs.position.x, rs.position.z, 0.55);
+      rs.position.x = nx;
+      rs.position.z = nz;
+
+      // Shoulder cam aimed down-range at the objective — W walks you there.
+      roamTargetVec.current.set(enc.pos[0], 0, enc.pos[1]);
+      battleCamera.update(clampedDt, rs.position, roamTargetVec.current);
+
+      // Locomotion straight off the live body (no sim yet).
+      const roamSpeed = Math.hypot(rs.velocity.x, rs.velocity.z);
+      playerAnimMachine.transition(
+        rs.isDodging ? AnimState.Dodge
+          : roamSpeed > 0.2 ? (rs.isRunning ? AnimState.Run : AnimState.Walk)
+          : AnimState.Idle,
+      );
+
+      if (roamSpeed > FOOTSTEP_SPEED_THRESHOLD) {
+        playerStepTimerRef.current -= clampedDt;
+        if (playerStepTimerRef.current <= 0) {
+          playerStepTimerRef.current = FOOTSTEP_INTERVAL;
+          combatAudio.playFootstep();
+        }
+      } else {
+        playerStepTimerRef.current = 0;
+      }
+
+      // The battlefield breathes from the first step, not the first shot.
+      if (!hasCrowd) combatAudio.startWindAmbience();
+
+      const d = Math.hypot(rs.position.x - enc.pos[0], rs.position.z - enc.pos[1]);
+      onObjective?.(enc.objective, Math.round(d));
+
+      // Found them.
+      if (d < Math.min(enc.zoneRadius * 0.8, 8)) startEncounter();
+
+      input.update();
+      return;
+    }
+
+    if (!sim) {
+      input.update();
+      return;
+    }
+    const playerController = sim.controller('p1');
+    const enemyController = sim.controller('p2');
+
+    // --- Wait for combat to start (countdown / standoff bark) ---
     const ps = playerController.state;
     if (!combatActiveRef.current) {
       battleCamera.update(clampedDt, ps.position, enemyController.state.position);
@@ -405,13 +680,19 @@ function BattleWorld({
           const winner = e.winner === 'p1' ? 'player' : 'enemy';
           const loser = e.loser === 'p1' ? 'player' : 'enemy';
 
+          // Chain bookkeeping: only a player win with encounters still queued
+          // continues the mission; anything else lands on the result screen.
+          const isFinal = !missionMode
+            || winner !== 'player'
+            || encIdxRef.current >= (mission?.encounters.length ?? 1) - 1;
+
           // Freeze the killing frame — both bodies hold while the burst pops.
           // The Death/Victory transitions queue behind the pause and start
           // playing (in slow-mo) when the beat timeline resumes the machines.
           playerAnimMachine.pause();
-          enemyAnimMachine.pause();
-          const loserAnim = loser === 'player' ? playerAnimMachine : enemyAnimMachine;
-          const winnerAnim = winner === 'player' ? playerAnimMachine : enemyAnimMachine;
+          enemyMachine.pause();
+          const loserAnim = loser === 'player' ? playerAnimMachine : enemyMachine;
+          const winnerAnim = winner === 'player' ? playerAnimMachine : enemyMachine;
           loserAnim.transition(AnimState.Death, true);
           winnerAnim.transition(AnimState.Victory, true);
 
@@ -436,6 +717,7 @@ function BattleWorld({
             resumed: false,
             slowmoEnded: false,
             resultFired: false,
+            final: isFinal,
           };
         }
       }
@@ -460,7 +742,7 @@ function BattleWorld({
       machine.transition(animState);
     };
     syncAnim(playerAnimMachine, snapshot.fighters.p1.animState);
-    syncAnim(enemyAnimMachine, snapshot.fighters.p2.animState);
+    syncAnim(enemyMachine, snapshot.fighters.p2.animState);
 
     // --- Footsteps + ground dust ---
     const playerSpeed = Math.sqrt(ps.velocity.x ** 2 + ps.velocity.z ** 2);
@@ -518,8 +800,39 @@ function BattleWorld({
       {/* Battlefield stages have no stadium; the crowd only exists in the colosseum. */}
       {hasCrowd && <Crowd director={crowd} />}
       <CoverProps variant={arenaVariant} />
-      <FighterModel classId={playerClass} state={playerController.state} animMachine={playerAnimMachine} accent={CLASS_ACCENTS[playerClass]} gunId={playerGun} />
-      <FighterModel classId={enemyClass} state={enemyController.state} animMachine={enemyAnimMachine} accent={CLASS_ACCENTS[enemyClass]} gunId={enemyGun} />
+
+      {/* Mission staging: the objective beacon while hunting, the zone ring while fighting. */}
+      {missionMode && phase === 'roam' && mission && (
+        <ObjectiveMarker
+          x={mission.encounters[Math.min(encIdx, mission.encounters.length - 1)].pos[0]}
+          z={mission.encounters[Math.min(encIdx, mission.encounters.length - 1)].pos[1]}
+        />
+      )}
+      {missionMode && phase === 'combat' && zoneRef.current && (
+        <ZoneRing cx={zoneRef.current.cx} cz={zoneRef.current.cz} radius={zoneRef.current.radius} />
+      )}
+
+      <FighterModel
+        classId={playerClass}
+        state={phase === 'roam' && roamCtrl ? roamCtrl.state : simRef.current ? simRef.current.controller('p1').state : roamCtrl!.state}
+        animMachine={playerAnimMachine}
+        accent={CLASS_ACCENTS[playerClass]}
+        gunId={playerGun}
+      />
+      {/* One model per encounter enemy: the current target (idle until found,
+          sim-driven in combat) plus every corpse the chain already dropped. */}
+      {enemyUnits.map((u, i) =>
+        i > encIdx ? null : (
+          <FighterModel
+            key={i}
+            classId={enemyClass}
+            state={i === encIdx && simRef.current ? simRef.current.controller('p2').state : u.ctrl.state}
+            animMachine={u.machine}
+            accent={CLASS_ACCENTS[enemyClass]}
+            gunId={enemyGun}
+          />
+        ),
+      )}
       <primitive object={tracerFX.group} />
       <primitive object={particles.mesh} />
       <primitive object={damageNumbers.group} />
@@ -558,6 +871,12 @@ export function GameScene(props: GameSceneProps) {
   const [sceneReady, setSceneReady] = useState(false);
   const combatStartedRef = useRef(false);
 
+  // Mission overlays: the roam objective line, the enemy's standoff bark, and
+  // the mid-chain "target down" beat.
+  const [objective, setObjective] = useState<{ text: string; dist: number } | null>(null);
+  const [bark, setBark] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
   const arenaVariant: ArenaVariant = STAGE_VARIANTS[props.stageId ?? 'battle_arena'];
 
   const difficulty = props.difficulty ?? AIDifficulty.Medium;
@@ -571,6 +890,16 @@ export function GameScene(props: GameSceneProps) {
     input.attach(window);
   }, []);
 
+  // The Ashfall stage IS collidable geometry — register the village with the
+  // sim's static cover layer so walls block movement, bullets and the camera.
+  // Registered during render (not an effect): BattleWorld generates the first
+  // encounter's debris inside the R3F tree, and its wall-overlap checks need
+  // the static layer to already exist by then.
+  useMemo(() => {
+    setStaticCover(arenaVariant === 'ashfall' ? villageColliders() : []);
+  }, [arenaVariant]);
+  useEffect(() => () => setStaticCover([]), []);
+
   const startCountdown = useCallback(() => {
     if (combatStartedRef.current) return;
     setSceneReady(true);
@@ -582,6 +911,29 @@ export function GameScene(props: GameSceneProps) {
       combatStartedRef.current = true;
     }, 3000);
     setTimeout(() => setCountdown(null), 3800);
+  }, []);
+
+  // Roam HUD line — identical values bail out so the 60fps stream doesn't
+  // re-render the overlay tree.
+  const handleObjective = useCallback((text: string, dist: number) => {
+    setObjective((prev) => (prev && prev.text === text && prev.dist === dist ? prev : { text, dist }));
+  }, []);
+
+  // Standoff: objective HUD off, the enemy gets their line, then the countdown.
+  const handleEncounterStart = useCallback((enc: MissionEncounter) => {
+    setObjective(null);
+    setBark(enc.bark);
+    setTimeout(() => {
+      setBark(null);
+      startCountdown();
+    }, 2000);
+  }, [startCountdown]);
+
+  // Mid-chain kill: re-arm the countdown gate and let the beat breathe.
+  const handleEncounterCleared = useCallback(() => {
+    combatStartedRef.current = false;
+    setToast('TARGET DOWN');
+    setTimeout(() => setToast(null), 2400);
   }, []);
 
   return (
@@ -619,7 +971,12 @@ export function GameScene(props: GameSceneProps) {
                   : { reloading, progress })}
             onHitmarker={(crit) => setHitmarker({ id: ++hitmarkerId.current, crit })}
             onBattleEnd={(w, d) => { setBattleResult(w); props.onBattleEnd?.(w, d); }}
-            onReady={startCountdown}
+            // Missions open in roam (no countdown until the enemy is found);
+            // quick fights count straight down into the duel.
+            onReady={props.mission ? () => setSceneReady(true) : startCountdown}
+            onObjective={handleObjective}
+            onEncounterStart={handleEncounterStart}
+            onEncounterCleared={handleEncounterCleared}
           />
         </Suspense>
       </Canvas>
@@ -644,27 +1001,42 @@ export function GameScene(props: GameSceneProps) {
             }} />
           </div>
         </div>
-        <div className="absolute top-4 right-4 md:top-6 md:right-6 text-right">
-          <div className="text-xs font-bold uppercase tracking-wider text-white/80 mb-1">{props.enemyName ?? props.enemyClass}</div>
-          <div className="relative w-48 md:w-64 h-4 rounded-sm overflow-hidden bg-black/60 border border-white/10">
-            <div className="absolute inset-y-0 right-0 rounded-sm transition-all duration-300" style={{
-              width: `${Math.max(0, (enemyHP / enemyMaxHP) * 100)}%`,
-              backgroundColor: enemyHP < 25 ? '#ef4444' : CLASS_ACCENTS[props.enemyClass],
-            }} />
-          </div>
-          <div className="text-xs text-white/50 font-mono mt-0.5">{enemyHP}/{enemyMaxHP}</div>
-          {/* Their mag is out — this is your window to push. */}
-          {enemyReload.reloading && !battleResult && (
-            <div className="mt-1 flex items-center justify-end gap-2">
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400 animate-pulse">
-                Reloading
-              </span>
-              <div className="w-16 h-1 rounded-full bg-black/50 overflow-hidden">
-                <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.round(enemyReload.progress * 100)}%` }} />
-              </div>
+        {/* Enemy vitals only exist once there's an enemy in front of you —
+            during the roam hunt the objective line takes this slot's job. */}
+        {!objective && (
+          <div className="absolute top-4 right-4 md:top-6 md:right-6 text-right">
+            <div className="text-xs font-bold uppercase tracking-wider text-white/80 mb-1">{props.enemyName ?? props.enemyClass}</div>
+            <div className="relative w-48 md:w-64 h-4 rounded-sm overflow-hidden bg-black/60 border border-white/10">
+              <div className="absolute inset-y-0 right-0 rounded-sm transition-all duration-300" style={{
+                width: `${Math.max(0, (enemyHP / enemyMaxHP) * 100)}%`,
+                backgroundColor: enemyHP < 25 ? '#ef4444' : CLASS_ACCENTS[props.enemyClass],
+              }} />
             </div>
-          )}
-        </div>
+            <div className="text-xs text-white/50 font-mono mt-0.5">{enemyHP}/{enemyMaxHP}</div>
+            {/* Their mag is out — this is your window to push. */}
+            {enemyReload.reloading && !battleResult && (
+              <div className="mt-1 flex items-center justify-end gap-2">
+                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400 animate-pulse">
+                  Reloading
+                </span>
+                <div className="w-16 h-1 rounded-full bg-black/50 overflow-hidden">
+                  <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.round(enemyReload.progress * 100)}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Roam objective — what you're hunting and how far away it is. */}
+        {objective && !battleResult && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 text-center">
+            <div className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-300/90">Objective</div>
+            <div className="text-sm md:text-base font-bold text-white/95 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] max-w-xs md:max-w-md">
+              {objective.text}
+            </div>
+            <div className="text-xs font-mono text-amber-200/80 mt-0.5">{objective.dist}m</div>
+          </div>
+        )}
 
         {/* Hitmarker — X ticks at screen centre (the OTS camera keeps the enemy
             there); re-mounts per hit via the key to restart the animation. */}
@@ -710,7 +1082,7 @@ export function GameScene(props: GameSceneProps) {
 
         {/* Ammo / reload — the gun's own status line. Sits clear of the mobile
             touch stick (left) and fire button (right). */}
-        {ammoHud.magazine > 0 && !battleResult && (
+        {ammoHud.magazine > 0 && !battleResult && !objective && (
           <div className="absolute bottom-6 md:bottom-24 left-1/2 -translate-x-1/2 text-center">
             {ammoHud.reloading ? (
               <div className="w-44">
@@ -755,6 +1127,30 @@ export function GameScene(props: GameSceneProps) {
           ))}
         </div>
       </div>
+
+      {/* Standoff bark — the enemy's line when you find them. */}
+      {bark && (
+        <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center pointer-events-none">
+          <div className="max-w-xl mx-4 px-5 py-3 bg-black/75 border border-white/10 rounded-lg text-center">
+            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-red-400 mb-1">
+              {props.enemyName ?? props.enemyClass}
+            </div>
+            <div className="text-white/95 text-base md:text-lg font-semibold">“{bark}”</div>
+          </div>
+        </div>
+      )}
+
+      {/* Mid-chain kill beat — target down, mission continues. */}
+      {toast && !battleResult && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
+          <div className="text-center">
+            <div className="text-4xl md:text-5xl font-black text-emerald-400 drop-shadow-[0_0_25px_rgba(52,211,153,0.5)]">
+              {toast}
+            </div>
+            <div className="text-sm font-bold uppercase tracking-[0.25em] text-white/70 mt-2">Push forward</div>
+          </div>
+        </div>
+      )}
 
       {/* Countdown overlay */}
       {countdown !== null && (

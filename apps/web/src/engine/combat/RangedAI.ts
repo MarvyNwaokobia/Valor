@@ -113,12 +113,16 @@ export class RangedAI {
     wx += tx * rangeBias;
     wz += tz * rangeBias;
 
-    // Steer back from the arena edge, and flip the strafe when cornered.
-    const distC = Math.hypot(sx, sz);
+    // Steer back from the zone edge, and flip the strafe when cornered. The
+    // zone centre/radius come from the controller config (missions fight in
+    // zones away from the world origin).
+    const [zcx, zcz] = self.config.arenaCenter;
+    const ex = sx - zcx, ez = sz - zcz;
+    const distC = Math.hypot(ex, ez);
     this.strafeTimer -= dt;
-    if (distC > 15) {
-      wx += (-sx / (distC || 1)) * 1.3;
-      wz += (-sz / (distC || 1)) * 1.3;
+    if (distC > self.config.arenaRadius * 0.85) {
+      wx += (-ex / (distC || 1)) * 1.3;
+      wz += (-ez / (distC || 1)) * 1.3;
       this.strafeTimer = Math.min(this.strafeTimer, 0.15);
     }
     if (this.strafeTimer <= 0) {
