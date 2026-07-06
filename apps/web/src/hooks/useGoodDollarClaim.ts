@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { createClaimSDK, withTimeout } from '@/lib/gooddollar'
+import { createClaimSDK, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -51,25 +51,23 @@ export function useGoodDollarClaim(
 
   const sdkReady = !!publicClient && !!walletClient && !!walletAddress
 
+  // Status check is read-only — it must NOT wait on the Magic wallet client
+  // (undefined/slow on mobile Safari). Only the wallet ADDRESS is needed; the
+  // SDK runs against plain HTTP Celo clients. See createReadOnlyClaimSDK.
   const refresh = useCallback(async () => {
-    console.log('[Claim] refresh called. publicClient:', !!publicClient, 'walletClient:', !!walletClient, 'walletAddress:', walletAddress)
-    if (!publicClient || !walletClient || !walletAddress) {
-      console.warn('[Claim] refresh: missing publicClient, walletClient, or walletAddress — staying in loading state')
+    if (!walletAddress) {
       setStatus('loading')
       return
     }
     setStatus('loading')
     setError(null)
     try {
-      console.log('[Claim] refresh: creating ClaimSDK')
-      const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
-      console.log('[Claim] refresh: ClaimSDK created, calling getWalletClaimStatus')
+      const sdk = createReadOnlyClaimSDK(walletAddress)
       const walletStatus = await withTimeout(
         sdk.getWalletClaimStatus(),
         12000,
         'GoodDollar claim status check timed out'
       )
-      console.log('[Claim] refresh: getWalletClaimStatus result:', walletStatus)
 
       if (walletStatus.status === 'can_claim') {
         setStatus('can_claim')
@@ -89,7 +87,7 @@ export function useGoodDollarClaim(
       console.error('[Claim] refresh failed:', err)
       setStatus('error')
     }
-  }, [publicClient, walletClient, walletAddress])
+  }, [walletAddress])
 
   useEffect(() => { refresh() }, [refresh])
 
