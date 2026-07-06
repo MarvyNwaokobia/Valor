@@ -18,10 +18,18 @@ export function useActiveWalletClient(): WalletClient | undefined {
   const { data: wagmiWalletClient } = useWagmiWalletClient()
 
   return useMemo(() => {
-    if (status !== 'ready' || !address) return undefined
+    console.log('[ActiveWalletClient] resolving. status:', status, 'address:', address, 'source:', source)
+    if (status !== 'ready' || !address) {
+      console.warn('[ActiveWalletClient] not ready or no address — returning undefined')
+      return undefined
+    }
     if (source === 'wallet') return wagmiWalletClient
     const magic = getMagic()
-    if (!magic) return undefined
+    if (!magic) {
+      console.warn('[ActiveWalletClient] source is magic but getMagic() returned null — returning undefined')
+      return undefined
+    }
+    console.log('[ActiveWalletClient] built Magic-backed walletClient')
     return createWalletClient({
       account: address,
       chain: celo,

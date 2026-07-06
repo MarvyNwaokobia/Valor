@@ -52,19 +52,24 @@ export function useGoodDollarClaim(
   const sdkReady = !!publicClient && !!walletClient && !!walletAddress
 
   const refresh = useCallback(async () => {
+    console.log('[Claim] refresh called. publicClient:', !!publicClient, 'walletClient:', !!walletClient, 'walletAddress:', walletAddress)
     if (!publicClient || !walletClient || !walletAddress) {
+      console.warn('[Claim] refresh: missing publicClient, walletClient, or walletAddress — staying in loading state')
       setStatus('loading')
       return
     }
     setStatus('loading')
     setError(null)
     try {
+      console.log('[Claim] refresh: creating ClaimSDK')
       const sdk = await createClaimSDK(publicClient, walletClient, walletAddress)
+      console.log('[Claim] refresh: ClaimSDK created, calling getWalletClaimStatus')
       const walletStatus = await withTimeout(
         sdk.getWalletClaimStatus(),
         12000,
         'GoodDollar claim status check timed out'
       )
+      console.log('[Claim] refresh: getWalletClaimStatus result:', walletStatus)
 
       if (walletStatus.status === 'can_claim') {
         setStatus('can_claim')
@@ -80,7 +85,8 @@ export function useGoodDollarClaim(
         setEntitlement('0')
         setNextClaimTime(null)
       }
-    } catch {
+    } catch (err) {
+      console.error('[Claim] refresh failed:', err)
       setStatus('error')
     }
   }, [publicClient, walletClient, walletAddress])
