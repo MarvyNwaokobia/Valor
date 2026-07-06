@@ -7,11 +7,9 @@ import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
-import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import DecayPanel from '@/components/player-card/DecayPanel'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
-import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import UsernameSetup from '@/components/profile/UsernameSetup'
 import { ChainBadge } from '@/components/ui/ChainBadge'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
@@ -20,9 +18,9 @@ import type { CharacterClass } from '@/lib/classes'
 import { XP_PER_RANK } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import type { Item } from '@/types'
-import { formatGDollarNumber } from '@/utils/format'
-import { useGBalance } from '@/hooks/useGBalance'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import Link from 'next/link'
+import { Wallet } from 'lucide-react'
 
 export default function ProfilePage() {
   const { status, address } = useResolvedAuth()
@@ -41,7 +39,6 @@ export default function ProfilePage() {
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
   const xpProgress = (player.xp / XP_PER_RANK) * 100
-  const { formatted: gBalanceFormatted } = useGBalance(address as `0x${string}`)
   const [showUsernameModal, setShowUsernameModal] = useState(false)
 
   const itemIds = inventory.map(i => i.item_id)
@@ -179,43 +176,29 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* G$ wallet balance — spendable */}
+        {/* Battle record */}
         <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
-          style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.35)' }}>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ Balance</p>
-            <p className="font-black text-amber-400 text-lg">
-              {gBalanceFormatted ? `${gBalanceFormatted} G$` : '—'}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Spendable</p>
-            <p className="text-[9px] text-slate-500 mt-0.5">Use in Marketplace</p>
-          </div>
+          style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(42,42,58,0.8)' }}>
+          <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Record</p>
+          <p className="text-sm font-black text-white">
+            <span className="text-green-400">{player.wins}W</span>
+            <span className="text-slate-700 mx-1">/</span>
+            <span className="text-red-400">{player.losses}L</span>
+          </p>
         </div>
 
-        {/* Lifetime G$ earned + record */}
-        <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
-          style={{ background: 'rgba(234,179,8,0.04)', borderColor: 'rgba(234,179,8,0.12)' }}>
-          <div>
-            <p className="text-[9px] uppercase tracking-widest text-amber-500/40 font-bold">Total Earned</p>
-            <p className="font-black text-amber-400/70 text-base">{formatGDollarNumber(player.g_earned_lifetime)} G$</p>
+        {/* Go to Bank — G$ balance, earnings breakdown, transfer out */}
+        <Link
+          href="/bank"
+          className="flex items-center justify-between px-4 py-3 rounded-xl border transition-colors hover:border-amber-500/50"
+          style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.35)' }}
+        >
+          <div className="flex items-center gap-2">
+            <Wallet size={16} className="text-amber-400" />
+            <span className="font-bold text-white text-sm">Go to Bank</span>
           </div>
-          <div className="text-right">
-            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Record</p>
-            <p className="text-sm font-black text-white">
-              <span className="text-green-400">{player.wins}W</span>
-              <span className="text-slate-700 mx-1">/</span>
-              <span className="text-red-400">{player.losses}L</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Daily claim */}
-        <DailyClaimButton walletAddress={address} />
-
-        {/* GoodCollective rank pool rewards */}
-        <RankPoolPanel rank={player.rank} walletAddress={address} />
+          <span className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ · Claim · Transfer</span>
+        </Link>
 
         {/* Decay panel */}
         <DecayPanel walletAddress={address} />

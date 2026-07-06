@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useWalletClient, usePublicClient } from 'wagmi'
+import { usePublicClient } from 'wagmi'
+import { celo } from 'viem/chains'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { getReadSDK, rankPoolAddress, UBI_POOL_CLAIM_ABI } from '@/lib/goodcollective'
 import type { Rank } from '@/types/database'
 
@@ -12,7 +14,7 @@ export interface RankPoolStatus {
 }
 
 export function useRankPool(rank: Rank, walletAddress?: `0x${string}`) {
-  const { data: walletClient } = useWalletClient()
+  const walletClient = useActiveWalletClient()
   const publicClient = usePublicClient()
 
   const [status, setStatus] = useState<RankPoolStatus | null>(null)
@@ -54,11 +56,12 @@ export function useRankPool(rank: Rank, walletAddress?: `0x${string}`) {
   useEffect(() => { refresh() }, [refresh])
 
   const claim = useCallback(async () => {
-    if (!poolAddress || !walletClient || !publicClient) return
+    if (!poolAddress || !walletClient?.account || !publicClient) return
     setClaiming(true)
     setClaimError(null)
     try {
       const hash = await walletClient.writeContract({
+        account: walletClient.account, chain: celo,
         address: poolAddress,
         abi: UBI_POOL_CLAIM_ABI,
         functionName: 'claim',

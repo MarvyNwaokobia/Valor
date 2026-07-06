@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { usePublicClient, useWalletClient } from 'wagmi'
+import { usePublicClient } from 'wagmi'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { createClaimSDK } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
@@ -38,7 +39,7 @@ export function useGoodDollarClaim(
   onClaimSuccess?: () => void,
 ): UseGoodDollarClaimReturn {
   const publicClient = usePublicClient()
-  const { data: walletClient } = useWalletClient()
+  const walletClient = useActiveWalletClient()
 
   const [status, setStatus]               = useState<GDClaimStatus>('loading')
   const [entitlement, setEntitlement]     = useState('0')
@@ -101,8 +102,13 @@ export function useGoodDollarClaim(
       setStatus('already_claimed')
       setEntitlement('0')
 
-      // Tell backend to record timestamp + reset decay — fire-and-forget
-      fetch(`${API}/players/${walletAddress}/daily-claim`, { method: 'POST' }).catch(() => {})
+      // Tell backend to record timestamp + reset decay, and log the claim in
+      // the G$ ledger (Bank page's UBI-earned figure) — fire-and-forget
+      fetch(`${API}/players/${walletAddress}/daily-claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: entitlement, tx_hash: receipt.transactionHash }),
+      }).catch(() => {})
 
       onClaimSuccess?.()
     } catch (err) {
@@ -121,7 +127,7 @@ export function useGoodDollarClaim(
       setClaiming(false)
       setClaimStep('Confirm in your wallet')
     }
-  }, [sdkReady, publicClient, walletClient, walletAddress, onClaimSuccess])
+  }, [sdkReady, publicClient, walletClient, walletAddress, onClaimSuccess, entitlement])
 
   return {
     status,

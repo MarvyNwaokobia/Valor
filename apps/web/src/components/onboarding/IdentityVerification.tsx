@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useSignOut } from '@/hooks/useSignOut'
@@ -20,6 +21,13 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   const { status, faceVerifyUrl, error, check, getFaceVerifyUrl, reset } = useGoodDollarIdentity()
   const [signing, setSigning] = useState(false)
   const autoChecked = useRef(false)
+  const searchParams = useSearchParams()
+  // Set on the callback URL we hand GoodDollar's face-verify page — present
+  // when we're landing back here after that flow, whether or not GD's own
+  // page actually completed its redirect (its "please wait" screen sometimes
+  // hangs). Lets us skip straight to checking instead of showing the
+  // "Verify Identity" button again.
+  const returningFromFaceVerify = searchParams?.get('fv') === '1'
 
   async function handleVerify() {
     console.log('[IdentityVerification] handleVerify started')
@@ -42,16 +50,36 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
     }
   }
 
-  // Returning verified users: auto-run the whitelist check as soon as the
-  // wallet client is ready — no button click needed. If they're still
+  // Returning verified users, or anyone bounced back from GoodDollar's
+  // face-verify page, auto-run the whitelist check as soon as the wallet
+  // client is ready — no button click needed. If they're already
   // whitelisted they pass straight through; if not, the normal flow shows.
   useEffect(() => {
-    if (isVerified && walletClient && status === 'idle' && !autoChecked.current) {
+    if ((isVerified || returningFromFaceVerify) && walletClient && status === 'idle' && !autoChecked.current) {
       autoChecked.current = true
-      console.log('[IdentityVerification] Auto-check triggered because player isVerified but has no registered player profile')
+      console.log('[IdentityVerification] Auto-check triggered', { isVerified, returningFromFaceVerify })
       handleVerify()
     }
-  }, [walletClient, isVerified, status])
+  }, [walletClient, isVerified, returningFromFaceVerify, status])
+
+  // GoodDollar's own "please wait, redirecting when complete" page sometimes
+  // never redirects. If the user gives up and switches back to this tab
+  // manually, re-check immediately instead of leaving them stuck on the
+  // "Continue with Verification" prompt.
+  useEffect(() => {
+    function handleVisible() {
+      if (document.visibilityState === 'visible' && status === 'not_whitelisted' && !signing) {
+        console.log('[IdentityVerification] Tab regained focus while not_whitelisted — auto rechecking')
+        handleRecheckAfterFV()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisible)
+    window.addEventListener('focus', handleVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisible)
+      window.removeEventListener('focus', handleVisible)
+    }
+  }, [status, signing])
 
   async function handleRecheckAfterFV() {
     console.log('[IdentityVerification] handleRecheckAfterFV started')

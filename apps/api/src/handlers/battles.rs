@@ -140,15 +140,16 @@ async fn award_player(
     let losses = if !won { player.losses + 1 } else { player.losses };
 
     if let Some(rank) = new_rank {
+        // g_earned_lifetime is bumped separately below, only once the G$
+        // transfer actually confirms on-chain — see the tokio::spawn block.
         let _ = sqlx::query(
             "UPDATE players
              SET xp = $1, wins = $2, losses = $3, rank = $4,
-                 g_earned_lifetime = g_earned_lifetime + $5,
-                 last_active = $6, decay_status = 'none'
-             WHERE wallet_address = $7",
+                 last_active = $5, decay_status = 'none'
+             WHERE wallet_address = $6",
         )
         .bind(new_xp).bind(wins).bind(losses).bind(rank)
-        .bind(g_awarded).bind(now).bind(wallet)
+        .bind(now).bind(wallet)
         .execute(&state.db).await;
     } else {
         let _ = sqlx::query(
@@ -164,9 +165,38 @@ async fn award_player(
     if let Some(rank) = new_rank {
         if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
             let rank_str = rank.to_string();
+            let wallet2  = wallet.to_string();
+            let db       = state.db.clone();
             tokio::spawn(async move {
                 chain.record_rank_up(addr, rank_str.clone()).await;
                 chain.enroll_in_rank_pool(addr, &rank_str).await;
+
+                // Real G$ transfer for the rank-up reward — only bump
+                // g_earned_lifetime and log the ledger entry once this
+                // actually confirms on-chain (mirrors the pattern this
+                // superseded from the now-removed players.rs::rank_up_reward).
+                match chain.distribute_rank_up_reward(addr, rank_str.clone()).await {
+                    Ok(true) => {
+                        let _ = sqlx::query(
+                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
+                        )
+                        .bind(g_awarded)
+                        .bind(&wallet2)
+                        .execute(&db)
+                        .await;
+                        crate::handlers::ledger::insert_ledger_entry(
+                            &db, &wallet2, "battle_reward",
+                            rust_decimal::Decimal::from(g_awarded), None, None,
+                        ).await;
+                        tracing::info!("G$ distributed + recorded: {} +{}", wallet2, g_awarded);
+                    }
+                    Ok(false) => {
+                        tracing::warn!("Reward pool not configured — skipping G$ distribution for {}", wallet2);
+                    }
+                    Err(e) => {
+                        tracing::error!("G$ distribution failed for {}: {}", wallet2, e);
+                    }
+                }
             });
         }
     }

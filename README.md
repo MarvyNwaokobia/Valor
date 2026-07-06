@@ -196,6 +196,7 @@ cp .env.example .env
 psql $DATABASE_URL < migrations/init.sql
 psql $DATABASE_URL < migrations/add_chain_tx_columns.sql
 psql $DATABASE_URL < migrations/fix_decimal_columns.sql
+psql $DATABASE_URL < migrations/add_gdollar_ledger.sql
 
 # Build and run
 cargo run
@@ -259,6 +260,9 @@ forge test
 | `RANK_POOL_GOLD` | — | GoodCollective UBI pool address for Gold rank rewards |
 | `RANK_POOL_PLATINUM` | — | GoodCollective UBI pool address for Platinum rank rewards |
 | `RANK_POOL_DIAMOND` | — | GoodCollective UBI pool address for Diamond rank rewards |
+| `G_TOKEN_CONTRACT` | — | G$ SuperToken address on Celo (defaults to the known mainnet address) — used to relay player-initiated transfer-outs |
+| `ADMIN_WALLETS` | — | Comma-separated wallet addresses allowed to sign into `/admin` |
+| `ADMIN_JWT_SECRET` | — | Signing secret for short-lived admin session tokens (separate from `SUPABASE_JWT_SECRET`) |
 
 ### `contracts/.env`
 
@@ -290,9 +294,11 @@ forge test
 | `POST` | `/players/:wallet/daily-claim` | Daily check-in |
 | `GET` | `/players/:wallet/daily-claim-status` | Check if claimable today |
 | `POST` | `/players/:wallet/decay-check` | Run decay check for this player |
-| `POST` | `/players/:wallet/rank-up` | Claim rank-up reward |
 | `POST` | `/players/:wallet/freeze-decay` | Consume a Shield to freeze decay 7 days |
 | `GET` | `/players/:wallet/username-available/:username` | Check username availability |
+| `GET` | `/players/:wallet/ledger-summary` | G$ earned (UBI/gameplay) + spent breakdown for the Bank page |
+| `POST` | `/players/:wallet/transfer` | Transfer G$ out to any wallet (player-signed permit, relayed) |
+| `GET` | `/relay-address` | Backend relay wallet's address (needed as the transfer permit's spender) |
 
 ### Battles
 
@@ -332,6 +338,11 @@ forge test
 |--------|------|-------------|
 | `POST` | `/decay/run` | Trigger decay sweep (requires `x-cron-secret` header) |
 | `GET` | `/health` | Health check |
+| `POST` | `/admin/login` | Wallet-signature login (checked against `ADMIN_WALLETS`) — issues a short-lived admin JWT |
+| `GET` | `/admin/stats?season_id=` | Season (or all-time) player/G$ volume stats — requires admin bearer token |
+| `GET` | `/admin/seasons` | List seasons — requires admin bearer token |
+| `POST` | `/admin/seasons` | Start a new season, closing any currently-open one — requires admin bearer token |
+| `POST` | `/admin/seasons/:id/end` | End a season — requires admin bearer token |
 
 ### WebSocket
 
@@ -385,6 +396,7 @@ railway variables --service Postgres --json   # get DATABASE_PUBLIC_URL
 psql $DATABASE_PUBLIC_URL < migrations/init.sql               # 001 initial schema
 psql $DATABASE_PUBLIC_URL < migrations/add_chain_tx_columns.sql  # 002 RLS + chain tx columns
 psql $DATABASE_PUBLIC_URL < migrations/fix_decimal_columns.sql   # 003 fix decimal types
+psql $DATABASE_PUBLIC_URL < migrations/add_gdollar_ledger.sql    # 004 G$ ledger + seasons
 ```
 
 Planned migrations (not yet in `migrations/` — apply when implemented):

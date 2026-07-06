@@ -38,6 +38,19 @@ abigen!(
     ]"#
 );
 
+// Standard ERC20 + EIP-2612 permit — G$ itself implements this (same contract
+// the frontend already signs permits against for marketplace checkout).
+abigen!(
+    GDollarToken,
+    r#"[
+        function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+        function transferFrom(address from, address to, uint256 value) external returns (bool)
+    ]"#
+);
+
+// Mainnet G$ SuperToken on Celo — matches apps/web/src/lib/constants.ts's G_TOKEN_ADDRESS.
+const DEFAULT_G_TOKEN: &str = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 #[derive(Clone)]
@@ -47,6 +60,7 @@ pub struct ChainWriter {
     rank_pools:   HashMap<String, Address>,
     marketplace:  Option<Arc<ValorMarketplace<ChainClient>>>,
     reward_pool:  Option<Arc<ValorRewardPool<ChainClient>>>,
+    g_token:      Arc<GDollarToken<ChainClient>>,
 }
 
 impl ChainWriter {
@@ -105,8 +119,15 @@ impl ChainWriter {
                 Arc::new(ValorRewardPool::new(addr, client.clone()))
             });
 
+        let g_token_addr: Address = std::env::var("G_TOKEN_CONTRACT")
+            .unwrap_or_else(|_| DEFAULT_G_TOKEN.to_string())
+            .parse()
+            .map_err(|e| tracing::warn!("ChainWriter: bad G_TOKEN_CONTRACT: {}", e))
+            .ok()?;
+        let g_token = Arc::new(GDollarToken::new(g_token_addr, client.clone()));
+
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract, client, rank_pools, marketplace, reward_pool })
+        Some(Self { contract, client, rank_pools, marketplace, reward_pool, g_token })
     }
 
     pub async fn claim_character(
@@ -269,5 +290,57 @@ impl ChainWriter {
 
         tracing::info!("purchaseWithPermit confirmed: {:?}", hash);
         Ok(hash)
+    }
+
+    /// Relays a player-initiated G$ transfer to any destination address.
+    /// The player signed an EIP-2612 permit granting this wallet an allowance
+    /// for the exact amount — no CELO required from them, and Valor never
+    /// custodies the funds (this wallet only ever holds the allowance long
+    /// enough to move it straight through to `to`). This wallet pays gas for
+    /// both steps. Returns the transferFrom tx hash (the one that actually
+    /// moves the funds).
+    pub async fn transfer_g_for(
+        &self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let r: [u8; 32] = H256::from_str(r_hex).map_err(|_| format!("Invalid r: {}", r_hex))?.0;
+        let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {}", s_hex))?.0;
+        let spender = self.client.address();
+
+        // 1. Consume the permit — grants this wallet an allowance for `amount`.
+        let permit_call = self.g_token.permit(from, spender, amount, U256::from(deadline), v, r, s);
+        let permit_pending = permit_call.send().await
+            .map_err(|e| format!("permit submission failed: {}", e))?;
+        tokio::time::timeout(Duration::from_secs(90), permit_pending.confirmations(1))
+            .await
+            .map_err(|_| "permit tx timed out".to_string())?
+            .map_err(|e| format!("permit tx failed: {}", e))?
+            .ok_or_else(|| "permit tx was dropped from mempool".to_string())?;
+
+        // 2. Move the funds straight to the destination.
+        let transfer_call = self.g_token.transfer_from(from, to, amount);
+        let transfer_pending = transfer_call.send().await
+            .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+        let hash = transfer_pending.tx_hash();
+        tokio::time::timeout(Duration::from_secs(90), transfer_pending.confirmations(1))
+            .await
+            .map_err(|_| "transfer tx timed out".to_string())?
+            .map_err(|e| format!("transfer tx failed: {}", e))?
+            .ok_or_else(|| "transfer tx was dropped from mempool".to_string())?;
+
+        tracing::info!("transferG: {} -> {} amount={} tx={:?}", from, to, amount, hash);
+        Ok(hash)
+    }
+
+    /// This wallet's own address — the frontend needs it as the `spender` in
+    /// the EIP-2612 permit it signs for `transfer_g_for` above.
+    pub fn relay_address(&self) -> Address {
+        self.client.address()
     }
 }

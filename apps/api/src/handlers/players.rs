@@ -1,11 +1,12 @@
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpResponse};
 use chrono::Utc;
 use ethers::types::Address;
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::utils::{is_valid_wallet, normalize_wallet};
+use crate::handlers::ledger::{record_ubi_claim, DailyClaimLedgerBody};
+use crate::utils::normalize_wallet;
 use crate::AppState;
 
 // ── PATCH /players/:wallet ────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ pub async fn get_player(
 pub async fn daily_claim(
     state: web::Data<AppState>,
     path: web::Path<String>,
+    body: Option<web::Json<DailyClaimLedgerBody>>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
     let now = Utc::now();
@@ -175,6 +177,10 @@ pub async fn daily_claim(
     .bind(&wallet)
     .execute(&state.db)
     .await;
+
+    if let Some(body) = body {
+        record_ubi_claim(&state.db, &wallet, &body).await;
+    }
 
     HttpResponse::Ok().json(json!({
         "success": true,
@@ -242,82 +248,6 @@ pub async fn decay_check(
     }
 
     HttpResponse::Ok().json(json!({"decay_status": new_status, "hours_inactive": hours_inactive}))
-}
-
-#[derive(serde::Deserialize)]
-pub struct RankUpRequest {
-    pub new_rank: String,
-}
-
-pub async fn rank_up_reward(
-    state: web::Data<AppState>,
-    req: HttpRequest,
-    path: web::Path<String>,
-    body: web::Json<RankUpRequest>,
-) -> HttpResponse {
-    let raw = path.into_inner();
-    if !is_valid_wallet(&raw) {
-        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
-    }
-    // Rate limit: 2 rank-ups per minute per IP (prevents spam)
-    let ip = req.connection_info().realip_remote_addr()
-        .unwrap_or("unknown")
-        .to_string();
-    if !state.rank_limiter.check(&ip) {
-        return HttpResponse::TooManyRequests()
-            .json(json!({"error": "Rate limit exceeded"}));
-    }
-    let wallet = normalize_wallet(&raw);
-    let new_rank = &body.new_rank;
-
-    let reward_amounts: std::collections::HashMap<&str, u64> = [
-        ("Bronze", 10), ("Silver", 20), ("Gold", 40), ("Platinum", 80), ("Diamond", 150),
-    ].iter().cloned().collect();
-
-    let Some(&amount) = reward_amounts.get(new_rank.as_str()) else {
-        return HttpResponse::BadRequest().json(json!({"error": "Unknown rank"}));
-    };
-
-    tracing::info!("Rank-up: {} -> {} (+{} G$)", wallet, new_rank, amount);
-
-    // Background chain writes: record event + distribute reward
-    if let Some(chain) = state.chain.as_ref().cloned() {
-        if let Ok(addr) = wallet.parse::<Address>() {
-            let rank_str  = new_rank.clone();
-            let wallet2   = wallet.clone();
-            let db        = state.db.clone();
-            tokio::spawn(async move {
-                // 1. Record rank-up on-chain (non-blocking, best-effort)
-                chain.record_rank_up(addr, rank_str.clone()).await;
-
-                // 2. Distribute real G$ from the reward pool
-                match chain.distribute_rank_up_reward(addr, rank_str.clone()).await {
-                    Ok(true) => {
-                        // Transfer confirmed — now reflect it in g_earned_lifetime
-                        let _ = sqlx::query(
-                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
-                        )
-                        .bind(amount as i64)
-                        .bind(&wallet2)
-                        .execute(&db)
-                        .await;
-                        tracing::info!("G$ distributed + recorded: {} +{}", wallet2, amount);
-                    }
-                    Ok(false) => {
-                        tracing::warn!("Reward pool not configured — skipping G$ distribution for {}", wallet2);
-                    }
-                    Err(e) => {
-                        tracing::error!("G$ distribution failed for {}: {}", wallet2, e);
-                    }
-                }
-            });
-        }
-    }
-
-    HttpResponse::Ok().json(json!({
-        "success": true,
-        "g_awarded": amount,
-    }))
 }
 
 // ── POST /players ─────────────────────────────────────────────────────────────
