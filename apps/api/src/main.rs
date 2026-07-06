@@ -16,7 +16,6 @@ pub struct AppState {
     pub rewards:           Option<services::rewards::RewardService>,
     pub chain:             Option<services::chain::ChainWriter>,
     pub battle_limiter:    services::rate_limiter::RateLimiter,
-    pub rank_limiter:      services::rate_limiter::RateLimiter,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
 }
@@ -57,11 +56,9 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Event listener disabled (MARKETPLACE_CONTRACT not set)");
     }
 
-    // Rate limiters — shared across all workers via AppState (DashMap is Send + Sync)
+    // Rate limiter — shared across all workers via AppState (DashMap is Send + Sync)
     // battle_limiter: 10 requests / 60s per IP
-    // rank_limiter:   2 requests / 60s per IP
     let battle_limiter = services::rate_limiter::RateLimiter::new(10, 60);
-    let rank_limiter   = services::rate_limiter::RateLimiter::new(2, 60);
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
     // In-progress bot fights — keyed by session id, shared across all workers
@@ -104,7 +101,6 @@ async fn main() -> anyhow::Result<()> {
                 rewards:        rewards.clone(),
                 chain:          chain.clone(),
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
-                rank_limiter:   services::rate_limiter::RateLimiter::new(2, 60),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
             }))

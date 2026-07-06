@@ -10,6 +10,8 @@ pub mod rewards;
 pub mod auth;
 pub mod ws;
 pub mod endless;
+pub mod ledger;
+pub mod admin;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -18,6 +20,7 @@ async fn health() -> HttpResponse {
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         .route("/health", web::get().to(health))
+        .route("/relay-address", web::get().to(ledger::get_relay_address))
         .route("/ws/battle", web::get().to(ws::battle_ws))
         .service(
             web::scope("/identity")
@@ -32,7 +35,6 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/daily-claim", web::post().to(players::daily_claim))
                 .route("/{wallet}/daily-claim-status", web::get().to(players::daily_claim_status))
                 .route("/{wallet}/decay-check", web::post().to(players::decay_check))
-                .route("/{wallet}/rank-up", web::post().to(players::rank_up_reward))
                 .route("/{wallet}", web::patch().to(players::update_player))
                 .route("/{wallet}/inventory", web::get().to(players::get_inventory))
                 .route("/{wallet}/inventory", web::post().to(players::add_inventory_item))
@@ -41,7 +43,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/achievements/check", web::post().to(players::check_achievements))
                 .route("/{wallet}/inventory/{item_id}", web::patch().to(players::toggle_equip))
                 .route("/{wallet}/battles", web::get().to(players::get_battles))
-                .route("/{wallet}/freeze-decay", web::post().to(players::freeze_decay)),
+                .route("/{wallet}/freeze-decay", web::post().to(players::freeze_decay))
+                .route("/{wallet}/ledger-summary", web::get().to(ledger::get_ledger_summary))
+                .route("/{wallet}/transfer", web::post().to(ledger::transfer_out)),
         )
         .service(
             web::scope("/battles")
@@ -79,5 +83,13 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/auth")
                 .route("/token", web::post().to(auth::issue_token)),
+        )
+        .service(
+            web::scope("/admin")
+                .route("/login", web::post().to(admin::login))
+                .route("/stats", web::get().to(admin::get_stats))
+                .route("/seasons", web::get().to(admin::list_seasons))
+                .route("/seasons", web::post().to(admin::create_season))
+                .route("/seasons/{id}/end", web::post().to(admin::end_season)),
         );
 }

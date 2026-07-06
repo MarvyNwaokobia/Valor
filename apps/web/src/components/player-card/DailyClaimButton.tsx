@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, RefreshCw } from 'lucide-react'
 import { useGoodDollarClaim } from '@/hooks/useGoodDollarClaim'
@@ -26,12 +26,33 @@ export default function DailyClaimButton({ walletAddress }: Props) {
   async function handleReverify() {
     setReverifying(true)
     try {
+      // Same-tab redirect (not window.open) — GoodDollar's face-verify page
+      // expects a top-level navigation and redirects back here itself once
+      // whitelisting completes, so the user lands right back on /profile
+      // with no second tab to hunt for.
       const url = await getFaceVerifyUrl(walletAddress, `${window.location.origin}/profile`)
-      if (url) window.open(url, '_blank')
+      if (url) window.location.href = url
     } finally {
       setReverifying(false)
     }
   }
+
+  // If GoodDollar's own redirect never fires and the user manually switches
+  // back to this tab, re-check right away instead of leaving the "re-verify"
+  // prompt stuck on screen.
+  useEffect(() => {
+    function handleVisible() {
+      if (document.visibilityState === 'visible' && status === 'not_whitelisted') {
+        refresh()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisible)
+    window.addEventListener('focus', handleVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisible)
+      window.removeEventListener('focus', handleVisible)
+    }
+  }, [status, refresh])
 
   async function handleClaim() {
     await claim()

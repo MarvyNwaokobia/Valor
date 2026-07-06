@@ -75,7 +75,7 @@ export async function generateFaceVerifyLink(
   const url = await withTimeout(
     sdk.generateFVLink(
       true,
-      callbackUrl ?? `${window.location.origin}/onboarding?step=verify`,
+      callbackUrl ?? `${window.location.origin}/onboarding?step=verify&fv=1`,
       SupportedChains.CELO,
     ),
     10000,

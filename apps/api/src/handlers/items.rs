@@ -182,6 +182,10 @@ pub async fn purchase_item_relay(
     .execute(&state.db)
     .await;
 
+    crate::handlers::ledger::insert_ledger_entry(
+        &state.db, &wallet, "marketplace_purchase", item.price_g, Some(&tx_hash), None,
+    ).await;
+
     tracing::info!("Purchase confirmed: item={} buyer={} tx={}", item_id, wallet, tx_hash);
 
     HttpResponse::Ok().json(json!({

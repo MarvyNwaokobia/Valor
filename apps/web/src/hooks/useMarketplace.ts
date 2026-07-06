@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useConfig, useSignTypedData } from 'wagmi'
+import { useConfig } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { parseUnits, parseSignature } from 'viem'
 import { useState } from 'react'
@@ -7,6 +7,7 @@ import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const MARKETPLACE_CONTRACT = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
@@ -53,10 +54,11 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const [pendingItemId, setPendingItemId] = useState<string | null>(null)
 
   const config = useConfig()
-  const { signTypedDataAsync } = useSignTypedData()
+  const walletClient = useActiveWalletClient()
 
   const purchase = async (item: Item): Promise<string> => {
     if (!walletAddress) throw new Error('Not signed in')
+    if (!walletClient?.account) throw new Error('Wallet not connected')
     if (!MARKETPLACE_CONTRACT) throw new Error('Marketplace not configured')
 
     setPendingItemId(item.id)
@@ -84,7 +86,8 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       })
 
       // Sign EIP-2612 permit — wallet shows "Sign message", zero gas for player
-      const rawSig = await signTypedDataAsync({
+      const rawSig = await walletClient.signTypedData({
+        account: walletClient.account,
         domain: {
           name: 'GoodDollar',
           version: '1',
