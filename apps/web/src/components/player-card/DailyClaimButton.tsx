@@ -254,16 +254,6 @@ export default function DailyClaimButton({ walletAddress }: Props) {
                 </motion.div>
               )}
 
-              {/* ── Gas note (shown when claiming) ── */}
-              {claiming && claimStep.includes('Gas') && (
-                <div className="px-3 py-2 rounded-lg"
-                  style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.18)' }}>
-                  <p className="text-[10px] text-amber-400/80 leading-relaxed">
-                    Your wallet needs a small CELO top-up for gas. A second signing prompt will appear — this is automatic and free.
-                  </p>
-                </div>
-              )}
-
               {error && (
                 <p className="text-red-400 text-xs -mt-2 text-center">{error}</p>
               )}
