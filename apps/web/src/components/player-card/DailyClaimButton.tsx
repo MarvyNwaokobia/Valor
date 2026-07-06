@@ -104,8 +104,8 @@ export default function DailyClaimButton({ walletAddress }: Props) {
         )}
 
         {status === 'already_claimed' && (
-          <div className="text-center py-1">
-            {isSuccess ? (
+          <div className="text-center py-1 flex flex-col gap-0.5">
+            {isSuccess && (
               <motion.p
                 className="text-sm font-bold"
                 style={{ color: '#00bf72' }}
@@ -114,11 +114,10 @@ export default function DailyClaimButton({ walletAddress }: Props) {
               >
                 G$ claimed!
               </motion.p>
-            ) : (
-              <p className="text-xs text-slate-500">
-                {nextClaimLabel ? `Next claim in ${nextClaimLabel}` : 'Claimed today'}
-              </p>
             )}
+            <p className="text-xs text-slate-500">
+              {nextClaimLabel ? `Next claim in ${nextClaimLabel}` : 'Claimed today'}
+            </p>
           </div>
         )}
 
@@ -249,6 +248,9 @@ export default function DailyClaimButton({ walletAddress }: Props) {
                   <p className="font-display font-black text-white text-lg">
                     +{entitlement === '0' ? '~' : entitlement} G$ received
                   </p>
+                  {nextClaimLabel && (
+                    <p className="text-xs text-slate-500">Next claim in {nextClaimLabel}</p>
+                  )}
                 </motion.div>
               )}
 

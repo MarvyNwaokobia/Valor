@@ -110,6 +110,13 @@ export function useGoodDollarClaim(
       setStatus('already_claimed')
       setEntitlement('0')
 
+      // Populate the next-claim countdown so the card can immediately show
+      // "Next claim in Xh Ym" after claiming. Read-only, non-blocking.
+      createReadOnlyClaimSDK(walletAddress)
+        .nextClaimTime()
+        .then((t) => setNextClaimTime(t))
+        .catch(() => {})
+
       // Tell backend to record timestamp + reset decay, and log the claim in
       // the G$ ledger (Bank page's UBI-earned figure) — fire-and-forget
       fetch(`${API}/players/${walletAddress}/daily-claim`, {

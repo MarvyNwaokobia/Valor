@@ -41,26 +41,6 @@ export async function createIdentitySDK(
   return new IdentitySDK({ account, publicClient, walletClient, env: GD_ENV })
 }
 
-export async function checkWhitelistStatus(
-  publicClient: PublicClient,
-  walletClient: WalletClient,
-  address: `0x${string}`,
-): Promise<{ isWhitelisted: boolean; root: `0x${string}` }> {
-  console.log('[GoodDollar] checkWhitelistStatus: starting verification check for', address)
-  const sdk = await withTimeout(
-    createIdentitySDK(publicClient, walletClient, address),
-    10000,
-    'GoodDollar SDK initialization timed out'
-  )
-  const result = await withTimeout(
-    sdk.getWhitelistedRoot(address),
-    10000,
-    'GoodDollar whitelist lookup timed out'
-  )
-  console.log('[GoodDollar] checkWhitelistStatus result:', result)
-  return result
-}
-
 export async function generateFaceVerifyLink(
   publicClient: PublicClient,
   walletClient: WalletClient,
@@ -104,16 +84,17 @@ export async function createClaimSDK(
 // Celo mainnet public RPC — Magic's embedded wallet talks to this same node.
 const CELO_RPC_URL = 'https://forno.celo.org'
 
-// A ClaimSDK backed entirely by plain HTTP Celo clients, with NO Magic /
-// wallet-provider dependency. Checking claim status (whitelist + entitlement +
-// next-claim-time) is fully read-only and routes through the public client, so
-// it must not hinge on useActiveWalletClient() — that Magic-backed client is
+// Signer-less HTTP Celo clients with NO Magic / wallet-provider dependency.
+// Every GoodDollar READ (whitelist status, identity expiry, claim
+// entitlement, next-claim-time) routes through the public client, so it must
+// not hinge on useActiveWalletClient() — that Magic-backed client is
 // slow or never-ready on mobile Safari (ITP / private-mode storage
-// partitioning), which otherwise leaves the daily-claim card stuck loading
-// forever. The SDK constructor still requires a walletClient with an account
-// attached, so we hand it a signer-less HTTP one: good enough for reads, and
-// the real Magic client is only needed for the actual claim signature.
-export function createReadOnlyClaimSDK(account: Address): ClaimSDK {
+// partitioning), which otherwise leaves the daily-claim card / verify screen
+// stuck loading forever. The SDK constructors still require a walletClient
+// with an account attached, so we hand them a signer-less HTTP one: good
+// enough for reads. The real Magic client is only needed to actually SIGN
+// (the claim tx, the face-verify message).
+function readOnlyClients(account: Address) {
   const publicClient = createPublicClient({
     chain: celo,
     transport: http(CELO_RPC_URL),
@@ -123,35 +104,50 @@ export function createReadOnlyClaimSDK(account: Address): ClaimSDK {
     chain: celo,
     transport: http(CELO_RPC_URL),
   })
+  return { publicClient, walletClient }
+}
+
+export function createReadOnlyClaimSDK(account: Address): ClaimSDK {
+  const { publicClient, walletClient } = readOnlyClients(account)
   const identitySDK = new IdentitySDK({ account, publicClient, walletClient, env: GD_ENV })
   return new ClaimSDK({ account, publicClient, walletClient, identitySDK, env: GD_ENV })
 }
 
-export async function getIdentityExpiry(
-  publicClient: PublicClient,
-  walletClient: WalletClient,
+export function createReadOnlyIdentitySDK(account: Address): IdentitySDK {
+  const { publicClient, walletClient } = readOnlyClients(account)
+  return new IdentitySDK({ account, publicClient, walletClient, env: GD_ENV })
+}
+
+// Read-only whitelist check — the GoodDollar identity whitelist is keyed to the
+// on-chain wallet address (same address every time for a given email/Google
+// login via Magic), so this is the single source of truth for "is this account
+// verified" across sessions and devices. No signature or Magic wallet needed.
+export async function checkWhitelistStatusReadOnly(
   address: Address,
-): Promise<IdentityExpiry> {
+): Promise<{ isWhitelisted: boolean; root: `0x${string}` }> {
+  const sdk = createReadOnlyIdentitySDK(address)
+  return withTimeout(
+    sdk.getWhitelistedRoot(address),
+    12000,
+    'GoodDollar whitelist lookup timed out',
+  )
+}
+
+export async function getIdentityExpiryReadOnly(address: Address): Promise<IdentityExpiry> {
   try {
-    console.log('[GoodDollar] getIdentityExpiry: fetching for', address)
-    const sdk = await withTimeout(
-      createIdentitySDK(publicClient, walletClient, address),
-      10000,
-      'GoodDollar SDK initialization timed out'
-    )
+    const sdk = createReadOnlyIdentitySDK(address)
     const { lastAuthenticated, authPeriod } = await withTimeout(
       sdk.getIdentityExpiryData(address),
       10000,
-      'GoodDollar expiry data lookup timed out'
+      'GoodDollar expiry data lookup timed out',
     )
     const { expiryTimestamp } = sdk.calculateIdentityExpiry(lastAuthenticated, authPeriod)
     const expiresAt = new Date(Number(expiryTimestamp))
     const now = Date.now()
     const daysLeft = Math.max(0, Math.floor((expiresAt.getTime() - now) / (1000 * 60 * 60 * 24)))
-    console.log('[GoodDollar] getIdentityExpiry success. Days left:', daysLeft)
     return { expiresAt, daysLeft, isExpired: expiresAt.getTime() <= now }
   } catch (err) {
-    console.warn('[GoodDollar] getIdentityExpiry failed:', err)
+    console.warn('[GoodDollar] getIdentityExpiryReadOnly failed:', err)
     return { expiresAt: null, daysLeft: 0, isExpired: false }
   }
 }

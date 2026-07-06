@@ -2,9 +2,9 @@ import { useState, useCallback } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import {
-  checkWhitelistStatus,
+  checkWhitelistStatusReadOnly,
   generateFaceVerifyLink,
-  getIdentityExpiry,
+  getIdentityExpiryReadOnly,
   type IdentityExpiry,
   withTimeout,
 } from '@/lib/gooddollar'
@@ -38,33 +38,27 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
   const [error, setError] = useState<string | null>(null)
   const [identityExpiry, setIdentityExpiry] = useState<IdentityExpiry | null>(null)
 
+  // Whitelist status is read-only and keyed to the on-chain address, so it does
+  // NOT need the Magic wallet client (undefined/slow on mobile Safari). Only the
+  // address is required — this is what lets us auto-recognize an already-verified
+  // account on any device without a manual re-verify.
   const check = useCallback(
     async (address: `0x${string}`): Promise<boolean> => {
       console.log('[Identity] check called for address:', address, 'status:', status)
-      if (!publicClient || !walletClient) {
-        console.warn('[Identity] check: Wallet not connected or clients not ready')
-        setError('Wallet not connected')
-        setStatus('error')
-        return false
-      }
 
       setStatus('checking')
       setError(null)
       console.log('[Identity] check: checking whitelist status for address:', address)
 
       try {
-        const { isWhitelisted } = await withTimeout(
-          checkWhitelistStatus(publicClient, walletClient, address),
-          10000,
-          'Identity verification check timed out.'
-        )
+        const { isWhitelisted } = await checkWhitelistStatusReadOnly(address)
         console.log('[Identity] check whitelist result for', address, 'isWhitelisted:', isWhitelisted)
 
         if (isWhitelisted) {
           setStatus('whitelisted')
           console.log('[Identity] check: whitelisted. Fetching expiry in background...')
           // Fetch expiry in background — non-blocking, non-fatal
-          getIdentityExpiry(publicClient, walletClient, address)
+          getIdentityExpiryReadOnly(address)
             .then((expiry) => {
               console.log('[Identity] Background expiry fetched:', expiry)
               setIdentityExpiry(expiry)
@@ -86,7 +80,7 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         return false
       }
     },
-    [publicClient, walletClient, status],
+    [status],
   )
 
   const getFaceVerifyUrl = useCallback(async (address: `0x${string}`, callbackUrl?: string): Promise<string | null> => {
