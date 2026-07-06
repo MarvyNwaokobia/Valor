@@ -8,6 +8,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
 import { getLevel, CAMPAIGN_LENGTH } from '@/engine/campaign/levels';
+import { getMission } from '@/engine/campaign/missions';
 import { AIDifficulty } from '@/engine/combat';
 import type { StageId } from '@/engine/scene/ArenaStage';
 import { StoryPanel } from '@/engine/story/StoryPanel';
@@ -243,6 +244,10 @@ export default function FightPage() {
           enemyGun={fight.enemyGun}
           enemyHpMult={fight.enemyHpMult}
           difficulty={fight.difficulty}
+          // Walk-to-find mission staging for campaign levels that have one;
+          // retries/replays spawn closer so repeat attempts skip the hike.
+          mission={level ? getMission(level) : undefined}
+          missionRetry={!firstClear}
           onBattleEnd={handleBattleEnd}
           reward={reward}
           rewardPending={pending}

@@ -5,6 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import { Sky } from '@react-three/drei';
 import * as THREE from 'three';
 import { mulberry32 } from './prng';
+import { VILLAGE, WELL_POS, CART_POS, CART_YAW, type HouseSpec } from './ashfallLayout';
 
 /**
  * ASHFALL, Zone 1's burned village. The campaign's first real PLACE: an open
@@ -13,9 +14,12 @@ import { mulberry32 } from './prng';
  * here"), so the environment IS the narrative.
  *
  * Same flat-shaded low-poly language as StylizedArena so fighters, guns and
- * VFX read identically across stages. The combat zone (r<=12) stays clear:
- * the sim clamps fighters to r=10 and generates cover inside r=11, so all
- * static dressing lives outside that circle and never fights the gameplay.
+ * VFX read identically across stages.
+ *
+ * WHERE things stand comes from ashfallLayout.ts — the same data the sim turns
+ * into static colliders — so this file only decides how things LOOK. The open
+ * square (r<=12) stays free of structures for the classic duel stages; mission
+ * encounters fight anywhere, with walls as real cover.
  */
 
 // ── Palette ──────────────────────────────────────────────────────────────────
@@ -34,45 +38,11 @@ const TREE_DARK = '#241f1a';
 const MOUNTAIN = '#463c33';
 const DRIFT = '#6e655a';
 
-// Nothing solid inside this radius: the fight owns it.
-const CLEAR_R = 12;
-
-const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // ── Burned house: shell walls, one collapsed side, charred roof beams, and a
-// hearth of embers still glowing in the wreck. Local +z faces the square. ──
-interface HouseSpec {
-  x: number; z: number; yaw: number;
-  w: number; d: number; seed: number;
-  emberLight: boolean; // only a couple of hero houses cast real light (perf)
-}
-
+// hearth of embers still glowing in the wreck. Structure (walls, chimney)
+// comes from ashfallLayout — the sim collides with exactly these boxes. ──
 function BurnedHouse({ spec }: { spec: HouseSpec }) {
-  const p = useMemo(() => {
-    const rand = mulberry32(spec.seed);
-    const hBack = 2.3 + rand() * 0.9;
-    return {
-      hBack,
-      hLeft: hBack * (0.75 + rand() * 0.25),
-      // right wall collapsed into two jagged stumps
-      hR1: 0.9 + rand() * 0.5,
-      hR2: 0.45 + rand() * 0.35,
-      frontRemnant: rand() > 0.35,
-      hFront: 0.5 + rand() * 0.4,
-      chimney: rand() > 0.55,
-      chimneyH: 3.3 + rand() * 0.9,
-      beams: Array.from({ length: 4 }, (_, i) => ({
-        x: -spec.w * 0.32 + (i / 3) * spec.w * 0.64 + (rand() - 0.5) * 0.3,
-        fallen: i === 3 && rand() > 0.4,
-        tilt: 0.5 + rand() * 0.25,
-        yawJitter: (rand() - 0.5) * 0.5,
-      })),
-      emberX: (rand() - 0.5) * spec.w * 0.4,
-      emberZ: (rand() - 0.5) * spec.d * 0.3,
-    };
-  }, [spec]);
-
-  const t = 0.3; // wall thickness
   return (
     <group position={[spec.x, 0, spec.z]} rotation={[0, spec.yaw, 0]}>
       {/* floor slab, scorched */}
@@ -81,50 +51,32 @@ function BurnedHouse({ spec }: { spec: HouseSpec }) {
         <meshStandardMaterial color={SCORCH} roughness={1} />
       </mesh>
 
-      {/* back wall (away from the square) */}
-      <mesh position={[0, p.hBack / 2, -spec.d / 2]} castShadow receiveShadow>
-        <boxGeometry args={[spec.w, p.hBack, t]} />
-        <meshStandardMaterial color={PLASTER} roughness={0.95} flatShading />
-      </mesh>
-      {/* soot staining the top of the back wall */}
-      <mesh position={[0, p.hBack - 0.22, -spec.d / 2]}>
-        <boxGeometry args={[spec.w + 0.02, 0.44, t + 0.02]} />
-        <meshStandardMaterial color={CHAR} roughness={1} flatShading />
-      </mesh>
-
-      {/* left wall, mostly standing */}
-      <mesh position={[-spec.w / 2, p.hLeft / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[t, p.hLeft, spec.d]} />
-        <meshStandardMaterial color={PLASTER} roughness={0.95} flatShading />
-      </mesh>
-
-      {/* right wall, collapsed to jagged stumps */}
-      <mesh position={[spec.w / 2, p.hR1 / 2, -spec.d * 0.2]} castShadow receiveShadow>
-        <boxGeometry args={[t, p.hR1, spec.d * 0.5]} />
-        <meshStandardMaterial color={BRICK} roughness={1} flatShading />
-      </mesh>
-      <mesh position={[spec.w / 2, p.hR2 / 2, spec.d * 0.3]} castShadow receiveShadow>
-        <boxGeometry args={[t, p.hR2, spec.d * 0.28]} />
-        <meshStandardMaterial color={BRICK} roughness={1} flatShading />
-      </mesh>
-
-      {/* low front remnant, open toward the square */}
-      {p.frontRemnant && (
-        <mesh position={[-spec.w * 0.22, p.hFront / 2, spec.d / 2]} castShadow receiveShadow>
-          <boxGeometry args={[spec.w * 0.5, p.hFront, t * 0.9]} />
-          <meshStandardMaterial color={BRICK} roughness={1} flatShading />
-        </mesh>
-      )}
+      {/* structural walls (shared with the sim's colliders) */}
+      {spec.walls.map((w, i) => (
+        <group key={i}>
+          <mesh position={[w.lx, w.h / 2, w.lz]} castShadow receiveShadow>
+            <boxGeometry args={[w.hx * 2, w.h, w.hz * 2]} />
+            <meshStandardMaterial color={w.mat === 'plaster' ? PLASTER : BRICK} roughness={w.mat === 'plaster' ? 0.95 : 1} flatShading />
+          </mesh>
+          {/* soot staining the top of the back wall */}
+          {w.soot && (
+            <mesh position={[w.lx, w.h - 0.22, w.lz]}>
+              <boxGeometry args={[w.hx * 2 + 0.02, 0.44, w.hz * 2 + 0.02]} />
+              <meshStandardMaterial color={CHAR} roughness={1} flatShading />
+            </mesh>
+          )}
+        </group>
+      ))}
 
       {/* charred roof beams: survivors lean from the back wall; one has fallen in */}
-      {p.beams.map((b, i) =>
+      {spec.beams.map((b, i) =>
         b.fallen ? (
           <mesh key={i} position={[b.x, 0.55, 0]} rotation={[1.15, b.yawJitter, 0.1]} castShadow>
             <boxGeometry args={[0.1, 0.14, spec.d * 0.85]} />
             <meshStandardMaterial color={CHAR_BEAM} roughness={1} flatShading />
           </mesh>
         ) : (
-          <mesh key={i} position={[b.x, p.hBack * 0.62, -spec.d * 0.08]} rotation={[b.tilt, 0, 0]} castShadow>
+          <mesh key={i} position={[b.x, spec.hBack * 0.62, -spec.d * 0.08]} rotation={[b.tilt, 0, 0]} castShadow>
             <boxGeometry args={[0.1, 0.14, spec.d * 0.95]} />
             <meshStandardMaterial color={CHAR_BEAM} roughness={1} flatShading />
           </mesh>
@@ -132,13 +84,13 @@ function BurnedHouse({ spec }: { spec: HouseSpec }) {
       )}
 
       {/* stone chimney riding the back corner, the burned-village silhouette */}
-      {p.chimney && (
-        <group position={[-spec.w / 2 + 0.45, 0, -spec.d / 2 + 0.45]}>
-          <mesh position={[0, p.chimneyH / 2, 0]} castShadow>
-            <boxGeometry args={[0.8, p.chimneyH, 0.8]} />
+      {spec.chimney && (
+        <group position={[spec.chimney.lx, 0, spec.chimney.lz]}>
+          <mesh position={[0, spec.chimney.h / 2, 0]} castShadow>
+            <boxGeometry args={[0.8, spec.chimney.h, 0.8]} />
             <meshStandardMaterial color={STONE} roughness={1} flatShading />
           </mesh>
-          <mesh position={[0, p.chimneyH + 0.06, 0]} castShadow>
+          <mesh position={[0, spec.chimney.h + 0.06, 0]} castShadow>
             <boxGeometry args={[0.95, 0.14, 0.95]} />
             <meshStandardMaterial color={CHAR} roughness={1} flatShading />
           </mesh>
@@ -146,12 +98,12 @@ function BurnedHouse({ spec }: { spec: HouseSpec }) {
       )}
 
       {/* hearth of embers still alive in the wreckage */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[p.emberX, 0.03, p.emberZ]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[spec.ember.lx, 0.03, spec.ember.lz]}>
         <planeGeometry args={[1.3, 0.9]} />
         <meshStandardMaterial color={EMBER} emissive={EMBER} emissiveIntensity={1.3} transparent opacity={0.85} />
       </mesh>
       {spec.emberLight && (
-        <pointLight color={EMBER} intensity={2.2} distance={11} decay={2} position={[p.emberX, 0.6, p.emberZ]} />
+        <pointLight color={EMBER} intensity={2.2} distance={11} decay={2} position={[spec.ember.lx, 0.6, spec.ember.lz]} />
       )}
     </group>
   );
@@ -349,51 +301,11 @@ function EmberDrift() {
 }
 
 // ── The arena ────────────────────────────────────────────────────────────────
+// Houses face the square, with two street mouths on the duel axis (east/west)
+// so the camera looks down a road, not into a wall. Layout: ashfallLayout.ts.
 export function AshfallArena() {
-  const ringRef = useRef<THREE.Mesh>(null);
-
-  useFrame((state) => {
-    if (ringRef.current) {
-      const m = ringRef.current.material as THREE.MeshStandardMaterial;
-      m.emissiveIntensity = 0.35 + Math.sin(state.clock.elapsedTime * 1.3) * 0.12;
-    }
-  });
-
-  // Village ring: houses face the square, with two street mouths on the duel
-  // axis (east/west) so the OTS camera looks down a road, not into a wall.
-  const houses = useMemo(() => {
-    const rand = mulberry32(7);
-    const gaps = [0, Math.PI];
-    const specs: HouseSpec[] = [];
-    let emberLights = 0;
-    for (let k = 0; k < 12; k++) {
-      const a = (k / 12) * Math.PI * 2 + (rand() - 0.5) * 0.22;
-      if (gaps.some((g) => Math.abs(wrapAngle(a - g)) < 0.42)) continue;
-      const r = 16 + rand() * 6;
-      const x = Math.cos(a) * r;
-      const z = Math.sin(a) * r;
-      const emberLight = emberLights < 2 && rand() > 0.5;
-      if (emberLight) emberLights++;
-      specs.push({
-        x, z,
-        yaw: Math.atan2(-x, -z) + (rand() - 0.5) * 0.3,
-        w: 5 + rand() * 3,
-        d: 4 + rand() * 2.5,
-        seed: 100 + k * 17,
-        emberLight,
-      });
-    }
-    return specs;
-  }, []);
-
-  const nearTrees = useMemo(() => {
-    const rand = mulberry32(59);
-    return Array.from({ length: 4 }, (_, i) => {
-      const a = 0.7 + i * 1.65 + rand() * 0.5;
-      const r = CLEAR_R + 1 + rand() * 2.2;
-      return { x: Math.cos(a) * r, z: Math.sin(a) * r, scale: 0.85 + rand() * 0.6, seed: 300 + i * 13 };
-    });
-  }, []);
+  const houses = VILLAGE.houses;
+  const nearTrees = VILLAGE.trees;
 
   return (
     <group>
@@ -455,12 +367,6 @@ export function AshfallArena() {
           <meshStandardMaterial color={SCORCH} roughness={1} transparent opacity={0.85} />
         </mesh>
       ))}
-      {/* faint ember ring marking the combat boundary (same cue as the arena rim) */}
-      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
-        <ringGeometry args={[10.8, 11.05, 64]} />
-        <meshStandardMaterial color={EMBER} emissive={EMBER} emissiveIntensity={0.4} transparent opacity={0.45} />
-      </mesh>
-
       {/* ---- The village ---- */}
       {houses.map((h, i) => (
         <BurnedHouse key={i} spec={h} />
@@ -470,7 +376,7 @@ export function AshfallArena() {
       ))}
 
       {/* well at the north street corner */}
-      <group position={[13.5, 0, 5.5]}>
+      <group position={[WELL_POS[0], 0, WELL_POS[1]]}>
         <mesh position={[0, 0.4, 0]} castShadow>
           <cylinderGeometry args={[0.9, 1.0, 0.8, 10]} />
           <meshStandardMaterial color={STONE} roughness={1} flatShading />
@@ -488,7 +394,7 @@ export function AshfallArena() {
       </group>
 
       {/* tipped cart abandoned on the west road */}
-      <group position={[-14.5, 0, -3.8]} rotation={[0, 0.6, 0]}>
+      <group position={[CART_POS[0], 0, CART_POS[1]]} rotation={[0, CART_YAW, 0]}>
         <mesh position={[0, 0.55, 0]} rotation={[0, 0, 0.5]} castShadow>
           <boxGeometry args={[2.2, 0.9, 1.3]} />
           <meshStandardMaterial color={CHAR_BEAM} roughness={1} flatShading />

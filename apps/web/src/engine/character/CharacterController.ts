@@ -33,6 +33,9 @@ export interface CharacterConfig {
   turnSpeed: number;
   gravity: number;
   arenaRadius: number;
+  /** Centre of the circular clamp — missions fight where the enemy was FOUND,
+   *  so the zone is not always the world origin. */
+  arenaCenter: [number, number];
   arenaMinX: number;
   arenaMaxX: number;
   arenaMinZ: number;
@@ -59,6 +62,7 @@ const DEFAULT_CONFIG: CharacterConfig = {
   // visual platform — the stage stays spacious, but the fight (and the cover) stays
   // in a readable ~20m zone the camera can frame closely, so characters read big.
   arenaRadius: 10,
+  arenaCenter: [0, 0],
   arenaMinX: -12,
   arenaMaxX: 12,
   arenaMinZ: -8,
@@ -430,16 +434,18 @@ export class CharacterController {
     this.clampToArena();
   }
 
-  // Keep the fighter inside the circular pit — the floor is round, so a
+  // Keep the fighter inside the circular zone — the floor is round, so a
   // rectangular clamp let them walk off the edge into the void/terraces.
   private clampToArena() {
     const p = this.state.position;
     const r = this.config.arenaRadius;
-    const distSq = p.x * p.x + p.z * p.z;
+    const [cx, cz] = this.config.arenaCenter;
+    const dx = p.x - cx, dz = p.z - cz;
+    const distSq = dx * dx + dz * dz;
     if (distSq > r * r) {
       const d = Math.sqrt(distSq) || 1;
-      p.x = (p.x / d) * r;
-      p.z = (p.z / d) * r;
+      p.x = cx + (dx / d) * r;
+      p.z = cz + (dz / d) * r;
     }
   }
 }

@@ -31,3 +31,24 @@ Routes and flow:
 - Capture `page.on('pageerror')` and console errors; a healthy run prints none.
 
 Screenshot right after countdown for the wide framing; mid-combat for the over-the-shoulder camera. Existing example: apps/web/probe-stride.mjs.
+
+## Missions (campaign levels with walk-to-find staging)
+
+Levels with a mission (see engine/campaign/missions.ts) open in a ROAM phase:
+an objective line + distance shows top-centre, and the fight only starts after
+walking to the enemy. To drive it:
+
+- Hold `w` CONTINUOUSLY (do not tap in bursts: the walk needs a held key to
+  break into a run) and poll `document.body.innerText` until the word
+  OBJECTIVE disappears; that is the standoff trigger.
+- Then ~2s bark + ~3.8s countdown before combat input works.
+- Chained missions print `TARGET DOWN` mid-mission; roam resumes with the next
+  objective. Poll innerText for `TARGET DOWN` / `VICTORY` / `DEFEATED`.
+
+Gotchas that will burn you:
+- SwiftShader renders ~5-10fps and the frame loop clamps dt at 50ms, so GAME
+  TIME runs 3-6x slower than wall time headlessly. Budget walks and fights
+  accordingly (a fight can take 3+ minutes of wall time). Smaller viewports
+  (800x450) help.
+- Do NOT edit any apps/web source while a probe is running: Fast Refresh
+  remounts the scene and resets the run.
