@@ -9,11 +9,8 @@ import type { AnimationStateMachine } from '../animation';
 import type { CharacterState } from '../character';
 import { loadMixamoAnimations, getMixamoClips, isMixamoLoadComplete } from '../animation';
 import { makeBlobShadowTexture } from '../world/textures';
-import { RIFLE_URL, buildRifle } from './GunModel';
-import { type GunId } from '../combat';
-
-// Preload the gun model so it's ready by the time the rig binds.
-useGLTF.preload(RIFLE_URL);
+import { makeGunMesh } from './GunMesh';
+import { STARTER_GUN_ID, type GunId } from '../combat';
 
 interface FighterModelProps {
   classId: 'berserker' | 'sentinel' | 'phantom';
@@ -74,6 +71,7 @@ export const FighterModel = memo(function FighterModel({
   state,
   animMachine,
   accent,
+  gunId = STARTER_GUN_ID,
 }: FighterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const modelRef = useRef<THREE.Group>(null);
@@ -101,8 +99,9 @@ export const FighterModel = memo(function FighterModel({
   const initTime = useRef(0);
   const modelPath = MODEL_PATHS[classId];
   const { scene, animations } = useGLTF(modelPath);
-  const gunGltf = useGLTF(RIFLE_URL);
-  const gunProto = useMemo(() => buildRifle(gunGltf.scene), [gunGltf.scene]);
+  // The fighter's ACTUAL equipped weapon — each tier is its own model, so the
+  // gun you bought is the gun in your hands (and the one the enemy shows you).
+  const gunProto = useMemo(() => makeGunMesh(gunId), [gunId]);
   const blobTex = useMemo(() => makeBlobShadowTexture(), []);
 
   const clonedScene = useMemo(() => {

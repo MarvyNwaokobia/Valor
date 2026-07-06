@@ -2,82 +2,299 @@ import * as THREE from 'three';
 import type { GunId } from '../combat/GunStats';
 
 /**
- * Procedural gun meshes — no GLB needed.
+ * The armoury — every purchasable gun as a real, distinct model.
  *
- * The duel renders in Three.js, so each gun is built from primitives at runtime,
- * parametrised by tier. This keeps the marketplace's different guns visually
- * distinct (a stubby sidearm vs a long marksman rifle) with zero binary assets,
- * and bakes in a `muzzle` anchor (a named Object3D at the barrel tip) so the VFX
- * layer can read its world position each frame for muzzle flash + tracer origin.
+ * Each tier is a hand-built low-poly weapon in the game's flat-shaded style:
+ * a compact pistol, a stubby suppressed SMG, a full assault rifle, a scoped
+ * marksman rifle, and the exotic energy prototype. Built from primitives at
+ * runtime (no binaries), so the SAME meshes render in the fighter's hands,
+ * in marketplace art, and anywhere else the catalogue shows a weapon.
  *
- * The group's local +Z is the firing direction. It's socketed onto the fighter's
- * RightHand bone in FighterModel; the grip transform there orients it in the palm.
+ * Conventions (shared with FighterModel's GUN_GRIP socket):
+ *   - local +Z is the firing direction, +Y is up,
+ *   - the ORIGIN sits at the pistol grip (where the palm wraps),
+ *   - a `muzzle` anchor (named Object3D) marks the barrel tip for VFX.
  */
 
-interface GunVisual {
-  length: number;  // receiver length (m)
-  barrel: number;  // barrel length (m)
-  color: number;
-  accent: number;
-  glow: number;    // emissive intensity on the accent parts
+// ── Shared palette ────────────────────────────────────────────────────────────
+const METAL_DARK = 0x252a32; // receivers, slides
+const METAL = 0x39404a;      // secondary metal
+const POLYMER = 0x424750;    // furniture: grips, stocks, handguards
+const POLYMER_DARK = 0x2c313a;
+
+interface GunKit {
+  body: THREE.MeshStandardMaterial;
+  metal: THREE.MeshStandardMaterial;
+  furn: THREE.MeshStandardMaterial;
+  furnDark: THREE.MeshStandardMaterial;
+  accent: THREE.MeshStandardMaterial;
+  glow: THREE.MeshStandardMaterial;
+  group: THREE.Group;
 }
 
-const GUN_VISUALS: Record<GunId, GunVisual> = {
-  sidearm:       { length: 0.20, barrel: 0.10, color: 0x2b2f36, accent: 0x9aa0a6, glow: 0.12 },
-  smg:           { length: 0.30, barrel: 0.16, color: 0x23262b, accent: 0xffaa33, glow: 0.18 },
-  assault_rifle: { length: 0.46, barrel: 0.28, color: 0x2a2d33, accent: 0x33cc66, glow: 0.2 },
-  marksman:      { length: 0.62, barrel: 0.42, color: 0x1f2227, accent: 0x55aaff, glow: 0.25 },
-  legendary:     { length: 0.52, barrel: 0.34, color: 0x2a2030, accent: 0xb070ff, glow: 0.6 },
+const ACCENTS: Record<GunId, { color: number; glow: number }> = {
+  sidearm:       { color: 0x9aa0a6, glow: 0.15 },
+  smg:           { color: 0xffaa33, glow: 0.3 },
+  assault_rifle: { color: 0x33cc66, glow: 0.35 },
+  marksman:      { color: 0x55aaff, glow: 0.4 },
+  legendary:     { color: 0xb070ff, glow: 1.5 },
 };
 
-/** Build a gun group for the given tier, with a `muzzle` anchor at the barrel tip. */
-export function makeGunMesh(gunId: GunId): THREE.Group {
-  const v = GUN_VISUALS[gunId] ?? GUN_VISUALS.sidearm;
-  const group = new THREE.Group();
-  group.name = `gun-${gunId}`;
+function makeKit(gunId: GunId): GunKit {
+  const a = ACCENTS[gunId];
+  return {
+    body: new THREE.MeshStandardMaterial({ color: METAL_DARK, metalness: 0.7, roughness: 0.38, flatShading: true }),
+    metal: new THREE.MeshStandardMaterial({ color: METAL, metalness: 0.65, roughness: 0.42, flatShading: true }),
+    furn: new THREE.MeshStandardMaterial({ color: POLYMER, metalness: 0.15, roughness: 0.7, flatShading: true }),
+    furnDark: new THREE.MeshStandardMaterial({ color: POLYMER_DARK, metalness: 0.2, roughness: 0.65, flatShading: true }),
+    accent: new THREE.MeshStandardMaterial({ color: a.color, metalness: 0.45, roughness: 0.4, emissive: a.color, emissiveIntensity: a.glow * 0.4, flatShading: true }),
+    glow: new THREE.MeshStandardMaterial({ color: a.color, emissive: a.color, emissiveIntensity: a.glow, metalness: 0.2, roughness: 0.35 }),
+    group: new THREE.Group(),
+  };
+}
 
-  const bodyMat = new THREE.MeshStandardMaterial({ color: v.color, metalness: 0.65, roughness: 0.4 });
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: v.accent, metalness: 0.3, roughness: 0.5,
-    emissive: v.accent, emissiveIntensity: v.glow,
-  });
+// Positioned box/cylinder helpers keep the builders readable.
+function box(k: GunKit, mat: THREE.Material, w: number, h: number, d: number,
+  x: number, y: number, z: number, rx = 0, ry = 0, rz = 0): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
+  k.group.add(m);
+  return m;
+}
 
-  // Receiver / body.
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, v.length), bodyMat);
-  body.position.z = v.length * 0.1;
-  group.add(body);
+/** Cylinder whose axis runs along local +Z (the barrel direction). */
+function zCyl(k: GunKit, mat: THREE.Material, r0: number, r1: number, len: number,
+  x: number, y: number, z: number, sides = 10): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, sides), mat);
+  m.rotation.x = Math.PI / 2;
+  m.position.set(x, y, z);
+  k.group.add(m);
+  return m;
+}
 
-  // Barrel.
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, v.barrel, 8), bodyMat);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.z = v.length * 0.5 + v.barrel * 0.5;
-  group.add(barrel);
-
-  // Grip.
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.11, 0.05), bodyMat);
-  grip.position.set(0, -0.08, -v.length * 0.25);
-  grip.rotation.x = -0.25;
-  group.add(grip);
-
-  // Magazine (accent colour so the tier reads at a glance).
-  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.05), accentMat);
-  mag.position.set(0, -0.09, -v.length * 0.02);
-  group.add(mag);
-
-  // Sight / top rail accent.
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.022, v.length * 0.5), accentMat);
-  sight.position.set(0, 0.05, 0);
-  group.add(sight);
-
-  // Muzzle anchor at the barrel tip — VFX reads this Object3D's world position.
+function finish(k: GunKit, gunId: GunId, muzzleY: number, muzzleZ: number): THREE.Group {
   const muzzle = new THREE.Object3D();
   muzzle.name = 'muzzle';
-  muzzle.position.set(0, 0, v.length * 0.5 + v.barrel);
-  group.add(muzzle);
-
-  group.traverse((o) => {
+  muzzle.position.set(0, muzzleY, muzzleZ);
+  k.group.add(muzzle);
+  k.group.name = `gun-${gunId}`;
+  k.group.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh) mesh.castShadow = true;
   });
-  return group;
+  return k.group;
+}
+
+// ── Tier 1 · Standard Sidearm: compact service pistol ────────────────────────
+function buildSidearm(): THREE.Group {
+  const k = makeKit('sidearm');
+
+  // frame + slide
+  box(k, k.metal, 0.032, 0.030, 0.160, 0, 0.046, 0.024);
+  box(k, k.body, 0.034, 0.032, 0.190, 0, 0.076, 0.028);
+  // slide serrations (rear grip cuts)
+  box(k, k.furnDark, 0.036, 0.024, 0.030, 0, 0.076, -0.052);
+  // ejection port
+  box(k, k.accent, 0.002, 0.014, 0.034, 0.018, 0.080, 0.012);
+  // sights
+  box(k, k.body, 0.024, 0.012, 0.010, 0, 0.098, -0.058);
+  box(k, k.body, 0.006, 0.012, 0.008, 0, 0.098, 0.108);
+  // barrel stub
+  zCyl(k, k.metal, 0.0085, 0.0085, 0.024, 0, 0.076, 0.132);
+  // grip (raked back), palm at origin
+  box(k, k.furn, 0.030, 0.112, 0.044, 0, -0.048, -0.014, 0.16);
+  box(k, k.furnDark, 0.032, 0.030, 0.046, 0, -0.098, -0.022, 0.16); // mag base flare
+  box(k, k.accent, 0.026, 0.008, 0.040, 0, -0.112, -0.024, 0.16);   // baseplate accent
+  // trigger guard (D-shape from two bars) + trigger
+  box(k, k.metal, 0.006, 0.006, 0.052, 0, -0.004, 0.046);
+  box(k, k.metal, 0.006, 0.034, 0.006, 0, 0.012, 0.070);
+  box(k, k.body, 0.005, 0.022, 0.006, 0, 0.012, 0.036, 0.25);
+
+  return finish(k, 'sidearm', 0.076, 0.146);
+}
+
+// ── Tier 2 · Compact SMG: stubby, suppressed, mag-forward ────────────────────
+function buildSmg(): THREE.Group {
+  const k = makeKit('smg');
+
+  // receiver + top rail
+  box(k, k.body, 0.050, 0.060, 0.300, 0, 0.052, 0.020);
+  box(k, k.furnDark, 0.022, 0.012, 0.270, 0, 0.088, 0.020);
+  // rail notches
+  for (let i = 0; i < 5; i++) box(k, k.body, 0.024, 0.004, 0.010, 0, 0.096, -0.08 + i * 0.05);
+  // sights
+  box(k, k.metal, 0.020, 0.018, 0.008, 0, 0.104, -0.098);
+  box(k, k.metal, 0.006, 0.018, 0.008, 0, 0.104, 0.128);
+  // barrel + suppressor
+  zCyl(k, k.metal, 0.011, 0.011, 0.070, 0, 0.052, 0.205);
+  zCyl(k, k.furnDark, 0.017, 0.017, 0.115, 0, 0.052, 0.288);
+  box(k, k.accent, 0.002, 0.010, 0.090, 0.017, 0.052, 0.288); // suppressor accent line
+  // magazine, raked slightly forward of the grip
+  box(k, k.metal, 0.028, 0.140, 0.050, 0, -0.055, 0.075, -0.14);
+  box(k, k.accent, 0.030, 0.014, 0.052, 0, -0.122, 0.085, -0.14);
+  // pistol grip at origin
+  box(k, k.furn, 0.032, 0.105, 0.046, 0, -0.044, -0.026, 0.14);
+  // forward grip
+  box(k, k.furn, 0.028, 0.072, 0.036, 0, -0.028, 0.150, -0.10);
+  // trigger guard
+  box(k, k.metal, 0.006, 0.006, 0.055, 0, -0.006, 0.026);
+  box(k, k.metal, 0.006, 0.030, 0.006, 0, 0.008, 0.052);
+  // collapsed wire stock: twin rods + butt plate
+  zCyl(k, k.metal, 0.006, 0.006, 0.130, 0.014, 0.052, -0.195, 6);
+  zCyl(k, k.metal, 0.006, 0.006, 0.130, -0.014, 0.052, -0.195, 6);
+  box(k, k.furnDark, 0.052, 0.072, 0.016, 0, 0.044, -0.266);
+  // ejection port
+  box(k, k.accent, 0.002, 0.016, 0.040, 0.026, 0.058, -0.020);
+
+  return finish(k, 'smg', 0.052, 0.348);
+}
+
+// ── Tier 3 · Assault Rifle: full-size, curved mag, fixed stock ───────────────
+function buildAssaultRifle(): THREE.Group {
+  const k = makeKit('assault_rifle');
+
+  // lower + upper receiver
+  box(k, k.metal, 0.042, 0.050, 0.240, 0, 0.040, 0.010);
+  box(k, k.body, 0.044, 0.046, 0.260, 0, 0.086, 0.020);
+  // carry rail
+  box(k, k.furnDark, 0.020, 0.012, 0.240, 0, 0.116, 0.020);
+  // handguard with side rails + vents
+  box(k, k.furn, 0.046, 0.052, 0.200, 0, 0.072, 0.250);
+  box(k, k.accent, 0.002, 0.010, 0.160, 0.024, 0.072, 0.250);
+  box(k, k.accent, 0.002, 0.010, 0.160, -0.024, 0.072, 0.250);
+  for (let i = 0; i < 3; i++) box(k, k.furnDark, 0.048, 0.010, 0.026, 0, 0.052, 0.185 + i * 0.055);
+  // barrel + muzzle brake
+  zCyl(k, k.metal, 0.010, 0.010, 0.120, 0, 0.072, 0.408);
+  box(k, k.body, 0.024, 0.024, 0.050, 0, 0.072, 0.478);
+  box(k, k.furnDark, 0.028, 0.006, 0.036, 0, 0.084, 0.478);
+  // sights: front post + rear
+  box(k, k.metal, 0.008, 0.026, 0.008, 0, 0.128, 0.330);
+  box(k, k.metal, 0.022, 0.016, 0.010, 0, 0.128, -0.070);
+  // curved magazine (two angled segments) + accent baseplate
+  box(k, k.metal, 0.030, 0.090, 0.056, 0, -0.070, 0.078, 0.22);
+  box(k, k.metal, 0.030, 0.072, 0.050, 0, -0.140, 0.048, 0.46);
+  box(k, k.accent, 0.032, 0.014, 0.052, 0, -0.172, 0.030, 0.46);
+  // pistol grip at origin
+  box(k, k.furn, 0.032, 0.108, 0.048, 0, -0.046, -0.024, 0.22);
+  // trigger guard
+  box(k, k.metal, 0.006, 0.006, 0.056, 0, -0.008, 0.030);
+  box(k, k.metal, 0.006, 0.032, 0.006, 0, 0.008, 0.056);
+  // buffer tube + fixed stock with cheek riser + butt pad
+  zCyl(k, k.metal, 0.015, 0.015, 0.100, 0, 0.070, -0.160, 8);
+  box(k, k.furn, 0.040, 0.088, 0.140, 0, 0.036, -0.262);
+  box(k, k.furn, 0.036, 0.026, 0.110, 0, 0.094, -0.256);
+  box(k, k.furnDark, 0.046, 0.104, 0.016, 0, 0.032, -0.336);
+  box(k, k.accent, 0.012, 0.020, 0.060, 0, 0.086, -0.150); // tier tag on the tube
+
+  return finish(k, 'assault_rifle', 0.072, 0.504);
+}
+
+// ── Tier 4 · Marksman Rifle: long barrel, scope, precision stock ─────────────
+function buildMarksman(): THREE.Group {
+  const k = makeKit('marksman');
+
+  // receiver
+  box(k, k.body, 0.045, 0.055, 0.300, 0, 0.058, -0.010);
+  box(k, k.furnDark, 0.020, 0.010, 0.280, 0, 0.094, -0.010);
+  // long vented handguard
+  box(k, k.furn, 0.048, 0.050, 0.260, 0, 0.058, 0.270);
+  for (let i = 0; i < 4; i++) {
+    box(k, k.furnDark, 0.050, 0.010, 0.028, 0, 0.040, 0.185 + i * 0.058);
+    box(k, k.furnDark, 0.050, 0.010, 0.028, 0, 0.076, 0.185 + i * 0.058);
+  }
+  // barrel + brake
+  zCyl(k, k.metal, 0.009, 0.009, 0.280, 0, 0.058, 0.540);
+  zCyl(k, k.body, 0.014, 0.014, 0.055, 0, 0.058, 0.702);
+  box(k, k.furnDark, 0.032, 0.005, 0.040, 0, 0.070, 0.702);
+  // scope: mounts, tube, bells, glinting objective lens, turrets
+  box(k, k.metal, 0.014, 0.034, 0.022, 0, 0.112, -0.048);
+  box(k, k.metal, 0.014, 0.034, 0.022, 0, 0.112, 0.030);
+  zCyl(k, k.body, 0.018, 0.018, 0.150, 0, 0.146, -0.008);
+  zCyl(k, k.body, 0.027, 0.023, 0.045, 0, 0.146, 0.082);
+  zCyl(k, k.body, 0.023, 0.020, 0.038, 0, 0.146, -0.096);
+  const lens = new THREE.Mesh(
+    new THREE.CircleGeometry(0.023, 12),
+    new THREE.MeshStandardMaterial({ color: 0x66ccff, emissive: 0x66ccff, emissiveIntensity: 0.7, metalness: 0.1, roughness: 0.2 }),
+  );
+  lens.position.set(0, 0.146, 0.1052);
+  k.group.add(lens);
+  zCyl(k, k.metal, 0.010, 0.010, 0.016, 0, 0.178, -0.008, 8); // elevation turret
+  box(k, k.metal, 0.030, 0.012, 0.014, 0.012, 0.146, -0.008); // windage turret
+  // straight precision mag + accent base
+  box(k, k.metal, 0.032, 0.100, 0.060, 0, -0.075, 0.060, 0.10);
+  box(k, k.accent, 0.034, 0.014, 0.056, 0, -0.128, 0.052, 0.10);
+  // grip at origin
+  box(k, k.furn, 0.032, 0.105, 0.048, 0, -0.045, -0.026, 0.24);
+  // trigger guard
+  box(k, k.metal, 0.006, 0.006, 0.052, 0, -0.008, 0.026);
+  box(k, k.metal, 0.006, 0.030, 0.006, 0, 0.008, 0.050);
+  // precision stock: body, cheek riser, butt pad, bottom hook
+  box(k, k.furn, 0.042, 0.075, 0.220, 0, 0.040, -0.230);
+  box(k, k.accent, 0.036, 0.028, 0.120, 0, 0.100, -0.230);
+  box(k, k.furnDark, 0.046, 0.115, 0.018, 0, 0.024, -0.346);
+  box(k, k.furn, 0.030, 0.050, 0.045, 0, -0.026, -0.290);
+  // folded bipod legs under the handguard
+  zCyl(k, k.metal, 0.005, 0.005, 0.110, 0.016, 0.026, 0.320, 6);
+  zCyl(k, k.metal, 0.005, 0.005, 0.110, -0.016, 0.026, 0.320, 6);
+
+  return finish(k, 'marksman', 0.058, 0.730);
+}
+
+// ── Tier 5 · Valor Prototype: exotic energy rifle, glowing core + coils ──────
+function buildLegendary(): THREE.Group {
+  const k = makeKit('legendary');
+
+  // angular core receiver + canted top plates
+  box(k, k.body, 0.050, 0.068, 0.300, 0, 0.056, 0.000);
+  box(k, k.metal, 0.044, 0.020, 0.240, 0, 0.104, -0.010, 0.10);
+  box(k, k.metal, 0.044, 0.020, 0.120, 0, 0.108, 0.110, -0.14);
+  // exposed energy cell riding the spine
+  zCyl(k, k.glow, 0.019, 0.019, 0.095, 0, 0.096, -0.052, 8);
+  box(k, k.body, 0.050, 0.016, 0.020, 0, 0.096, -0.108);
+  box(k, k.body, 0.050, 0.016, 0.020, 0, 0.096, 0.004);
+  // spine fin
+  box(k, k.metal, 0.008, 0.040, 0.120, 0, 0.130, -0.160, -0.10);
+  // emissive barrel rod inside a finned shroud
+  zCyl(k, k.glow, 0.0075, 0.0075, 0.360, 0, 0.056, 0.300, 8);
+  for (const ang of [0.785, 2.356, 3.927, 5.498]) {
+    const fin = box(k, k.body, 0.006, 0.034, 0.130, 0, 0.056, 0.170);
+    fin.position.x = Math.cos(ang) * 0.020;
+    fin.position.y = 0.056 + Math.sin(ang) * 0.020;
+    fin.rotation.z = ang;
+  }
+  // coil rings along the barrel
+  for (let i = 0; i < 3; i++) {
+    zCyl(k, k.accent, 0.024, 0.024, 0.016, 0, 0.056, 0.240 + i * 0.085, 8);
+  }
+  // muzzle emitter ring
+  zCyl(k, k.glow, 0.019, 0.014, 0.035, 0, 0.056, 0.470, 8);
+  // underslung capacitor with charge strip
+  box(k, k.metal, 0.032, 0.052, 0.110, 0, -0.048, 0.100, 0.12);
+  box(k, k.glow, 0.034, 0.010, 0.080, 0, -0.052, 0.096, 0.12);
+  // grip at origin
+  box(k, k.furn, 0.032, 0.105, 0.048, 0, -0.046, -0.026, 0.22);
+  // trigger guard
+  box(k, k.metal, 0.006, 0.006, 0.052, 0, -0.008, 0.028);
+  box(k, k.metal, 0.006, 0.030, 0.006, 0, 0.008, 0.052);
+  // skeletal stock: twin angled struts to a butt frame
+  box(k, k.metal, 0.010, 0.014, 0.200, 0, 0.078, -0.190, 0.14);
+  box(k, k.metal, 0.010, 0.014, 0.190, 0, -0.006, -0.180, -0.20);
+  box(k, k.furnDark, 0.040, 0.120, 0.018, 0, 0.028, -0.296);
+  box(k, k.glow, 0.012, 0.060, 0.010, 0, 0.028, -0.306);
+
+  return finish(k, 'legendary', 0.056, 0.492);
+}
+
+const BUILDERS: Record<GunId, () => THREE.Group> = {
+  sidearm: buildSidearm,
+  smg: buildSmg,
+  assault_rifle: buildAssaultRifle,
+  marksman: buildMarksman,
+  legendary: buildLegendary,
+};
+
+/** Build the real model for a gun tier, with a `muzzle` anchor at the barrel tip. */
+export function makeGunMesh(gunId: GunId): THREE.Group {
+  return (BUILDERS[gunId] ?? BUILDERS.sidearm)();
 }

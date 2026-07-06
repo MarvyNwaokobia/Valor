@@ -7,7 +7,8 @@ import type { Item } from '@/types'
 import { formatCountdown, formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
-import { GunIcon, gunIdFromItemId } from './GunIcons'
+import { gunIdFromItemId } from './GunIcons'
+import { ItemArt } from './ItemArt'
 import { gunDps, GUN_CATALOG } from '@/engine/combat/GunStats'
 
 const SALE_END_TIMESTAMP =
@@ -79,13 +80,12 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
         <div className="absolute inset-0 pointer-events-none bg-linear-to-br from-valor-gold/5 to-transparent" />
 
         <div className="relative z-10 p-6 flex flex-col sm:flex-row gap-6 items-center">
-          {/* Icon */}
-          <div className="w-24 h-24 rounded-2xl border-2 border-valor-gold/40 bg-valor-gold/10 flex items-center justify-center shrink-0">
-            {(() => {
-              const gid = gunIdFromItemId(item.id)
-              if (gid) return <GunIcon gunId={gid} size={64} color="#eab308" />
-              return <GunIcon gunId="legendary" size={64} color="#eab308" />
-            })()}
+          {/* The real weapon, rendered from its in-game model */}
+          <div
+            className="w-44 h-28 rounded-2xl border-2 border-valor-gold/40 flex items-center justify-center shrink-0 px-2"
+            style={{ background: 'radial-gradient(ellipse at 50% 40%, rgba(234,179,8,0.16) 0%, rgba(234,179,8,0.04) 60%, transparent 100%)' }}
+          >
+            <ItemArt item={item} color="#eab308" size="banner" />
           </div>
 
           {/* Info */}
@@ -204,11 +204,7 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               {/* Item details */}
               <div className="p-3 rounded-xl bg-valor-gold/10 border border-valor-gold/20">
                 <div className="flex items-center gap-3">
-                  {(() => {
-                    const gid = gunIdFromItemId(item.id)
-                    if (gid) return <GunIcon gunId={gid} size={44} color="#eab308" className="shrink-0" />
-                    return <GunIcon gunId="legendary" size={44} color="#eab308" className="shrink-0" />
-                  })()}
+                  <ItemArt item={item} color="#eab308" size="modal" />
                   <div className="min-w-0">
                     <p className="font-bold text-white text-sm truncate">{item.name}</p>
                     {(() => {

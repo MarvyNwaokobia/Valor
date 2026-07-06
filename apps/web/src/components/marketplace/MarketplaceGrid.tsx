@@ -3,6 +3,7 @@ import { Crosshair, Zap, CircleDot, Wrench, Shield } from 'lucide-react'
 import { useMarketplaceItems } from '@/hooks/useMarketplace'
 import MarketplaceItem from './MarketplaceItem'
 import LimitedItemBanner from './LimitedItemBanner'
+import { gunIdFromItemId } from './GunIcons'
 
 interface Props {
   walletAddress: string | undefined
@@ -18,8 +19,12 @@ const CATEGORY_META = {
 } as const
 
 export default function MarketplaceGrid({ walletAddress }: Props) {
-  const { data: items = [], isLoading } = useMarketplaceItems()
+  const { data: rawItems = [], isLoading } = useMarketplaceItems()
   const [filter, setFilter] = useState<string>('all')
+
+  // Hide melee-era relics: 'weapon' rows that don't map to a gun in the
+  // shooter's catalogue (swords from before the pivot still live in the DB).
+  const items = rawItems.filter((i) => i.category !== 'weapon' || gunIdFromItemId(i.id))
 
   const legendaryItems = items.filter((i) => i.rarity === 'legendary')
   const filteredItems = items.filter(

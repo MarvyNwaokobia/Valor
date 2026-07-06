@@ -44,7 +44,7 @@ export default function MarketplacePage() {
               <h1 className="font-display font-black text-white text-2xl tracking-wide">Marketplace</h1>
             </div>
           </div>
-          <p className="text-slate-500 text-xs">Guns · Ammo · Attachments — buy from the house or trade with other players</p>
+          <p className="text-slate-500 text-xs">Guns · Ammo · Attachments · buy from the house or trade with other players</p>
           {gBalance && (
             <div className="flex items-center justify-between px-4 py-3 rounded-xl"
               style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
