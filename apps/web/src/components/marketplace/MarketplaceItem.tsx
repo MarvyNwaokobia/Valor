@@ -2,14 +2,15 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Sparkles, X, Crosshair, CircleDot, Wrench } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { Item } from '@/types'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
-import { GunIcon, gunIdFromItemId } from './GunIcons'
+import { gunIdFromItemId } from './GunIcons'
+import { ItemArt } from './ItemArt'
 import { gunDps, GUN_CATALOG, type GunStats } from '@/engine/combat/GunStats'
 
 const SLOT_LABEL: Record<string, string> = {
@@ -124,20 +125,15 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           )}
         </div>
 
-        {/* Item visual */}
+        {/* Item visual: the real in-game asset */}
         <div
-          className="w-full rounded-xl flex items-center justify-center border py-4"
-          style={{ background: `${rarityColor}08`, borderColor: `${rarityColor}18` }}
+          className="w-full rounded-xl flex items-center justify-center border py-3 px-2"
+          style={{
+            background: `radial-gradient(ellipse at 50% 40%, ${rarityColor}1c 0%, ${rarityColor}06 60%, transparent 100%)`,
+            borderColor: `${rarityColor}18`,
+          }}
         >
-          {(() => {
-            const gid = gunIdFromItemId(item.id)
-            if (gid) return <GunIcon gunId={gid} size={72} color={rarityColor} />
-            if (item.category === 'ammo') return <CircleDot size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
-            if (item.category === 'attachment') return <Wrench size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
-            if (item.category === 'booster') return <Zap size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
-            if (item.category === 'cosmetic') return <Sparkles size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
-            return <Crosshair size={40} strokeWidth={1.2} style={{ color: rarityColor }} />
-          })()}
+          <ItemArt item={item} color={rarityColor} />
         </div>
 
         {/* Name + desc */}
@@ -180,7 +176,26 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
             )
           }
           if (item.category === 'booster') {
-            return <div className="text-xs text-slate-400 font-bold">2× XP for 24 hours</div>
+            return (
+              <div className="flex flex-col gap-1 mt-1">
+                <ModLine label="XP earned" value="×2" color="#ffc72a" />
+                <ModLine label="Duration" value="24 hours" color="#22c55e" />
+              </div>
+            )
+          }
+          if (item.category === 'shield') {
+            return (
+              <div className="flex flex-col gap-1 mt-1">
+                <ModLine label="Rank decay" value="Frozen" color="#4a8dff" />
+                <ModLine label="Duration" value="7 days" color="#22c55e" />
+                <span className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                  Your rank can&apos;t drop from inactivity while the shield is active.
+                </span>
+              </div>
+            )
+          }
+          if (item.category === 'cosmetic') {
+            return <div className="text-[10px] text-slate-500 mt-1">Cosmetic only, no stat changes.</div>
           }
           return null
         })()}
@@ -196,6 +211,9 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
             }
             if (item.category === 'ammo') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Ammo</span>
             if (item.category === 'attachment') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>{SLOT_LABEL[(item.weapon_stats as Record<string, string> | null)?.slot ?? ''] ?? 'Part'}</span>
+            if (item.category === 'shield') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Shield</span>
+            if (item.category === 'booster') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Booster</span>
+            if (item.category === 'cosmetic') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Cosmetic</span>
             return null
           })()}
         </div>
@@ -266,12 +284,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               {/* Item details */}
               <div className="p-3 rounded-xl" style={{ background: `${rarityColor}10`, border: `1px solid ${rarityColor}22` }}>
                 <div className="flex items-center gap-3">
-                  {(() => {
-                    const gid = gunIdFromItemId(item.id)
-                    if (gid) return <GunIcon gunId={gid} size={44} color={rarityColor} className="shrink-0" />
-                    if (item.category === 'booster') return <Zap size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
-                    return <Crosshair size={28} strokeWidth={1.2} style={{ color: rarityColor }} className="shrink-0" />
-                  })()}
+                  <ItemArt item={item} color={rarityColor} size="modal" />
                   <div className="min-w-0">
                     <p className="font-bold text-white text-sm truncate">{item.name}</p>
                     {(() => {
