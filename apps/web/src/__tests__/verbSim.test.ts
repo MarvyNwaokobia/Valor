@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { VerbSim, ARCHETYPES, computeEdgeArrow, type VerbEvent } from '@/engine/verb';
+import * as THREE from 'three';
+import {
+  VerbSim, ARCHETYPES, computeEdgeArrow, pointInBlock, pushCircleOut,
+  type VerbEvent,
+} from '@/engine/verb';
 
 /**
  * Slice 1 (CLONE_PLAN.md): the Rift Edge state machine and the melee string,
@@ -26,7 +30,7 @@ describe('RiftEdge throw', () => {
     const sim = new VerbSim({
       dummies: [],
       heroPos: [0, 8],
-      blocks: [{ min: [-1, 0, 2], max: [1, 2, 2.6] }],
+      blocks: [{ x: 0, z: 2.3, hx: 1, hz: 0.3, height: 2 }],
     });
     const events = collect(sim);
 
@@ -210,6 +214,37 @@ describe('melee string', () => {
   });
 });
 
+describe('the combat gate', () => {
+  it('enemies hold during title/intro phases and hunt once combat enables', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, 5], archetype: 'rusher' }], heroPos: [0, 8] });
+    sim.combatEnabled = false;
+    run(sim, 5.0);
+    expect(sim.heroHp).toBe(sim.heroMaxHp);
+    expect(sim.getDummies()[0].ai).toBe('idle');
+
+    sim.combatEnabled = true;
+    run(sim, 6.0);
+    expect(sim.heroHp).toBeLessThan(sim.heroMaxHp);
+  });
+});
+
+describe('rotated blocks (Ashfall walls have yaw)', () => {
+  const wall = { x: 0, z: 0, hx: 2, hz: 0.3, height: 2, yaw: Math.PI / 4 };
+
+  it('detects points inside a yawed wall', () => {
+    // Local +x maps to world (0.707, -0.707) under rotateY(π/4).
+    expect(pointInBlock(1.2, 1, -1.2, wall)).toBe(true);
+    expect(pointInBlock(1.2, 1, 1.2, wall)).toBe(false);  // beside it
+    expect(pointInBlock(1.2, 2.5, -1.2, wall)).toBe(false); // above it
+  });
+
+  it('pushes a body out of a yawed wall footprint', () => {
+    const pos = new THREE.Vector3(1.1, 0, -1.3); // inside the footprint
+    pushCircleOut(pos, 0.4, wall);
+    expect(pointInBlock(pos.x, 1, pos.z, wall)).toBe(false);
+  });
+});
+
 describe('solid bodies', () => {
   it('hero cannot ghost through a dummy', () => {
     const sim = new VerbSim({ dummies: [{ pos: [0, 4] }], heroPos: [0, 8] });
@@ -271,7 +306,7 @@ describe('enemy combat (slice 4)', () => {
   it('gunner shots are eaten by cover; without cover they land', () => {
     // Wide enough that the gunner can't strafe out a firing lane in 8s (it
     // legitimately hunts for one — a narrow wall gets flanked).
-    const wall = { min: [-20, 0, 1.7] as [number, number, number], max: [20, 2.2, 2.3] as [number, number, number] };
+    const wall = { x: 0, z: 2, hx: 20, hz: 0.3, height: 2.2 };
 
     const covered = new VerbSim({
       dummies: [{ pos: [0, -4], archetype: 'gunner' }],

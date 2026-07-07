@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { pointInBlock, type SimBlock } from './blocks';
 
 /**
  * The Rift Edge — the signature verb (CLONE_PLAN.md slice 1).
@@ -20,11 +21,6 @@ import * as THREE from 'three';
  */
 
 export type EdgeState = 'held' | 'thrown' | 'embedded' | 'recalling';
-
-export interface EdgeAabb {
-  min: [number, number, number];
-  max: [number, number, number];
-}
 
 /** What the edge can embed into. */
 export type EmbedTarget =
@@ -141,7 +137,7 @@ export class RiftEdge {
     this.pos.copy(handPos);
   }
 
-  update(dt: number, handPos: THREE.Vector3, probe: EdgeHitProbe, blocks: EdgeAabb[]) {
+  update(dt: number, handPos: THREE.Vector3, probe: EdgeHitProbe, blocks: SimBlock[]) {
     switch (this.state) {
       case 'held':
         this.pos.copy(handPos);
@@ -158,7 +154,7 @@ export class RiftEdge {
     }
   }
 
-  private updateThrown(dt: number, probe: EdgeHitProbe, blocks: EdgeAabb[]) {
+  private updateThrown(dt: number, probe: EdgeHitProbe, blocks: SimBlock[]) {
     this.spin += dt * 18;
     this.vel.y -= THROW_GRAVITY * dt;
 
@@ -239,14 +235,10 @@ export class RiftEdge {
     }
   }
 
-  private insideBlock(blocks: EdgeAabb[]): boolean {
+  private insideBlock(blocks: SimBlock[]): boolean {
     const p = this.pos;
     for (const b of blocks) {
-      if (
-        p.x >= b.min[0] && p.x <= b.max[0] &&
-        p.y >= b.min[1] && p.y <= b.max[1] &&
-        p.z >= b.min[2] && p.z <= b.max[2]
-      ) return true;
+      if (pointInBlock(p.x, p.y, p.z, b)) return true;
     }
     return false;
   }
