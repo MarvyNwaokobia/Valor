@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BattleCamera } from '../camera';
-import { VerbSim, VerbAudio, type VerbEvent, type EdgeAabb } from '../verb';
+import { VerbSim, type VerbEvent, type EdgeAabb } from '../verb';
+import { AudioDirector, combatIntensity } from '../audio';
 
 /**
  * Slice 1 graybox: the Rift Edge with zero art (CLONE_PLAN.md).
@@ -74,7 +75,7 @@ function VerbWorld() {
     () => new VerbSim({ dummies: DUMMIES, blocks: AABBS, heroPos: [0, 8] }),
     [],
   );
-  const audio = useMemo(() => new VerbAudio(), []);
+  const audio = useMemo(() => new AudioDirector(), []);
   const battleCam = useMemo(
     () => new BattleCamera(camera as THREE.PerspectiveCamera),
     [camera],
@@ -93,11 +94,14 @@ function VerbWorld() {
   const pauseRef = useRef(0);
   const accRef = useRef(0);
   const keys = useRef(new Set<string>());
+  // Wall-clock time of the last landed hit — drives the score's intensity.
+  const lastHitRef = useRef(-100);
 
   // ── Input ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
+      audio.unlock(); // browsers gate sound behind a gesture; any key counts
       keys.current.add(e.code);
       if (e.code === 'KeyJ') sim.pressAttack();
       if (e.code === 'KeyF') sim.pressThrow();
@@ -106,6 +110,7 @@ function VerbWorld() {
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
     const mouseDown = (e: MouseEvent) => {
+      audio.unlock();
       if (e.button === 0) sim.pressAttack();
       if (e.button === 2) sim.setAiming(true);
     };
@@ -136,7 +141,8 @@ function VerbWorld() {
           break;
         case 'meleeHit': {
           const big = e.stage === 3 || e.buffed;
-          audio.meleeHit(e.stage, e.buffed);
+          audio.meleeHit(e.stage, e.buffed, e.pos);
+          lastHitRef.current = performance.now() / 1000;
           pauseRef.current = Math.max(pauseRef.current, big ? PAUSE.meleeBig : PAUSE.melee);
           battleCam.shake(big ? 0.05 : 0.02, 40);
           break;
@@ -150,20 +156,22 @@ function VerbWorld() {
           break;
         case 'embed':
           if (e.target.kind === 'enemy') {
-            audio.embedFlesh();
+            audio.embed('flesh', e.pos);
+            lastHitRef.current = performance.now() / 1000;
             pauseRef.current = Math.max(pauseRef.current, PAUSE.embedEnemy);
             battleCam.shake(0.06, 35);
           } else {
-            audio.embedWorld();
+            audio.embed(e.target.kind === 'ground' ? 'ground' : 'stone', e.pos);
             battleCam.shake(0.03, 30);
           }
           break;
         case 'recallStart':
-          audio.rip();
+          audio.rip(sim.edge.pos);
           audio.startWhistle();
           break;
         case 'recallHit':
-          audio.recallSweepHit();
+          audio.recallHit(e.pos);
+          lastHitRef.current = performance.now() / 1000;
           battleCam.shake(0.03, 40);
           break;
         case 'catch':
@@ -174,7 +182,8 @@ function VerbWorld() {
           battleCam.shake(0.04, 45);
           break;
         case 'dummyDeath':
-          audio.death();
+          audio.death(e.pos);
+          lastHitRef.current = performance.now() / 1000;
           pauseRef.current = Math.max(pauseRef.current, PAUSE.death);
           break;
         case 'dash':
@@ -206,7 +215,8 @@ function VerbWorld() {
     }
 
     if (sim.edgeState === 'recalling') {
-      audio.setWhistleProgress(sim.edge.recallProgress);
+      // Re-spatialize the whistle every frame — the arc is audible.
+      audio.setWhistle(sim.edge.pos, sim.edge.recallProgress);
     }
 
     // Camera: OTS soft-locked to the nearest dummy; free-follow when all down.
@@ -214,6 +224,13 @@ function VerbWorld() {
     const wantMode = target ? 'ots' : 'follow';
     if (battleCam.currentMode !== wantMode) battleCam.setMode(wantMode);
     battleCam.update(dt, sim.heroPos, target ?? undefined);
+
+    // The camera is the ear; the score follows the fight state.
+    audio.setListener(camera.position.x, camera.position.z, battleCam.cameraYaw);
+    const nearest = target ? target.distanceTo(sim.heroPos) : null;
+    audio.setIntensity(
+      combatIntensity(nearest, performance.now() / 1000 - lastHitRef.current),
+    );
 
     // Hero + procedural swing (graybox stand-in for real strike animations).
     if (heroRef.current) {
