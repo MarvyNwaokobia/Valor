@@ -85,6 +85,7 @@ export class AudioDirector {
 
   dispose() {
     this.stopWhistle();
+    this.setHeartbeat(false);
     this.music?.dispose();
     void this.ctx?.close();
     this.ctx = null;
@@ -174,6 +175,83 @@ export class AudioDirector {
   dash() {
     this.noiseSweep(600, 1800, 0.12, 0.18, this.verbBus);
   }
+
+  // ── Threat audio (slice 4): every attack is audible before it lands ────────
+
+  /** Attack tell, spatialized at the attacker. One voice per archetype so
+   *  eyes-closed play can name WHO is winding up, not just where. */
+  tell(archetype: 'rusher' | 'gunner' | 'bulwark', pos: Pos) {
+    this.spatialOneShot(pos, this.impactBus, (dest) => {
+      if (archetype === 'rusher') {
+        this.noiseSweep(320, 1000, 0.32, 0.5, dest);          // rising snarl
+      } else if (archetype === 'gunner') {
+        this.sine(600, 1500, 0.55, 0.28, dest);               // charge whine (rises)
+      } else {
+        this.sine(58, 45, 0.28, 0.85, dest);                  // war-drum double
+        this.sine(58, 45, 0.28, 0.85, dest);
+      }
+    });
+  }
+
+  /** Gunner muzzle crack at the shooter's position. */
+  enemyShot(pos: Pos) {
+    this.spatialOneShot(pos, this.impactBus, (dest) => {
+      this.noiseSweep(1600, 500, 0.07, 0.5, dest);
+      this.sine(220, 80, 0.07, 0.4, dest);
+    });
+  }
+
+  /** Taking a hit: a dull, personal thud — never spatialized, it's YOU. */
+  heroHit() {
+    this.sine(140, 48, 0.16, 0.8, this.verbBus);
+    this.noiseBand(420, 0.8, 0.05, 0.4, this.verbBus);
+    this.duckMusic(0.45, 220);
+  }
+
+  /** The defeat: score hole + a falling minor line. Quiet, not melodramatic. */
+  heroDown() {
+    this.music?.gap(900);
+    this.sine(70, 30, 0.8, 0.9, this.verbBus);
+    const g = this.graph();
+    if (!g || !this.verbBus) return;
+    try {
+      // D3 → C3 → Bb2, one per beat: the theme falling over.
+      const line: Array<[number, number]> = [[146.83, 0], [130.81, 0.4], [116.54, 0.8]];
+      for (const [freq, at] of line) {
+        const osc = g.ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        const gain = g.ctx.createGain();
+        const t = g.ctx.currentTime + at;
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.exponentialRampToValueAtTime(0.2, t + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        osc.connect(gain).connect(this.verbBus);
+        osc.start(t);
+        osc.stop(t + 0.95);
+      }
+    } catch {}
+  }
+
+  /** Low-HP heartbeat layer — informational audio, not decoration. */
+  setHeartbeat(on: boolean) {
+    if (on === (this.heartbeatTimer !== null)) return;
+    if (!on) {
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+      return;
+    }
+    const g = this.graph();
+    if (!g) return;
+    const thump = () => {
+      this.sine(72, 38, 0.12, 0.5, this.verbBus);
+      setTimeout(() => this.sine(64, 34, 0.1, 0.35, this.verbBus), 180);
+    };
+    thump();
+    this.heartbeatTimer = setInterval(thump, 850);
+  }
+
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   death(pos: Pos) {
     this.spatialOneShot(pos, this.impactBus, (dest) => {

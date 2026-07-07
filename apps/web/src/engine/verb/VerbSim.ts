@@ -5,29 +5,36 @@ import {
 } from './RiftEdge';
 
 /**
- * Headless graybox sim for the Verb (CLONE_PLAN.md slice 1).
+ * Headless graybox sim for the Verb (CLONE_PLAN.md slices 1 + 4).
  *
- * One hero, a handful of dummies, and the Rift Edge. This deliberately does
- * NOT touch CombatSim: the old stat-duel keeps working while the new combat
- * core proves itself here. The gate is feel: 30 seconds of muted play in the
- * graybox has to be fun before anything gets art, story, or an economy.
+ * Slice 1 built the hero's verb (melee string, throw, magnet recall, catch
+ * follow-up, dash). Slice 4 wakes the other side up: dummies with an
+ * `archetype` are ENEMIES that fight back —
  *
- * Skill surface being prototyped:
- *  - melee: 3-hit string with buffered chaining, strike magnetism + lunge
- *  - throw: aimed, travel time, embeds where it lands
- *  - recall: magnet arc back through the fight, catch window
- *  - catch follow-up: attacking within the window after a catch skips the
- *    windup and hits harder — the rhythm GoW built a whole game on
- *  - dash: short burst for spacing
+ *   rusher  — closes distance, telegraphed melee lunge
+ *   gunner  — kites to range, telegraphed shot with real travel time
+ *             (blocks are cover: shots die on them)
+ *   bulwark — slow wall; a front guard eats damage into POSTURE instead of
+ *             HP until it breaks. Turns slowly, so the recall arc through
+ *             its back is the counter the verb was born for.
  *
- * The sim emits events; hit-pause, camera juice, audio and render all live in
- * the scene layer. Damage stays here.
+ * Fairness comes from the GoW rule: an AGGRESSION TOKEN DIRECTOR grants at
+ * most ENGAGE_TOKENS attack rights at once; everyone else circles. Every
+ * attack has a windup the player can hear (scene plays spatial tells) and
+ * dodge — the dash carries i-frames now.
+ *
+ * Dummies WITHOUT an archetype stay inert training props (slice 1 tests).
+ * The sim emits events; all juice lives in the scene layer.
  */
+
+export type Archetype = 'rusher' | 'gunner' | 'bulwark';
 
 export interface DummySpec {
   pos: [number, number];
-  /** Walkers shamble toward the hero so spacing/melee feel is testable. */
+  /** Legacy inert shambler (training prop) — walks, never attacks. */
   walker?: boolean;
+  /** Combat archetype; omit for an inert training dummy. */
+  archetype?: Archetype;
 }
 
 export interface VerbSimOptions {
@@ -36,23 +43,42 @@ export interface VerbSimOptions {
   heroPos?: [number, number];
 }
 
+/** Enemy attack state; inert dummies stay 'idle' forever. */
+export type EnemyAI = 'idle' | 'reposition' | 'windup' | 'strike' | 'recover' | 'broken';
+
 export interface DummyState {
   id: number;
   pos: THREE.Vector3;
   hp: number;
   maxHp: number;
   dead: boolean;
-  /** Seconds of hit-flash left (render reads this for the emissive pulse). */
   flash: number;
-  /** Seconds until a dead dummy stands back up. */
   respawn: number;
   walker: boolean;
+  archetype?: Archetype;
   spawn: THREE.Vector3;
-  vel: THREE.Vector3; // knockback impulse, decays
+  vel: THREE.Vector3;
   stagger: number;
+  // ── Slice 4 ──
+  yaw: number;           // facing; bulwarks turn slowly (flankable)
+  ai: EnemyAI;
+  aiT: number;           // seconds left in the current ai state
+  windupTotal: number;   // length of the running windup (for telegraph ramps)
+  hasToken: boolean;
+  attackCd: number;
+  orbitDir: 1 | -1;
+  posture: number;       // bulwark: guard damage absorbed so far
+  guardUp: boolean;      // bulwark: front guard active
 }
 
-export type MeleeStage = 0 | 1 | 2 | 3; // 0 = idle, 1..3 = which strike is playing
+export interface EnemyProjectile {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  alive: boolean;
+  travelled: number;
+}
+
+export type MeleeStage = 0 | 1 | 2 | 3;
 
 export type VerbEvent =
   | { type: 'meleeSwing'; stage: MeleeStage; buffed: boolean }
@@ -61,9 +87,17 @@ export type VerbEvent =
   | { type: 'recallHit'; dummyId: number; pos: THREE.Vector3 }
   | { type: 'dummyDeath'; dummyId: number; pos: THREE.Vector3 }
   | { type: 'dash' }
+  // ── Slice 4 ──
+  | { type: 'enemyWindup'; dummyId: number; archetype: Archetype; pos: THREE.Vector3; windup: number }
+  | { type: 'enemyStrike'; dummyId: number; archetype: Archetype; pos: THREE.Vector3; hit: boolean }
+  | { type: 'enemyShot'; dummyId: number; pos: THREE.Vector3 }
+  | { type: 'guardBlock'; dummyId: number; pos: THREE.Vector3 }
+  | { type: 'postureBreak'; dummyId: number; pos: THREE.Vector3 }
+  | { type: 'heroHit'; damage: number; pos: THREE.Vector3; dir: THREE.Vector3 }
+  | { type: 'heroDown'; pos: THREE.Vector3 }
   | Exclude<EdgeEvent, { type: 'recallSweep' }>;
 
-// ── Tuning ───────────────────────────────────────────────────────────────────
+// ── Hero tuning ──────────────────────────────────────────────────────────────
 
 const MOVE_SPEED = 5.2;
 const AIM_MOVE_SPEED = 2.6;
@@ -72,14 +106,19 @@ const TURN_LERP = 14;
 const DASH_SPEED = 11;
 const DASH_TIME = 0.16;
 const DASH_COOLDOWN = 0.45;
+/** The dodge: invulnerable from the dash press for this long. */
+const DASH_IFRAMES = 0.28;
+/** Post-hit mercy window so packs can't shred instantly. */
+const HIT_IFRAMES = 0.6;
+
+const HERO_MAX_HP = 100;
+const HERO_HIT_KNOCKBACK = 2.6;
 
 const MELEE_RANGE = 1.9;
-const MELEE_ARC_COS = Math.cos((70 * Math.PI) / 180 / 2 + 0.5); // generous ~120° effective
-const MAGNET_RANGE = 3.2;   // strike magnetism: snap facing + lunge toward this
+const MELEE_ARC_COS = Math.cos((70 * Math.PI) / 180 / 2 + 0.5);
+const MAGNET_RANGE = 3.2;
 const LUNGE_DIST = 0.55;
 
-// Per-stage melee timing (s): hit lands at `active`, next input chains from
-// `cancel`, string drops at `recover`. Armed = blade in hand.
 interface StrikeSpec { active: number; cancel: number; recover: number; damage: number; knockback: number }
 const ARMED: StrikeSpec[] = [
   { active: 0.12, cancel: 0.26, recover: 0.42, damage: 8,  knockback: 1.6 },
@@ -91,7 +130,6 @@ const UNARMED: StrikeSpec[] = [
   { active: 0.09, cancel: 0.20, recover: 0.34, damage: 6,  knockback: 1.4 },
   { active: 0.14, cancel: 0.32, recover: 0.46, damage: 10, knockback: 3.4 },
 ];
-/** Attack pressed within this window after a catch: skip windup, hit harder. */
 const CATCH_FOLLOWUP_WINDOW = 0.28;
 const CATCH_FOLLOWUP_MULT = 1.5;
 
@@ -101,6 +139,55 @@ const THROW_DAMAGE = 22;
 const THROW_KNOCKBACK = 5;
 const RECALL_DAMAGE = 12;
 const RECALL_KNOCKBACK = 3;
+
+// ── Enemy tuning ─────────────────────────────────────────────────────────────
+
+/** The GoW fairness rule: at most this many enemies may attack at once. */
+const ENGAGE_TOKENS = 2;
+
+interface ArchetypeSpec {
+  hp: number;
+  speed: number;
+  turnLerp: number;      // low = flankable
+  engageRange: number;   // wants a token inside this
+  attackRange: number;
+  windup: number;        // telegraph the player hears/sees
+  strikeDur: number;
+  recover: number;
+  damage: number;
+  cooldown: number;      // after an attack, before wanting a token again
+  orbitRadius: number;   // tokenless circling distance
+}
+
+export const ARCHETYPES: Record<Archetype, ArchetypeSpec> = {
+  rusher: {
+    hp: 50, speed: 2.7, turnLerp: 10,
+    engageRange: 13, attackRange: 1.9, windup: 0.55, strikeDur: 0.12,
+    recover: 0.4, damage: 12, cooldown: 1.6, orbitRadius: 5.5,
+  },
+  gunner: {
+    hp: 40, speed: 2.2, turnLerp: 10,
+    engageRange: 15, attackRange: 14, windup: 0.7, strikeDur: 0.05,
+    recover: 0.45, damage: 10, cooldown: 2.4, orbitRadius: 9,
+  },
+  bulwark: {
+    hp: 90, speed: 1.35, turnLerp: 2.2,
+    engageRange: 8, attackRange: 2.3, windup: 0.9, strikeDur: 0.16,
+    recover: 0.6, damage: 18, cooldown: 2.2, orbitRadius: 4.5,
+  },
+};
+
+/** Guard damage a bulwark absorbs before the break. */
+const POSTURE_BREAK = 30;
+const POSTURE_BROKEN_TIME = 2.6;
+/** Attacks travelling INTO the bulwark's facing get guarded. */
+const GUARD_FACING_DOT = -0.25;
+const GUARD_DAMAGE_MULT = 0.25;
+
+const GUNNER_KITE_RANGE = 6;   // backs away inside this
+const PROJECTILE_SPEED = 10;
+const PROJECTILE_RADIUS = 0.6; // vs hero
+const PROJECTILE_MAX_DIST = 34;
 
 const DUMMY_HP = 60;
 const DUMMY_RADIUS = 0.45;
@@ -113,7 +200,6 @@ const KNOCKBACK_DECAY = 6;
 const HAND_HEIGHT = 1.25;
 const HAND_RIGHT = 0.35;
 
-/** Soft aim assist: a throw within this cone of a dummy snaps to its chest. */
 const AIM_CONE_COS = Math.cos((12 * Math.PI) / 180);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,18 +208,18 @@ export class VerbSim {
   readonly heroPos: THREE.Vector3;
   heroYaw = 0;
   readonly edge = new RiftEdge();
-  /** Session structure: rounds own revival, so the sandbox turns this off. */
   respawnEnabled = true;
 
   private dummies: DummyState[] = [];
   private blocks: EdgeAabb[];
+  private projectiles: EnemyProjectile[] = [];
 
   private moveX = 0;
   private moveY = 0;
   private cameraYaw = 0;
   private aiming = false;
 
-  private attackBuffer = -1; // sim-time the press expires, -1 = empty
+  private attackBuffer = -1;
   private meleeStage: MeleeStage = 0;
   private meleeT = 0;
   private meleeHitDone = false;
@@ -145,8 +231,12 @@ export class VerbSim {
   private dashDir = new THREE.Vector3(0, 0, 1);
 
   private catchWindow = 0;
-  /** Dummies already clipped by the current recall sweep (hit once per pass). */
   private sweepHit = new Set<number>();
+
+  private _heroHp = HERO_MAX_HP;
+  private heroInvulnT = 0;
+  private heroKnock = new THREE.Vector3();
+  private heroDead = false;
 
   private time = 0;
   private listeners: Array<(e: VerbEvent) => void> = [];
@@ -157,28 +247,42 @@ export class VerbSim {
     this.dummies = opts.dummies.map((d, i) => ({
       id: i,
       pos: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
-      hp: DUMMY_HP,
-      maxHp: DUMMY_HP,
+      hp: d.archetype ? ARCHETYPES[d.archetype].hp : DUMMY_HP,
+      maxHp: d.archetype ? ARCHETYPES[d.archetype].hp : DUMMY_HP,
       dead: false,
       flash: 0,
       respawn: 0,
       walker: !!d.walker,
+      archetype: d.archetype,
       spawn: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
       vel: new THREE.Vector3(),
       stagger: 0,
+      // Spawn aware: face the hero (bulwarks turn too slowly to fake this).
+      yaw: Math.atan2(
+        (opts.heroPos?.[0] ?? 0) - d.pos[0],
+        (opts.heroPos?.[1] ?? 8) - d.pos[1],
+      ),
+      ai: 'idle',
+      aiT: 0,
+      windupTotal: 1,
+      hasToken: false,
+      attackCd: 0.6 + i * 0.4, // stagger first attacks so the opener is readable
+      orbitDir: i % 2 === 0 ? 1 : -1,
+      posture: 0,
+      guardUp: d.archetype === 'bulwark',
     }));
 
     this.edge.onEvent((e) => this.onEdgeEvent(e));
   }
 
-  // ── Input (scene layer calls these) ────────────────────────────────────────
+  // ── Input ──────────────────────────────────────────────────────────────────
 
   setMove(x: number, y: number) { this.moveX = x; this.moveY = y; }
   setCameraYaw(yaw: number) { this.cameraYaw = yaw; }
   setAiming(aiming: boolean) { this.aiming = aiming; }
 
-  /** Strike (J/LMB): melee when the Edge is anywhere, throw when aiming with it in hand. */
   pressAttack() {
+    if (this.heroDead) return;
     if (this.aiming && this.edge.state === 'held') {
       this.throwEdge();
       return;
@@ -186,23 +290,28 @@ export class VerbSim {
     this.attackBuffer = this.time + INPUT_BUFFER;
   }
 
-  /** Throw (F): instant, no aim-hold — camera-forward with the assist cone. */
   pressThrow() {
+    if (this.heroDead) return;
     if (this.edge.state === 'held') this.throwEdge();
   }
 
-  pressRecall() { this.edge.recall(this.handPos()); }
+  pressRecall() {
+    if (this.heroDead) return;
+    this.edge.recall(this.handPos());
+  }
 
   pressDash() {
+    if (this.heroDead) return;
     if (this.dashCooldown > 0 || this.dashT > 0) return;
     const dir = this.moveWorldDir();
     this.dashDir.copy(dir.lengthSq() > 1e-4 ? dir : this.facingDir());
     this.dashT = DASH_TIME;
     this.dashCooldown = DASH_COOLDOWN;
+    this.heroInvulnT = Math.max(this.heroInvulnT, DASH_IFRAMES); // the dodge
     this.emit({ type: 'dash' });
   }
 
-  // ── Public state (render layer reads these) ────────────────────────────────
+  // ── Public state ───────────────────────────────────────────────────────────
 
   onEvent(cb: (e: VerbEvent) => void): () => void {
     this.listeners.push(cb);
@@ -210,41 +319,17 @@ export class VerbSim {
   }
 
   getDummies(): readonly DummyState[] { return this.dummies; }
+  getProjectiles(): readonly EnemyProjectile[] { return this.projectiles; }
   get allDown(): boolean { return this.dummies.every((d) => d.dead); }
-
-  /** Dev/probe helper: drop every living dummy through the normal damage
-   *  path so death events (and the kill moment) fire exactly as in play. */
-  debugKillAll() {
-    const dir = this.facingDir();
-    for (const d of this.dummies) {
-      if (!d.dead) this.damageDummy(d, d.hp, dir, 2);
-    }
-  }
-
-  /** Round restart: everyone back up, blade back in the hand, hero stays put. */
-  resetRound() {
-    for (const d of this.dummies) {
-      d.dead = false;
-      d.hp = d.maxHp;
-      d.pos.copy(d.spawn);
-      d.vel.set(0, 0, 0);
-      d.flash = 0;
-      d.stagger = 0;
-      d.respawn = 0;
-    }
-    this.meleeStage = 0;
-    this.meleeT = 0;
-    this.attackBuffer = -1;
-    this.catchWindow = 0;
-    this.edge.reset(this.handPos());
-  }
   get isAiming() { return this.aiming; }
   get edgeState(): EdgeState { return this.edge.state; }
   get meleeState(): { stage: MeleeStage; t: number } { return { stage: this.meleeStage, t: this.meleeT }; }
   get armed(): boolean { return this.edge.state === 'held'; }
   get dashing(): boolean { return this.dashT > 0; }
+  get heroHp(): number { return this._heroHp; }
+  get heroMaxHp(): number { return HERO_MAX_HP; }
+  get heroIsDown(): boolean { return this.heroDead; }
 
-  /** Nearest living dummy — the camera's soft-lock target. */
   softLockTarget(): THREE.Vector3 | null {
     let best: DummyState | null = null;
     let bestD = Infinity;
@@ -264,54 +349,75 @@ export class VerbSim {
       .setY(HAND_HEIGHT);
   }
 
+  /** Dev/probe helper: drop every living dummy through the normal damage
+   *  path so death events (and the kill moment) fire exactly as in play. */
+  debugKillAll() {
+    const dir = this.facingDir();
+    for (const d of this.dummies) {
+      if (!d.dead) {
+        d.guardUp = false; // a debug kill ignores the shield
+        this.damageDummy(d, d.hp, dir, 2);
+      }
+    }
+  }
+
+  /** Round restart: everyone back up, blade back in the hand, hero stays put. */
+  resetRound() {
+    for (const d of this.dummies) {
+      d.dead = false;
+      d.hp = d.maxHp;
+      d.pos.copy(d.spawn);
+      d.vel.set(0, 0, 0);
+      d.flash = 0;
+      d.stagger = 0;
+      d.respawn = 0;
+      d.ai = 'idle';
+      d.aiT = 0;
+      d.hasToken = false;
+      d.attackCd = 0.6 + d.id * 0.4;
+      d.posture = 0;
+      d.guardUp = d.archetype === 'bulwark';
+      d.yaw = Math.atan2(this.heroPos.x - d.spawn.x, this.heroPos.z - d.spawn.z);
+    }
+    this.projectiles = [];
+    this._heroHp = HERO_MAX_HP;
+    this.heroDead = false;
+    this.heroInvulnT = 0;
+    this.heroKnock.set(0, 0, 0);
+    this.meleeStage = 0;
+    this.meleeT = 0;
+    this.attackBuffer = -1;
+    this.catchWindow = 0;
+    this.edge.reset(this.handPos());
+  }
+
   // ── Tick ───────────────────────────────────────────────────────────────────
 
   step(dt: number) {
     this.time += dt;
     this.dashCooldown = Math.max(0, this.dashCooldown - dt);
     this.catchWindow = Math.max(0, this.catchWindow - dt);
+    this.heroInvulnT = Math.max(0, this.heroInvulnT - dt);
 
     this.updateHero(dt);
     this.updateMelee(dt);
+    this.assignTokens();
     this.updateDummies(dt);
+    this.updateProjectiles(dt);
     this.resolveBodies();
     this.edge.update(dt, this.handPos(), this.probe, this.blocks);
   }
 
-  /**
-   * Bodies are solid: hero and dummies push each other apart instead of
-   * ghosting through. Dummies yield first (shoving them feels right); if a
-   * dummy is pinned against a block the hero backs off instead.
-   */
-  private resolveBodies() {
-    const heroMin = HERO_RADIUS + DUMMY_RADIUS;
-    for (const d of this.dummies) {
-      if (d.dead) continue;
-      const sep = separation(this.heroPos, d.pos, heroMin);
-      if (sep) {
-        d.pos.add(sep);
-        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
-        // Still overlapping (dummy pinned against a wall) → the hero gives.
-        const rest = separation(this.heroPos, d.pos, heroMin);
-        if (rest) this.heroPos.sub(rest);
-      }
-    }
-    // Dummies vs each other: split the overlap.
-    const dMin = DUMMY_RADIUS * 2;
-    for (let i = 0; i < this.dummies.length; i++) {
-      for (let j = i + 1; j < this.dummies.length; j++) {
-        const a = this.dummies[i]; const b = this.dummies[j];
-        if (a.dead || b.dead) continue;
-        const sep = separation(a.pos, b.pos, dMin);
-        if (sep) {
-          b.pos.addScaledVector(sep, 0.5);
-          a.pos.addScaledVector(sep, -0.5);
-        }
-      }
-    }
-  }
-
   private updateHero(dt: number) {
+    // Knockback from enemy hits rides on top of everything.
+    if (this.heroKnock.lengthSq() > 1e-4) {
+      this.heroPos.addScaledVector(this.heroKnock, dt);
+      this.heroKnock.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY * dt));
+    }
+    if (this.heroDead) {
+      this.pushOutOfBlocks(this.heroPos, HERO_RADIUS);
+      return;
+    }
     if (this.dashT > 0) {
       this.dashT -= dt;
       this.heroPos.addScaledVector(this.dashDir, DASH_SPEED * dt);
@@ -320,7 +426,6 @@ export class VerbSim {
       const speed = this.aiming ? AIM_MOVE_SPEED : MOVE_SPEED;
       this.heroPos.addScaledVector(dir, speed * dt);
 
-      // Face movement; face the camera line while aiming.
       const face = this.aiming
         ? new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
         : dir;
@@ -333,6 +438,7 @@ export class VerbSim {
   }
 
   private updateMelee(dt: number) {
+    if (this.heroDead) { this.meleeStage = 0; return; }
     if (this.meleeStage === 0) {
       if (this.attackBuffer >= this.time) this.startStrike(1);
       return;
@@ -361,11 +467,9 @@ export class VerbSim {
     this.meleeStage = stage;
     this.meleeHitDone = false;
     this.meleeBuffed = stage === 1 && this.catchWindow > 0;
-    // The catch follow-up lands NOW — the windup is the reward that got skipped.
     this.meleeT = this.meleeBuffed ? this.strikes[0].active : 0;
     this.catchWindow = 0;
 
-    // Strike magnetism: square up on the nearest dummy in front and lunge.
     const target = this.nearestInMagnetRange();
     if (target) {
       const to = new THREE.Vector3().subVectors(target.pos, this.heroPos).setY(0);
@@ -391,12 +495,14 @@ export class VerbSim {
       if (dist > 0.01 && to.normalize().dot(facing) < MELEE_ARC_COS) continue;
 
       landed = true;
-      this.damageDummy(d, Math.round(spec.damage * mult), facing, spec.knockback);
-      this.emit({
-        type: 'meleeHit', stage: this.meleeStage, dummyId: d.id,
-        pos: d.pos.clone().setY(1.1), damage: Math.round(spec.damage * mult),
-        buffed: this.meleeBuffed,
-      });
+      const dealt = this.damageDummy(d, Math.round(spec.damage * mult), facing, spec.knockback);
+      if (dealt > 0) {
+        this.emit({
+          type: 'meleeHit', stage: this.meleeStage, dummyId: d.id,
+          pos: d.pos.clone().setY(1.1), damage: dealt,
+          buffed: this.meleeBuffed,
+        });
+      }
     }
     if (!landed) this.emit({ type: 'meleeWhiff', stage: this.meleeStage });
   }
@@ -407,7 +513,6 @@ export class VerbSim {
     this.edge.throw(hand, dir);
   }
 
-  /** Camera-forward aim with a soft cone snap to the nearest dummy chest. */
   private aimDir(from: THREE.Vector3): THREE.Vector3 {
     const forward = new THREE.Vector3(
       -Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
@@ -432,14 +537,13 @@ export class VerbSim {
     }
     if (e.type === 'recallStart') this.sweepHit.clear();
     if (e.type === 'recallSweep') {
-      // Per-frame sweep stays internal; the scene hears discrete recallHits.
       for (const d of this.dummies) {
         if (d.dead || this.sweepHit.has(d.id)) continue;
         const flat = d.pos.clone().setY(0).distanceTo(e.pos.clone().setY(0));
         if (flat <= RECALL_SWEEP_RADIUS + DUMMY_RADIUS && e.pos.y < 1.9) {
           this.sweepHit.add(d.id);
-          this.damageDummy(d, RECALL_DAMAGE, e.dir, RECALL_KNOCKBACK);
-          this.emit({ type: 'recallHit', dummyId: d.id, pos: d.pos.clone().setY(1.1) });
+          const dealt = this.damageDummy(d, RECALL_DAMAGE, e.dir, RECALL_KNOCKBACK);
+          if (dealt > 0) this.emit({ type: 'recallHit', dummyId: d.id, pos: d.pos.clone().setY(1.1) });
         }
       }
       return;
@@ -448,23 +552,98 @@ export class VerbSim {
     this.emit(e);
   }
 
-  private damageDummy(d: DummyState, amount: number, dir: THREE.Vector3, knockback: number) {
-    d.hp -= amount;
+  /**
+   * Damage with the bulwark guard rule: attacks travelling into an intact
+   * front guard deal 25% and feed POSTURE; the rest lands whole. Returns HP
+   * actually dealt (0 when fully... the guard never fully zeroes — chip stays).
+   */
+  private damageDummy(d: DummyState, amount: number, dir: THREE.Vector3, knockback: number): number {
+    let dealt = amount;
+    if (d.archetype === 'bulwark' && d.guardUp && d.ai !== 'broken') {
+      const facing = new THREE.Vector3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
+      const flat = dir.clone().setY(0);
+      const intoFace = flat.lengthSq() > 1e-4 && flat.normalize().dot(facing) < GUARD_FACING_DOT;
+      if (intoFace) {
+        dealt = Math.max(1, Math.round(amount * GUARD_DAMAGE_MULT));
+        d.posture += amount;
+        this.emit({ type: 'guardBlock', dummyId: d.id, pos: d.pos.clone().setY(1.2) });
+        if (d.posture >= POSTURE_BREAK) {
+          d.guardUp = false;
+          d.ai = 'broken';
+          d.aiT = POSTURE_BROKEN_TIME;
+          this.releaseToken(d);
+          this.emit({ type: 'postureBreak', dummyId: d.id, pos: d.pos.clone().setY(1.2) });
+        }
+      }
+    }
+
+    d.hp -= dealt;
     d.flash = 0.28;
-    d.stagger = 0.25;
+    d.stagger = Math.max(d.stagger, 0.25);
     const push = dir.clone().setY(0);
     if (push.lengthSq() > 1e-4) d.vel.addScaledVector(push.normalize(), knockback);
     if (d.hp <= 0) {
       d.dead = true;
       d.respawn = DUMMY_RESPAWN;
+      this.releaseToken(d);
       this.emit({ type: 'dummyDeath', dummyId: d.id, pos: d.pos.clone() });
     }
+    return dealt;
   }
+
+  private damageHero(amount: number, from: THREE.Vector3) {
+    if (this.heroDead || this.heroInvulnT > 0) return;
+    this._heroHp -= amount;
+    this.heroInvulnT = HIT_IFRAMES;
+    const dir = new THREE.Vector3().subVectors(this.heroPos, from).setY(0);
+    if (dir.lengthSq() > 1e-4) this.heroKnock.addScaledVector(dir.normalize(), HERO_HIT_KNOCKBACK);
+    this.emit({
+      type: 'heroHit', damage: amount,
+      pos: this.heroPos.clone().setY(1.1),
+      dir: dir.clone(),
+    });
+    if (this._heroHp <= 0) {
+      this._heroHp = 0;
+      this.heroDead = true;
+      for (const d of this.dummies) this.releaseToken(d);
+      this.emit({ type: 'heroDown', pos: this.heroPos.clone() });
+    }
+  }
+
+  // ── The aggression token director ──────────────────────────────────────────
+
+  /** Nearest hungry enemies get the ENGAGE_TOKENS attack rights; ties go on. */
+  private assignTokens() {
+    if (this.heroDead) return;
+    let held = 0;
+    for (const d of this.dummies) if (d.hasToken && !d.dead) held++;
+
+    if (held >= ENGAGE_TOKENS) return;
+    const hungry = this.dummies
+      .filter((d) =>
+        !d.dead && d.archetype && !d.hasToken && d.attackCd <= 0 &&
+        (d.ai === 'idle' || d.ai === 'reposition') &&
+        d.pos.distanceTo(this.heroPos) <= ARCHETYPES[d.archetype].engageRange)
+      .sort((a, b) => a.pos.distanceTo(this.heroPos) - b.pos.distanceTo(this.heroPos));
+
+    for (const d of hungry) {
+      if (held >= ENGAGE_TOKENS) break;
+      d.hasToken = true;
+      held++;
+    }
+  }
+
+  private releaseToken(d: DummyState) {
+    d.hasToken = false;
+  }
+
+  // ── Enemies ────────────────────────────────────────────────────────────────
 
   private updateDummies(dt: number) {
     for (const d of this.dummies) {
       d.flash = Math.max(0, d.flash - dt);
       d.stagger = Math.max(0, d.stagger - dt);
+      d.attackCd = Math.max(0, d.attackCd - dt);
 
       if (d.dead) {
         if (!this.respawnEnabled) continue;
@@ -478,18 +657,173 @@ export class VerbSim {
         continue;
       }
 
-      // Knockback impulse decays exponentially.
       if (d.vel.lengthSq() > 1e-4) {
         d.pos.addScaledVector(d.vel, dt);
         d.vel.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY * dt));
       }
 
+      if (d.archetype) {
+        this.updateEnemy(d, dt);
+        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
+        continue;
+      }
+
+      // Legacy inert walker prop.
       if (d.walker && d.stagger <= 0) {
         const to = new THREE.Vector3().subVectors(this.heroPos, d.pos).setY(0);
         if (to.length() > WALKER_STOP) {
           d.pos.addScaledVector(to.normalize(), WALKER_SPEED * dt);
         }
       }
+    }
+  }
+
+  private updateEnemy(d: DummyState, dt: number) {
+    const spec = ARCHETYPES[d.archetype!];
+    const toHero = new THREE.Vector3().subVectors(this.heroPos, d.pos).setY(0);
+    const dist = toHero.length();
+    const heroDir = dist > 1e-4 ? toHero.clone().normalize() : new THREE.Vector3(0, 0, 1);
+
+    // Face the hero — bulwarks slowly, which is what makes them flankable.
+    if (d.ai !== 'broken') {
+      d.yaw = dampAngle(d.yaw, Math.atan2(heroDir.x, heroDir.z), spec.turnLerp, dt);
+    }
+
+    switch (d.ai) {
+      case 'idle':
+      case 'reposition': {
+        if (this.heroDead) { d.ai = 'idle'; return; }
+        d.ai = 'reposition';
+        if (d.stagger > 0) return;
+
+        if (d.hasToken) {
+          // Token holders close to their attack distance and wind up.
+          const wantRange = d.archetype === 'gunner'
+            ? THREE.MathUtils.clamp(dist, GUNNER_KITE_RANGE + 1, spec.attackRange - 1)
+            : spec.attackRange - 0.3;
+          const inRange = d.archetype === 'gunner'
+            ? dist >= GUNNER_KITE_RANGE && dist <= spec.attackRange && this.hasLineOfSight(d.pos, this.heroPos)
+            : dist <= spec.attackRange;
+          if (inRange) {
+            d.ai = 'windup';
+            d.aiT = spec.windup;
+            d.windupTotal = spec.windup;
+            this.emit({
+              type: 'enemyWindup', dummyId: d.id, archetype: d.archetype!,
+              pos: d.pos.clone().setY(1.1), windup: spec.windup,
+            });
+          } else if (dist > wantRange) {
+            d.pos.addScaledVector(heroDir, spec.speed * dt);
+          } else if (d.archetype === 'gunner' && dist < GUNNER_KITE_RANGE) {
+            d.pos.addScaledVector(heroDir, -spec.speed * dt); // kite away
+          } else if (d.archetype === 'gunner') {
+            // In the band but no clear shot: sidestep for a lane.
+            const tang = new THREE.Vector3(-heroDir.z, 0, heroDir.x);
+            d.pos.addScaledVector(tang, spec.speed * 0.8 * d.orbitDir * dt);
+          }
+        } else {
+          // No token: circle at orbit radius — threatening, never mobbing.
+          const tang = new THREE.Vector3(-heroDir.z, 0, heroDir.x);
+          const radialErr = dist - spec.orbitRadius;
+          d.pos.addScaledVector(heroDir, THREE.MathUtils.clamp(radialErr, -1, 1) * spec.speed * 0.6 * dt);
+          d.pos.addScaledVector(tang, spec.speed * 0.55 * d.orbitDir * dt);
+        }
+        return;
+      }
+
+      case 'windup': {
+        d.aiT -= dt;
+        // Rushers creep in during the windup; the others plant.
+        if (d.archetype === 'rusher' && dist > 1.2) {
+          d.pos.addScaledVector(heroDir, spec.speed * 0.5 * dt);
+        }
+        if (d.aiT <= 0) {
+          d.ai = 'strike';
+          d.aiT = spec.strikeDur;
+          this.resolveEnemyStrike(d, spec, dist);
+        }
+        return;
+      }
+
+      case 'strike': {
+        d.aiT -= dt;
+        if (d.aiT <= 0) {
+          d.ai = 'recover';
+          d.aiT = spec.recover;
+        }
+        return;
+      }
+
+      case 'recover': {
+        d.aiT -= dt;
+        if (d.aiT <= 0) {
+          d.ai = 'reposition';
+          d.attackCd = spec.cooldown + Math.random() * 0.8;
+          this.releaseToken(d);
+        }
+        return;
+      }
+
+      case 'broken': {
+        d.aiT -= dt;
+        if (d.aiT <= 0) {
+          d.ai = 'reposition';
+          d.posture = 0;
+          d.guardUp = true;
+          d.attackCd = 1.0;
+        }
+        return;
+      }
+    }
+  }
+
+  private resolveEnemyStrike(d: DummyState, spec: ArchetypeSpec, dist: number) {
+    if (d.archetype === 'gunner') {
+      // A real projectile with travel time — the dash dodges it, cover eats it.
+      const from = d.pos.clone().setY(1.2);
+      const aim = this.heroPos.clone().setY(1.0).sub(from).normalize();
+      this.projectiles.push({
+        pos: from,
+        vel: aim.multiplyScalar(PROJECTILE_SPEED),
+        alive: true,
+        travelled: 0,
+      });
+      this.emit({ type: 'enemyShot', dummyId: d.id, pos: from.clone() });
+      this.emit({
+        type: 'enemyStrike', dummyId: d.id, archetype: d.archetype!,
+        pos: d.pos.clone().setY(1.1), hit: false,
+      });
+      return;
+    }
+
+    // Melee archetypes: connect if the hero is still inside the reach.
+    const hit = dist <= spec.attackRange + 0.45 && this.heroInvulnT <= 0 && !this.heroDead;
+    if (hit) this.damageHero(spec.damage, d.pos);
+    this.emit({
+      type: 'enemyStrike', dummyId: d.id, archetype: d.archetype!,
+      pos: d.pos.clone().setY(1.1), hit,
+    });
+  }
+
+  private updateProjectiles(dt: number) {
+    for (const p of this.projectiles) {
+      if (!p.alive) continue;
+      const step = PROJECTILE_SPEED * dt;
+      p.pos.addScaledVector(p.vel.clone().normalize(), step);
+      p.travelled += step;
+
+      if (p.travelled >= PROJECTILE_MAX_DIST || p.pos.y <= 0.02) { p.alive = false; continue; }
+      if (this.pointInBlocks(p.pos)) { p.alive = false; continue; } // cover works
+      if (!this.heroDead && this.heroInvulnT <= 0) {
+        const flat = Math.hypot(p.pos.x - this.heroPos.x, p.pos.z - this.heroPos.z);
+        if (flat <= PROJECTILE_RADIUS && p.pos.y >= 0.2 && p.pos.y <= 1.8) {
+          p.alive = false;
+          this.damageHero(ARCHETYPES.gunner.damage, p.pos);
+        }
+      }
+    }
+    if (this.projectiles.length > 32) {
+      this.projectiles = this.projectiles.filter((p) => p.alive);
     }
   }
 
@@ -510,7 +844,6 @@ export class VerbSim {
     },
   };
 
-  /** Camera-relative move direction on the ground plane (matches BattleCamera's yaw contract). */
   private moveWorldDir(): THREE.Vector3 {
     const fwd = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
@@ -533,16 +866,37 @@ export class VerbSim {
       const to = new THREE.Vector3().subVectors(d.pos, this.heroPos).setY(0);
       const dist = to.length();
       if (dist > MAGNET_RANGE) continue;
-      // In front-ish, or basically on top of us.
       if (dist > 0.6 && to.normalize().dot(facing) < 0.1) continue;
       if (dist < bestDist) { bestDist = dist; best = d; }
     }
     return best;
   }
 
+  /** Coarse LOS: sample the segment against the blocks at torso height. */
+  private hasLineOfSight(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const steps = Math.max(2, Math.ceil(a.distanceTo(b) / 0.5));
+    const probe = new THREE.Vector3();
+    for (let i = 1; i < steps; i++) {
+      probe.lerpVectors(a, b, i / steps).setY(1.2);
+      if (this.pointInBlocks(probe)) return false;
+    }
+    return true;
+  }
+
+  private pointInBlocks(p: THREE.Vector3): boolean {
+    for (const b of this.blocks) {
+      if (
+        p.x >= b.min[0] && p.x <= b.max[0] &&
+        p.y >= b.min[1] && p.y <= b.max[1] &&
+        p.z >= b.min[2] && p.z <= b.max[2]
+      ) return true;
+    }
+    return false;
+  }
+
   private pushOutOfBlocks(pos: THREE.Vector3, r: number) {
     for (const b of this.blocks) {
-      if (b.max[1] < 0.4) continue; // low debris, step over
+      if (b.max[1] < 0.4) continue;
       const cx = THREE.MathUtils.clamp(pos.x, b.min[0], b.max[0]);
       const cz = THREE.MathUtils.clamp(pos.z, b.min[2], b.max[2]);
       const dx = pos.x - cx; const dz = pos.z - cz;
@@ -552,6 +906,32 @@ export class VerbSim {
         const d = Math.sqrt(d2);
         pos.x = cx + (dx / d) * r;
         pos.z = cz + (dz / d) * r;
+      }
+    }
+  }
+
+  private resolveBodies() {
+    const heroMin = HERO_RADIUS + DUMMY_RADIUS;
+    for (const d of this.dummies) {
+      if (d.dead) continue;
+      const sep = separation(this.heroPos, d.pos, heroMin);
+      if (sep) {
+        d.pos.add(sep);
+        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
+        const rest = separation(this.heroPos, d.pos, heroMin);
+        if (rest) this.heroPos.sub(rest);
+      }
+    }
+    const dMin = DUMMY_RADIUS * 2;
+    for (let i = 0; i < this.dummies.length; i++) {
+      for (let j = i + 1; j < this.dummies.length; j++) {
+        const a = this.dummies[i]; const b = this.dummies[j];
+        if (a.dead || b.dead) continue;
+        const sep = separation(a.pos, b.pos, dMin);
+        if (sep) {
+          b.pos.addScaledVector(sep, 0.5);
+          a.pos.addScaledVector(sep, -0.5);
+        }
       }
     }
   }

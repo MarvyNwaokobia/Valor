@@ -4,37 +4,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BattleCamera } from '../camera';
-import { VerbSim, type VerbEvent, type EdgeAabb } from '../verb';
+import { VerbSim, computeEdgeArrow, type VerbEvent, type EdgeAabb, type Archetype } from '../verb';
 import { AudioDirector, combatIntensity } from '../audio';
 
 /**
- * Slice 1 graybox (the verb) + slice 3 (the no-cut rule) — CLONE_PLAN.md.
+ * The verb graybox — CLONE_PLAN.md slices 1 (verb), 3 (no-cut), 4 (combat).
  *
- * The whole session is ONE continuous camera shot:
+ * One continuous camera across the whole session:
+ *   title (drifting wide shot) → swoop to OTS → combat → last kill:
+ *   slow-mo killcam + CLEARED · or the enemies win: DOWN → back to title.
  *
- *   title — live wide shot drifting around the arena, title text over it
- *   ↓ any key: the same camera swoops down into OTS (a lerp, not a cut)
- *   combat — drop all four dummies
- *   ↓ last dummy falls: slow-mo + the camera melts into a killcam orbit
- *   cleared — time shown in-world-over, orbit continues
- *   ↓ the camera climbs back out to the wide drift, dummies stand back up
- *   title again
- *
- * There is no cut anywhere in the loop. DOM text overlays fade over the
- * frame; the camera itself never teleports — the probe asserts this.
+ * Slice 4 rules on display here:
+ *  - enemies attack under an aggression-token director (max 2 at once)
+ *  - every attack has a visible windup pulse and an audible, spatialized tell
+ *  - attacks from OFF-SCREEN get an edge arrow (the GoW readability rule)
+ *  - the dash is the dodge (i-frames), gunner shots die on cover,
+ *    the bulwark's front guard breaks via posture or a recall through its back
  *
  * Controls: WASD move · J strike · F throw · E recall · Space dash.
  */
 
-type Phase = 'title' | 'combat' | 'cleared';
+type Phase = 'title' | 'combat' | 'cleared' | 'down';
 
-// One shared layout: the sim collides/embeds against these, the render draws them.
 const BLOCKS: Array<{ pos: [number, number, number]; size: [number, number, number] }> = [
-  { pos: [-5, 1.1, -2], size: [1, 2.2, 1] },   // pillar left
-  { pos: [5.5, 1.1, -5], size: [1, 2.2, 1] },  // pillar right
-  { pos: [0, 0.6, -9], size: [3.6, 1.2, 0.6] }, // low wall far
-  { pos: [-3.5, 1.25, -13], size: [4, 2.5, 0.6] }, // tall wall (throw around it)
-  { pos: [7, 0.45, 2], size: [2.2, 0.9, 2.2] }, // crate cluster
+  { pos: [-5, 1.1, -2], size: [1, 2.2, 1] },
+  { pos: [5.5, 1.1, -5], size: [1, 2.2, 1] },
+  { pos: [0, 0.6, -9], size: [3.6, 1.2, 0.6] },
+  { pos: [-3.5, 1.25, -13], size: [4, 2.5, 0.6] },
+  { pos: [7, 0.45, 2], size: [2.2, 0.9, 2.2] },
 ];
 
 const AABBS: EdgeAabb[] = BLOCKS.map((b) => ({
@@ -42,21 +39,30 @@ const AABBS: EdgeAabb[] = BLOCKS.map((b) => ({
   max: [b.pos[0] + b.size[0] / 2, b.pos[1] + b.size[1] / 2, b.pos[2] + b.size[2] / 2],
 }));
 
-const DUMMIES: Array<{ pos: [number, number]; walker?: boolean }> = [
-  { pos: [0, -4] },
-  { pos: [-4, -7] },
-  { pos: [4.5, -8] },
-  { pos: [1.5, -14], walker: true },
+const ENEMIES: Array<{ pos: [number, number]; archetype: Archetype }> = [
+  { pos: [0, -4], archetype: 'rusher' },
+  { pos: [-4, -7], archetype: 'gunner' },
+  { pos: [4.5, -8], archetype: 'bulwark' },
+  { pos: [1.5, -14], archetype: 'rusher' },
 ];
 
+const ARCHETYPE_COLOR: Record<Archetype, number> = {
+  rusher: 0x9a7263,
+  gunner: 0x74749a,
+  bulwark: 0x64808f,
+};
+
 const FIXED_DT = 1 / 60;
+const PAUSE = { melee: 0.06, meleeBig: 0.09, embedEnemy: 0.11, catch: 0.05, death: 0.08, hurt: 0.05, break: 0.1 };
+const BEAT_SLOWMO_MS = 1400;
+const BEAT_TOTAL_MS = 4200;
+const MAX_ARROWS = 4;
 
-// Hit-pause per beat (seconds of frozen sim).
-const PAUSE = { melee: 0.06, meleeBig: 0.09, embedEnemy: 0.11, catch: 0.05, death: 0.08 };
-
-// The cleared beat: slow-mo window, then the orbit runs out the clock.
-const CLEAR_SLOWMO_MS = 1400;
-const CLEAR_TOTAL_MS = 4200;
+interface HudRefs {
+  hpFill: HTMLDivElement | null;
+  vignette: HTMLDivElement | null;
+  arrows: Array<HTMLDivElement | null>;
+}
 
 /** The Rift Edge: heavy short blade, teal edge-light so it tracks in flight. */
 function EdgeMesh() {
@@ -82,11 +88,14 @@ function EdgeMesh() {
   );
 }
 
-function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) => void }) {
+function VerbWorld({ onPhase, hud }: {
+  onPhase: (phase: Phase, beatSecs?: number) => void;
+  hud: HudRefs;
+}) {
   const { camera } = useThree();
   const sim = useMemo(() => {
-    const s = new VerbSim({ dummies: DUMMIES, blocks: AABBS, heroPos: [0, 8] });
-    s.respawnEnabled = false; // rounds own revival now
+    const s = new VerbSim({ dummies: ENEMIES, blocks: AABBS, heroPos: [0, 8] });
+    s.respawnEnabled = false;
     return s;
   }, []);
   const audio = useMemo(() => new AudioDirector(), []);
@@ -103,51 +112,61 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
   const fistRRef = useRef<THREE.Mesh>(null);
   const dummyRefs = useRef<Array<THREE.Group | null>>([]);
   const hpRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const shieldRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const projRefs = useRef<Array<THREE.Mesh | null>>([]);
 
   const pauseRef = useRef(0);
   const accRef = useRef(0);
   const keys = useRef(new Set<string>());
   const lastHitRef = useRef(-100);
+  const vignetteRef = useRef(0);
 
   const phaseRef = useRef<Phase>('title');
   const roundStartRef = useRef(0);
-  const clearedAtRef = useRef(0);
+  const beatAtRef = useRef(0);
 
-  const setPhase = useCallback((p: Phase, clearedSecs?: number) => {
+  const setPhase = useCallback((p: Phase, beatSecs?: number) => {
     phaseRef.current = p;
-    onPhase(p, clearedSecs);
+    onPhase(p, beatSecs);
   }, [onPhase]);
 
   const startCombat = useCallback(() => {
     roundStartRef.current = performance.now();
     setPhase('combat');
-    // No setMode here: the per-frame camera logic lerps into OTS — the swoop.
   }, [setPhase]);
 
-  const enterCleared = useCallback(() => {
+  const enterBeat = useCallback((kind: 'cleared' | 'down') => {
     const secs = (performance.now() - roundStartRef.current) / 1000;
-    clearedAtRef.current = performance.now();
-    setPhase('cleared', secs);
+    beatAtRef.current = performance.now();
+    setPhase(kind, secs);
     battleCam.startKillcam('player');
     battleCam.setSlowMoFov(-8);
     audio.setIntensity(0);
-    audio.roundClear();
+    audio.setHeartbeat(false);
+    if (kind === 'cleared') audio.roundClear();
+    else audio.heroDown();
   }, [setPhase, battleCam, audio]);
 
   const returnToTitle = useCallback(() => {
     sim.resetRound();
     audio.stopWhistle();
     battleCam.setSlowMoFov(0);
-    battleCam.setMode('follow'); // the orbit climbs back out into the drift
+    battleCam.setMode('follow');
     setPhase('title');
   }, [sim, audio, battleCam, setPhase]);
+
+  // Probe hook for headless verification.
+  useEffect(() => {
+    (window as unknown as { __verbKill?: () => void }).__verbKill = () => sim.debugKillAll();
+    return () => { delete (window as unknown as { __verbKill?: () => void }).__verbKill; };
+  }, [sim]);
 
   // ── Input ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const anyInput = (): boolean => {
       audio.unlock();
       if (phaseRef.current === 'title') { startCombat(); return true; }
-      return phaseRef.current === 'cleared'; // swallow inputs during the beat
+      return phaseRef.current === 'cleared' || phaseRef.current === 'down';
     };
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
@@ -183,13 +202,6 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       audio.dispose();
     };
   }, [sim, audio, startCombat]);
-
-  // Probe hook: lets headless verification finish a round without minutes of
-  // swiftshader combat. Fires the normal damage/death path.
-  useEffect(() => {
-    (window as unknown as { __verbKill?: () => void }).__verbKill = () => sim.debugKillAll();
-    return () => { delete (window as unknown as { __verbKill?: () => void }).__verbKill; };
-  }, [sim]);
 
   // ── Sim events → juice ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -243,14 +255,41 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
           audio.death(e.pos);
           lastHitRef.current = performance.now() / 1000;
           pauseRef.current = Math.max(pauseRef.current, PAUSE.death);
-          if (phaseRef.current === 'combat' && sim.allDown) enterCleared();
+          if (phaseRef.current === 'combat' && sim.allDown) enterBeat('cleared');
           break;
         case 'dash':
           audio.dash();
           break;
+        // ── Slice 4 ──
+        case 'enemyWindup':
+          audio.tell(e.archetype, e.pos);
+          break;
+        case 'enemyStrike':
+          break; // connect/miss reads through heroHit / the visual lunge
+        case 'enemyShot':
+          audio.enemyShot(e.pos);
+          break;
+        case 'guardBlock':
+          audio.embed('metal', e.pos); // the clank that says "not from the front"
+          break;
+        case 'postureBreak': {
+          audio.embed('metal', e.pos);
+          pauseRef.current = Math.max(pauseRef.current, PAUSE.break);
+          battleCam.shake(0.06, 30);
+          break;
+        }
+        case 'heroHit':
+          audio.heroHit();
+          vignetteRef.current = 0.8;
+          pauseRef.current = Math.max(pauseRef.current, PAUSE.hurt);
+          battleCam.shake(0.07, 28);
+          break;
+        case 'heroDown':
+          if (phaseRef.current === 'combat') enterBeat('down');
+          break;
       }
     });
-  }, [sim, audio, battleCam, enterCleared]);
+  }, [sim, audio, battleCam, enterBeat]);
 
   // ── Frame ──────────────────────────────────────────────────────────────────
   useFrame((_, rawDt) => {
@@ -258,15 +297,13 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
     const phase = phaseRef.current;
     const now = performance.now();
 
-    // Cleared beat: slow-mo window, then the orbit runs, then back to title.
     let simScale = 1;
-    if (phase === 'cleared') {
-      simScale = now - clearedAtRef.current < CLEAR_SLOWMO_MS ? 0.35 : 1;
-      if (now - clearedAtRef.current >= CLEAR_SLOWMO_MS) battleCam.setSlowMoFov(0);
-      if (now - clearedAtRef.current >= CLEAR_TOTAL_MS) returnToTitle();
+    if (phase === 'cleared' || phase === 'down') {
+      simScale = now - beatAtRef.current < BEAT_SLOWMO_MS ? 0.35 : 1;
+      if (now - beatAtRef.current >= BEAT_SLOWMO_MS) battleCam.setSlowMoFov(0);
+      if (now - beatAtRef.current >= BEAT_TOTAL_MS) returnToTitle();
     }
 
-    // Hit-pause: the world holds its breath, the camera keeps breathing.
     if (pauseRef.current > 0) {
       pauseRef.current -= dt;
     } else {
@@ -291,32 +328,34 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       audio.setWhistle(sim.edge.pos, sim.edge.recallProgress);
     }
 
-    // Camera: one shot across every phase — targets change, the camera lerps.
+    // Camera: one shot across every phase.
     const target = sim.softLockTarget();
     if (phase === 'title') {
-      battleCam.rotateMouse(-38 * dt, 0); // slow cinematic drift
+      battleCam.rotateMouse(-38 * dt, 0);
       battleCam.update(dt, sim.heroPos);
     } else if (phase === 'combat') {
       const wantMode = target ? 'ots' : 'follow';
       if (battleCam.currentMode !== wantMode) battleCam.setMode(wantMode);
       battleCam.update(dt, sim.heroPos, target ?? undefined);
     } else {
-      battleCam.update(dt, sim.heroPos, sim.heroPos); // killcam orbits the hero
+      battleCam.update(dt, sim.heroPos, sim.heroPos);
     }
 
-    // The camera is the ear; the score follows the fight state.
     audio.setListener(camera.position.x, camera.position.z, battleCam.cameraYaw);
     if (phase === 'combat') {
       const nearest = target ? target.distanceTo(sim.heroPos) : null;
       audio.setIntensity(
         combatIntensity(nearest, performance.now() / 1000 - lastHitRef.current),
       );
+      audio.setHeartbeat(sim.heroHp > 0 && sim.heroHp <= 30);
     }
 
-    // Hero + procedural swing (graybox stand-in for real strike animations).
+    // Hero (falls over when down) + procedural swing.
     if (heroRef.current) {
       heroRef.current.position.copy(sim.heroPos);
       heroRef.current.rotation.y = sim.heroYaw;
+      heroRef.current.rotation.z = THREE.MathUtils.lerp(
+        heroRef.current.rotation.z, sim.heroIsDown ? Math.PI / 2 : 0, 0.18);
     }
     if (swingRef.current) {
       const m = sim.meleeState;
@@ -325,7 +364,7 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
         const p = Math.min(1, m.t / spec);
         const dir = m.stage === 2 ? -1 : 1;
         if (m.stage === 3) {
-          swingRef.current.rotation.set(-1.6 + p * 2.4, 0, 0); // overhead chop
+          swingRef.current.rotation.set(-1.6 + p * 2.4, 0, 0);
         } else {
           swingRef.current.rotation.set(0, dir * (-1.2 + p * 2.4), 0);
         }
@@ -335,8 +374,7 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       }
     }
 
-    // Fists: idle at the sides; bare-handed strikes jab them forward so a
-    // punch is visible even with zero character art.
+    // Fists: visible bare-handed strikes.
     {
       const m = sim.meleeState;
       const spec = m.stage === 3 ? 0.46 : 0.34;
@@ -353,7 +391,7 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       }
     }
 
-    // The Edge: in-hand it rides the swing pivot; loose it flies/embeds/returns.
+    // The Edge.
     const held = sim.edgeState === 'held';
     if (edgeHeldRef.current) edgeHeldRef.current.visible = held;
     if (edgeLooseRef.current) {
@@ -367,25 +405,32 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       }
     }
 
-    // Probe/debug readout — headless verification reads this (no DOM re-render).
-    (window as unknown as { __verbState?: object }).__verbState = {
-      phase: phaseRef.current,
-      edge: sim.edgeState,
-      hero: [sim.heroPos.x, sim.heroPos.z],
-      cam: [camera.position.x, camera.position.y, camera.position.z],
-      dummies: sim.getDummies().map((d) => ({ hp: d.hp, dead: d.dead })),
-    };
-
-    // Dummies: flash on hit, crumple when dead.
+    // Enemies: archetype colors, windup pulse, guard shield, crumple on death.
     sim.getDummies().forEach((d, i) => {
       const g = dummyRefs.current[i];
       if (!g) return;
       g.position.copy(d.pos);
+      g.rotation.y = d.yaw;
       const mesh = g.children[0] as THREE.Mesh;
       const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
       if (mat) {
-        mat.emissive.setHex(d.flash > 0 ? 0xff3322 : 0x000000);
-        mat.color.setHex(d.dead ? 0x333338 : d.walker ? 0x8a8a92 : 0x77777d);
+        const base = d.archetype ? ARCHETYPE_COLOR[d.archetype] : 0x77777d;
+        mat.color.setHex(d.dead ? 0x333338 : base);
+        if (d.flash > 0) {
+          mat.emissive.setHex(0xff3322);
+          mat.emissiveIntensity = 1;
+        } else if (d.ai === 'windup') {
+          // The telegraph: amber, brightening as the strike closes in.
+          const p = 1 - d.aiT / d.windupTotal;
+          mat.emissive.setHex(0xffa028);
+          mat.emissiveIntensity = 0.25 + p * 1.3;
+        } else if (d.ai === 'broken') {
+          mat.emissive.setHex(0x37e0d8); // posture broken: open season
+          mat.emissiveIntensity = 0.5;
+        } else {
+          mat.emissive.setHex(0x000000);
+          mat.emissiveIntensity = 1;
+        }
       }
       if (mesh) mesh.scale.setScalar(1 + d.flash * 0.45);
       g.rotation.z = THREE.MathUtils.lerp(g.rotation.z, d.dead ? Math.PI / 2 : 0, 0.25);
@@ -394,7 +439,74 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
         hp.visible = !d.dead;
         hp.scale.x = Math.max(0.02, d.hp / d.maxHp);
       }
+      const shield = shieldRefs.current[i];
+      if (shield) shield.visible = !d.dead && d.guardUp;
     });
+
+    // Enemy projectiles.
+    {
+      const alive = sim.getProjectiles().filter((p) => p.alive);
+      projRefs.current.forEach((m, i) => {
+        if (!m) return;
+        const p = alive[i];
+        m.visible = !!p;
+        if (p) m.position.copy(p.pos);
+      });
+    }
+
+    // ── HUD (imperative DOM: no React re-renders at 60fps) ──────────────────
+    if (hud.hpFill) {
+      const f = sim.heroHp / sim.heroMaxHp;
+      hud.hpFill.style.transform = `scaleX(${Math.max(0, f)})`;
+      hud.hpFill.style.background = f > 0.5 ? '#43d17c' : f > 0.3 ? '#ffb347' : '#ff5544';
+    }
+    if (hud.vignette) {
+      vignetteRef.current = Math.max(0, vignetteRef.current - dt * 1.6);
+      const lowHp = phase === 'combat' && sim.heroHp <= 30 && !sim.heroIsDown ? 0.28 : 0;
+      hud.vignette.style.opacity = String(Math.max(vignetteRef.current, lowHp));
+    }
+
+    // Off-screen threat arrows: enemies winding up outside the frame get an
+    // edge indicator pointing at them (paired with the spatial audio tell).
+    {
+      const cam = camera as THREE.PerspectiveCamera;
+      const threats = sim.getDummies().filter(
+        (d) => !d.dead && (d.ai === 'windup' || d.ai === 'strike'));
+      let slot = 0;
+      const v = new THREE.Vector3();
+      const n = new THREE.Vector3();
+      for (const d of threats) {
+        if (slot >= MAX_ARROWS) break;
+        v.set(d.pos.x, 1.1, d.pos.z).applyMatrix4(cam.matrixWorldInverse);
+        const ndc = v.z <= 0 ? n.set(d.pos.x, 1.1, d.pos.z).project(cam) : null;
+        const arrow = computeEdgeArrow(v, ndc);
+        if (!arrow) continue; // visibly on screen
+        const el = hud.arrows[slot];
+        if (el) {
+          const p = d.ai === 'strike' ? 1 : 1 - d.aiT / d.windupTotal;
+          el.style.display = 'block';
+          el.style.left = `${arrow.leftPct}%`;
+          el.style.top = `${arrow.topPct}%`;
+          el.style.opacity = String(0.4 + 0.6 * p);
+          el.style.transform = `translate(-50%, -50%) rotate(${arrow.deg}deg) scale(${1 + p * 0.4})`;
+        }
+        slot++;
+      }
+      for (; slot < MAX_ARROWS; slot++) {
+        const el = hud.arrows[slot];
+        if (el) el.style.display = 'none';
+      }
+    }
+
+    // Probe/debug readout.
+    (window as unknown as { __verbState?: object }).__verbState = {
+      phase: phaseRef.current,
+      edge: sim.edgeState,
+      heroHp: sim.heroHp,
+      hero: [sim.heroPos.x, sim.heroPos.z],
+      cam: [camera.position.x, camera.position.y, camera.position.z],
+      dummies: sim.getDummies().map((d) => ({ hp: d.hp, dead: d.dead, ai: d.ai })),
+    };
   });
 
   return (
@@ -402,14 +514,12 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
       <hemisphereLight intensity={0.75} color="#cfd6e0" groundColor="#3a3d44" />
       <directionalLight position={[6, 10, 4]} intensity={1.1} castShadow />
 
-      {/* Floor */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[44, 44]} />
         <meshStandardMaterial color="#55565c" />
       </mesh>
       <gridHelper args={[44, 44, 0x777880, 0x64656b]} position={[0, 0.01, 0]} />
 
-      {/* Graybox blocks */}
       {BLOCKS.map((b, i) => (
         <mesh key={i} position={b.pos} castShadow receiveShadow>
           <boxGeometry args={b.size} />
@@ -417,7 +527,6 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
         </mesh>
       ))}
 
-      {/* Hero: capsule + nose wedge (facing) + fists + swing pivot with the Edge */}
       <group ref={heroRef}>
         <mesh position={[0, 0.95, 0]} castShadow>
           <capsuleGeometry args={[0.38, 1.1, 6, 14]} />
@@ -442,26 +551,39 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
         </group>
       </group>
 
-      {/* The Edge, loose in the world (thrown / embedded / recalling) */}
       <group ref={edgeLooseRef} visible={false}>
         <EdgeMesh />
       </group>
 
-      {/* Dummies */}
-      {DUMMIES.map((d, i) => (
+      {/* Enemies: capsule scaled by archetype, bulwark carries a front shield */}
+      {ENEMIES.map((d, i) => (
         <group key={i} ref={(el) => { dummyRefs.current[i] = el; }} position={[d.pos[0], 0, d.pos[1]]}>
           <mesh position={[0, 0.95, 0]} castShadow>
-            <capsuleGeometry args={[0.45, 1.0, 6, 14]} />
+            <capsuleGeometry args={[d.archetype === 'bulwark' ? 0.52 : 0.45, d.archetype === 'bulwark' ? 1.15 : 1.0, 6, 14]} />
             <meshStandardMaterial color="#77777d" />
           </mesh>
-          <mesh
-            ref={(el) => { hpRefs.current[i] = el; }}
-            position={[0, 2.1, 0]}
-          >
+          {d.archetype === 'bulwark' && (
+            <mesh
+              ref={(el) => { shieldRefs.current[i] = el; }}
+              position={[0, 1.0, 0.62]}
+            >
+              <boxGeometry args={[0.95, 1.25, 0.08]} />
+              <meshStandardMaterial color="#3f4a52" metalness={0.6} roughness={0.4} />
+            </mesh>
+          )}
+          <mesh ref={(el) => { hpRefs.current[i] = el; }} position={[0, 2.2, 0]}>
             <boxGeometry args={[0.8, 0.07, 0.02]} />
             <meshStandardMaterial color="#43d17c" />
           </mesh>
         </group>
+      ))}
+
+      {/* Gunner projectile pool */}
+      {Array.from({ length: 8 }).map((_, i) => (
+        <mesh key={i} ref={(el) => { projRefs.current[i] = el; }} visible={false}>
+          <sphereGeometry args={[0.09, 8, 8]} />
+          <meshStandardMaterial color="#ffd28a" emissive="#ff9a3c" emissiveIntensity={2.2} />
+        </mesh>
       ))}
     </>
   );
@@ -476,19 +598,43 @@ const overlayFont: React.CSSProperties = {
 
 export function GrayboxVerbScene() {
   const [phase, setPhase] = useState<Phase>('title');
-  const [clearedSecs, setClearedSecs] = useState<number | null>(null);
+  const [beatSecs, setBeatSecs] = useState<number | null>(null);
+  const hud = useRef<HudRefs>({ hpFill: null, vignette: null, arrows: [] }).current;
 
   const onPhase = useCallback((p: Phase, secs?: number) => {
     setPhase(p);
-    if (secs !== undefined) setClearedSecs(secs);
+    if (secs !== undefined) setBeatSecs(secs);
   }, []);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#404248' }}>
       <style>{`@keyframes verbPulse { 0%,100% { opacity: 0.9 } 50% { opacity: 0.35 } }`}</style>
       <Canvas shadows camera={{ position: [0, 4, 16], fov: 55 }}>
-        <VerbWorld onPhase={onPhase} />
+        <VerbWorld onPhase={onPhase} hud={hud} />
       </Canvas>
+
+      {/* Damage vignette (opacity driven imperatively) */}
+      <div
+        ref={(el) => { hud.vignette = el; }}
+        style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0,
+          background: 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(255,40,30,0.55) 100%)',
+        }}
+      />
+
+      {/* Off-screen threat arrows */}
+      {Array.from({ length: MAX_ARROWS }).map((_, i) => (
+        <div
+          key={i}
+          ref={(el) => { hud.arrows[i] = el; }}
+          style={{
+            ...overlayFont, position: 'absolute', display: 'none',
+            color: '#ffa028', fontSize: 26, fontWeight: 800, textShadow: '0 0 8px rgba(255,160,40,0.7)',
+          }}
+        >
+          ▲
+        </div>
+      ))}
 
       {phase === 'title' && (
         <div style={{
@@ -514,14 +660,28 @@ export function GrayboxVerbScene() {
             ...overlayFont, position: 'absolute', top: 14, left: 0, right: 0,
             textAlign: 'center', fontSize: 13, letterSpacing: '0.15em', opacity: 0.85,
           }}>
-            DROP ALL FOUR
+            DROP ALL FOUR · THEY FIGHT BACK
+          </div>
+          {/* Hero HP */}
+          <div style={{
+            position: 'absolute', bottom: 64, left: '50%', transform: 'translateX(-50%)',
+            width: 240, height: 10, background: 'rgba(10,12,16,0.6)', borderRadius: 5,
+            overflow: 'hidden', pointerEvents: 'none',
+          }}>
+            <div
+              ref={(el) => { hud.hpFill = el; }}
+              style={{
+                width: '100%', height: '100%', background: '#43d17c',
+                transformOrigin: 'left', transition: 'background 0.2s',
+              }}
+            />
           </div>
           <div style={{
             ...overlayFont, position: 'absolute', left: 12, bottom: 12, fontSize: 13,
             lineHeight: 1.7, background: 'rgba(10,12,16,0.55)', padding: '10px 14px', borderRadius: 8,
           }}>
             <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>RIFT EDGE · graybox</div>
-            WASD move · J strike · F throw · E recall · Space dash
+            WASD move · J strike · F throw · E recall · Space dash (dodge)
           </div>
         </>
       )}
@@ -534,8 +694,22 @@ export function GrayboxVerbScene() {
           <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: '0.3em', textIndent: '0.3em', color: '#37e0d8' }}>
             CLEARED
           </div>
-          {clearedSecs !== null && (
-            <div style={{ fontSize: 15, opacity: 0.9 }}>in {clearedSecs.toFixed(1)}s</div>
+          {beatSecs !== null && (
+            <div style={{ fontSize: 15, opacity: 0.9 }}>in {beatSecs.toFixed(1)}s</div>
+          )}
+        </div>
+      )}
+
+      {phase === 'down' && (
+        <div style={{
+          ...overlayFont, position: 'absolute', inset: 0, display: 'flex',
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+          <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: '0.3em', textIndent: '0.3em', color: '#ff5544' }}>
+            DOWN
+          </div>
+          {beatSecs !== null && (
+            <div style={{ fontSize: 15, opacity: 0.9 }}>survived {beatSecs.toFixed(1)}s</div>
           )}
         </div>
       )}
