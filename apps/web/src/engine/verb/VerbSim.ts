@@ -3,6 +3,7 @@ import {
   RiftEdge, RECALL_SWEEP_RADIUS,
   type EdgeAabb, type EdgeEvent, type EdgeState,
 } from './RiftEdge';
+import { BossBrain, type BossEvent } from './Boss';
 
 /**
  * Headless graybox sim for the Verb (CLONE_PLAN.md slices 1 + 4).
@@ -35,6 +36,8 @@ export interface DummySpec {
   walker?: boolean;
   /** Combat archetype; omit for an inert training dummy. */
   archetype?: Archetype;
+  /** Boss body: driven by a BossBrain (see Boss.ts), ignores the token director. */
+  boss?: boolean;
 }
 
 export interface VerbSimOptions {
@@ -43,8 +46,9 @@ export interface VerbSimOptions {
   heroPos?: [number, number];
 }
 
-/** Enemy attack state; inert dummies stay 'idle' forever. */
-export type EnemyAI = 'idle' | 'reposition' | 'windup' | 'strike' | 'recover' | 'broken';
+/** Enemy attack state; inert dummies stay 'idle' forever.
+ *  'phase' is boss-only: the invulnerable transition beat. */
+export type EnemyAI = 'idle' | 'reposition' | 'windup' | 'strike' | 'recover' | 'broken' | 'phase';
 
 export interface DummyState {
   id: number;
@@ -69,6 +73,10 @@ export interface DummyState {
   orbitDir: 1 | -1;
   posture: number;       // bulwark: guard damage absorbed so far
   guardUp: boolean;      // bulwark: front guard active
+  // ── Boss (slice 4b) ──
+  boss: boolean;
+  radius: number;        // body radius: 0.45 troops, 0.7 boss
+  bossPhase?: number;
 }
 
 export interface EnemyProjectile {
@@ -76,6 +84,7 @@ export interface EnemyProjectile {
   vel: THREE.Vector3;
   alive: boolean;
   travelled: number;
+  damage: number;
 }
 
 export type MeleeStage = 0 | 1 | 2 | 3;
@@ -95,6 +104,7 @@ export type VerbEvent =
   | { type: 'postureBreak'; dummyId: number; pos: THREE.Vector3 }
   | { type: 'heroHit'; damage: number; pos: THREE.Vector3; dir: THREE.Vector3 }
   | { type: 'heroDown'; pos: THREE.Vector3 }
+  | BossEvent
   | Exclude<EdgeEvent, { type: 'recallSweep' }>;
 
 // ── Hero tuning ──────────────────────────────────────────────────────────────
@@ -191,6 +201,8 @@ const PROJECTILE_MAX_DIST = 34;
 
 const DUMMY_HP = 60;
 const DUMMY_RADIUS = 0.45;
+const BOSS_HP = 220;
+const BOSS_RADIUS = 0.7;
 const HERO_RADIUS = 0.4;
 const DUMMY_RESPAWN = 2.5;
 const WALKER_SPEED = 1.15;
@@ -241,38 +253,52 @@ export class VerbSim {
   private time = 0;
   private listeners: Array<(e: VerbEvent) => void> = [];
 
+  private bossBrain: BossBrain | null = null;
+
   constructor(opts: VerbSimOptions) {
     this.heroPos = new THREE.Vector3(opts.heroPos?.[0] ?? 0, 0, opts.heroPos?.[1] ?? 8);
     this.blocks = opts.blocks ?? [];
-    this.dummies = opts.dummies.map((d, i) => ({
-      id: i,
-      pos: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
-      hp: d.archetype ? ARCHETYPES[d.archetype].hp : DUMMY_HP,
-      maxHp: d.archetype ? ARCHETYPES[d.archetype].hp : DUMMY_HP,
-      dead: false,
-      flash: 0,
-      respawn: 0,
-      walker: !!d.walker,
-      archetype: d.archetype,
-      spawn: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
-      vel: new THREE.Vector3(),
-      stagger: 0,
-      // Spawn aware: face the hero (bulwarks turn too slowly to fake this).
-      yaw: Math.atan2(
-        (opts.heroPos?.[0] ?? 0) - d.pos[0],
-        (opts.heroPos?.[1] ?? 8) - d.pos[1],
-      ),
-      ai: 'idle',
-      aiT: 0,
-      windupTotal: 1,
-      hasToken: false,
-      attackCd: 0.6 + i * 0.4, // stagger first attacks so the opener is readable
-      orbitDir: i % 2 === 0 ? 1 : -1,
-      posture: 0,
-      guardUp: d.archetype === 'bulwark',
-    }));
-
+    this.buildRoster(opts.dummies);
     this.edge.onEvent((e) => this.onEdgeEvent(e));
+  }
+
+  /** Swap the enemy roster (round changes: troops → boss). Resets the round. */
+  setRoster(specs: DummySpec[]) {
+    this.buildRoster(specs);
+    this.resetRound();
+  }
+
+  private buildRoster(specs: DummySpec[]) {
+    this.bossBrain = specs.some((s) => s.boss) ? new BossBrain() : null;
+    this.dummies = specs.map((d, i) => {
+      const hp = d.boss ? BOSS_HP : d.archetype ? ARCHETYPES[d.archetype].hp : DUMMY_HP;
+      return {
+        id: i,
+        pos: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
+        hp,
+        maxHp: hp,
+        dead: false,
+        flash: 0,
+        respawn: 0,
+        walker: !!d.walker,
+        archetype: d.archetype,
+        spawn: new THREE.Vector3(d.pos[0], 0, d.pos[1]),
+        vel: new THREE.Vector3(),
+        stagger: 0,
+        // Spawn aware: face the hero (bulwarks turn too slowly to fake this).
+        yaw: Math.atan2(this.heroPos.x - d.pos[0], this.heroPos.z - d.pos[1]),
+        ai: 'idle' as const,
+        aiT: 0,
+        windupTotal: 1,
+        hasToken: false,
+        attackCd: 0.6 + i * 0.4, // stagger first attacks so the opener is readable
+        orbitDir: (i % 2 === 0 ? 1 : -1) as 1 | -1,
+        posture: 0,
+        guardUp: d.archetype === 'bulwark',
+        boss: !!d.boss,
+        radius: d.boss ? BOSS_RADIUS : DUMMY_RADIUS,
+      };
+    });
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -379,6 +405,7 @@ export class VerbSim {
       d.guardUp = d.archetype === 'bulwark';
       d.yaw = Math.atan2(this.heroPos.x - d.spawn.x, this.heroPos.z - d.spawn.z);
     }
+    this.bossBrain?.reset();
     this.projectiles = [];
     this._heroHp = HERO_MAX_HP;
     this.heroDead = false;
@@ -491,7 +518,7 @@ export class VerbSim {
       if (d.dead) continue;
       const to = new THREE.Vector3().subVectors(d.pos, this.heroPos).setY(0);
       const dist = to.length();
-      if (dist > MELEE_RANGE + DUMMY_RADIUS) continue;
+      if (dist > MELEE_RANGE + d.radius) continue;
       if (dist > 0.01 && to.normalize().dot(facing) < MELEE_ARC_COS) continue;
 
       landed = true;
@@ -540,7 +567,7 @@ export class VerbSim {
       for (const d of this.dummies) {
         if (d.dead || this.sweepHit.has(d.id)) continue;
         const flat = d.pos.clone().setY(0).distanceTo(e.pos.clone().setY(0));
-        if (flat <= RECALL_SWEEP_RADIUS + DUMMY_RADIUS && e.pos.y < 1.9) {
+        if (flat <= RECALL_SWEEP_RADIUS + d.radius && e.pos.y < 1.9) {
           this.sweepHit.add(d.id);
           const dealt = this.damageDummy(d, RECALL_DAMAGE, e.dir, RECALL_KNOCKBACK);
           if (dealt > 0) this.emit({ type: 'recallHit', dummyId: d.id, pos: d.pos.clone().setY(1.1) });
@@ -558,6 +585,10 @@ export class VerbSim {
    * actually dealt (0 when fully... the guard never fully zeroes — chip stays).
    */
   private damageDummy(d: DummyState, amount: number, dir: THREE.Vector3, knockback: number): number {
+    // Boss rules: phase transitions are sacred, and 220kg doesn't fly.
+    if (d.boss && this.bossBrain?.invulnerable) return 0;
+    if (d.boss) knockback *= 0.15;
+
     let dealt = amount;
     if (d.archetype === 'bulwark' && d.guardUp && d.ai !== 'broken') {
       const facing = new THREE.Vector3(Math.sin(d.yaw), 0, Math.cos(d.yaw));
@@ -662,9 +693,22 @@ export class VerbSim {
         d.vel.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY * dt));
       }
 
+      if (d.boss) {
+        this.bossBrain?.update(d, {
+          heroPos: this.heroPos,
+          heroDead: this.heroDead,
+          damageHero: (amount, from) => this.damageHero(amount, from),
+          spawnProjectile: (from, dir, speed, damage) =>
+            this.spawnProjectile(from, dir, speed, damage),
+          emit: (e) => this.emit(e),
+        }, dt);
+        this.pushOutOfBlocks(d.pos, d.radius);
+        continue;
+      }
+
       if (d.archetype) {
         this.updateEnemy(d, dt);
-        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
+        this.pushOutOfBlocks(d.pos, d.radius);
         continue;
       }
 
@@ -782,12 +826,7 @@ export class VerbSim {
       // A real projectile with travel time — the dash dodges it, cover eats it.
       const from = d.pos.clone().setY(1.2);
       const aim = this.heroPos.clone().setY(1.0).sub(from).normalize();
-      this.projectiles.push({
-        pos: from,
-        vel: aim.multiplyScalar(PROJECTILE_SPEED),
-        alive: true,
-        travelled: 0,
-      });
+      this.spawnProjectile(from, aim, PROJECTILE_SPEED, ARCHETYPES.gunner.damage);
       this.emit({ type: 'enemyShot', dummyId: d.id, pos: from.clone() });
       this.emit({
         type: 'enemyStrike', dummyId: d.id, archetype: d.archetype!,
@@ -805,12 +844,21 @@ export class VerbSim {
     });
   }
 
+  private spawnProjectile(from: THREE.Vector3, dir: THREE.Vector3, speed: number, damage: number) {
+    this.projectiles.push({
+      pos: from.clone(),
+      vel: dir.clone().normalize().multiplyScalar(speed),
+      alive: true,
+      travelled: 0,
+      damage,
+    });
+  }
+
   private updateProjectiles(dt: number) {
     for (const p of this.projectiles) {
       if (!p.alive) continue;
-      const step = PROJECTILE_SPEED * dt;
-      p.pos.addScaledVector(p.vel.clone().normalize(), step);
-      p.travelled += step;
+      p.pos.addScaledVector(p.vel, dt);
+      p.travelled += p.vel.length() * dt;
 
       if (p.travelled >= PROJECTILE_MAX_DIST || p.pos.y <= 0.02) { p.alive = false; continue; }
       if (this.pointInBlocks(p.pos)) { p.alive = false; continue; } // cover works
@@ -818,7 +866,7 @@ export class VerbSim {
         const flat = Math.hypot(p.pos.x - this.heroPos.x, p.pos.z - this.heroPos.z);
         if (flat <= PROJECTILE_RADIUS && p.pos.y >= 0.2 && p.pos.y <= 1.8) {
           p.alive = false;
-          this.damageHero(ARCHETYPES.gunner.damage, p.pos);
+          this.damageHero(p.damage, p.pos);
         }
       }
     }
@@ -834,7 +882,7 @@ export class VerbSim {
       for (const d of this.dummies) {
         if (d.dead) continue;
         const flat = d.pos.clone().setY(0).distanceTo(pos.clone().setY(0));
-        if (flat <= radius + DUMMY_RADIUS && pos.y >= 0.15 && pos.y <= 1.85) return d.id;
+        if (flat <= radius + d.radius && pos.y >= 0.15 && pos.y <= 1.85) return d.id;
       }
       return null;
     },
@@ -911,23 +959,22 @@ export class VerbSim {
   }
 
   private resolveBodies() {
-    const heroMin = HERO_RADIUS + DUMMY_RADIUS;
     for (const d of this.dummies) {
       if (d.dead) continue;
+      const heroMin = HERO_RADIUS + d.radius;
       const sep = separation(this.heroPos, d.pos, heroMin);
       if (sep) {
         d.pos.add(sep);
-        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
+        this.pushOutOfBlocks(d.pos, d.radius);
         const rest = separation(this.heroPos, d.pos, heroMin);
         if (rest) this.heroPos.sub(rest);
       }
     }
-    const dMin = DUMMY_RADIUS * 2;
     for (let i = 0; i < this.dummies.length; i++) {
       for (let j = i + 1; j < this.dummies.length; j++) {
         const a = this.dummies[i]; const b = this.dummies[j];
         if (a.dead || b.dead) continue;
-        const sep = separation(a.pos, b.pos, dMin);
+        const sep = separation(a.pos, b.pos, a.radius + b.radius);
         if (sep) {
           b.pos.addScaledVector(sep, 0.5);
           a.pos.addScaledVector(sep, -0.5);
