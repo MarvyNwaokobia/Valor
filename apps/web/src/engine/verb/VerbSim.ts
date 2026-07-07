@@ -122,6 +122,8 @@ export class VerbSim {
   readonly heroPos: THREE.Vector3;
   heroYaw = 0;
   readonly edge = new RiftEdge();
+  /** Session structure: rounds own revival, so the sandbox turns this off. */
+  respawnEnabled = true;
 
   private dummies: DummyState[] = [];
   private blocks: EdgeAabb[];
@@ -208,6 +210,34 @@ export class VerbSim {
   }
 
   getDummies(): readonly DummyState[] { return this.dummies; }
+  get allDown(): boolean { return this.dummies.every((d) => d.dead); }
+
+  /** Dev/probe helper: drop every living dummy through the normal damage
+   *  path so death events (and the kill moment) fire exactly as in play. */
+  debugKillAll() {
+    const dir = this.facingDir();
+    for (const d of this.dummies) {
+      if (!d.dead) this.damageDummy(d, d.hp, dir, 2);
+    }
+  }
+
+  /** Round restart: everyone back up, blade back in the hand, hero stays put. */
+  resetRound() {
+    for (const d of this.dummies) {
+      d.dead = false;
+      d.hp = d.maxHp;
+      d.pos.copy(d.spawn);
+      d.vel.set(0, 0, 0);
+      d.flash = 0;
+      d.stagger = 0;
+      d.respawn = 0;
+    }
+    this.meleeStage = 0;
+    this.meleeT = 0;
+    this.attackBuffer = -1;
+    this.catchWindow = 0;
+    this.edge.reset(this.handPos());
+  }
   get isAiming() { return this.aiming; }
   get edgeState(): EdgeState { return this.edge.state; }
   get meleeState(): { stage: MeleeStage; t: number } { return { stage: this.meleeStage, t: this.meleeT }; }
@@ -437,6 +467,7 @@ export class VerbSim {
       d.stagger = Math.max(0, d.stagger - dt);
 
       if (d.dead) {
+        if (!this.respawnEnabled) continue;
         d.respawn -= dt;
         if (d.respawn <= 0) {
           d.dead = false;
