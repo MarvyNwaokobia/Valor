@@ -233,6 +233,42 @@ export class AudioDirector {
     } catch {}
   }
 
+  /** Boss move tells: bigger voices than the troops, still one per move. */
+  bossTell(move: 'torchSwing' | 'emberToss' | 'flameRush' | 'ashRing', pos: Pos) {
+    this.spatialOneShot(pos, this.impactBus, (dest) => {
+      switch (move) {
+        case 'torchSwing':
+          this.noiseSweep(220, 700, 0.4, 0.6, dest); // low snarl
+          break;
+        case 'emberToss':
+          this.sine(500, 1300, 0.6, 0.3, dest);      // charge whine
+          this.noiseBand(2100, 1.6, 0.3, 0.2, dest); // crackle
+          break;
+        case 'flameRush':
+          this.noiseSweep(150, 900, 0.7, 0.6, dest); // building roar
+          this.sine(50, 120, 0.7, 0.5, dest);        // RISING sub = danger
+          break;
+        case 'ashRing':
+          this.sine(56, 40, 0.24, 0.9, dest);        // war drums, three of them
+          setTimeout(() => this.sine(56, 40, 0.24, 0.9, dest), 280);
+          setTimeout(() => this.sine(60, 42, 0.28, 1.0, dest), 560);
+          break;
+      }
+    });
+    this.duckMusic(0.6, 300);
+  }
+
+  /** The phase roar: the fight re-teaching itself. */
+  bossRoar(pos: Pos) {
+    this.music?.gap(350);
+    this.duckMusic(0.3, 500);
+    this.spatialOneShot(pos, this.verbBus, (dest) => {
+      this.noiseSweep(700, 150, 0.8, 0.9, dest);  // falling roar
+      this.sine(90, 32, 0.7, 1.0, dest);          // chest sub
+      this.ring(180, 0.5, 0.1, dest);
+    });
+  }
+
   /** Low-HP heartbeat layer — informational audio, not decoration. */
   setHeartbeat(on: boolean) {
     if (on === (this.heartbeatTimer !== null)) return;
