@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { VerbSim, type VerbEvent } from '@/engine/verb';
+import { VerbSim, ARCHETYPES, computeEdgeArrow, type VerbEvent } from '@/engine/verb';
 
 /**
  * Slice 1 (CLONE_PLAN.md): the Rift Edge state machine and the melee string,
@@ -220,6 +220,146 @@ describe('solid bodies', () => {
     const d = sim.getDummies()[0];
     const flatDist = Math.hypot(sim.heroPos.x - d.pos.x, sim.heroPos.z - d.pos.z);
     expect(flatDist).toBeGreaterThanOrEqual(0.84); // HERO_RADIUS + DUMMY_RADIUS − ε
+  });
+});
+
+describe('enemy combat (slice 4)', () => {
+  it('a rusher lands hits on a standing hero', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, 3], archetype: 'rusher' }], heroPos: [0, 8] });
+    const events = collect(sim);
+    run(sim, 6.0);
+    expect(events.some((e) => e.type === 'enemyWindup')).toBe(true);
+    expect(events.some((e) => e.type === 'heroHit')).toBe(true);
+    expect(sim.heroHp).toBeLessThan(sim.heroMaxHp);
+  });
+
+  it('the aggression token director caps simultaneous attackers at 2', () => {
+    const sim = new VerbSim({
+      dummies: [
+        { pos: [0, 4], archetype: 'rusher' },
+        { pos: [3, 5], archetype: 'rusher' },
+        { pos: [-3, 5], archetype: 'rusher' },
+        { pos: [0, 12], archetype: 'rusher' },
+      ],
+      heroPos: [0, 8],
+    });
+    for (let i = 0; i < 600; i++) { // 10s, checked every step
+      sim.step(DT);
+      const attacking = sim.getDummies().filter(
+        (d) => !d.dead && (d.ai === 'windup' || d.ai === 'strike')).length;
+      expect(attacking).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('dashing through the strike moment dodges it (i-frames + displacement)', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, 6.5], archetype: 'rusher' }], heroPos: [0, 8] });
+    let windupAt = -1;
+    sim.onEvent((e) => { if (e.type === 'enemyWindup' && windupAt < 0) windupAt = 1; });
+
+    // Step until the windup starts…
+    for (let i = 0; i < 600 && windupAt < 0; i++) sim.step(DT);
+    expect(windupAt).toBe(1);
+    // …ride out most of it, then dash through the strike.
+    run(sim, ARCHETYPES.rusher.windup - 0.15);
+    sim.setCameraYaw(0);
+    sim.setMove(0, 1);
+    sim.pressDash();
+    run(sim, 0.4);
+    expect(sim.heroHp).toBe(sim.heroMaxHp);
+  });
+
+  it('gunner shots are eaten by cover; without cover they land', () => {
+    // Wide enough that the gunner can't strafe out a firing lane in 8s (it
+    // legitimately hunts for one — a narrow wall gets flanked).
+    const wall = { min: [-20, 0, 1.7] as [number, number, number], max: [20, 2.2, 2.3] as [number, number, number] };
+
+    const covered = new VerbSim({
+      dummies: [{ pos: [0, -4], archetype: 'gunner' }],
+      heroPos: [0, 8],
+      blocks: [wall],
+    });
+    run(covered, 8.0);
+    expect(covered.heroHp).toBe(covered.heroMaxHp);
+
+    const open = new VerbSim({
+      dummies: [{ pos: [0, -4], archetype: 'gunner' }],
+      heroPos: [0, 8],
+    });
+    const events = collect(open);
+    run(open, 8.0);
+    expect(events.some((e) => e.type === 'enemyShot')).toBe(true);
+    expect(open.heroHp).toBeLessThan(open.heroMaxHp);
+  });
+
+  it('bulwark guards frontal hits into posture, breaks, then takes full damage', () => {
+    // In FRONT of the hero's initial facing (+z) so the opener connects;
+    // the bulwark faces the hero, so the strike travels into its guard.
+    const sim = new VerbSim({ dummies: [{ pos: [0, 9.7], archetype: 'bulwark' }], heroPos: [0, 8] });
+    const events = collect(sim);
+    const bulwark = () => sim.getDummies()[0];
+
+    // Frontal strike: chip damage + posture, and the clank event.
+    sim.pressAttack();
+    run(sim, 0.6);
+    expect(events.some((e) => e.type === 'guardBlock')).toBe(true);
+    expect(bulwark().hp).toBeGreaterThan(ARCHETYPES.bulwark.hp - 4); // chipped, not hurt
+
+    // Keep swinging until the posture break (30 absorbed).
+    for (let i = 0; i < 12 && !events.some((e) => e.type === 'postureBreak'); i++) {
+      sim.pressAttack();
+      run(sim, 0.6);
+    }
+    expect(events.some((e) => e.type === 'postureBreak')).toBe(true);
+    expect(bulwark().ai).toBe('broken');
+
+    // Broken: the same strike now lands whole.
+    const before = bulwark().hp;
+    sim.pressAttack();
+    run(sim, 0.6);
+    expect(before - bulwark().hp).toBeGreaterThanOrEqual(8);
+  });
+
+  it('the hero can go down, and resetRound stands them back up', () => {
+    const sim = new VerbSim({
+      dummies: [{ pos: [0, 6], archetype: 'rusher' }, { pos: [2, 6], archetype: 'rusher' }],
+      heroPos: [0, 8],
+    });
+    const events = collect(sim);
+    for (let i = 0; i < 60 * 60 && !sim.heroIsDown; i++) sim.step(DT);
+    expect(sim.heroIsDown).toBe(true);
+    expect(events.some((e) => e.type === 'heroDown')).toBe(true);
+
+    sim.resetRound();
+    expect(sim.heroIsDown).toBe(false);
+    expect(sim.heroHp).toBe(sim.heroMaxHp);
+  });
+});
+
+describe('off-screen threat arrows (GoW readability rule)', () => {
+  it('shows no arrow for an attacker the player can see', () => {
+    expect(computeEdgeArrow({ x: 0.5, y: 0, z: -5 }, { x: 0.2, y: 0 })).toBeNull();
+  });
+
+  it('an attacker off the right edge gets a right-edge arrow pointing right', () => {
+    const a = computeEdgeArrow({ x: 4, y: 0, z: -3 }, { x: 1.6, y: 0 })!;
+    expect(a).not.toBeNull();
+    expect(a.leftPct).toBeGreaterThan(85);
+    expect(Math.abs(a.topPct - 50)).toBeLessThan(1);
+    expect(Math.abs(a.deg - 90)).toBeLessThan(1); // ▲ rotated 90° points right
+  });
+
+  it('an attacker dead behind gets a bottom arrow pointing down', () => {
+    const a = computeEdgeArrow({ x: 0, y: 0, z: 5 }, null)!;
+    expect(a).not.toBeNull();
+    expect(a.topPct).toBeGreaterThan(80);
+    expect(Math.abs(a.deg - 180)).toBeLessThan(1); // pointing down/back
+  });
+
+  it('an attacker behind-left maps to the lower-left edge', () => {
+    const a = computeEdgeArrow({ x: -3, y: 0, z: 4 }, null)!;
+    expect(a).not.toBeNull();
+    expect(a.leftPct).toBeLessThan(40);  // their side (left)…
+    expect(a.topPct).toBeGreaterThan(70); // …pulled low because they're behind
   });
 });
 
