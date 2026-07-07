@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BattleCamera } from '../camera';
@@ -10,10 +10,12 @@ import {
 } from '../verb';
 import { AudioDirector, combatIntensity } from '../audio';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
-import { AshfallArena } from './arenas/AshfallArena';
+import { AshfallCinematic } from './arenas/AshfallCinematic';
 import { AmbientVFX } from '../world/AmbientVFX';
 import { villageColliders } from './arenas/ashfallLayout';
 import { setStaticCover } from '../sim/Cover';
+import { EffectComposer, Bloom, Vignette, Noise, ToneMapping } from '@react-three/postprocessing';
+import { BlendFunction, ToneMappingMode } from 'postprocessing';
 
 /**
  * The verb graybox — CLONE_PLAN.md slices 1 (verb), 3 (no-cut), 4 (combat + boss).
@@ -46,12 +48,13 @@ const ROUND_ONE: DummySpec[] = [
 const ROUND_BOSS: DummySpec[] = [{ pos: [0, -12], boss: true }];
 const MAX_SLOTS = 4;
 
+// Grounded, desaturated actor palette: bodies must sit IN the dusk, not on it.
 const ARCHETYPE_COLOR: Record<Archetype, number> = {
-  rusher: 0x9a7263,
-  gunner: 0x74749a,
-  bulwark: 0x64808f,
+  rusher: 0x6e5247,
+  gunner: 0x555a70,
+  bulwark: 0x4d5f6b,
 };
-const BOSS_COLOR = 0xa14e2c; // ember
+const BOSS_COLOR = 0x7e3d22; // ember
 
 const FIXED_DT = 1 / 60;
 const PAUSE = { melee: 0.06, meleeBig: 0.09, embedEnemy: 0.11, catch: 0.05, death: 0.08, hurt: 0.05, break: 0.1, roar: 0.12 };
@@ -519,8 +522,8 @@ function VerbWorld({ onPhase, hud }: {
       const mesh = g.children[0] as THREE.Mesh;
       const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
       if (mat) {
-        const base = d.boss ? BOSS_COLOR : d.archetype ? ARCHETYPE_COLOR[d.archetype] : 0x77777d;
-        mat.color.setHex(d.dead ? 0x333338 : base);
+        const base = d.boss ? BOSS_COLOR : d.archetype ? ARCHETYPE_COLOR[d.archetype] : 0x565049;
+        mat.color.setHex(d.dead ? 0x241f1c : base);
         if (d.flash > 0) {
           mat.emissive.setHex(0xff3322);
           mat.emissiveIntensity = 1;
@@ -678,29 +681,37 @@ function VerbWorld({ onPhase, hud }: {
 
   return (
     <>
-      {/* Ashfall's smoke-choked air: matched background + fog close the world
-          the way GoW's atmosphere and Valor's haze do — depth reads as layers. */}
-      <color attach="background" args={['#b3a08a']} />
-      <fog attach="fog" args={['#b3a08a', 20, 110]} />
-      <AshfallArena />
+      {/* Smoke-dusk air: bg matches fog so distance dissolves into layered
+          silhouettes (the Valor/GoW atmosphere rule). Filmic post on top. */}
+      <color attach="background" args={['#41332b']} />
+      <fog attach="fog" args={['#41332b', 14, 92]} />
+      <Suspense fallback={null}>
+        <AshfallCinematic />
+      </Suspense>
       <AmbientVFX stageId="lava_arena" />
+      <EffectComposer multisampling={0}>
+        <Bloom intensity={0.45} luminanceThreshold={0.72} luminanceSmoothing={0.25} mipmapBlur />
+        <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.55} />
+        <Vignette darkness={0.42} offset={0.28} blendFunction={BlendFunction.NORMAL} />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+      </EffectComposer>
 
       <group ref={heroRef}>
         <mesh position={[0, 0.95, 0]} castShadow>
           <capsuleGeometry args={[0.38, 1.1, 6, 14]} />
-          <meshStandardMaterial color="#9aa3b2" />
+          <meshStandardMaterial color="#6d7480" roughness={0.7} />
         </mesh>
         <mesh position={[0, 1.45, 0.34]}>
           <boxGeometry args={[0.14, 0.14, 0.22]} />
-          <meshStandardMaterial color="#c8d0dc" />
+          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
         </mesh>
         <mesh ref={fistLRef} position={[-0.3, 1.1, 0.18]} castShadow>
           <sphereGeometry args={[0.13, 10, 10]} />
-          <meshStandardMaterial color="#c8d0dc" />
+          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
         </mesh>
         <mesh ref={fistRRef} position={[0.3, 1.1, 0.18]} castShadow>
           <sphereGeometry args={[0.13, 10, 10]} />
-          <meshStandardMaterial color="#c8d0dc" />
+          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
         </mesh>
         <group ref={swingRef}>
           <group ref={edgeHeldRef} position={[0.35, 1.25, 0.25]} rotation={[-0.5, 0, 0]}>
