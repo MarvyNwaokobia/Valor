@@ -186,11 +186,11 @@ export function AshfallCinematic() {
   return (
     <group>
       {/* ── The light: dusk through smoke, one warm key, cold fill ── */}
-      <hemisphereLight color="#5d5a66" groundColor="#211b17" intensity={0.5} />
-      <ambientLight color="#4a4550" intensity={0.16} />
+      <hemisphereLight color="#7d7a86" groundColor="#332a24" intensity={0.9} />
+      <ambientLight color="#5d5864" intensity={0.34} />
       <directionalLight
         color="#ff9450"
-        intensity={2.4}
+        intensity={3.2}
         position={[-30, 10, 16]}
         castShadow
         shadow-mapSize-width={2048}
@@ -202,12 +202,12 @@ export function AshfallCinematic() {
         shadow-camera-far={110}
         shadow-bias={-0.0004}
       />
-      <directionalLight color="#4d5b78" intensity={0.5} position={[22, 14, -18]} />
+      <directionalLight color="#5d6d8c" intensity={0.9} position={[22, 14, -18]} />
 
       {/* ── Ground: real burned earth ── */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[85, 48]} />
-        <meshStandardMaterial {...ground} color="#8f867c" roughness={1} />
+        <meshStandardMaterial {...ground} color="#aaa094" roughness={1} />
       </mesh>
 
       {/* ── The village ── */}
