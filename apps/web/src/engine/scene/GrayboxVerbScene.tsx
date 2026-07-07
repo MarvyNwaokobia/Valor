@@ -131,6 +131,7 @@ function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) 
     battleCam.startKillcam('player');
     battleCam.setSlowMoFov(-8);
     audio.setIntensity(0);
+    audio.roundClear();
   }, [setPhase, battleCam, audio]);
 
   const returnToTitle = useCallback(() => {

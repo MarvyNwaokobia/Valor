@@ -24,6 +24,8 @@ export interface CameraConfig {
   otsLookHeight: number;
   otsSmoothSpeed: number;
   killcamDistance: number;
+  /** The orbit slowly dollies in to this — the zoom onto the winner. */
+  killcamCloseDistance: number;
   killcamHeight: number;
   killcamOrbitSpeed: number; // rad/s the killcam circles the winner
   fovDefault: number;
@@ -47,6 +49,7 @@ const DEFAULT_CONFIG: CameraConfig = {
   otsLookHeight: 1.35,
   otsSmoothSpeed: 9,
   killcamDistance: 3.6,
+  killcamCloseDistance: 2.6,
   killcamHeight: 2.0,
   killcamOrbitSpeed: 0.4,
   fovDefault: 55,
@@ -81,6 +84,7 @@ export class BattleCamera {
   private killcamFocus: 'player' | 'target' = 'player';
   private killcamAngle = 0;
   private killcamSeeded = false;
+  private killcamDist = 3.6;
 
   private shakeOffset = new THREE.Vector3();
   private shakeIntensity = 0;
@@ -277,13 +281,25 @@ export class BattleCamera {
         this.currentPosition.x - focus.x,
         this.currentPosition.z - focus.z,
       );
+      // Start the orbit at whatever radius the live shot already has…
+      this.killcamDist = THREE.MathUtils.clamp(
+        Math.hypot(this.currentPosition.x - focus.x, this.currentPosition.z - focus.z),
+        this.config.killcamCloseDistance,
+        6,
+      );
     }
     this.killcamAngle += dt * this.config.killcamOrbitSpeed;
+    // …then dolly slowly in on the winner over the beat.
+    this.killcamDist = THREE.MathUtils.lerp(
+      this.killcamDist,
+      this.config.killcamCloseDistance,
+      1 - Math.exp(-0.7 * dt),
+    );
 
     this.targetPosition.set(
-      focus.x + Math.sin(this.killcamAngle) * this.config.killcamDistance,
+      focus.x + Math.sin(this.killcamAngle) * this.killcamDist,
       focus.y + this.config.killcamHeight,
-      focus.z + Math.cos(this.killcamAngle) * this.config.killcamDistance,
+      focus.z + Math.cos(this.killcamAngle) * this.killcamDist,
     );
     this.targetLookAt.set(focus.x, focus.y + 1.15, focus.z);
     this.yaw = this.killcamAngle;
