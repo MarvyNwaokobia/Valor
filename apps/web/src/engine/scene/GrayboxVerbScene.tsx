@@ -99,6 +99,8 @@ function VerbWorld() {
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
       keys.current.add(e.code);
+      if (e.code === 'KeyJ') sim.pressAttack();
+      if (e.code === 'KeyF') sim.pressThrow();
       if (e.code === 'KeyE') sim.pressRecall();
       if (e.code === 'Space') { e.preventDefault(); sim.pressDash(); }
     };
@@ -360,9 +362,9 @@ export function GrayboxVerbScene() {
         <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>
           RIFT EDGE · graybox {edgeHint ? '' : '· loading'}
         </div>
-        WASD move · LMB strike · hold RMB aim + LMB throw
+        WASD move · J strike · F throw · E recall · Space dash
         <br />
-        E recall · Space dash · sound starts on first click
+        (mouse too: LMB strike, hold RMB aim + LMB throw) · sound starts on first input
       </div>
     </div>
   );
