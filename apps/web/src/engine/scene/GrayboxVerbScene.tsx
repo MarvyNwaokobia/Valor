@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BattleCamera } from '../camera';
@@ -8,16 +8,25 @@ import { VerbSim, type VerbEvent, type EdgeAabb } from '../verb';
 import { AudioDirector, combatIntensity } from '../audio';
 
 /**
- * Slice 1 graybox: the Rift Edge with zero art (CLONE_PLAN.md).
+ * Slice 1 graybox (the verb) + slice 3 (the no-cut rule) — CLONE_PLAN.md.
  *
- * Everything is a gray primitive on purpose — the gate is "30 seconds of
- * muted play feels great", and gray boxes make it impossible for art to
- * carry a verb that isn't fun. The scene layer owns exactly what the sim
- * doesn't: hit-pause, camera juice, synth audio, and meshes.
+ * The whole session is ONE continuous camera shot:
  *
- * Controls: WASD move · LMB strike · hold RMB to aim, LMB throws ·
- * E recall · Space dash.
+ *   title — live wide shot drifting around the arena, title text over it
+ *   ↓ any key: the same camera swoops down into OTS (a lerp, not a cut)
+ *   combat — drop all four dummies
+ *   ↓ last dummy falls: slow-mo + the camera melts into a killcam orbit
+ *   cleared — time shown in-world-over, orbit continues
+ *   ↓ the camera climbs back out to the wide drift, dummies stand back up
+ *   title again
+ *
+ * There is no cut anywhere in the loop. DOM text overlays fade over the
+ * frame; the camera itself never teleports — the probe asserts this.
+ *
+ * Controls: WASD move · J strike · F throw · E recall · Space dash.
  */
+
+type Phase = 'title' | 'combat' | 'cleared';
 
 // One shared layout: the sim collides/embeds against these, the render draws them.
 const BLOCKS: Array<{ pos: [number, number, number]; size: [number, number, number] }> = [
@@ -45,6 +54,10 @@ const FIXED_DT = 1 / 60;
 // Hit-pause per beat (seconds of frozen sim).
 const PAUSE = { melee: 0.06, meleeBig: 0.09, embedEnemy: 0.11, catch: 0.05, death: 0.08 };
 
+// The cleared beat: slow-mo window, then the orbit runs out the clock.
+const CLEAR_SLOWMO_MS = 1400;
+const CLEAR_TOTAL_MS = 4200;
+
 /** The Rift Edge: heavy short blade, teal edge-light so it tracks in flight. */
 function EdgeMesh() {
   return (
@@ -69,12 +82,13 @@ function EdgeMesh() {
   );
 }
 
-function VerbWorld() {
+function VerbWorld({ onPhase }: { onPhase: (phase: Phase, clearedSecs?: number) => void }) {
   const { camera } = useThree();
-  const sim = useMemo(
-    () => new VerbSim({ dummies: DUMMIES, blocks: AABBS, heroPos: [0, 8] }),
-    [],
-  );
+  const sim = useMemo(() => {
+    const s = new VerbSim({ dummies: DUMMIES, blocks: AABBS, heroPos: [0, 8] });
+    s.respawnEnabled = false; // rounds own revival now
+    return s;
+  }, []);
   const audio = useMemo(() => new AudioDirector(), []);
   const battleCam = useMemo(
     () => new BattleCamera(camera as THREE.PerspectiveCamera),
@@ -83,12 +97,8 @@ function VerbWorld() {
 
   const heroRef = useRef<THREE.Group>(null);
   const swingRef = useRef<THREE.Group>(null);
-  // Two renderings of one blade: in the hand (parented to the swing pivot) and
-  // loose in the world (scene root, transform straight from the sim). Toggling
-  // visibility beats re-parenting math.
   const edgeHeldRef = useRef<THREE.Group>(null);
   const edgeLooseRef = useRef<THREE.Group>(null);
-  // Fists: bare-handed strikes need something visible to swing.
   const fistLRef = useRef<THREE.Mesh>(null);
   const fistRRef = useRef<THREE.Mesh>(null);
   const dummyRefs = useRef<Array<THREE.Group | null>>([]);
@@ -97,23 +107,60 @@ function VerbWorld() {
   const pauseRef = useRef(0);
   const accRef = useRef(0);
   const keys = useRef(new Set<string>());
-  // Wall-clock time of the last landed hit — drives the score's intensity.
   const lastHitRef = useRef(-100);
+
+  const phaseRef = useRef<Phase>('title');
+  const roundStartRef = useRef(0);
+  const clearedAtRef = useRef(0);
+
+  const setPhase = useCallback((p: Phase, clearedSecs?: number) => {
+    phaseRef.current = p;
+    onPhase(p, clearedSecs);
+  }, [onPhase]);
+
+  const startCombat = useCallback(() => {
+    roundStartRef.current = performance.now();
+    setPhase('combat');
+    // No setMode here: the per-frame camera logic lerps into OTS — the swoop.
+  }, [setPhase]);
+
+  const enterCleared = useCallback(() => {
+    const secs = (performance.now() - roundStartRef.current) / 1000;
+    clearedAtRef.current = performance.now();
+    setPhase('cleared', secs);
+    battleCam.startKillcam('player');
+    battleCam.setSlowMoFov(-8);
+    audio.setIntensity(0);
+  }, [setPhase, battleCam, audio]);
+
+  const returnToTitle = useCallback(() => {
+    sim.resetRound();
+    audio.stopWhistle();
+    battleCam.setSlowMoFov(0);
+    battleCam.setMode('follow'); // the orbit climbs back out into the drift
+    setPhase('title');
+  }, [sim, audio, battleCam, setPhase]);
 
   // ── Input ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    const anyInput = (): boolean => {
+      audio.unlock();
+      if (phaseRef.current === 'title') { startCombat(); return true; }
+      return phaseRef.current === 'cleared'; // swallow inputs during the beat
+    };
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
-      audio.unlock(); // browsers gate sound behind a gesture; any key counts
+      if (e.code === 'Space') e.preventDefault();
+      if (anyInput()) return;
       keys.current.add(e.code);
       if (e.code === 'KeyJ') sim.pressAttack();
       if (e.code === 'KeyF') sim.pressThrow();
       if (e.code === 'KeyE') sim.pressRecall();
-      if (e.code === 'Space') { e.preventDefault(); sim.pressDash(); }
+      if (e.code === 'Space') sim.pressDash();
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
     const mouseDown = (e: MouseEvent) => {
-      audio.unlock();
+      if (anyInput()) return;
       if (e.button === 0) sim.pressAttack();
       if (e.button === 2) sim.setAiming(true);
     };
@@ -134,7 +181,14 @@ function VerbWorld() {
       window.removeEventListener('contextmenu', noMenu);
       audio.dispose();
     };
-  }, [sim, audio]);
+  }, [sim, audio, startCombat]);
+
+  // Probe hook: lets headless verification finish a round without minutes of
+  // swiftshader combat. Fires the normal damage/death path.
+  useEffect(() => {
+    (window as unknown as { __verbKill?: () => void }).__verbKill = () => sim.debugKillAll();
+    return () => { delete (window as unknown as { __verbKill?: () => void }).__verbKill; };
+  }, [sim]);
 
   // ── Sim events → juice ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -188,29 +242,44 @@ function VerbWorld() {
           audio.death(e.pos);
           lastHitRef.current = performance.now() / 1000;
           pauseRef.current = Math.max(pauseRef.current, PAUSE.death);
+          if (phaseRef.current === 'combat' && sim.allDown) enterCleared();
           break;
         case 'dash':
           audio.dash();
           break;
       }
     });
-  }, [sim, audio, battleCam]);
+  }, [sim, audio, battleCam, enterCleared]);
 
   // ── Frame ──────────────────────────────────────────────────────────────────
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
+    const phase = phaseRef.current;
+    const now = performance.now();
+
+    // Cleared beat: slow-mo window, then the orbit runs, then back to title.
+    let simScale = 1;
+    if (phase === 'cleared') {
+      simScale = now - clearedAtRef.current < CLEAR_SLOWMO_MS ? 0.35 : 1;
+      if (now - clearedAtRef.current >= CLEAR_SLOWMO_MS) battleCam.setSlowMoFov(0);
+      if (now - clearedAtRef.current >= CLEAR_TOTAL_MS) returnToTitle();
+    }
 
     // Hit-pause: the world holds its breath, the camera keeps breathing.
     if (pauseRef.current > 0) {
       pauseRef.current -= dt;
     } else {
       const k = keys.current;
-      sim.setMove(
-        (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0),
-        (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0),
-      );
+      if (phase === 'combat') {
+        sim.setMove(
+          (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0),
+          (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0),
+        );
+      } else {
+        sim.setMove(0, 0);
+      }
       sim.setCameraYaw(battleCam.cameraYaw);
-      accRef.current += dt;
+      accRef.current += dt * simScale;
       while (accRef.current >= FIXED_DT) {
         sim.step(FIXED_DT);
         accRef.current -= FIXED_DT;
@@ -218,22 +287,30 @@ function VerbWorld() {
     }
 
     if (sim.edgeState === 'recalling') {
-      // Re-spatialize the whistle every frame — the arc is audible.
       audio.setWhistle(sim.edge.pos, sim.edge.recallProgress);
     }
 
-    // Camera: OTS soft-locked to the nearest dummy; free-follow when all down.
+    // Camera: one shot across every phase — targets change, the camera lerps.
     const target = sim.softLockTarget();
-    const wantMode = target ? 'ots' : 'follow';
-    if (battleCam.currentMode !== wantMode) battleCam.setMode(wantMode);
-    battleCam.update(dt, sim.heroPos, target ?? undefined);
+    if (phase === 'title') {
+      battleCam.rotateMouse(-38 * dt, 0); // slow cinematic drift
+      battleCam.update(dt, sim.heroPos);
+    } else if (phase === 'combat') {
+      const wantMode = target ? 'ots' : 'follow';
+      if (battleCam.currentMode !== wantMode) battleCam.setMode(wantMode);
+      battleCam.update(dt, sim.heroPos, target ?? undefined);
+    } else {
+      battleCam.update(dt, sim.heroPos, sim.heroPos); // killcam orbits the hero
+    }
 
     // The camera is the ear; the score follows the fight state.
     audio.setListener(camera.position.x, camera.position.z, battleCam.cameraYaw);
-    const nearest = target ? target.distanceTo(sim.heroPos) : null;
-    audio.setIntensity(
-      combatIntensity(nearest, performance.now() / 1000 - lastHitRef.current),
-    );
+    if (phase === 'combat') {
+      const nearest = target ? target.distanceTo(sim.heroPos) : null;
+      audio.setIntensity(
+        combatIntensity(nearest, performance.now() / 1000 - lastHitRef.current),
+      );
+    }
 
     // Hero + procedural swing (graybox stand-in for real strike animations).
     if (heroRef.current) {
@@ -258,13 +335,12 @@ function VerbWorld() {
     }
 
     // Fists: idle at the sides; bare-handed strikes jab them forward so a
-    // punch is visible even with zero character art. Armed strikes let the
-    // blade do the talking.
+    // punch is visible even with zero character art.
     {
       const m = sim.meleeState;
       const spec = m.stage === 3 ? 0.46 : 0.34;
       const p = m.stage > 0 ? Math.min(1, m.t / spec) : 0;
-      const jab = Math.sin(p * Math.PI) * 0.6; // out and back
+      const jab = Math.sin(p * Math.PI) * 0.6;
       const unarmedSwing = !sim.armed && m.stage > 0;
       if (fistRRef.current) {
         const active = unarmedSwing && (m.stage === 1 || m.stage === 3);
@@ -292,8 +368,10 @@ function VerbWorld() {
 
     // Probe/debug readout — headless verification reads this (no DOM re-render).
     (window as unknown as { __verbState?: object }).__verbState = {
+      phase: phaseRef.current,
       edge: sim.edgeState,
       hero: [sim.heroPos.x, sim.heroPos.z],
+      cam: [camera.position.x, camera.position.y, camera.position.z],
       dummies: sim.getDummies().map((d) => ({ hp: d.hp, dead: d.dead })),
     };
 
@@ -308,7 +386,6 @@ function VerbWorld() {
         mat.emissive.setHex(d.flash > 0 ? 0xff3322 : 0x000000);
         mat.color.setHex(d.dead ? 0x333338 : d.walker ? 0x8a8a92 : 0x77777d);
       }
-      // Hit pop: a quick swell while the flash is live sells the impact.
       if (mesh) mesh.scale.setScalar(1 + d.flash * 0.45);
       g.rotation.z = THREE.MathUtils.lerp(g.rotation.z, d.dead ? Math.PI / 2 : 0, 0.25);
       const hp = hpRefs.current[i];
@@ -339,7 +416,7 @@ function VerbWorld() {
         </mesh>
       ))}
 
-      {/* Hero: capsule + nose wedge (facing) + swing pivot carrying the Edge */}
+      {/* Hero: capsule + nose wedge (facing) + fists + swing pivot with the Edge */}
       <group ref={heroRef}>
         <mesh position={[0, 0.95, 0]} castShadow>
           <capsuleGeometry args={[0.38, 1.1, 6, 14]} />
@@ -389,32 +466,78 @@ function VerbWorld() {
   );
 }
 
+const overlayFont: React.CSSProperties = {
+  fontFamily: 'ui-monospace, monospace',
+  color: '#d6dae2',
+  userSelect: 'none',
+  pointerEvents: 'none',
+};
+
 export function GrayboxVerbScene() {
-  const [edgeHint, setEdgeHint] = useState(false);
+  const [phase, setPhase] = useState<Phase>('title');
+  const [clearedSecs, setClearedSecs] = useState<number | null>(null);
+
+  const onPhase = useCallback((p: Phase, secs?: number) => {
+    setPhase(p);
+    if (secs !== undefined) setClearedSecs(secs);
+  }, []);
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#404248' }}>
-      <Canvas
-        shadows
-        camera={{ position: [0, 2.4, 12], fov: 58 }}
-        onCreated={() => setEdgeHint(true)}
-      >
-        <VerbWorld />
+      <style>{`@keyframes verbPulse { 0%,100% { opacity: 0.9 } 50% { opacity: 0.35 } }`}</style>
+      <Canvas shadows camera={{ position: [0, 4, 16], fov: 55 }}>
+        <VerbWorld onPhase={onPhase} />
       </Canvas>
-      <div
-        style={{
-          position: 'absolute', left: 12, bottom: 12, color: '#d6dae2',
-          fontFamily: 'ui-monospace, monospace', fontSize: 13, lineHeight: 1.7,
-          background: 'rgba(10,12,16,0.55)', padding: '10px 14px', borderRadius: 8,
-          userSelect: 'none', pointerEvents: 'none',
-        }}
-      >
-        <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>
-          RIFT EDGE · graybox {edgeHint ? '' : '· loading'}
+
+      {phase === 'title' && (
+        <div style={{
+          ...overlayFont, position: 'absolute', inset: 0, display: 'flex',
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
+          background: 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(10,12,16,0.5) 100%)',
+        }}>
+          <div style={{ fontSize: 64, fontWeight: 800, letterSpacing: '0.35em', textIndent: '0.35em' }}>
+            VALOR
+          </div>
+          <div style={{ fontSize: 14, color: '#37e0d8', letterSpacing: '0.25em' }}>
+            RIFT EDGE · PROVING GROUND
+          </div>
+          <div style={{ fontSize: 13, marginTop: 26, animation: 'verbPulse 2.2s ease-in-out infinite' }}>
+            press any key
+          </div>
         </div>
-        WASD move · J strike · F throw · E recall · Space dash
-        <br />
-        (mouse too: LMB strike, hold RMB aim + LMB throw) · sound starts on first input
-      </div>
+      )}
+
+      {phase === 'combat' && (
+        <>
+          <div style={{
+            ...overlayFont, position: 'absolute', top: 14, left: 0, right: 0,
+            textAlign: 'center', fontSize: 13, letterSpacing: '0.15em', opacity: 0.85,
+          }}>
+            DROP ALL FOUR
+          </div>
+          <div style={{
+            ...overlayFont, position: 'absolute', left: 12, bottom: 12, fontSize: 13,
+            lineHeight: 1.7, background: 'rgba(10,12,16,0.55)', padding: '10px 14px', borderRadius: 8,
+          }}>
+            <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>RIFT EDGE · graybox</div>
+            WASD move · J strike · F throw · E recall · Space dash
+          </div>
+        </>
+      )}
+
+      {phase === 'cleared' && (
+        <div style={{
+          ...overlayFont, position: 'absolute', inset: 0, display: 'flex',
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+          <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: '0.3em', textIndent: '0.3em', color: '#37e0d8' }}>
+            CLEARED
+          </div>
+          {clearedSecs !== null && (
+            <div style={{ fontSize: 15, opacity: 0.9 }}>in {clearedSecs.toFixed(1)}s</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

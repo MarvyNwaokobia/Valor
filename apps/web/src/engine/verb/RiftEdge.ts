@@ -131,6 +131,16 @@ export class RiftEdge {
     return this.state === 'recalling' ? this.arcT : 0;
   }
 
+  /** Hard reset to the hand (round restarts) — no events, no flight. */
+  reset(handPos: THREE.Vector3) {
+    this.state = 'held';
+    this.embedTarget = null;
+    this.ripTimer = 0;
+    this.arcT = 0;
+    this.spin = 0;
+    this.pos.copy(handPos);
+  }
+
   update(dt: number, handPos: THREE.Vector3, probe: EdgeHitProbe, blocks: EdgeAabb[]) {
     switch (this.state) {
       case 'held':

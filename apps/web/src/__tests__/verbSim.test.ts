@@ -223,6 +223,34 @@ describe('solid bodies', () => {
   });
 });
 
+describe('round structure', () => {
+  it('dead dummies stay down when respawn is off; resetRound revives them', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, 4] }, { pos: [2, 4] }], heroPos: [0, 8] });
+    sim.respawnEnabled = false;
+
+    sim.debugKillAll();
+    expect(sim.allDown).toBe(true);
+    run(sim, 5.0); // way past the respawn timer
+    expect(sim.allDown).toBe(true);
+
+    sim.resetRound();
+    expect(sim.allDown).toBe(false);
+    expect(sim.getDummies().every((d) => d.hp === d.maxHp)).toBe(true);
+  });
+
+  it('resetRound returns a loose edge to the hand', () => {
+    const sim = new VerbSim({ dummies: [], heroPos: [0, 8] });
+    sim.setCameraYaw(0);
+    sim.pressThrow();
+    run(sim, 2.0);
+    expect(sim.edgeState).toBe('embedded');
+
+    sim.resetRound();
+    expect(sim.edgeState).toBe('held');
+    expect(sim.edge.pos.distanceTo(sim.handPos())).toBeLessThan(0.01);
+  });
+});
+
 describe('dummies', () => {
   it('die, fall, and respawn', () => {
     const sim = new VerbSim({ dummies: [{ pos: [0, 9.5] }], heroPos: [0, 8] });
