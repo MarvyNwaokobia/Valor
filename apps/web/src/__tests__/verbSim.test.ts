@@ -56,6 +56,19 @@ describe('RiftEdge throw', () => {
     expect(sim.getDummies()[0].hp).toBe(60 - 22);
   });
 
+  it('throws instantly on pressThrow, no aim-hold needed', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, -4] }], heroPos: [0, 8] });
+    const events = collect(sim);
+
+    sim.setCameraYaw(0); // camera facing the dummy; assist cone does the rest
+    sim.pressThrow();
+    run(sim, 1.0);
+
+    const embed = events.find((e) => e.type === 'embed');
+    expect(embed).toBeDefined();
+    expect(embed!.type === 'embed' && embed!.target.kind).toBe('enemy');
+  });
+
   it('pitches into the ground at max range when nothing is hit', () => {
     const sim = new VerbSim({ dummies: [], heroPos: [0, 8] });
     const events = collect(sim);

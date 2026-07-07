@@ -175,13 +175,18 @@ export class VerbSim {
   setCameraYaw(yaw: number) { this.cameraYaw = yaw; }
   setAiming(aiming: boolean) { this.aiming = aiming; }
 
-  /** LMB: melee when the Edge is anywhere, throw when aiming with it in hand. */
+  /** Strike (J/LMB): melee when the Edge is anywhere, throw when aiming with it in hand. */
   pressAttack() {
     if (this.aiming && this.edge.state === 'held') {
       this.throwEdge();
       return;
     }
     this.attackBuffer = this.time + INPUT_BUFFER;
+  }
+
+  /** Throw (F): instant, no aim-hold — camera-forward with the assist cone. */
+  pressThrow() {
+    if (this.edge.state === 'held') this.throwEdge();
   }
 
   pressRecall() { this.edge.recall(this.handPos()); }
