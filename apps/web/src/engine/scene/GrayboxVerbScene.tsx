@@ -337,6 +337,11 @@ function VerbWorld({ onPhase, hud }: {
       const wantMode = target ? 'ots' : 'follow';
       if (battleCam.currentMode !== wantMode) battleCam.setMode(wantMode);
       battleCam.update(dt, sim.heroPos, target ?? undefined);
+    } else if (phase === 'down') {
+      // Death cam looks DOWN at the fallen body, not at standing height —
+      // otherwise whoever is looming over you steals the frame.
+      const body = sim.heroPos.clone().setY(-0.55);
+      battleCam.update(dt, body, body);
     } else {
       battleCam.update(dt, sim.heroPos, sim.heroPos);
     }
@@ -568,7 +573,7 @@ function VerbWorld({ onPhase, hud }: {
               position={[0, 1.0, 0.62]}
             >
               <boxGeometry args={[0.95, 1.25, 0.08]} />
-              <meshStandardMaterial color="#3f4a52" metalness={0.6} roughness={0.4} />
+              <meshStandardMaterial color="#5d6f7d" metalness={0.55} roughness={0.35} />
             </mesh>
           )}
           <mesh ref={(el) => { hpRefs.current[i] = el; }} position={[0, 2.2, 0]}>
