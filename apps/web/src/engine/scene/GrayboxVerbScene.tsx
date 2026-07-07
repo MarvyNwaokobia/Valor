@@ -88,6 +88,9 @@ function VerbWorld() {
   // visibility beats re-parenting math.
   const edgeHeldRef = useRef<THREE.Group>(null);
   const edgeLooseRef = useRef<THREE.Group>(null);
+  // Fists: bare-handed strikes need something visible to swing.
+  const fistLRef = useRef<THREE.Mesh>(null);
+  const fistRRef = useRef<THREE.Mesh>(null);
   const dummyRefs = useRef<Array<THREE.Group | null>>([]);
   const hpRefs = useRef<Array<THREE.Mesh | null>>([]);
 
@@ -254,6 +257,25 @@ function VerbWorld() {
       }
     }
 
+    // Fists: idle at the sides; bare-handed strikes jab them forward so a
+    // punch is visible even with zero character art. Armed strikes let the
+    // blade do the talking.
+    {
+      const m = sim.meleeState;
+      const spec = m.stage === 3 ? 0.46 : 0.34;
+      const p = m.stage > 0 ? Math.min(1, m.t / spec) : 0;
+      const jab = Math.sin(p * Math.PI) * 0.6; // out and back
+      const unarmedSwing = !sim.armed && m.stage > 0;
+      if (fistRRef.current) {
+        const active = unarmedSwing && (m.stage === 1 || m.stage === 3);
+        fistRRef.current.position.set(0.3, 1.1 + (m.stage === 3 ? jab * 0.25 : 0), 0.18 + (active ? jab : 0));
+      }
+      if (fistLRef.current) {
+        const active = unarmedSwing && (m.stage === 2 || m.stage === 3);
+        fistLRef.current.position.set(-0.3, 1.1 + (m.stage === 3 ? jab * 0.25 : 0), 0.18 + (active ? jab : 0));
+      }
+    }
+
     // The Edge: in-hand it rides the swing pivot; loose it flies/embeds/returns.
     const held = sim.edgeState === 'held';
     if (edgeHeldRef.current) edgeHeldRef.current.visible = held;
@@ -286,6 +308,8 @@ function VerbWorld() {
         mat.emissive.setHex(d.flash > 0 ? 0xff3322 : 0x000000);
         mat.color.setHex(d.dead ? 0x333338 : d.walker ? 0x8a8a92 : 0x77777d);
       }
+      // Hit pop: a quick swell while the flash is live sells the impact.
+      if (mesh) mesh.scale.setScalar(1 + d.flash * 0.45);
       g.rotation.z = THREE.MathUtils.lerp(g.rotation.z, d.dead ? Math.PI / 2 : 0, 0.25);
       const hp = hpRefs.current[i];
       if (hp) {
@@ -323,6 +347,14 @@ function VerbWorld() {
         </mesh>
         <mesh position={[0, 1.45, 0.34]}>
           <boxGeometry args={[0.14, 0.14, 0.22]} />
+          <meshStandardMaterial color="#c8d0dc" />
+        </mesh>
+        <mesh ref={fistLRef} position={[-0.3, 1.1, 0.18]} castShadow>
+          <sphereGeometry args={[0.13, 10, 10]} />
+          <meshStandardMaterial color="#c8d0dc" />
+        </mesh>
+        <mesh ref={fistRRef} position={[0.3, 1.1, 0.18]} castShadow>
+          <sphereGeometry args={[0.13, 10, 10]} />
           <meshStandardMaterial color="#c8d0dc" />
         </mesh>
         <group ref={swingRef}>

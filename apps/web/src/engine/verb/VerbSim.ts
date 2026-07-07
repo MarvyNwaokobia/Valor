@@ -420,7 +420,7 @@ export class VerbSim {
 
   private damageDummy(d: DummyState, amount: number, dir: THREE.Vector3, knockback: number) {
     d.hp -= amount;
-    d.flash = 0.18;
+    d.flash = 0.28;
     d.stagger = 0.25;
     const push = dir.clone().setY(0);
     if (push.lengthSq() > 1e-4) d.vel.addScaledVector(push.normalize(), knockback);
