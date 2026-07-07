@@ -6,10 +6,14 @@ import * as THREE from 'three';
 import { BattleCamera } from '../camera';
 import {
   VerbSim, computeEdgeArrow, BOSS_RING_RADIUS,
-  type VerbEvent, type EdgeAabb, type Archetype, type DummySpec, type BossMove,
+  type VerbEvent, type Archetype, type DummySpec, type BossMove,
 } from '../verb';
 import { AudioDirector, combatIntensity } from '../audio';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
+import { AshfallArena } from './arenas/AshfallArena';
+import { AmbientVFX } from '../world/AmbientVFX';
+import { villageColliders } from './arenas/ashfallLayout';
+import { setStaticCover } from '../sim/Cover';
 
 /**
  * The verb graybox — CLONE_PLAN.md slices 1 (verb), 3 (no-cut), 4 (combat + boss).
@@ -28,18 +32,10 @@ import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from 
 
 type Phase = 'title' | 'combat' | 'cleared' | 'down' | 'bossIntro';
 
-const BLOCKS: Array<{ pos: [number, number, number]; size: [number, number, number] }> = [
-  { pos: [-5, 1.1, -2], size: [1, 2.2, 1] },
-  { pos: [5.5, 1.1, -5], size: [1, 2.2, 1] },
-  { pos: [0, 0.6, -9], size: [3.6, 1.2, 0.6] },
-  { pos: [-3.5, 1.25, -13], size: [4, 2.5, 0.6] },
-  { pos: [7, 0.45, 2], size: [2.2, 0.9, 2.2] },
-];
-
-const AABBS: EdgeAabb[] = BLOCKS.map((b) => ({
-  min: [b.pos[0] - b.size[0] / 2, b.pos[1] - b.size[1] / 2, b.pos[2] - b.size[2] / 2],
-  max: [b.pos[0] + b.size[0] / 2, b.pos[1] + b.size[1] / 2, b.pos[2] + b.size[2] / 2],
-}));
+// The fight lives in ASHFALL now (slice 6a): the burned village from
+// ashfallLayout, whose walls the sim, the edge, the projectiles, the camera
+// spring arm and the renderer all read from the same data.
+const VILLAGE_BLOCKS = villageColliders();
 
 const ROUND_ONE: DummySpec[] = [
   { pos: [0, -4], archetype: 'rusher' },
@@ -109,9 +105,15 @@ function VerbWorld({ onPhase, hud }: {
 }) {
   const { camera } = useThree();
   const sim = useMemo(() => {
-    const s = new VerbSim({ dummies: ROUND_ONE, blocks: AABBS, heroPos: [0, 8] });
+    const s = new VerbSim({ dummies: ROUND_ONE, blocks: VILLAGE_BLOCKS, heroPos: [0, 8] });
     s.respawnEnabled = false;
     return s;
+  }, []);
+
+  // The OTS camera's spring arm reads the same walls (losHit → pull in).
+  useEffect(() => {
+    setStaticCover(villageColliders());
+    return () => setStaticCover([]);
   }, []);
   const audio = useMemo(() => new AudioDirector(), []);
   const battleCam = useMemo(
@@ -403,6 +405,7 @@ function VerbWorld({ onPhase, hud }: {
         sim.setMove(0, 0);
       }
       sim.setCameraYaw(battleCam.cameraYaw);
+      sim.combatEnabled = phase === 'combat';
       accRef.current += dt * simScale;
       while (accRef.current >= FIXED_DT) {
         sim.step(FIXED_DT);
@@ -675,21 +678,12 @@ function VerbWorld({ onPhase, hud }: {
 
   return (
     <>
-      <hemisphereLight intensity={0.75} color="#cfd6e0" groundColor="#3a3d44" />
-      <directionalLight position={[6, 10, 4]} intensity={1.1} castShadow />
-
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[44, 44]} />
-        <meshStandardMaterial color="#55565c" />
-      </mesh>
-      <gridHelper args={[44, 44, 0x777880, 0x64656b]} position={[0, 0.01, 0]} />
-
-      {BLOCKS.map((b, i) => (
-        <mesh key={i} position={b.pos} castShadow receiveShadow>
-          <boxGeometry args={b.size} />
-          <meshStandardMaterial color="#6b6c72" />
-        </mesh>
-      ))}
+      {/* Ashfall's smoke-choked air: matched background + fog close the world
+          the way GoW's atmosphere and Valor's haze do — depth reads as layers. */}
+      <color attach="background" args={['#b3a08a']} />
+      <fog attach="fog" args={['#b3a08a', 20, 110]} />
+      <AshfallArena />
+      <AmbientVFX stageId="lava_arena" />
 
       <group ref={heroRef}>
         <mesh position={[0, 0.95, 0]} castShadow>

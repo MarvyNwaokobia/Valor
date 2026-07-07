@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import {
   RiftEdge, RECALL_SWEEP_RADIUS,
-  type EdgeAabb, type EdgeEvent, type EdgeState,
+  type EdgeEvent, type EdgeState,
 } from './RiftEdge';
 import { BossBrain, type BossEvent } from './Boss';
+import { pointInBlock, pushCircleOut, type SimBlock } from './blocks';
 
 /**
  * Headless graybox sim for the Verb (CLONE_PLAN.md slices 1 + 4).
@@ -42,7 +43,7 @@ export interface DummySpec {
 
 export interface VerbSimOptions {
   dummies: DummySpec[];
-  blocks?: EdgeAabb[];
+  blocks?: SimBlock[];
   heroPos?: [number, number];
 }
 
@@ -212,6 +213,9 @@ const KNOCKBACK_DECAY = 6;
 const HAND_HEIGHT = 1.25;
 const HAND_RIGHT = 0.35;
 
+/** Playable ring: matches Ashfall's ROAM bound so nobody kites into the void. */
+const WORLD_RADIUS = 26;
+
 const AIM_CONE_COS = Math.cos((12 * Math.PI) / 180);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,9 +225,11 @@ export class VerbSim {
   heroYaw = 0;
   readonly edge = new RiftEdge();
   respawnEnabled = true;
+  /** Off during title/intro/beat phases: enemies hold instead of hunting. */
+  combatEnabled = true;
 
   private dummies: DummyState[] = [];
-  private blocks: EdgeAabb[];
+  private blocks: SimBlock[];
   private projectiles: EnemyProjectile[] = [];
 
   private moveX = 0;
@@ -645,7 +651,7 @@ export class VerbSim {
 
   /** Nearest hungry enemies get the ENGAGE_TOKENS attack rights; ties go on. */
   private assignTokens() {
-    if (this.heroDead) return;
+    if (this.heroDead || !this.combatEnabled) return;
     let held = 0;
     for (const d of this.dummies) if (d.hasToken && !d.dead) held++;
 
@@ -694,6 +700,7 @@ export class VerbSim {
       }
 
       if (d.boss) {
+        if (!this.combatEnabled) { d.ai = 'idle'; continue; }
         this.bossBrain?.update(d, {
           heroPos: this.heroPos,
           heroDead: this.heroDead,
@@ -727,6 +734,13 @@ export class VerbSim {
     const toHero = new THREE.Vector3().subVectors(this.heroPos, d.pos).setY(0);
     const dist = toHero.length();
     const heroDir = dist > 1e-4 ? toHero.clone().normalize() : new THREE.Vector3(0, 0, 1);
+
+    if (!this.combatEnabled) {
+      // Hold: face the hero, stand ready, attack nothing.
+      d.ai = 'idle';
+      d.yaw = dampAngle(d.yaw, Math.atan2(heroDir.x, heroDir.z), spec.turnLerp, dt);
+      return;
+    }
 
     // Face the hero — bulwarks slowly, which is what makes them flankable.
     if (d.ai !== 'broken') {
@@ -933,28 +947,22 @@ export class VerbSim {
 
   private pointInBlocks(p: THREE.Vector3): boolean {
     for (const b of this.blocks) {
-      if (
-        p.x >= b.min[0] && p.x <= b.max[0] &&
-        p.y >= b.min[1] && p.y <= b.max[1] &&
-        p.z >= b.min[2] && p.z <= b.max[2]
-      ) return true;
+      if (pointInBlock(p.x, p.y, p.z, b)) return true;
     }
     return false;
   }
 
   private pushOutOfBlocks(pos: THREE.Vector3, r: number) {
     for (const b of this.blocks) {
-      if (b.max[1] < 0.4) continue;
-      const cx = THREE.MathUtils.clamp(pos.x, b.min[0], b.max[0]);
-      const cz = THREE.MathUtils.clamp(pos.z, b.min[2], b.max[2]);
-      const dx = pos.x - cx; const dz = pos.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < r * r) {
-        if (d2 < 1e-9) { pos.z = b.max[2] + r; continue; }
-        const d = Math.sqrt(d2);
-        pos.x = cx + (dx / d) * r;
-        pos.z = cz + (dz / d) * r;
-      }
+      if (b.height < 0.4) continue; // low debris, step over
+      pushCircleOut(pos, r, b);
+    }
+    // Nobody leaves the village: a soft world bound keeps every body inside
+    // the playable ring (the street mouths would otherwise run to infinity).
+    const d = Math.hypot(pos.x, pos.z);
+    if (d > WORLD_RADIUS) {
+      pos.x *= WORLD_RADIUS / d;
+      pos.z *= WORLD_RADIUS / d;
     }
   }
 

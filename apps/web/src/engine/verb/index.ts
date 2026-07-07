@@ -1,4 +1,5 @@
-export { RiftEdge, type EdgeState, type EdgeEvent, type EdgeAabb } from './RiftEdge';
+export { RiftEdge, type EdgeState, type EdgeEvent } from './RiftEdge';
+export { pointInBlock, pushCircleOut, type SimBlock } from './blocks';
 export {
   VerbSim, ARCHETYPES,
   type VerbEvent, type VerbSimOptions, type DummyState, type DummySpec, type MeleeStage,
