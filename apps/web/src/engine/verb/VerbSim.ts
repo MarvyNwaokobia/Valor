@@ -104,6 +104,7 @@ const RECALL_KNOCKBACK = 3;
 
 const DUMMY_HP = 60;
 const DUMMY_RADIUS = 0.45;
+const HERO_RADIUS = 0.4;
 const DUMMY_RESPAWN = 2.5;
 const WALKER_SPEED = 1.15;
 const WALKER_STOP = 2.0;
@@ -238,7 +239,41 @@ export class VerbSim {
     this.updateHero(dt);
     this.updateMelee(dt);
     this.updateDummies(dt);
+    this.resolveBodies();
     this.edge.update(dt, this.handPos(), this.probe, this.blocks);
+  }
+
+  /**
+   * Bodies are solid: hero and dummies push each other apart instead of
+   * ghosting through. Dummies yield first (shoving them feels right); if a
+   * dummy is pinned against a block the hero backs off instead.
+   */
+  private resolveBodies() {
+    const heroMin = HERO_RADIUS + DUMMY_RADIUS;
+    for (const d of this.dummies) {
+      if (d.dead) continue;
+      const sep = separation(this.heroPos, d.pos, heroMin);
+      if (sep) {
+        d.pos.add(sep);
+        this.pushOutOfBlocks(d.pos, DUMMY_RADIUS);
+        // Still overlapping (dummy pinned against a wall) → the hero gives.
+        const rest = separation(this.heroPos, d.pos, heroMin);
+        if (rest) this.heroPos.sub(rest);
+      }
+    }
+    // Dummies vs each other: split the overlap.
+    const dMin = DUMMY_RADIUS * 2;
+    for (let i = 0; i < this.dummies.length; i++) {
+      for (let j = i + 1; j < this.dummies.length; j++) {
+        const a = this.dummies[i]; const b = this.dummies[j];
+        if (a.dead || b.dead) continue;
+        const sep = separation(a.pos, b.pos, dMin);
+        if (sep) {
+          b.pos.addScaledVector(sep, 0.5);
+          a.pos.addScaledVector(sep, -0.5);
+        }
+      }
+    }
   }
 
   private updateHero(dt: number) {
@@ -259,7 +294,7 @@ export class VerbSim {
         this.heroYaw = dampAngle(this.heroYaw, target, TURN_LERP, dt);
       }
     }
-    this.keepOutOfBlocks();
+    this.pushOutOfBlocks(this.heroPos, HERO_RADIUS);
   }
 
   private updateMelee(dt: number) {
@@ -469,20 +504,18 @@ export class VerbSim {
     return best;
   }
 
-  private keepOutOfBlocks() {
-    const r = 0.4;
+  private pushOutOfBlocks(pos: THREE.Vector3, r: number) {
     for (const b of this.blocks) {
       if (b.max[1] < 0.4) continue; // low debris, step over
-      const px = this.heroPos.x; const pz = this.heroPos.z;
-      const cx = THREE.MathUtils.clamp(px, b.min[0], b.max[0]);
-      const cz = THREE.MathUtils.clamp(pz, b.min[2], b.max[2]);
-      const dx = px - cx; const dz = pz - cz;
+      const cx = THREE.MathUtils.clamp(pos.x, b.min[0], b.max[0]);
+      const cz = THREE.MathUtils.clamp(pos.z, b.min[2], b.max[2]);
+      const dx = pos.x - cx; const dz = pos.z - cz;
       const d2 = dx * dx + dz * dz;
       if (d2 < r * r) {
-        if (d2 < 1e-9) { this.heroPos.z = b.max[2] + r; continue; }
+        if (d2 < 1e-9) { pos.z = b.max[2] + r; continue; }
         const d = Math.sqrt(d2);
-        this.heroPos.x = cx + (dx / d) * r;
-        this.heroPos.z = cz + (dz / d) * r;
+        pos.x = cx + (dx / d) * r;
+        pos.z = cz + (dz / d) * r;
       }
     }
   }
@@ -490,6 +523,17 @@ export class VerbSim {
   private emit(e: VerbEvent) {
     for (const l of this.listeners) l(e);
   }
+}
+
+/** XZ push that moves `b` out of `a`'s space, or null when clear of `minDist`. */
+function separation(a: THREE.Vector3, b: THREE.Vector3, minDist: number): THREE.Vector3 | null {
+  const dx = b.x - a.x; const dz = b.z - a.z;
+  const d2 = dx * dx + dz * dz;
+  if (d2 >= minDist * minDist) return null;
+  if (d2 < 1e-9) return new THREE.Vector3(0, 0, minDist);
+  const d = Math.sqrt(d2);
+  const push = minDist - d;
+  return new THREE.Vector3((dx / d) * push, 0, (dz / d) * push);
 }
 
 /** Frame-rate independent angular damp (shortest path). */

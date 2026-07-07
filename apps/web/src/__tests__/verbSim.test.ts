@@ -197,6 +197,19 @@ describe('melee string', () => {
   });
 });
 
+describe('solid bodies', () => {
+  it('hero cannot ghost through a dummy', () => {
+    const sim = new VerbSim({ dummies: [{ pos: [0, 4] }], heroPos: [0, 8] });
+    sim.setCameraYaw(0); // forward = -z, straight at the dummy
+    sim.setMove(0, 1);
+    run(sim, 3.0); // way more than enough time to walk 4m
+
+    const d = sim.getDummies()[0];
+    const flatDist = Math.hypot(sim.heroPos.x - d.pos.x, sim.heroPos.z - d.pos.z);
+    expect(flatDist).toBeGreaterThanOrEqual(0.84); // HERO_RADIUS + DUMMY_RADIUS − ε
+  });
+});
+
 describe('dummies', () => {
   it('die, fall, and respawn', () => {
     const sim = new VerbSim({ dummies: [{ pos: [0, 9.5] }], heroPos: [0, 8] });
