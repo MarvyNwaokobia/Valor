@@ -18,6 +18,15 @@ export const CLIP_NAMES = {
   gettingHit: 'gettingHit',         // HitHeavy — heavier flinch (also crits)
   deathForward: 'deathForward',     // Death — the loser
   victory: 'victory',               // Victory — the winner
+  // ── Verb era (CLONE_PLAN slice 6b): the blade + bare hands ──
+  meleeHorizontal: 'meleeHorizontal', // armed strike 1 — wide horizontal cut
+  hook: 'hook',                       // armed strike 2 — tight hooking swing
+  melee360: 'melee360',               // armed strike 3 — full spinning low cut
+  jumpAttack: 'jumpAttack',           // boss/big overhead leap
+  crossPunch: 'crossPunch',           // unarmed strike 1
+  hookPunch: 'hookPunch',             // unarmed strike 2
+  comboPunch: 'comboPunch',           // unarmed strike 3
+  throwObject: 'throwObject',         // the Edge leaves the hand
 } as const;
 
 const ALL_ANIMS: Record<string, string> = {
@@ -37,6 +46,14 @@ const ALL_ANIMS: Record<string, string> = {
   [CLIP_NAMES.gettingHit]: '/characters/raw/Getting Hit.fbx',
   [CLIP_NAMES.deathForward]: '/characters/raw/Standing Death Forward 02.fbx',
   [CLIP_NAMES.victory]: '/characters/raw/Victory.fbx',
+  [CLIP_NAMES.meleeHorizontal]: '/characters/raw/Standing Melee Attack Horizontal.fbx',
+  [CLIP_NAMES.hook]: '/characters/raw/Hook.fbx',
+  [CLIP_NAMES.melee360]: '/characters/raw/Standing Melee Attack 360 Low.fbx',
+  [CLIP_NAMES.jumpAttack]: '/characters/raw/Jump Attack.fbx',
+  [CLIP_NAMES.crossPunch]: '/characters/raw/Cross Punch.fbx',
+  [CLIP_NAMES.hookPunch]: '/characters/raw/Hook Punch.fbx',
+  [CLIP_NAMES.comboPunch]: '/characters/raw/Combo Punch.fbx',
+  [CLIP_NAMES.throwObject]: '/characters/raw/Throw.fbx',
 };
 
 const allClips: Map<string, THREE.AnimationClip> = new Map();

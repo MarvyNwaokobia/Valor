@@ -28,6 +28,11 @@ export enum AnimState {
   HitHeavy = 'hitHeavy',
   Death = 'death',
   Victory = 'victory',
+  // ── Verb era (CLONE_PLAN slice 6b): the blade + bare hands. Maps that don't
+  // configure these states simply no-op if one is requested. ──
+  Attack = 'attack',                 // armed string (chain pool)
+  AttackUnarmed = 'attackUnarmed',   // fists while the Edge is away (chain pool)
+  Throw = 'throw',                   // the Edge leaves the hand
 }
 
 export type HitDirection = 'front' | 'back' | 'side';

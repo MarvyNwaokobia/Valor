@@ -11,6 +11,8 @@ import {
 import { AudioDirector, combatIntensity } from '../audio';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
 import { AshfallCinematic } from './arenas/AshfallCinematic';
+import { VerbFighterModel } from './VerbFighterModel';
+import { heroAnimations, enemyAnimations, bossAnimations } from '../animation';
 import { AmbientVFX } from '../world/AmbientVFX';
 import { villageColliders } from './arenas/ashfallLayout';
 import { setStaticCover } from '../sim/Cover';
@@ -48,13 +50,24 @@ const ROUND_ONE: DummySpec[] = [
 const ROUND_BOSS: DummySpec[] = [{ pos: [0, -12], boss: true }];
 const MAX_SLOTS = 4;
 
-// Grounded, desaturated actor palette: bodies must sit IN the dusk, not on it.
-const ARCHETYPE_COLOR: Record<Archetype, number> = {
-  rusher: 0x6e5247,
-  gunner: 0x555a70,
-  bulwark: 0x4d5f6b,
+// Real bodies (slice 6b): faction → rig. Tints multiply into the textures so
+// the shared rigs read as different people in the dusk.
+const BODY: Record<Archetype | 'boss' | 'hero', { path: string; tint?: string }> = {
+  hero: { path: '/characters/glb/sentinel.glb' },
+  rusher: { path: '/characters/glb/berserker.glb', tint: '#c9a58f' },
+  gunner: { path: '/characters/glb/phantom.glb', tint: '#b9b9d4' },
+  bulwark: { path: '/characters/glb/sentinel.glb', tint: '#8fa4b2' },
+  boss: { path: '/characters/glb/berserker.glb', tint: '#ffb07a' },
 };
-const BOSS_COLOR = 0x7e3d22; // ember
+
+// Animation maps are pure data — build once, share across bodies.
+const HERO_ANIMS = heroAnimations();
+const BOSS_ANIMS = bossAnimations();
+const ENEMY_ANIMS: Record<Archetype, ReturnType<typeof enemyAnimations>> = {
+  rusher: enemyAnimations('rusher'),
+  gunner: enemyAnimations('gunner'),
+  bulwark: enemyAnimations('bulwark'),
+};
 
 const FIXED_DT = 1 / 60;
 const PAUSE = { melee: 0.06, meleeBig: 0.09, embedEnemy: 0.11, catch: 0.05, death: 0.08, hurt: 0.05, break: 0.1, roar: 0.12 };
@@ -125,11 +138,7 @@ function VerbWorld({ onPhase, hud }: {
   );
 
   const heroRef = useRef<THREE.Group>(null);
-  const swingRef = useRef<THREE.Group>(null);
-  const edgeHeldRef = useRef<THREE.Group>(null);
   const edgeLooseRef = useRef<THREE.Group>(null);
-  const fistLRef = useRef<THREE.Mesh>(null);
-  const fistRRef = useRef<THREE.Mesh>(null);
   const slotRefs = useRef<Array<THREE.Group | null>>([]);
   const hpRefs = useRef<Array<THREE.Mesh | null>>([]);
   const shieldRefs = useRef<Array<THREE.Mesh | null>>([]);
@@ -193,9 +202,12 @@ function VerbWorld({ onPhase, hud }: {
     }
   }, [setPhase, battleCam, audio, say]);
 
+  const [rosterSpecs, setRosterSpecs] = useState<DummySpec[]>(ROUND_ONE);
+
   const startBossIntro = useCallback(() => {
     roundRef.current = 2;
     sim.setRoster(ROUND_BOSS);
+    setRosterSpecs(ROUND_BOSS);
     bossMoveRef.current = null;
     setPhase('bossIntro');
     beatAtRef.current = performance.now();
@@ -210,6 +222,7 @@ function VerbWorld({ onPhase, hud }: {
   const returnToTitle = useCallback(() => {
     roundRef.current = 1;
     sim.setRoster(ROUND_ONE);
+    setRosterSpecs(ROUND_ONE);
     bossMoveRef.current = null;
     audio.stopWhistle();
     battleCam.setSlowMoFov(0);
@@ -452,50 +465,15 @@ function VerbWorld({ onPhase, hud }: {
       audio.setHeartbeat(sim.heroHp > 0 && sim.heroHp <= 30);
     }
 
-    // Hero (falls over when down) + procedural swing.
+    // Hero: the rig (VerbFighterModel) owns the skeleton; this owns placement.
+    // Death is a real animation now, so no capsule fall-over rotation.
     if (heroRef.current) {
       heroRef.current.position.copy(sim.heroPos);
       heroRef.current.rotation.y = sim.heroYaw;
-      heroRef.current.rotation.z = THREE.MathUtils.lerp(
-        heroRef.current.rotation.z, sim.heroIsDown ? Math.PI / 2 : 0, 0.18);
-    }
-    if (swingRef.current) {
-      const m = sim.meleeState;
-      if (m.stage > 0) {
-        const spec = m.stage === 3 ? 0.55 : 0.42;
-        const p = Math.min(1, m.t / spec);
-        const dir = m.stage === 2 ? -1 : 1;
-        if (m.stage === 3) {
-          swingRef.current.rotation.set(-1.6 + p * 2.4, 0, 0);
-        } else {
-          swingRef.current.rotation.set(0, dir * (-1.2 + p * 2.4), 0);
-        }
-      } else {
-        swingRef.current.rotation.x = THREE.MathUtils.lerp(swingRef.current.rotation.x, 0, 0.2);
-        swingRef.current.rotation.y = THREE.MathUtils.lerp(swingRef.current.rotation.y, 0, 0.2);
-      }
     }
 
-    // Fists: visible bare-handed strikes.
-    {
-      const m = sim.meleeState;
-      const spec = m.stage === 3 ? 0.46 : 0.34;
-      const p = m.stage > 0 ? Math.min(1, m.t / spec) : 0;
-      const jab = Math.sin(p * Math.PI) * 0.6;
-      const unarmedSwing = !sim.armed && m.stage > 0;
-      if (fistRRef.current) {
-        const active = unarmedSwing && (m.stage === 1 || m.stage === 3);
-        fistRRef.current.position.set(0.3, 1.1 + (m.stage === 3 ? jab * 0.25 : 0), 0.18 + (active ? jab : 0));
-      }
-      if (fistLRef.current) {
-        const active = unarmedSwing && (m.stage === 2 || m.stage === 3);
-        fistLRef.current.position.set(-0.3, 1.1 + (m.stage === 3 ? jab * 0.25 : 0), 0.18 + (active ? jab : 0));
-      }
-    }
-
-    // The Edge.
+    // The Edge, loose in the world (the held blade rides the hero's hand bone).
     const held = sim.edgeState === 'held';
-    if (edgeHeldRef.current) edgeHeldRef.current.visible = held;
     if (edgeLooseRef.current) {
       edgeLooseRef.current.visible = !held;
       if (!held) {
@@ -507,7 +485,8 @@ function VerbWorld({ onPhase, hud }: {
       }
     }
 
-    // Enemy slots: driven entirely from the sim so rosters can swap.
+    // Enemy slots: placement/scale/HUD only — the rigs animate themselves
+    // (telegraph emissive included) inside VerbFighterModel.
     const dummies = sim.getDummies();
     for (let i = 0; i < MAX_SLOTS; i++) {
       const g = slotRefs.current[i];
@@ -517,37 +496,7 @@ function VerbWorld({ onPhase, hud }: {
       if (!d) continue;
       g.position.copy(d.pos);
       g.rotation.y = d.yaw;
-      const bodyScale = d.radius / 0.45;
-      g.scale.setScalar(bodyScale);
-      const mesh = g.children[0] as THREE.Mesh;
-      const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
-      if (mat) {
-        const base = d.boss ? BOSS_COLOR : d.archetype ? ARCHETYPE_COLOR[d.archetype] : 0x565049;
-        mat.color.setHex(d.dead ? 0x241f1c : base);
-        if (d.flash > 0) {
-          mat.emissive.setHex(0xff3322);
-          mat.emissiveIntensity = 1;
-        } else if (d.ai === 'windup') {
-          const p = 1 - d.aiT / d.windupTotal;
-          mat.emissive.setHex(d.boss ? 0xff5510 : 0xffa028);
-          mat.emissiveIntensity = 0.25 + p * 1.3;
-        } else if (d.ai === 'strike') {
-          mat.emissive.setHex(0xff4416);
-          mat.emissiveIntensity = 1.1;
-        } else if (d.ai === 'phase') {
-          // The invulnerable transition: white-hot, don't bother attacking.
-          mat.emissive.setHex(0xfff2dd);
-          mat.emissiveIntensity = 1 + Math.sin(now / 60) * 0.5;
-        } else if (d.ai === 'broken') {
-          mat.emissive.setHex(0x37e0d8);
-          mat.emissiveIntensity = 0.5;
-        } else {
-          mat.emissive.setHex(d.boss ? 0x531f08 : 0x000000);
-          mat.emissiveIntensity = 1;
-        }
-      }
-      if (mesh) mesh.scale.setScalar(1 + d.flash * 0.45);
-      g.rotation.z = THREE.MathUtils.lerp(g.rotation.z, d.dead ? Math.PI / 2 : 0, 0.25);
+      g.scale.setScalar(d.radius / 0.45);
       const hp = hpRefs.current[i];
       if (hp) {
         hp.visible = !d.dead && !d.boss; // the boss uses the big top bar
@@ -696,55 +645,58 @@ function VerbWorld({ onPhase, hud }: {
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
 
+      {/* ASH — a real body; the blade rides the right-hand bone inside */}
       <group ref={heroRef}>
-        <mesh position={[0, 0.95, 0]} castShadow>
-          <capsuleGeometry args={[0.38, 1.1, 6, 14]} />
-          <meshStandardMaterial color="#6d7480" roughness={0.7} />
-        </mesh>
-        <mesh position={[0, 1.45, 0.34]}>
-          <boxGeometry args={[0.14, 0.14, 0.22]} />
-          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
-        </mesh>
-        <mesh ref={fistLRef} position={[-0.3, 1.1, 0.18]} castShadow>
-          <sphereGeometry args={[0.13, 10, 10]} />
-          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
-        </mesh>
-        <mesh ref={fistRRef} position={[0.3, 1.1, 0.18]} castShadow>
-          <sphereGeometry args={[0.13, 10, 10]} />
-          <meshStandardMaterial color="#9aa3b8" roughness={0.6} />
-        </mesh>
-        <group ref={swingRef}>
-          <group ref={edgeHeldRef} position={[0.35, 1.25, 0.25]} rotation={[-0.5, 0, 0]}>
-            <EdgeMesh />
-          </group>
-        </group>
+        <Suspense fallback={null}>
+          <VerbFighterModel
+            modelPath={BODY.hero.path}
+            animMap={HERO_ANIMS}
+            sim={sim}
+            body="hero"
+            tint={BODY.hero.tint}
+            withEdge
+          />
+        </Suspense>
       </group>
 
       <group ref={edgeLooseRef} visible={false}>
         <EdgeMesh />
       </group>
 
-      {/* Generic enemy slots — colors/scale/shield all driven per-frame */}
-      {Array.from({ length: MAX_SLOTS }).map((_, i) => (
-        <group key={i} ref={(el) => { slotRefs.current[i] = el; }} visible={false}>
-          <mesh position={[0, 0.95, 0]} castShadow>
-            <capsuleGeometry args={[0.45, 1.0, 6, 14]} />
-            <meshStandardMaterial color="#77777d" />
-          </mesh>
-          <mesh
-            ref={(el) => { shieldRefs.current[i] = el; }}
-            position={[0, 1.0, 0.62]}
+      {/* Enemy slots — real rigs per roster; remounted when the cast changes */}
+      {rosterSpecs.map((spec, i) => {
+        const role = spec.boss ? 'boss' : (spec.archetype ?? 'rusher');
+        return (
+          <group
+            key={`${role}-${i}`}
+            ref={(el) => { slotRefs.current[i] = el; }}
             visible={false}
           >
-            <boxGeometry args={[0.95, 1.25, 0.08]} />
-            <meshStandardMaterial color="#5d6f7d" metalness={0.55} roughness={0.35} />
-          </mesh>
-          <mesh ref={(el) => { hpRefs.current[i] = el; }} position={[0, 2.2, 0]}>
-            <boxGeometry args={[0.8, 0.07, 0.02]} />
-            <meshStandardMaterial color="#43d17c" />
-          </mesh>
-        </group>
-      ))}
+            <Suspense fallback={null}>
+              <VerbFighterModel
+                modelPath={BODY[role].path}
+                animMap={spec.boss ? BOSS_ANIMS : ENEMY_ANIMS[spec.archetype ?? 'rusher']}
+                sim={sim}
+                body={i}
+                tint={BODY[role].tint}
+                getBossMove={spec.boss ? () => bossMoveRef.current : undefined}
+              />
+            </Suspense>
+            <mesh
+              ref={(el) => { shieldRefs.current[i] = el; }}
+              position={[0, 1.0, 0.62]}
+              visible={false}
+            >
+              <boxGeometry args={[0.95, 1.25, 0.08]} />
+              <meshStandardMaterial color="#5d6f7d" metalness={0.55} roughness={0.35} />
+            </mesh>
+            <mesh ref={(el) => { hpRefs.current[i] = el; }} position={[0, 2.2, 0]}>
+              <boxGeometry args={[0.8, 0.07, 0.02]} />
+              <meshStandardMaterial color="#43d17c" />
+            </mesh>
+          </group>
+        );
+      })}
 
       {/* Ash ring telegraph/burst */}
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
