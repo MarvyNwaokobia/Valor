@@ -135,6 +135,36 @@ export class AudioDirector {
     this.noiseSweep(1400 + stage * 200, 500, 0.1, 0.16, this.verbBus);
   }
 
+  /**
+   * Round cleared: punch a hole in the score, then a resolved D open-fifth
+   * swell (no third — dark-triumphant, same key as the leitmotif) over a
+   * long sub. The audible full stop the kill moment was missing.
+   */
+  roundClear() {
+    this.music?.gap(520);
+    this.duckMusic(0.3, 600);
+    this.sine(60, 38, 0.55, 0.8, this.verbBus); // the floor drops
+    const g = this.graph();
+    if (!g || !this.verbBus) return;
+    try {
+      const now = g.ctx.currentTime + 0.09; // let the sub land first
+      for (const [freq, vol] of [[146.83, 0.2], [220.0, 0.18], [293.66, 0.14]] as const) {
+        const osc = g.ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        osc.detune.value = (Math.random() - 0.5) * 8;
+        const gain = g.ctx.createGain();
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(vol, now + 0.07);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+        osc.connect(gain).connect(this.verbBus);
+        osc.start(now);
+        osc.stop(now + 1.55);
+      }
+      this.ring(1174.66, 0.7, 0.05, this.verbBus); // D6 shimmer on top
+    } catch {}
+  }
+
   meleeHit(stage: number, buffed: boolean, pos: Pos) {
     const weight: ImpactWeight = stage === 3 || buffed ? 'heavy' : 'light';
     this.impact('flesh', weight, pos);
