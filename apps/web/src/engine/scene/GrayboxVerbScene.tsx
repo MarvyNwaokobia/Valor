@@ -9,6 +9,7 @@ import {
   type VerbEvent, type EdgeAabb, type Archetype, type DummySpec, type BossMove,
 } from '../verb';
 import { AudioDirector, combatIntensity } from '../audio';
+import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
 
 /**
  * The verb graybox — CLONE_PLAN.md slices 1 (verb), 3 (no-cut), 4 (combat + boss).
@@ -70,6 +71,9 @@ interface HudRefs {
   vignette: HTMLDivElement | null;
   bossWrap: HTMLDivElement | null;
   bossFill: HTMLDivElement | null;
+  subWrap: HTMLDivElement | null;
+  subName: HTMLDivElement | null;
+  subText: HTMLDivElement | null;
   arrows: Array<HTMLDivElement | null>;
 }
 
@@ -140,6 +144,17 @@ function VerbWorld({ onPhase, hud }: {
   const bossMoveRef = useRef<BossMove | null>(null);
   const ringBurstRef = useRef(0);
 
+  // The voices: a queue of presence lines, each trigger fires once per run.
+  const voQueueRef = useRef<PresenceLine[]>([]);
+  const voUntilRef = useRef(0);
+  const voFiredRef = useRef(new Set<PresenceTrigger>());
+
+  const say = useCallback((trigger: PresenceTrigger) => {
+    if (voFiredRef.current.has(trigger)) return;
+    voFiredRef.current.add(trigger);
+    voQueueRef.current.push(...linesFor(trigger));
+  }, []);
+
   const setPhase = useCallback((p: Phase, beatSecs?: number) => {
     phaseRef.current = p;
     onPhase(p, beatSecs);
@@ -148,7 +163,8 @@ function VerbWorld({ onPhase, hud }: {
   const startCombat = useCallback(() => {
     roundStartRef.current = performance.now();
     setPhase('combat');
-  }, [setPhase]);
+    if (roundRef.current === 1) say('combatStart');
+  }, [setPhase, say]);
 
   const enterBeat = useCallback((kind: 'cleared' | 'down') => {
     const secs = (performance.now() - roundStartRef.current) / 1000;
@@ -158,9 +174,19 @@ function VerbWorld({ onPhase, hud }: {
     battleCam.setSlowMoFov(-8);
     audio.setIntensity(0);
     audio.setHeartbeat(false);
-    if (kind === 'cleared') audio.roundClear();
-    else audio.heroDown();
-  }, [setPhase, battleCam, audio]);
+    if (kind === 'cleared') {
+      audio.roundClear();
+      if (roundRef.current === 1) {
+        say('troopsCleared');
+      } else {
+        say('zoneClear');
+        say('zoneClearTag');
+      }
+    } else {
+      audio.heroDown();
+      say('heroDown');
+    }
+  }, [setPhase, battleCam, audio, say]);
 
   const startBossIntro = useCallback(() => {
     roundRef.current = 2;
@@ -173,7 +199,8 @@ function VerbWorld({ onPhase, hud }: {
     battleCam.startKillcam('target');
     const boss = sim.getDummies()[0];
     if (boss) audio.bossRoar({ x: boss.pos.x, z: boss.pos.z });
-  }, [sim, battleCam, audio, setPhase]);
+    say('bossIntro');
+  }, [sim, battleCam, audio, setPhase, say]);
 
   const returnToTitle = useCallback(() => {
     roundRef.current = 1;
@@ -182,6 +209,9 @@ function VerbWorld({ onPhase, hud }: {
     audio.stopWhistle();
     battleCam.setSlowMoFov(0);
     battleCam.setMode('follow');
+    voFiredRef.current.clear();
+    voQueueRef.current.length = 0;
+    voUntilRef.current = 0;
     setPhase('title');
   }, [sim, audio, battleCam, setPhase]);
 
@@ -280,6 +310,7 @@ function VerbWorld({ onPhase, hud }: {
           pauseRef.current = Math.max(pauseRef.current, PAUSE.catch);
           battleCam.punch(0.06);
           battleCam.shake(0.04, 45);
+          say('firstCatch');
           break;
         case 'dummyDeath':
           audio.death(e.pos);
@@ -311,6 +342,7 @@ function VerbWorld({ onPhase, hud }: {
           vignetteRef.current = 0.8;
           pauseRef.current = Math.max(pauseRef.current, PAUSE.hurt);
           battleCam.shake(0.07, 28);
+          if (sim.heroHp > 0 && sim.heroHp <= 30) say('lowHp');
           break;
         case 'heroDown':
           if (phaseRef.current === 'combat') enterBeat('down');
@@ -333,6 +365,7 @@ function VerbWorld({ onPhase, hud }: {
           audio.bossRoar(e.pos);
           pauseRef.current = Math.max(pauseRef.current, PAUSE.roar);
           battleCam.shake(0.08, 24);
+          say(e.phase === 2 ? 'bossPhase2' : 'bossPhase3');
           break;
       }
     });
@@ -574,6 +607,29 @@ function VerbWorld({ onPhase, hud }: {
       hud.vignette.style.opacity = String(Math.max(vignetteRef.current, lowHp));
     }
 
+    // The voices: one line at a time, reading pace scaled to its length.
+    if (hud.subWrap && hud.subName && hud.subText) {
+      // Backlog rule: if more lines are waiting, the current one wraps up
+      // fast — Valor's entrance must never queue behind small talk.
+      if (voQueueRef.current.length > 0 && voUntilRef.current - now > 1400) {
+        voUntilRef.current = now + 900;
+      }
+      if (now >= voUntilRef.current) {
+        const line = voQueueRef.current.shift();
+        if (line) {
+          const meta = SPEAKER_META[line.speaker];
+          hud.subName.textContent = meta.name;
+          hud.subName.style.color = meta.color;
+          hud.subText.textContent = line.text;
+          hud.subWrap.style.display = 'block';
+          voUntilRef.current = now + 2400 + line.text.length * 34;
+          audio.playVo(line.id, line.speaker);
+        } else {
+          hud.subWrap.style.display = 'none';
+        }
+      }
+    }
+
     // Off-screen threat arrows.
     {
       const cam = camera as THREE.PerspectiveCamera;
@@ -713,7 +769,10 @@ export function GrayboxVerbScene() {
   const [phase, setPhase] = useState<Phase>('title');
   const [beatSecs, setBeatSecs] = useState<number | null>(null);
   const [bossRound, setBossRound] = useState(false);
-  const hud = useRef<HudRefs>({ hpFill: null, vignette: null, bossWrap: null, bossFill: null, arrows: [] }).current;
+  const hud = useRef<HudRefs>({
+    hpFill: null, vignette: null, bossWrap: null, bossFill: null,
+    subWrap: null, subName: null, subText: null, arrows: [],
+  }).current;
 
   const onPhase = useCallback((p: Phase, secs?: number) => {
     setPhase(p);
@@ -749,6 +808,20 @@ export function GrayboxVerbScene() {
           ▲
         </div>
       ))}
+
+      {/* The voices: radio subtitles (VO rides on top when generated) */}
+      <div
+        ref={(el) => { hud.subWrap = el; }}
+        style={{
+          ...overlayFont, position: 'absolute', bottom: 96, left: '50%',
+          transform: 'translateX(-50%)', width: 'min(620px, 86vw)',
+          textAlign: 'center', display: 'none',
+          background: 'rgba(8,10,14,0.62)', borderRadius: 8, padding: '10px 16px',
+        }}
+      >
+        <div ref={(el) => { hud.subName = el; }} style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.3em', marginBottom: 4 }} />
+        <div ref={(el) => { hud.subText = el; }} style={{ fontSize: 14, lineHeight: 1.5 }} />
+      </div>
 
       {/* Boss bar (shown during the Cinder fight) */}
       <div

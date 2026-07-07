@@ -269,6 +269,61 @@ export class AudioDirector {
     });
   }
 
+  // ── Voices (slice 5): VO sits at the very top of the hierarchy ─────────────
+
+  /**
+   * Play a presence line. Prefers a generated VO file (public/vo/{id}.mp3,
+   * produced by scripts/generate-vo.mjs); until those exist, the line lands
+   * as the speaker's radio signature under the subtitle. Ducks the score
+   * either way — a voice owns the room.
+   */
+  playVo(id: string, speaker: 'ember' | 'valor' | 'cinder') {
+    this.radioSignature(speaker);
+    this.duckMusic(0.4, 1600);
+    const known = this.voAvailable.get(id);
+    if (known === false) return; // no file: the signature carried the line
+    if (known === true) {
+      this.playVoFile(id);
+      return;
+    }
+    // First ask politely (fetch 404s don't spam the console like <audio> does).
+    fetch(`/vo/${id}.mp3`, { method: 'HEAD' })
+      .then((r) => {
+        this.voAvailable.set(id, r.ok);
+        if (r.ok) this.playVoFile(id);
+      })
+      .catch(() => this.voAvailable.set(id, false));
+  }
+
+  private voAvailable = new Map<string, boolean>();
+
+  private playVoFile(id: string) {
+    try {
+      const el = new Audio(`/vo/${id}.mp3`);
+      el.volume = 0.9;
+      void el.play().catch(() => {});
+    } catch {}
+  }
+
+  /** Per-speaker radio static: tells WHO is talking before you read a word. */
+  private radioSignature(speaker: 'ember' | 'valor' | 'cinder') {
+    switch (speaker) {
+      case 'ember': // close, warm, slightly bright — a friend's channel
+        this.noiseBand(1900, 1.1, 0.09, 0.18, this.verbBus);
+        this.noiseBand(1400, 1.4, 0.06, 0.12, this.verbBus);
+        break;
+      case 'valor': // he doesn't crackle in — the channel drops to make room
+        this.sine(120, 34, 0.5, 0.5, this.verbBus);
+        this.noiseBand(700, 0.7, 0.3, 0.14, this.verbBus);
+        this.music?.gap(260);
+        break;
+      case 'cinder': // fire on the line
+        this.noiseBand(2600, 0.8, 0.18, 0.2, this.verbBus);
+        this.noiseSweep(900, 300, 0.25, 0.2, this.verbBus);
+        break;
+    }
+  }
+
   /** Low-HP heartbeat layer — informational audio, not decoration. */
   setHeartbeat(on: boolean) {
     if (on === (this.heartbeatTimer !== null)) return;
