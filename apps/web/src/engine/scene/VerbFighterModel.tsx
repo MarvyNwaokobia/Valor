@@ -96,6 +96,8 @@ export function VerbFighterModel({
   const mixamoApplied = useRef(false);
   const revealed = useRef(false);
   const initTime = useRef(0);
+  const grounded = useRef(false);
+  const revealAt = useRef(0);
   const hipsFixApplied = useRef(false);
   const lastPos = useRef(new THREE.Vector3());
   const speedRef = useRef(0);
@@ -185,10 +187,25 @@ export function VerbFighterModel({
       if (initTime.current === 0) initTime.current = performance.now();
       if (mixamoApplied.current || performance.now() - initTime.current > 2500) {
         revealed.current = true;
+        revealAt.current = performance.now();
       }
     }
     g.visible = revealed.current;
     if (!revealed.current) return;
+
+    // Ground the rig: bind poses can hover above their origin, so once the
+    // idle clip has settled, measure the lowest point and plant the feet.
+    if (!grounded.current && performance.now() - revealAt.current > 400) {
+      grounded.current = true;
+      g.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(clonedScene);
+      if (Number.isFinite(box.min.y)) {
+        const gy = g.getWorldPosition(new THREE.Vector3()).y;
+        const worldScale = g.getWorldScale(new THREE.Vector3()).y || 1;
+        const drop = (box.min.y - gy) / worldScale; // into the rig's local units
+        if (Math.abs(drop) > 0.02) clonedScene.position.y -= drop;
+      }
+    }
 
     // ── State mapping ──
     const worldPos = g.getWorldPosition(new THREE.Vector3());

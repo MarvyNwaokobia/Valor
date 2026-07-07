@@ -632,16 +632,16 @@ function VerbWorld({ onPhase, hud }: {
     <>
       {/* Smoke-dusk air: bg matches fog so distance dissolves into layered
           silhouettes (the Valor/GoW atmosphere rule). Filmic post on top. */}
-      <color attach="background" args={['#41332b']} />
-      <fog attach="fog" args={['#41332b', 14, 92]} />
+      <color attach="background" args={['#54443a']} />
+      <fog attach="fog" args={['#54443a', 16, 98]} />
       <Suspense fallback={null}>
         <AshfallCinematic />
       </Suspense>
       <AmbientVFX stageId="lava_arena" />
       <EffectComposer multisampling={0}>
         <Bloom intensity={0.45} luminanceThreshold={0.72} luminanceSmoothing={0.25} mipmapBlur />
-        <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.55} />
-        <Vignette darkness={0.42} offset={0.28} blendFunction={BlendFunction.NORMAL} />
+        <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.42} />
+        <Vignette darkness={0.3} offset={0.3} blendFunction={BlendFunction.NORMAL} />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
 
@@ -839,7 +839,7 @@ export function GrayboxVerbScene() {
             ...overlayFont, position: 'absolute', left: 12, bottom: 12, fontSize: 13,
             lineHeight: 1.7, background: 'rgba(10,12,16,0.55)', padding: '10px 14px', borderRadius: 8,
           }}>
-            <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>RIFT EDGE · graybox</div>
+            <div style={{ color: '#37e0d8', fontWeight: 700, marginBottom: 2 }}>RIFT EDGE · Ashfall</div>
             WASD move · J strike · F throw · E recall · Space dash (dodge)
           </div>
         </>
