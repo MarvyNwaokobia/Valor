@@ -1,0 +1,894 @@
+/**
+ * @module fps/FpsSim
+ * @description The headless first-person shooter core for the Valor clone (the plan
+ * slice 1). Render-free and deterministic: no Three.js rendering, no DOM. The
+ * scene passes the shooter's eye ray + input each step; the sim owns ammo,
+ * cadence, reload, spread, the raycast against enemy hitboxes and cover, damage,
+ * and respawns, and emits events the scene turns into muzzle flash, tracers,
+ * hitmarkers and audio (audio arrives in slice 2).
+ *
+ * Reuses the existing gun catalogue (engine/combat/GunStats). The stat-duel's
+ * hidden `accuracy` roll is reinterpreted here as an aim SPREAD cone: higher
+ * accuracy = tighter cone. Skill (where you point) decides the hit now, not a die.
+ *
+ * The one deliberate split from the old CombatSim: RECOIL (the climb) lives in
+ * the scene because it moves the camera, and the shot ray is simply the camera
+ * forward the scene passes in. The sim owns only SPREAD (the bloom) on top of
+ * that ray. So a shot goes exactly where the muzzle points, plus a little cone.
+ */
+
+import { getGun, type GunId, type GunStats } from '../combat/GunStats';
+
+export type Vec3 = [number, number, number];
+
+/** Enemy behaviour (slice 3). hidden/recover = ducked & safe; aim = telegraphing
+ *  a shot (the reaction window); fire = the shot; seek = repositioning. */
+export type EnemyAI = 'hidden' | 'seek' | 'aim' | 'fire' | 'recover';
+
+/** A humanoid combatant. Head is a sphere, body an axis-aligned box. */
+export interface FpsEnemy {
+  id: number;
+  x: number;
+  z: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  /** sim-time (s) of death, for the scene's fall/fade + the respawn timer. */
+  deadAt: number;
+  // ── AI (slice 3) ──
+  ai: EnemyAI;
+  aiUntil: number;   // when the current phase ends
+  facing: number;    // yaw toward the player, for rendering
+  token: boolean;    // holds an aggression token (allowed to shoot this beat)
+  ducking: number;   // 0 exposed .. 1 fully in cover (visual + fire-gating)
+  goalX: number;     // where it's maneuvering to
+  goalZ: number;
+  nextGoalAt: number;
+  room: number;      // mission room (slice 4)
+  active: boolean;   // AI only runs when the room has been entered
+  boss: boolean;
+  phase: number;     // 0 for a mook; 1..3 for a boss, rising as its health falls
+}
+
+/** A wall or crate: an axis-aligned box that blocks movement and bullets. */
+export interface CoverBox {
+  x: number;
+  z: number;
+  w: number; // full extent on X
+  d: number; // full extent on Z
+  h: number; // height (from y=0)
+}
+
+export interface FpsInput {
+  firing: boolean;
+  wantReload: boolean;
+  /** Shooter eye position in world space. */
+  origin: Vec3;
+  /** Normalised aim forward (already includes look + the scene's recoil climb). */
+  dir: Vec3;
+  adsFactor: number; // 0 hip .. 1 fully aimed
+  moving: boolean;
+  crouched: boolean;
+}
+
+export type FpsEvent =
+  | { kind: 'fire'; ammo: number; spread: number }
+  | { kind: 'empty' }
+  | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean }
+  | { kind: 'kill'; enemyId: number }
+  | { kind: 'wall'; point: Vec3 }
+  | { kind: 'miss'; point: Vec3 }
+  | { kind: 'fireModeChanged'; mode: FireMode }
+  | { kind: 'weaponSwitch'; gunId: GunId; slot: number; name: string }
+  | { kind: 'reloadStart'; duration: number }
+  | { kind: 'reloadEnd' }
+  | { kind: 'spawn'; enemyId: number }
+  // ── slice 3: enemies fighting back ──
+  | { kind: 'enemyAim'; enemyId: number; from: Vec3 }               // windup tell begins
+  // A real round: leaves the MUZZLE, flies along `dir`, and stops at `impact`.
+  // `part` is the piece of the player it struck (null = it hit cover or air).
+  | { kind: 'enemyFire'; enemyId: number; from: Vec3; dir: Vec3; impact: Vec3; hit: boolean; part: HitPart | null }
+  | { kind: 'playerHit'; damage: number; part: HitPart; from: Vec3; fromDir: Vec3; hp: number }
+  | { kind: 'playerDown' }
+  // A boss crossed a health threshold and escalated (2 = wounded, 3 = enraged).
+  | { kind: 'bossPhase'; enemyId: number; phase: number; hpFrac: number };
+
+export type HitPart = 'head' | 'torso' | 'arm' | 'leg';
+
+export type FireMode = 'semi' | 'burst' | 'auto';
+const BURST_COUNT = 3;
+/** Raise time when swapping weapons — you can't fire for this long after a swap. */
+const SWAP_TIME = 0.35;
+/** Which fire modes each weapon offers, first = default. A marksman is not full-auto. */
+export const GUN_FIRE_MODES: Record<GunId, FireMode[]> = {
+  sidearm: ['semi'],
+  smg: ['auto', 'burst'],
+  assault_rifle: ['auto', 'burst', 'semi'],
+  marksman: ['semi'],
+  legendary: ['auto', 'burst'],
+};
+
+export interface EnemySpec {
+  pos: [number, number]; // x, z
+  hp?: number;
+  room?: number; // which mission room this enemy belongs to (slice 4)
+  boss?: boolean; // a named boss — the scene gives it a health bar + menace tint
+}
+
+export interface FpsSimOptions {
+  gunId?: GunId;
+  /** The weapons you carry (1-2). Overrides `gunId`; slot 0 is the primary. */
+  loadout?: GunId[];
+  enemies: EnemySpec[];
+  cover?: CoverBox[];
+  /** Injectable RNG for deterministic tests (default Math.random). */
+  rng?: () => number;
+  /** Sandbox respawns cleared enemies; a mission does not (default true). */
+  respawnEnabled?: boolean;
+}
+
+// ── Tunables (feel levers — tune these with Marvy against the muted graybox) ──
+export const FPS_TUNING = {
+  // Hitboxes (standing). A full articulated silhouette — head, torso, both arms
+  // and legs are all hittable, so the player can shoot ANY part of the body and
+  // it registers, each part with its own damage (see PART_MULT).
+  HEAD_RADIUS: 0.15,
+  HEAD_Y: 1.62,
+  TORSO: { hx: 0.22, y0: 0.92, y1: 1.46, hz: 0.16 },
+  LEGS: { hx: 0.2, y0: 0.02, y1: 0.92, hz: 0.15 },
+  ARM: { hx: 0.09, y0: 0.96, y1: 1.42, hz: 0.11, dx: 0.3 }, // dx = offset from centre
+
+  // Spread cone (radians). accuracy 1 → BASE only; accuracy 0 → BASE+ACC.
+  BASE_SPREAD: 0.02,
+  ACC_SPREAD: 0.06,
+  ADS_SPREAD_MULT: 0.14, // ADS collapses the cone → precision
+  MOVE_SPREAD_MULT: 1.8,
+  CROUCH_SPREAD_MULT: 0.7,
+
+  // Lethality. Valor is lethal: a global scale over the catalogue damage, then a
+  // per-zone multiplier — a head drops a target fast, limbs chip, torso in
+  // between (tuned so ~1 head / ~3 torso / ~4-5 limb shots kill a 100hp target).
+  LETHALITY: 2.2,
+  PART_MULT: { head: 3.5, torso: 1.0, arm: 0.65, leg: 0.8 },
+  FALLOFF_END_MULT: 2.0, // damage fades to FALLOFF_FLOOR by range*this
+  FALLOFF_FLOOR: 0.5,
+
+  DEFAULT_ENEMY_HP: 100,
+  RESPAWN_DELAY: 2.6,
+  MAX_RAY: 120, // metres a bullet travels before it's a clean miss
+
+  PLAYER_HP: 100,
+
+  // Enemies (slice 3). Deliberately FAIR: only MAX_ATTACKERS shoot at once, every
+  // shot is telegraphed for AIM_MS first (your reaction window), and a hit grants
+  // MERCY_MS of invulnerability so you're never chain-melted.
+  ENEMY: {
+    EYE_Y: 1.5,
+    MAX_ATTACKERS: 3,     // aggression-token budget (the GoW fairness rule) — livelier
+    ENGAGE_RANGE: 30,     // won't shoot from further than this
+    AIM_MS: 0.6,          // telegraph before the shot — the reaction window
+    RECOVER_MS: 0.6,      // ducked cooldown after firing
+    HIDE_MS: 0.7,         // min time hidden before peeking again
+    BASE_ACC: 0.45,       // point-blank hit chance
+    NEAR: 6, FAR: 26,     // accuracy falls off linearly across this range
+    DMG: 10,              // damage per hit
+    MERCY_MS: 0.6,        // post-hit invulnerability
+    MOVE_SPEED: 2.8,      // m/s when maneuvering
+    BODY_R: 0.55,         // shoulders + rifle: keep them clear of walls, not touching
+    WORLD_CLAMP: 18,      // outer safety; walls do the real containment (layouts vary in depth)
+    PREFERRED_DIST: 12,   // enemies maneuver to about this range and flank
+    // The round leaves the rifle they're actually holding, not their sternum.
+    MUZZLE_Y: 1.42,
+    MUZZLE_FWD: 0.42,
+    MUZZLE_RIGHT: 0.13,
+    SPREAD_NEAR: 0.03,    // rad; the cone opens with range, so distance = safety
+    SPREAD_FAR: 0.09,
+  },
+
+  // A named boss is not a tougher mook — it escalates. As its health falls
+  // through PHASE_AT, it enters phase 2 then 3: telegraph shrinks, rounds land
+  // tighter, it closes the distance and moves faster. It also acts OUTSIDE the
+  // MAX_ATTACKERS token budget, so it is always a threat while its guards trade
+  // turns around it. Index by phase-1 (phase 1 = [0]).
+  BOSS: {
+    PHASE_AT: [0.66, 0.33] as const, // hp fractions where phase 2 / phase 3 begin
+    AIM_MS: [0.5, 0.4, 0.28],        // reaction window you get shrinks each phase
+    RECOVER_MS: [0.6, 0.45, 0.3],    // it fires more often
+    SPREAD_MULT: [0.9, 0.72, 0.55],  // and lands tighter
+    PREFERRED_DIST: [14, 10, 6],     // it stops keeping its distance
+    MOVE_MULT: [1.1, 1.25, 1.45],    // and moves faster while doing it
+  },
+
+  /** Your body, as the enemies' bullets see it. Heights are relative to eye level. */
+  PLAYER_HIT: {
+    HEAD_R: 0.15,
+    TORSO: { h: 0.22, y0: -0.7, y1: -0.14 },
+    LEGS: { h: 0.2, yTop: -0.7 },
+    PART_MULT: { head: 2.2, torso: 1.0, arm: 0.6, leg: 0.6 },
+  },
+} as const;
+
+const UP: Vec3 = [0, 1, 0];
+
+export class FpsSim {
+  // The active weapon. Reassigned on a weapon switch (loadout support).
+  gun: GunStats;
+  /** The 1-2 weapons you carry; slot 0 = primary. */
+  readonly loadout: GunId[];
+  activeSlot = 0;
+  /** Ammo is tracked PER slot, so swapping never refills the other weapon. */
+  private ammoBySlot: number[];
+  private enemies: FpsEnemy[] = [];
+  private spawns: [number, number][] = [];
+  private cover: CoverBox[];
+  private rng: () => number;
+  private respawnEnabled: boolean;
+
+  time = 0;
+  reloading = false;
+  private reloadEndsAt = 0;
+  private nextShotAt = 0;
+  private prevFiring = false;   // trigger edge detection (semi/burst)
+  private burstLeft = 0;
+  fireMode: FireMode = 'auto';
+
+  // Session stats (probe + later the XP loop reads these).
+  shotsFired = 0;
+  hits = 0;
+  headshots = 0;
+  kills = 0;
+  enemyShots = 0; // rounds fired AT the player (diagnostics + feel tuning)
+  /** Which part of the player the last enemy round struck (diagnostics + HUD). */
+  lastHitPart: HitPart | null = null;
+  hitParts: Record<HitPart, number> = { head: 0, torso: 0, arm: 0, leg: 0 };
+
+  private events: FpsEvent[] = [];
+  private nextId = 1;
+
+  // Player survival (slice 3).
+  playerHp: number = FPS_TUNING.PLAYER_HP;
+  private playerEyeY = 1.6;
+  playerAlive = true;
+  private mercyUntil = 0;
+
+  /** Rounds in the ACTIVE weapon's magazine (transparently the current slot). */
+  get ammo(): number { return this.ammoBySlot[this.activeSlot]; }
+  set ammo(v: number) { this.ammoBySlot[this.activeSlot] = v; }
+
+  constructor(opts: FpsSimOptions) {
+    // A loadout of 1-2 guns; a bare `gunId` is treated as a single-weapon loadout.
+    const loadout = (opts.loadout && opts.loadout.length ? opts.loadout : [opts.gunId ?? 'sidearm']).slice(0, 2);
+    this.loadout = loadout;
+    this.ammoBySlot = loadout.map((id) => getGun(id).magazine);
+    this.gun = getGun(loadout[0]);
+    this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
+    this.cover = opts.cover ?? [];
+    this.rng = opts.rng ?? Math.random;
+    this.respawnEnabled = opts.respawnEnabled ?? true;
+    for (const e of opts.enemies) this.addEnemy(e);
+  }
+
+  private addEnemy(spec: EnemySpec): FpsEnemy {
+    const hp = spec.hp ?? FPS_TUNING.DEFAULT_ENEMY_HP;
+    const e: FpsEnemy = {
+      id: this.nextId++,
+      x: spec.pos[0],
+      z: spec.pos[1],
+      hp,
+      maxHp: hp,
+      alive: true,
+      deadAt: 0,
+      ai: 'hidden',
+      aiUntil: 0,
+      facing: 0,
+      token: false,
+      ducking: 1,
+      goalX: spec.pos[0],
+      goalZ: spec.pos[1],
+      nextGoalAt: 0,
+      room: spec.room ?? 0,
+      active: true,
+      boss: spec.boss ?? false,
+      phase: spec.boss ? 1 : 0,
+    };
+    this.enemies.push(e);
+    this.spawns.push([spec.pos[0], spec.pos[1]]);
+    return e;
+  }
+
+  getEnemies(): readonly FpsEnemy[] {
+    return this.enemies;
+  }
+  getCover(): readonly CoverBox[] {
+    return this.cover;
+  }
+  aliveCount(): number {
+    let n = 0;
+    for (const e of this.enemies) if (e.alive) n++;
+    return n;
+  }
+  /** Living enemies in a mission room (slice 4). */
+  roomAlive(room: number): number {
+    let n = 0;
+    for (const e of this.enemies) if (e.alive && e.room === room) n++;
+    return n;
+  }
+  /** Wake or sleep a room's enemies (the player breaching triggers this). */
+  setRoomActive(room: number, active: boolean): void {
+    for (const e of this.enemies) if (e.room === room) e.active = active;
+  }
+  setAllActive(active: boolean): void {
+    for (const e of this.enemies) e.active = active;
+  }
+
+  /** Current effective spread half-angle (radians) for the given input. */
+  spreadFor(adsFactor: number, moving: boolean, crouched: boolean): number {
+    let s = FPS_TUNING.BASE_SPREAD + FPS_TUNING.ACC_SPREAD * (1 - this.gun.accuracy);
+    s *= lerp(1, FPS_TUNING.ADS_SPREAD_MULT, clamp01(adsFactor));
+    if (moving) s *= FPS_TUNING.MOVE_SPREAD_MULT;
+    if (crouched) s *= FPS_TUNING.CROUCH_SPREAD_MULT;
+    return s;
+  }
+
+  /** Cycle to this weapon's next fire mode. Single-mode guns don't change. */
+  cycleFireMode(): FireMode {
+    const modes = GUN_FIRE_MODES[this.gun.id] ?? ['auto'];
+    const i = modes.indexOf(this.fireMode);
+    this.fireMode = modes[(i + 1) % modes.length];
+    this.burstLeft = 0;
+    return this.fireMode;
+  }
+
+  /** Swap to loadout slot `n`. Cancels a reload, imposes a raise time, and each
+   *  weapon keeps its own ammo. Returns true if the weapon actually changed. */
+  switchGun(n: number): boolean {
+    if (n < 0 || n >= this.loadout.length || n === this.activeSlot) return false;
+    this.activeSlot = n;                 // the ammo getter now points at this slot
+    this.gun = getGun(this.loadout[n]);
+    this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
+    this.reloading = false;
+    this.burstLeft = 0;
+    this.nextShotAt = this.time + SWAP_TIME; // raise time: no firing mid-swap
+    this.events.push({ kind: 'weaponSwitch', gunId: this.gun.id, slot: n, name: this.gun.name });
+    return true;
+  }
+
+  /** Cycle to the next weapon in the loadout (the swap key). */
+  nextWeapon(): boolean {
+    if (this.loadout.length < 2) return false;
+    return this.switchGun((this.activeSlot + 1) % this.loadout.length);
+  }
+
+  startReload(): void {
+    if (this.reloading || this.ammo >= this.gun.magazine) return;
+    this.reloading = true;
+    this.reloadEndsAt = this.time + this.gun.reloadTime;
+    this.events.push({ kind: 'reloadStart', duration: this.gun.reloadTime });
+  }
+
+  /** Advance one step. Returns the events produced this step (also drained via drain()). */
+  step(dt: number, input: FpsInput): FpsEvent[] {
+    const produced: FpsEvent[] = [];
+    this.time += dt;
+
+    // Reload completion.
+    if (this.reloading && this.time >= this.reloadEndsAt) {
+      this.reloading = false;
+      this.ammo = this.gun.magazine;
+    this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
+      this.push(produced, { kind: 'reloadEnd' });
+    }
+    if (input.wantReload) this.startReload();
+
+    // Respawns (sandbox only — a mission leaves cleared enemies down).
+    for (const e of this.enemies) {
+      if (this.respawnEnabled && !e.alive && this.time - e.deadAt >= FPS_TUNING.RESPAWN_DELAY) {
+        e.alive = true;
+        e.hp = e.maxHp;
+        e.phase = e.boss ? 1 : 0;
+        e.token = false;
+        e.ai = 'hidden';
+        e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+        this.push(produced, { kind: 'spawn', enemyId: e.id });
+      }
+    }
+
+    // Enemies think, take cover, telegraph and shoot back (slice 3).
+    this.updateEnemies(dt, input, produced);
+
+    this.playerEyeY = input.crouched ? 1.02 : 1.6;
+
+    // Firing — fire mode decides what a held trigger means.
+    const rising = input.firing && !this.prevFiring;            // this frame's trigger PULL
+    if (this.fireMode === 'burst' && rising && this.burstLeft <= 0) this.burstLeft = BURST_COUNT;
+    const wantShoot =
+      this.fireMode === 'auto' ? input.firing :                 // spray while held
+      this.fireMode === 'semi' ? rising :                       // one per pull
+      this.burstLeft > 0;                                       // burst: fire out the queue
+    this.prevFiring = input.firing;
+
+    if (wantShoot && !this.reloading && this.time >= this.nextShotAt) {
+      this.nextShotAt = this.time + 60 / this.gun.fireRate;
+      if (this.ammo <= 0) {
+        this.burstLeft = 0;
+        this.push(produced, { kind: 'empty' });
+        this.startReload(); // pulling the trigger dry kicks off a reload
+      } else {
+        this.ammo--;
+        this.shotsFired++;
+        if (this.burstLeft > 0) this.burstLeft--;
+        const spread = this.spreadFor(input.adsFactor, input.moving, input.crouched);
+        this.push(produced, { kind: 'fire', ammo: this.ammo, spread });
+        this.resolveShot(input.origin, input.dir, spread, produced);
+        if (this.ammo <= 0) { this.burstLeft = 0; this.startReload(); } // auto-reload on dry
+      }
+    }
+
+    return produced;
+  }
+
+  /**
+   * Record an event. It must go BOTH into the caller's array (step()'s return)
+   * AND into `this.events`, because the scene reads events via drain(), not via
+   * step()'s return value. Pushing to `local` alone silently drops the event —
+   * that is exactly how enemy fire ended up with no tracer, no sound and no hit
+   * reaction for several slices. ALWAYS use this, never a bare `out.push`.
+   */
+  private push(local: FpsEvent[], ev: FpsEvent): void {
+    local.push(ev);
+    this.events.push(ev);
+  }
+
+  /** One bullet: jitter the ray within the cone, find the nearest thing it hits. */
+  private resolveShot(origin: Vec3, dir: Vec3, spread: number, out: FpsEvent[]): void {
+    const ray = jitter(normalize(dir), spread, this.rng);
+
+    let bestT: number = FPS_TUNING.MAX_RAY;
+    let hitEnemy: FpsEnemy | null = null;
+    let hitPart: HitPart = 'torso';
+
+    // Cover first — a crate closer than an enemy eats the round.
+    for (const c of this.cover) {
+      const t = rayAABB(origin, ray, aabbOfCover(c));
+      if (t !== null && t < bestT) {
+        bestT = t;
+        hitEnemy = null;
+      }
+    }
+
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const th = raySphere(origin, ray, [e.x, FPS_TUNING.HEAD_Y, e.z], FPS_TUNING.HEAD_RADIUS);
+      if (th !== null && th < bestT) {
+        bestT = th;
+        hitEnemy = e;
+        hitPart = 'head';
+      }
+      for (const zone of bodyZones(e)) {
+        const t = rayAABB(origin, ray, [zone.min, zone.max]);
+        if (t !== null && t < bestT) {
+          bestT = t;
+          hitEnemy = e;
+          hitPart = zone.part;
+        }
+      }
+    }
+
+    const point: Vec3 = [origin[0] + ray[0] * bestT, origin[1] + ray[1] * bestT, origin[2] + ray[2] * bestT];
+
+    if (hitEnemy) {
+      const dmg = this.damageFor(hitPart, bestT);
+      hitEnemy.hp -= dmg;
+      this.hits++;
+      if (hitPart === 'head') this.headshots++;
+      const killed = hitEnemy.hp <= 0;
+      if (killed) {
+        hitEnemy.alive = false;
+        hitEnemy.hp = 0;
+        hitEnemy.deadAt = this.time;
+        this.kills++;
+      }
+      this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed });
+      if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id });
+    } else if (bestT < FPS_TUNING.MAX_RAY) {
+      this.push(out, { kind: 'wall', point });
+    } else {
+      this.push(out, { kind: 'miss', point });
+    }
+  }
+
+  private damageFor(part: HitPart, dist: number): number {
+    let dmg = this.gun.damage * FPS_TUNING.LETHALITY * FPS_TUNING.PART_MULT[part];
+    // Range falloff: full within `range`, fading to FLOOR by range*FALLOFF_END_MULT.
+    const near = this.gun.range;
+    const far = this.gun.range * FPS_TUNING.FALLOFF_END_MULT;
+    if (dist > near) {
+      const t = clamp01((dist - near) / Math.max(0.001, far - near));
+      dmg *= lerp(1, FPS_TUNING.FALLOFF_FLOOR, t);
+    }
+    return dmg;
+  }
+
+  // ── Enemy AI (slice 3): hide → peek → telegraph → fire → recover, fairly ──
+  private updateEnemies(dt: number, input: FpsInput, out: FpsEvent[]): void {
+    const E = FPS_TUNING.ENEMY;
+    const B = FPS_TUNING.BOSS;
+    const px = input.origin[0], pz = input.origin[2];
+
+    // Bosses fight outside the fairness budget, so only mooks spend tokens.
+    let tokens = 0;
+    for (const e of this.enemies) if (e.alive && e.token && !e.boss) tokens++;
+
+    for (const e of this.enemies) {
+      if (!e.alive) { e.token = false; continue; }
+      if (!e.active) { // dormant until the player breaches this room
+        e.ducking += (1 - e.ducking) * Math.min(1, dt * 6);
+        e.ai = 'hidden';
+        e.token = false;
+        continue;
+      }
+
+      // A boss escalates as it bleeds — announce each new phase once.
+      if (e.boss) {
+        const frac = e.hp / e.maxHp;
+        const want = frac <= B.PHASE_AT[1] ? 3 : frac <= B.PHASE_AT[0] ? 2 : 1;
+        if (want > e.phase) {
+          e.phase = want;
+          this.push(out, { kind: 'bossPhase', enemyId: e.id, phase: want, hpFrac: frac });
+        }
+      }
+      const ph = e.boss ? e.phase - 1 : 0; // phase index into the BOSS tables
+
+      e.facing = Math.atan2(px - e.x, pz - e.z);
+      const dist = Math.hypot(px - e.x, pz - e.z);
+      const los = this.playerAlive && this.hasLOS(e, input.origin);
+
+      // stand to shoot, duck otherwise
+      const duckTarget = e.ai === 'aim' || e.ai === 'fire' ? 0 : 1;
+      e.ducking += (duckTarget - e.ducking) * Math.min(1, dt * 6);
+
+      if (e.token) {
+        if (!los) {
+          e.token = false; if (!e.boss) tokens--; e.ai = 'hidden'; e.aiUntil = this.time + E.HIDE_MS;
+        } else if (e.ai === 'aim' && this.time >= e.aiUntil) {
+          e.ai = 'fire';
+          this.enemyFire(e, input, out, e.boss ? B.SPREAD_MULT[ph] : 1);
+          e.aiUntil = this.time + (e.boss ? B.RECOVER_MS[ph] : E.RECOVER_MS);
+        } else if (e.ai === 'fire') {
+          e.ai = 'recover';
+        } else if (e.ai === 'recover' && this.time >= e.aiUntil) {
+          e.token = false; if (!e.boss) tokens--; e.ai = 'hidden'; e.aiUntil = this.time + E.HIDE_MS;
+        }
+        continue;
+      }
+
+      // No token: MANEUVER. Pick a spot at a preferred combat distance from the
+      // player (with a strafe offset) and walk to it — so enemies close in and
+      // flank instead of standing still and bobbing.
+      if (this.time >= e.nextGoalAt) {
+        // Resample until the goal is somewhere a body can actually stand.
+        const preferred = e.boss ? B.PREFERRED_DIST[ph] : E.PREFERRED_DIST;
+        for (let tries = 0; tries < 6; tries++) {
+          const bearing = Math.atan2(e.x - px, e.z - pz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
+          const d = preferred + (this.rng() - 0.5) * 5;
+          e.goalX = px + Math.sin(bearing) * d;
+          e.goalZ = pz + Math.cos(bearing) * d;
+          if (!this.inCover(e.goalX, e.goalZ)) break;
+        }
+        e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
+      }
+      if (Math.hypot(e.goalX - e.x, e.goalZ - e.z) > 0.6) {
+        this.moveToward(e, e.goalX, e.goalZ, dt, e.boss ? B.MOVE_MULT[ph] : 1);
+        e.ai = 'seek';
+      } else {
+        e.ai = 'hidden';
+      }
+
+      // Earn a token to peek + shoot: mooks share the MAX_ATTACKERS budget, a
+      // boss always may (it fights outside the fairness cap).
+      if (this.playerAlive && (e.boss || tokens < E.MAX_ATTACKERS) && los && dist < E.ENGAGE_RANGE && this.time >= e.aiUntil) {
+        e.token = true; if (!e.boss) tokens++;
+        e.ai = 'aim';
+        const aimMs = e.boss ? B.AIM_MS[ph] : E.AIM_MS;
+        e.aiUntil = this.time + aimMs * (0.85 + this.rng() * 0.4); // stagger the volley
+        this.push(out, { kind: 'enemyAim', enemyId: e.id, from: [e.x, E.EYE_Y, e.z] });
+      }
+    }
+  }
+
+  private enemyFire(e: FpsEnemy, input: FpsInput, out: FpsEvent[], spreadMult = 1): void {
+    const E = FPS_TUNING.ENEMY;
+    const px = input.origin[0], pz = input.origin[2];
+    const eyeY = this.playerEyeY;
+
+    // The muzzle of the rifle in their hands, not a point inside their chest.
+    const fx = Math.sin(e.facing), fz = Math.cos(e.facing);
+    const rx = Math.cos(e.facing), rz = -Math.sin(e.facing);
+    const from: Vec3 = [
+      e.x + fx * E.MUZZLE_FWD + rx * E.MUZZLE_RIGHT,
+      E.MUZZLE_Y,
+      e.z + fz * E.MUZZLE_FWD + rz * E.MUZZLE_RIGHT,
+    ];
+
+    // Aim centre mass, then open a cone that widens with range: no dice roll,
+    // the round either intersects you or it doesn't.
+    const aim: Vec3 = [px, eyeY - 0.28, pz];
+    const dist = Math.hypot(px - from[0], pz - from[2]);
+    const t = clamp01((dist - E.NEAR) / Math.max(1, E.FAR - E.NEAR));
+    const spread = (E.SPREAD_NEAR + (E.SPREAD_FAR - E.SPREAD_NEAR) * t) * spreadMult;
+    const dir = jitter(normalize([aim[0] - from[0], aim[1] - from[1], aim[2] - from[2]]), spread, this.rng);
+
+    // Trace it: cover eats rounds, otherwise find which part of you it strikes.
+    let bestT: number = FPS_TUNING.MAX_RAY;
+    let part: HitPart | null = null;
+    for (const c of this.cover) {
+      const tc = rayAABB(from, dir, aabbOfCover(c));
+      if (tc !== null && tc < bestT) { bestT = tc; part = null; }
+    }
+    for (const z of playerHitZones(px, pz, eyeY)) {
+      const tz = z.sphere
+        ? raySphere(from, dir, z.sphere.c, z.sphere.r)
+        : rayAABB(from, dir, [z.min!, z.max!]);
+      if (tz !== null && tz < bestT) { bestT = tz; part = z.part; }
+    }
+    const impact: Vec3 = [from[0] + dir[0] * bestT, from[1] + dir[1] * bestT, from[2] + dir[2] * bestT];
+
+    this.enemyShots++;
+    this.push(out, { kind: 'enemyFire', enemyId: e.id, from, dir, impact, hit: part !== null, part });
+
+    if (part && this.playerAlive && this.time >= this.mercyUntil) {
+      this.mercyUntil = this.time + E.MERCY_MS;
+      const dmg = Math.round(E.DMG * FPS_TUNING.PLAYER_HIT.PART_MULT[part]);
+      this.lastHitPart = part;
+      this.hitParts[part]++;
+      this.playerHp = Math.max(0, this.playerHp - dmg);
+      const fromDir = normalize([e.x - px, 0, e.z - pz]);
+      this.push(out, { kind: 'playerHit', damage: dmg, part, from, fromDir, hp: this.playerHp });
+      if (this.playerHp <= 0) {
+        this.playerAlive = false;
+        this.push(out, { kind: 'playerDown' });
+      }
+    }
+  }
+
+  /** Is the player visible from this enemy (no cover box in the way)? */
+  private hasLOS(e: FpsEnemy, playerEye: Vec3): boolean {
+    const from: Vec3 = [e.x, FPS_TUNING.ENEMY.EYE_Y, e.z];
+    const d: Vec3 = [playerEye[0] - from[0], playerEye[1] - from[1], playerEye[2] - from[2]];
+    const dist = Math.hypot(d[0], d[1], d[2]) || 1;
+    const nd: Vec3 = [d[0] / dist, d[1] / dist, d[2] / dist];
+    for (const c of this.cover) {
+      const t = rayAABB(from, nd, aabbOfCover(c));
+      if (t !== null && t < dist - 0.4) return false;
+    }
+    return true;
+  }
+
+  /** Push a point out of every wall/crate. Two passes: sliding off one box can
+   *  bury you in the next, and a single pass leaves the body half inside. */
+  private pushOutOfCover(x: number, z: number): [number, number] {
+    const R = FPS_TUNING.ENEMY.BODY_R;
+    let nx = x, nz = z;
+    for (let pass = 0; pass < 2; pass++) {
+      for (const c of this.cover) {
+        const hx = c.w / 2 + R, hz = c.d / 2 + R;
+        const dx = nx - c.x, dz = nz - c.z;
+        if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
+          if (hx - Math.abs(dx) < hz - Math.abs(dz)) nx = c.x + Math.sign(dx || 1) * hx;
+          else nz = c.z + Math.sign(dz || 1) * hz;
+        }
+      }
+    }
+    return [nx, nz];
+  }
+
+  /** True if a body of radius BODY_R at (x,z) would be inside geometry. */
+  private inCover(x: number, z: number): boolean {
+    const R = FPS_TUNING.ENEMY.BODY_R;
+    for (const c of this.cover) {
+      if (Math.abs(x - c.x) < c.w / 2 + R && Math.abs(z - c.z) < c.d / 2 + R) return true;
+    }
+    return false;
+  }
+
+  private moveToward(e: FpsEnemy, px: number, pz: number, dt: number, speedMult = 1): void {
+    const C = FPS_TUNING.ENEMY.WORLD_CLAMP;
+    const dx = px - e.x, dz = pz - e.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const step = FPS_TUNING.ENEMY.MOVE_SPEED * speedMult * dt;
+    const [nx, nz] = this.pushOutOfCover(e.x + (dx / len) * step, e.z + (dz / len) * step);
+    e.x = Math.max(-C, Math.min(C, nx));
+    e.z = Math.max(-C, Math.min(C, nz));
+  }
+
+  /** Reset the encounter (player + enemies) — the scene calls this after a DOWN beat. */
+  resetEncounter(): void {
+    this.playerHp = FPS_TUNING.PLAYER_HP;
+    this.playerAlive = true;
+    this.mercyUntil = 0;
+    // Back to the primary, both weapons topped up.
+    this.activeSlot = 0;
+    this.ammoBySlot = this.loadout.map((id) => getGun(id).magazine);
+    this.gun = getGun(this.loadout[0]);
+    this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
+    this.reloading = false;
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      const [sx, sz] = this.spawns[i];
+      e.x = sx; e.z = sz;
+      e.alive = true; e.hp = e.maxHp;
+      e.token = false; e.ai = 'hidden'; e.ducking = 1;
+      e.phase = e.boss ? 1 : 0;
+      e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
+      e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+    }
+  }
+
+  /** Debug: drop every enemy now (probe hook for headless verification). */
+  debugKillAll(): void {
+    for (const e of this.enemies) {
+      if (e.alive) {
+        e.alive = false;
+        e.hp = 0;
+        e.deadAt = this.time;
+        this.kills++;
+        this.events.push({ kind: 'kill', enemyId: e.id });
+      }
+    }
+  }
+
+  /** Drain accumulated events (the scene calls this once per frame). */
+  drain(): FpsEvent[] {
+    const e = this.events;
+    this.events = [];
+    return e;
+  }
+
+  snapshot() {
+    return {
+      time: this.time,
+      ammo: this.ammo,
+      magazine: this.gun.magazine,
+      reloading: this.reloading,
+      fireMode: this.fireMode,
+      reloadRemaining: this.reloading ? Math.max(0, this.reloadEndsAt - this.time) : 0,
+      gunId: this.gun.id,
+      gunName: this.gun.name,
+      gunTier: this.gun.tier,
+      slot: this.activeSlot,
+      loadout: this.loadout.slice(),
+      playerHp: this.playerHp,
+      maxPlayerHp: FPS_TUNING.PLAYER_HP,
+      playerAlive: this.playerAlive,
+      enemies: this.enemies.map((e) => ({
+        id: e.id, x: e.x, z: e.z, alive: e.alive, hp: e.hp, maxHp: e.maxHp, deadAt: e.deadAt,
+        ai: e.ai, ducking: e.ducking, facing: e.facing, token: e.token, room: e.room, active: e.active, boss: e.boss, phase: e.phase,
+      })),
+      aliveCount: this.aliveCount(),
+      stats: { shotsFired: this.shotsFired, hits: this.hits, headshots: this.headshots, kills: this.kills, enemyShots: this.enemyShots },
+      lastHitPart: this.lastHitPart,
+      hitParts: { ...this.hitParts },
+    };
+  }
+}
+
+// ── Pure geometry (exported for unit tests) ──────────────────────────────────
+
+export function aabbOfCover(c: CoverBox): [Vec3, Vec3] {
+  return [
+    [c.x - c.w / 2, 0, c.z - c.d / 2],
+    [c.x + c.w / 2, c.h, c.z + c.d / 2],
+  ];
+}
+
+export interface HitZone {
+  part: HitPart;
+  min: Vec3;
+  max: Vec3;
+}
+
+/** A zone of the PLAYER's body: either a sphere (head) or a box. */
+export interface PlayerZone {
+  part: HitPart;
+  sphere?: { c: Vec3; r: number };
+  min?: Vec3;
+  max?: Vec3;
+}
+
+/**
+ * Where the player's head, torso and legs are, given their feet at (x,z) and
+ * their eye at `eyeY`. Crouching lowers the whole silhouette, which is why
+ * ducking actually protects your head instead of only looking like it does.
+ */
+export function playerHitZones(x: number, z: number, eyeY: number): PlayerZone[] {
+  const P = FPS_TUNING.PLAYER_HIT;
+  return [
+    { part: 'head', sphere: { c: [x, eyeY, z], r: P.HEAD_R } },
+    { part: 'torso', min: [x - P.TORSO.h, eyeY + P.TORSO.y0, z - P.TORSO.h], max: [x + P.TORSO.h, eyeY + P.TORSO.y1, z + P.TORSO.h] },
+    { part: 'leg', min: [x - P.LEGS.h, 0.02, z - P.LEGS.h], max: [x + P.LEGS.h, eyeY + P.LEGS.yTop, z + P.LEGS.h] },
+  ];
+}
+
+/**
+ * The body AABB zones (everything except the head sphere) for an enemy at (x,z):
+ * torso, both arms, and the legs. Together with the head they cover the whole
+ * standing silhouette, so a shot anywhere on the body registers.
+ */
+export function bodyZones(e: { x: number; z: number }): HitZone[] {
+  const T = FPS_TUNING.TORSO, L = FPS_TUNING.LEGS, A = FPS_TUNING.ARM;
+  return [
+    { part: 'torso', min: [e.x - T.hx, T.y0, e.z - T.hz], max: [e.x + T.hx, T.y1, e.z + T.hz] },
+    { part: 'leg', min: [e.x - L.hx, L.y0, e.z - L.hz], max: [e.x + L.hx, L.y1, e.z + L.hz] },
+    { part: 'arm', min: [e.x - A.dx - A.hx, A.y0, e.z - A.hz], max: [e.x - A.dx + A.hx, A.y1, e.z + A.hz] },
+    { part: 'arm', min: [e.x + A.dx - A.hx, A.y0, e.z - A.hz], max: [e.x + A.dx + A.hx, A.y1, e.z + A.hz] },
+  ];
+}
+
+/** Nearest positive ray-sphere hit distance, or null. */
+export function raySphere(o: Vec3, d: Vec3, center: Vec3, r: number): number | null {
+  const ox = o[0] - center[0], oy = o[1] - center[1], oz = o[2] - center[2];
+  const b = ox * d[0] + oy * d[1] + oz * d[2];
+  const c = ox * ox + oy * oy + oz * oz - r * r;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const sq = Math.sqrt(disc);
+  const t0 = -b - sq;
+  if (t0 >= 0) return t0;
+  const t1 = -b + sq;
+  return t1 >= 0 ? t1 : null;
+}
+
+/** Nearest positive ray-AABB (slab method) hit distance, or null. */
+export function rayAABB(o: Vec3, d: Vec3, box: [Vec3, Vec3]): number | null {
+  const [min, max] = box;
+  let tmin = 0;
+  let tmax: number = FPS_TUNING.MAX_RAY;
+  for (let i = 0; i < 3; i++) {
+    const oi = o[i], di = d[i];
+    if (Math.abs(di) < 1e-8) {
+      if (oi < min[i] || oi > max[i]) return null;
+    } else {
+      const inv = 1 / di;
+      let t1 = (min[i] - oi) * inv;
+      let t2 = (max[i] - oi) * inv;
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+      if (tmin > tmax) return null;
+    }
+  }
+  return tmin > 0 ? tmin : (tmax > 0 ? tmax : null);
+}
+
+/** Perturb a unit direction within a cone of half-angle `spread` (radians). */
+export function jitter(d: Vec3, spread: number, rng: () => number): Vec3 {
+  if (spread <= 1e-6) return d;
+  // Uniform sample inside the cone: sqrt for area weighting.
+  const theta = spread * Math.sqrt(rng());
+  const phi = 2 * Math.PI * rng();
+  // Build a basis perpendicular to d.
+  const helper: Vec3 = Math.abs(d[1]) < 0.99 ? UP : [1, 0, 0];
+  const right = normalize(cross(helper, d));
+  const up = cross(d, right);
+  const st = Math.sin(theta), ct = Math.cos(theta);
+  const cx = Math.cos(phi) * st, cy = Math.sin(phi) * st;
+  return normalize([
+    d[0] * ct + right[0] * cx + up[0] * cy,
+    d[1] * ct + right[1] * cx + up[1] * cy,
+    d[2] * ct + right[2] * cx + up[2] * cy,
+  ]);
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function normalize(v: Vec3): Vec3 {
+  const l = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / l, v[1] / l, v[2] / l];
+}
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
