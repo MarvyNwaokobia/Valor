@@ -42,6 +42,22 @@ CLASS_FILES = {
             'death':  'death.fbx',
         },
     },
+    # Valor doorkicker enemy (the plan slice 7b). Mixamo X Bot + the Slim Shooter
+    # Pack rifle set. Clip names map 1:1 onto FpsSim's enemy AI states.
+    'operator': {
+        'character': 'xbot.fbx',
+        'animations': {
+            'idle':    'aim_idle.fbx',   # rifle shouldered — the 'aim' telegraph
+            'walk':    'walking.fbx',
+            'run':     'rifle_run.fbx',
+            'strafeL': 'strafe_a.fbx',
+            'strafeR': 'strafe_b.fbx',
+            'fire':    'firing.fbx',
+            'reload':  'reloading.fbx',
+            'hit':     'hit.fbx',
+            'death':   'death.fbx',
+        },
+    },
 }
 
 
