@@ -41,7 +41,20 @@ export type PresenceTrigger =
   | 'bossPhase3'
   | 'heroDown'
   | 'zoneClear'     // Cinder dead
-  | 'zoneClearTag'; // the follow-up beat after zoneClear
+  | 'zoneClearTag'  // the follow-up beat after zoneClear
+  // ── Valor doorkicker beats (the plan slice 6). The melee triggers above name a
+  // blade the hero no longer carries, so the rifle operation gets its own lines.
+  // These have no recorded mp3 yet: they land as subtitle + radio static until
+  // scripts/generate-vo.mjs is run with an ElevenLabs key (it reads this file).
+  | 'opStart'        // briefing: who you are, who Ember is, whose compound this is
+  | 'opBreach'       // the doorway
+  | 'valorFirstWord' // he answers the channel Ember just noticed
+  | 'opPushIn'       // entering the objective room
+  | 'opHeroDown'     // Valor over your body (rifle-appropriate)
+  | 'missionCleared' // a non-finale op is done (Ember)
+  | 'valorReveal'    // the finale: Valor, finally in the room with you
+  | 'bossEscalate'   // a boss dropped past half — it stops holding back (phase 2)
+  | 'bossEnrage';    // a boss is nearly down and turns feral (phase 3)
 
 export const SPEAKER_META: Record<Speaker, { name: string; color: string }> = {
   ember: { name: 'EMBER', color: '#ffb38a' },
@@ -109,6 +122,62 @@ export const PRESENCE_LINES: PresenceLine[] = [
     speaker: 'ember',
     trigger: 'zoneClearTag',
     text: 'That voice. Ash... that was him. That was Valor.',
+  },
+
+  // ── Valor doorkicker lines (slice 6). No mp3 yet → subtitle + radio static. ──
+  {
+    id: 'ember-op-start',
+    speaker: 'ember',
+    trigger: 'opStart',
+    text: "Radio check, Ash. It's Ember. Two of us walked out of that fire, and one of us is standing outside a compound that belongs to him. Go.",
+  },
+  {
+    id: 'ember-op-breach',
+    speaker: 'ember',
+    trigger: 'opBreach',
+    text: "Door's yours. Whatever they're holding in there, they're holding it for him.",
+  },
+  {
+    id: 'valor-first-word',
+    speaker: 'valor',
+    trigger: 'valorFirstWord',
+    text: "You hear me. Good. I wanted you to know I have been on this channel the whole time.",
+  },
+  {
+    id: 'valor-push-in',
+    speaker: 'valor',
+    trigger: 'opPushIn',
+    text: 'Deeper, then. Everything you came for is in that room. So is everything I left there for you.',
+  },
+  {
+    id: 'valor-op-down',
+    speaker: 'valor',
+    trigger: 'opHeroDown',
+    text: 'Leave the body where it fell. Ember, you can stay on the line for this part.',
+  },
+  {
+    id: 'ember-mission-cleared',
+    speaker: 'ember',
+    trigger: 'missionCleared',
+    text: "Compound's clear, Ash. Extract, and we push to the next one. He's still out there.",
+  },
+  {
+    id: 'valor-reveal',
+    speaker: 'valor',
+    trigger: 'valorReveal',
+    text: 'So. You walked all the way into the dark to find me. Good. I was getting tired of the radio.',
+  },
+  {
+    id: 'valor-boss-escalate',
+    speaker: 'valor',
+    trigger: 'bossEscalate',
+    text: "You cut him. He felt that. Now watch what he does when he stops being careful.",
+  },
+  {
+    id: 'valor-boss-enrage',
+    speaker: 'valor',
+    trigger: 'bossEnrage',
+    text: "He's almost gone, and he knows it. That's when they're worst. Finish it.",
   },
 ];
 
