@@ -1553,7 +1553,12 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
   );
 }
 
-export function ValorScene() {
+export function ValorScene({ onOpCleared }: {
+  /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
+   *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
+   *  stays a self-contained sandbox. */
+  onOpCleared?: (level: number, durationSecs: number) => void;
+} = {}) {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
@@ -1594,6 +1599,8 @@ export function ValorScene() {
   };
   const [mode, setMode] = useState<'campaign' | 'survival'>('campaign');
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
+  const missionStartWall = useRef(performance.now()); // for the op's clear time
+  useEffect(() => { missionStartWall.current = performance.now(); }, [missionIndex, runNonce, mode]);
   const mission = mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
 
   const unlock = (upto: number) => setProgress((pr) => {
@@ -1629,6 +1636,8 @@ export function ValorScene() {
   const clearComplete = () => { if (hud.current.complete) hud.current.complete.style.opacity = '0'; };
   const handleComplete = () => {
     unlock(missionIndex + 1); // the next op is unlocked the moment this one is cleared
+    // Record the real reward (server-authoritative) for this op, by 1-based level.
+    onOpCleared?.(missionIndex + 1, Math.max(1, Math.round((performance.now() - missionStartWall.current) / 1000)));
     const last = missionIndex >= CAMPAIGN.length - 1;
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');
