@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CAMPAIGN, ZONE_THEMES } from './campaign';
+import { CAMPAIGN, ZONE_THEMES, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp } from './campaign';
 import type { CoverBox } from './index';
 
 // A spawned enemy / a standing objective marker must not overlap a wall or a
@@ -54,4 +54,29 @@ describe('campaign geometry', () => {
       });
     });
   }
+});
+
+describe('survival mode', () => {
+  it('escalates in size and toughness, capped at the pool', () => {
+    expect(survivalWaveCount(1)).toBeLessThan(survivalWaveCount(5));
+    expect(survivalWaveCount(100)).toBeLessThanOrEqual(10);
+    expect(survivalWaveHp(1)).toBe(1);
+    expect(survivalWaveHp(6)).toBeGreaterThan(survivalWaveHp(1));
+  });
+
+  it('is a themed arena with a full pool and no objectives', () => {
+    expect(SURVIVAL_MISSION.survival).toBe(true);
+    expect(ZONE_THEMES[SURVIVAL_MISSION.zone]).toBeDefined();
+    expect(SURVIVAL_MISSION.enemies.length).toBe(10);
+    expect(SURVIVAL_MISSION.objectives).toEqual([]);
+  });
+
+  it('places no spawn or the player start inside a wall or cover', () => {
+    const solids = [...SURVIVAL_MISSION.walls, ...SURVIVAL_MISSION.cover];
+    expect(solids.find((b) => inside(SURVIVAL_MISSION.start[0], SURVIVAL_MISSION.start[1], b, CLEAR))).toBeUndefined();
+    for (const e of SURVIVAL_MISSION.enemies) {
+      const hit = solids.find((b) => inside(e.pos[0], e.pos[1], b, CLEAR));
+      expect(hit, `survival spawn [${e.pos}] overlaps a box`).toBeUndefined();
+    }
+  });
 });
