@@ -10,7 +10,7 @@
  * as different places.
  */
 
-import type { CoverBox, EnemySpec } from './index';
+import type { CoverBox, EnemySpec, Attachment } from './index';
 import type { GunId } from '../combat/GunStats';
 
 export interface Objective {
@@ -29,6 +29,7 @@ export interface Mission {
   brief: string;  // one-line briefing subtitle
   gun: GunId;         // primary weapon for the op
   secondary?: GunId;  // sidearm slot (defaults to the pistol) — swap with the swap key
+  attachments?: Attachment[]; // fitted at op start (e.g. NVG in the Rift)
   start: [number, number];
   walls: CoverBox[];
   cover: CoverBox[];
@@ -229,7 +230,7 @@ export const CAMPAIGN: Mission[] = [
 
   // ── Zone 3 · THE RIFT (layout C) — the dark place, and where Valor waits ──
   {
-    id: 'rift-1', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'INTO THE DARK', gun: SMG,
+    id: 'rift-1', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'INTO THE DARK', gun: SMG, attachments: ['nvg'],
     brief: 'his channel goes quiet here · push through and find him',
     start: C_START, walls: C_WALLS, cover: C_COVER,
     enemies: [
@@ -239,7 +240,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(C_OBJ),
   },
   {
-    id: 'rift-valor', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'VALOR', gun: PROTO, secondary: AR, boss: true,
+    id: 'rift-valor', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'VALOR', gun: PROTO, secondary: AR, attachments: ['nvg'], boss: true,
     brief: 'the voice on your radio has a face · end it',
     start: C_START, walls: C_WALLS, cover: C_COVER,
     enemies: [

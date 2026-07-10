@@ -29,4 +29,5 @@ export type {
   HitZone,
   EnemySpec,
   FpsSimOptions,
+  Attachment,
 } from './FpsSim';

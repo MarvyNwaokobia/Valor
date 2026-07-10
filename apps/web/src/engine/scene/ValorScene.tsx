@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import {
   FpsSim,
-  xpForKill, rankForXp, xpIntoRank, rankUpsBetween, gReward, XP_REWARD, XP_PER_RANK, type FpsInput, type Vec3, type Rank,
+  xpForKill, rankForXp, xpIntoRank, rankUpsBetween, gReward, XP_REWARD, XP_PER_RANK, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
 } from '../fps';
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
@@ -61,6 +61,14 @@ const ADS_POS = new THREE.Vector3(0, -0.088, -0.32);
 
 // Per-weapon viewmodel framing so each gun reads as a different silhouette off
 // the one shared rifle model: scale = length, z/y = how it sits in the hands.
+// The attachment HUD strip + which key toggles each.
+const ATTACH_CHIPS: { id: Attachment; label: string; key: string; color: string }[] = [
+  { id: 'nvg', label: 'NVG', key: 'N', color: '#5fe0a8' },
+  { id: 'light', label: 'LIGHT', key: 'F', color: '#ffe08a' },
+  { id: 'laser', label: 'LASER', key: 'L', color: '#ff6a6a' },
+  { id: 'optic', label: 'OPTIC', key: 'O', color: '#8fb8d0' },
+];
+
 const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
   sidearm: { scale: 0.52, z: 0.14, y: -0.03 }, // a compact pistol, held in close
   smg: { scale: 0.8, z: 0.06, y: -0.01 },      // stubby, snappy
@@ -88,6 +96,9 @@ interface Hud {
   fireMode: HTMLDivElement | null;
   weapon: HTMLDivElement | null;
   loadout: HTMLDivElement | null;
+  attachments: HTMLDivElement | null;
+  nvgTint: HTMLDivElement | null;
+  scope: HTMLDivElement | null;
   reload: HTMLDivElement | null;
   reloadBar: HTMLDivElement | null;
   reloadHint: HTMLDivElement | null;
@@ -129,6 +140,7 @@ interface Controls {
   reload: boolean;
   fireMode: boolean;
   swap: boolean;
+  toggle: Attachment | null; // mobile attachment chip → toggle this
 }
 
 function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef }: {
@@ -153,7 +165,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
   const isFinale = mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
 
   const sim = useMemo(() => {
-    const s = new FpsSim({ loadout: LOADOUT, enemies: ENEMIES, cover: COLLIDERS, respawnEnabled: false });
+    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, enemies: ENEMIES, cover: COLLIDERS, respawnEnabled: false });
     s.setAllActive(false); // rooms start dormant; breaching each one wakes it
     return s;
   }, []);
@@ -219,6 +231,22 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
   const swapRaise = useRef(0);          // 1 → 0 dip when a weapon is raised
   const wantSlot = useRef<number | null>(null); // 1/2 keys pick a slot
   const wantSwap = useRef(false);       // the swap key cycles
+  // ── Attachments (toggleable kit) ──
+  const wantToggle = useRef<Attachment | null>(null);
+  const nvgAmt = useRef(0);             // 0..1 night-vision blend (exposure + green)
+  const flashLight = useMemo(() => new THREE.SpotLight(0xeaf2ff, 0, 34, 0.5, 0.5, 1.1), []);
+  const laserLine = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xd83228, transparent: true, opacity: 0.5, depthTest: false }));
+    l.frustumCulled = false; l.visible = false; l.renderOrder = 998;
+    return l;
+  }, []);
+  const laserDot = useMemo(() => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff4030, depthTest: false }));
+    m.frustumCulled = false; m.visible = false; m.renderOrder = 999;
+    return m;
+  }, []);
   const muzzleLight = useRef<THREE.PointLight>(null);
   const flashRef = useRef<THREE.Mesh>(null);
   const flashUntil = useRef(0);
@@ -302,6 +330,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       if (e.code === 'Digit1') wantSlot.current = 0;       // primary
       if (e.code === 'Digit2') wantSlot.current = 1;       // sidearm slot
       if (e.code === 'KeyX') wantSwap.current = true;      // swap to the other weapon
+      if (e.code === 'KeyN') wantToggle.current = 'nvg';   // night vision
+      if (e.code === 'KeyF') wantToggle.current = 'light'; // flashlight
+      if (e.code === 'KeyL') wantToggle.current = 'laser'; // laser sight
+      if (e.code === 'KeyO') wantToggle.current = 'optic'; // optic / scope
       audio.unlock();
       // Capture the mouse on the first keypress so MOVING the mouse aims (up/down
       // included) without needing a click. Guarded, so headless never throws.
@@ -369,10 +401,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     };
     w.__valorWakeRoom = (room: number) => sim.setRoomActive(room, true); // headless room activation
     w.__valorSwitch = (n?: number) => (typeof n === 'number' ? sim.switchGun(n) : sim.nextWeapon());
+    w.__valorToggle = (a: Attachment) => sim.toggleAttachment(a);
     return () => {
       delete w.__valorState; delete w.__valorKillAll; delete w.__valorAim; delete w.__valorAudio;
       delete w.__valorMission; delete w.__valorWarp; delete w.__valorSkipBriefing;
-      delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch;
+      delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorToggle;
     };
   }, [sim, audio]);
 
@@ -516,6 +549,33 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       vm.updateMatrixWorld();
     }
 
+    // ── Attachments: night vision, optic zoom, flashlight, laser ──
+    cam.getWorldDirection(fwd);
+    // NVG lifts the exposure (and the HUD tints green) so the dark reads.
+    nvgAmt.current += ((sim.hasAttachment('nvg') ? 1 : 0) - nvgAmt.current) * Math.min(1, dt * 8);
+    gl.toneMappingExposure = 1 + nvgAmt.current * 1.7;
+    // Optic deepens the ADS zoom (narrower FOV); no optic = a gentler aim zoom.
+    const fovTarget = THREE.MathUtils.lerp(55, sim.hasAttachment('optic') ? 30 : 45, adsCur.current);
+    if (Math.abs(cam.fov - fovTarget) > 0.02) { cam.fov = fovTarget; cam.updateProjectionMatrix(); }
+    // Flashlight: a forward cone from the muzzle line.
+    flashLight.intensity += ((sim.hasAttachment('light') ? 7 : 0) - flashLight.intensity) * Math.min(1, dt * 10);
+    flashLight.position.copy(cam.position);
+    flashLight.target.position.copy(tmp.copy(cam.position).addScaledVector(fwd, 10));
+    flashLight.target.updateMatrixWorld();
+    // Laser: a red line from the barrel to the first thing the aim ray meets.
+    if (sim.hasAttachment('laser')) {
+      const mp = muzzleLocal.getWorldPosition(tmp);
+      const o: Vec3 = [mp.x, mp.y, mp.z], d: Vec3 = [fwd.x, fwd.y, fwd.z];
+      let t = 50;
+      for (const c of COLLIDERS) { const tc = rayAABB(o, d, aabbOfCover(c)); if (tc !== null && tc < t) t = tc; }
+      if (fwd.y < -1e-3) { const tf = -mp.y / fwd.y; if (tf > 0 && tf < t) t = tf; } // floor
+      tmp2.copy(mp).addScaledVector(fwd, t);
+      const pa = laserLine.geometry.attributes.position as THREE.BufferAttribute;
+      pa.setXYZ(0, mp.x, mp.y, mp.z); pa.setXYZ(1, tmp2.x, tmp2.y, tmp2.z); pa.needsUpdate = true;
+      laserDot.position.copy(tmp2);
+      laserLine.visible = true; laserDot.visible = true;
+    } else { laserLine.visible = false; laserDot.visible = false; }
+
     // ── Fire input → sim ──
     if (ct.reload) { wantReload.current = true; ct.reload = false; }
     if (cycleFireMode.current || ct.fireMode) {
@@ -525,6 +585,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     }
     if (wantSlot.current !== null) { sim.switchGun(wantSlot.current); wantSlot.current = null; }
     if (wantSwap.current || ct.swap) { wantSwap.current = false; ct.swap = false; sim.nextWeapon(); }
+    if (wantToggle.current || ct.toggle) { sim.toggleAttachment(wantToggle.current ?? ct.toggle!); wantToggle.current = null; ct.toggle = null; }
     cam.getWorldDirection(fwd);
     const input: FpsInput = {
       firing: held('Space') || mouseBtn.current.has(0) || ct.fire,
@@ -564,6 +625,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
         } else if (ev.kind === 'wall') {
           audio.impact('wall', ev.point);
         }
+      } else if (ev.kind === 'attachment') {
+        audio.reloadEnd();          // a soft toggle click
       } else if (ev.kind === 'weaponSwitch') {
         swapRaise.current = 1;      // the new weapon dips in from below
         audio.reloadEnd();          // a mechanical rack/click
@@ -915,6 +978,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       h.loadout.innerHTML = snap.loadout.length < 2 ? '' :
         snap.loadout.map((_, i) => `<span style="color:${i === snap.slot ? '#37d0e0' : '#4a5763'}">${i + 1}</span>`).join('<span style="color:#39434d"> · </span>');
     }
+    if (h.nvgTint) h.nvgTint.style.opacity = String(nvgAmt.current);
+    if (h.scope) h.scope.style.opacity = String(snap.attachments.includes('optic') ? adsCur.current : 0);
+    if (h.attachments) {
+      // one chip per attachment; lit when active, dim + its key when not
+      const on = new Set(snap.attachments);
+      h.attachments.innerHTML = ATTACH_CHIPS.map((c) => {
+        const active = on.has(c.id);
+        return `<span style="font-size:10px;letter-spacing:1px;padding:3px 7px;border-radius:4px;border:1px solid ${active ? c.color : '#2a3440'};background:${active ? c.color + '22' : 'transparent'};color:${active ? c.color : '#4a5763'}">${c.label}<span style="opacity:.55"> ${c.key}</span></span>`;
+      }).join('');
+    }
     if (h.lock) h.lock.style.opacity = locked.current ? '0' : '1';
     // crosshair gap grows with spread + recoil
     const spread = sim.spreadFor(adsCur.current, false, crouchCur.current > 0.5);
@@ -1167,6 +1240,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
         </mesh>
       </group>
 
+      {/* attachments: flashlight cone + laser line/dot (positioned each frame) */}
+      <primitive object={flashLight} />
+      <primitive object={flashLight.target} />
+      <primitive object={laserLine} />
+      <primitive object={laserDot} />
+
       {/* muzzle flash + light */}
       <pointLight ref={muzzleLight} distance={9} decay={2} intensity={0} color="#ffd39a" />
       <mesh ref={flashRef} visible={false}>
@@ -1310,7 +1389,7 @@ function MissionSelect({ current, progress, onPick, onClose }: {
 
 export function ValorScene() {
   const hud = useRef<Hud>({
-    root: null, ammo: null, fireMode: null, weapon: null, loadout: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
+    root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
     objText: null, objArrow: null, briefing: null, complete: null,
@@ -1321,7 +1400,7 @@ export function ValorScene() {
 
   // Mobile is a first-class target (Marvy's note): a left move-stick, a right
   // look-pad, and fire/ADS/reload buttons write into this, read by FpsWorld.
-  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, fire: false, ads: false, reload: false, fireMode: false, swap: false });
+  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null });
   const audio = useMemo(() => new FpsAudio(), []);
   useEffect(() => () => audio.dispose(), [audio]);
 
@@ -1495,6 +1574,9 @@ export function ValorScene() {
           <div ref={(r) => { hud.current.reloadHint = r; }} style={{ marginTop: 4, fontSize: 11, letterSpacing: 1, color: '#6f7d8c' }}>{isTouch ? 'TAP ⟳ TO RELOAD' : 'PRESS [R] TO RELOAD'}</div>
         </div>
 
+        {/* attachment strip (toggleable kit) */}
+        <div ref={(r) => { hud.current.attachments = r; }} style={{ position: 'absolute', right: 26, bottom: 150, display: 'flex', gap: 6, justifyContent: 'flex-end' }} />
+
         {/* kills */}
         <div ref={(r) => { hud.current.kills = r; }} style={{ position: 'absolute', left: 26, bottom: 22, fontSize: 13, color: '#9fb4c8' }}>KILLS 0   ·   HS 0</div>
 
@@ -1532,6 +1614,12 @@ export function ValorScene() {
 
         {/* damage vignette (red edges on hit / when low) */}
         <div ref={(r) => { hud.current.vignette = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', boxShadow: 'inset 0 0 150px 44px rgba(200,20,10,.85)', transition: 'opacity .09s' }} />
+
+        {/* NVG green wash (opacity tracks the night-vision blend) */}
+        <div ref={(r) => { hud.current.nvgTint = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse at center, rgba(70,255,150,.16) 0%, rgba(10,40,20,.34) 78%, rgba(2,12,6,.62) 100%)', mixBlendMode: 'screen' }} />
+
+        {/* optic scope mask (only while aiming with an optic fitted) */}
+        <div ref={(r) => { hud.current.scope = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', boxShadow: 'inset 0 0 0 2000px rgba(0,0,0,0)', background: 'radial-gradient(circle at center, transparent 30%, rgba(0,0,0,.55) 33%, #000 40%)' }} />
 
         {/* directional damage indicator */}
         <div ref={(r) => { hud.current.hitDir = r; }} style={{ position: 'absolute', left: '50%', top: '50%', width: 64, height: 300, marginLeft: -32, marginTop: -150, opacity: 0, pointerEvents: 'none', transformOrigin: '50% 50%', background: 'linear-gradient(to top, transparent 62%, rgba(255,64,44,.9) 100%)', transition: 'opacity .1s' }} />
@@ -1597,7 +1685,7 @@ export function ValorScene() {
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
-            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · M operations
+            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops
           </div>
         )}
 
@@ -1635,6 +1723,13 @@ export function ValorScene() {
           {/* swap weapon */}
           <div onTouchStart={() => { controls.current.swap = true; }}
             style={{ position: 'absolute', right: 190, bottom: 150, width: 56, height: 56, borderRadius: '50%', border: '2px solid rgba(95,224,168,.5)', background: 'rgba(95,224,168,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#5fe0a8', touchAction: 'none' }}>⇆</div>
+          {/* attachment toggles (compact column, left of the look-pad) */}
+          <div style={{ position: 'absolute', left: 14, top: 96, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {ATTACH_CHIPS.map((c) => (
+              <div key={c.id} onTouchStart={() => { controls.current.toggle = c.id; }}
+                style={{ width: 52, height: 34, borderRadius: 6, border: `1px solid ${c.color}88`, background: `${c.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none' }}>{c.label}</div>
+            ))}
+          </div>
         </>
       )}
     </div>
