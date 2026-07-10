@@ -28,6 +28,7 @@ export interface Mission {
   name: string;   // mission title, e.g. "BREACH & CLEAR"
   brief: string;  // one-line briefing subtitle
   gun: GunId;         // primary weapon for the op
+  story?: string;     // a narrative lead-in shown on the pre-mission debrief screen
   secondary?: GunId;  // sidearm slot (defaults to the pistol) — swap with the swap key
   attachments?: Attachment[]; // fitted at op start (e.g. NVG in the Rift)
   start: [number, number];
@@ -187,7 +188,7 @@ const PROTO = 'legendary' as GunId; // the "Valor Prototype" — the finale weap
 export const CAMPAIGN: Mission[] = [
   // ── Zone 1 · ASHFALL (layout A) ──
   {
-    id: 'ash-1', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'BREACH & CLEAR', gun: AR,
+    id: 'ash-1', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'BREACH & CLEAR', gun: AR, story: 'You walked out of the fire alive. Ember found your channel. The crew that lit Ashfall is dug into the first compound — go take it back.',
     brief: 'push the compound · clear both rooms · reach extract',
     start: A_START, walls: A_WALLS, cover: A_COVER,
     enemies: [
@@ -197,7 +198,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(A_OBJ),
   },
   {
-    id: 'ash-2', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'HOLD THE LINE', gun: SMG,
+    id: 'ash-2', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'HOLD THE LINE', gun: SMG, story: "They know you lived now, and they know you're coming. This block is dug in deeper. Hold the line and push through.",
     brief: 'more of them, dug in · clear the compound',
     start: A2_START, walls: A2_WALLS, cover: A2_COVER,
     enemies: [
@@ -207,7 +208,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(A2_OBJ),
   },
   {
-    id: 'ash-3', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'CINDER', gun: AR, boss: true,
+    id: 'ash-3', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'CINDER', gun: AR, story: "Cinder is the one who lit the match. He's holed up in the last house on the row. Put him down and Ashfall is yours.", boss: true,
     brief: 'the man who lit the fire is in that room · put him down',
     start: A3_START, walls: A3_WALLS, cover: A3_COVER,
     enemies: [
@@ -219,7 +220,7 @@ export const CAMPAIGN: Mission[] = [
 
   // ── Zone 2 · PROVING GROUND (layout B) ──
   {
-    id: 'pg-1', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE HALL', gun: DMR, secondary: SMG,
+    id: 'pg-1', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE HALL', gun: DMR, story: 'Past the ashes lies the Proving Ground — the compound where Valor trained the crew that burned your home. Take the hall, then the vault.', secondary: SMG,
     brief: 'his crew trained here · take the hall, then the vault',
     start: B_START, walls: B_WALLS, cover: B_COVER,
     enemies: [
@@ -229,7 +230,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(B_OBJ),
   },
   {
-    id: 'pg-2', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE WARDEN', gun: AR, boss: true,
+    id: 'pg-2', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE WARDEN', gun: AR, story: 'The Warden runs the Proving Ground and he will not step aside. Break him and the road to the Rift opens.', boss: true,
     brief: 'the Warden runs this place · he will not step aside',
     start: B_START, walls: B_WALLS, cover: B_COVER,
     enemies: [
@@ -241,7 +242,7 @@ export const CAMPAIGN: Mission[] = [
 
   // ── Zone 3 · THE RIFT (layout C) — the dark place, and where Valor waits ──
   {
-    id: 'rift-1', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'INTO THE DARK', gun: SMG, attachments: ['nvg'],
+    id: 'rift-1', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'INTO THE DARK', gun: SMG, story: "Valor's channel goes quiet past here. This is the Rift — the dark place he disappears into. Push in and find him.", attachments: ['nvg'],
     brief: 'his channel goes quiet here · push through and find him',
     start: C_START, walls: C_WALLS, cover: C_COVER,
     enemies: [
@@ -251,7 +252,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(C_OBJ),
   },
   {
-    id: 'rift-valor', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'VALOR', gun: PROTO, secondary: AR, attachments: ['nvg'], boss: true,
+    id: 'rift-valor', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'VALOR', gun: PROTO, story: 'The voice that has been on your radio the whole way finally has a face and a body. This is the last room. End it.', secondary: AR, attachments: ['nvg'], boss: true,
     brief: 'the voice on your radio has a face · end it',
     start: C_START, walls: C_WALLS, cover: C_COVER,
     enemies: [

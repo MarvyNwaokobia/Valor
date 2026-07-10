@@ -56,6 +56,12 @@ describe('campaign geometry', () => {
   }
 });
 
+describe('debrief', () => {
+  it('every campaign op carries a story lead-in for the between-mission screen', () => {
+    for (const m of CAMPAIGN) expect(m.story, `${m.id} has no story`).toBeTruthy();
+  });
+});
+
 describe('survival mode', () => {
   it('escalates in size and toughness, capped at the pool', () => {
     expect(survivalWaveCount(1)).toBeLessThan(survivalWaveCount(5));

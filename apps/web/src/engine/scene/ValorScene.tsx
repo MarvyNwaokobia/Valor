@@ -145,9 +145,9 @@ interface Controls {
   toggle: Attachment | null; // mobile attachment chip → toggle this
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef }: {
+function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
-  audio: FpsAudio; lowSpec: boolean; mission: Mission; onAdvance: () => void;
+  audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
 }) {
   const { camera, gl } = useThree();
@@ -378,6 +378,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       canvas.removeEventListener('contextmenu', noMenu);
     };
   }, [gl]);
+
+  // A fresh mount (new mission / retry) must start with no stale overlays from
+  // the previous run showing through (the "MISSION COMPLETE stuck on" bug).
+  useEffect(() => {
+    for (const el of [hud.current.complete, hud.current.survEnd, hud.current.down]) {
+      if (el) el.style.opacity = '0';
+    }
+    if (hud.current.survEnd) hud.current.survEnd.style.pointerEvents = 'none';
+  }, [hud]);
 
   // ── Probe hooks (headless verification) ──
   useEffect(() => {
@@ -820,6 +829,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
         survOver.current = true;
         if (hud.current.survEnd) {
           hud.current.survEnd.style.opacity = '1';
+          hud.current.survEnd.style.pointerEvents = 'auto';
           if (hud.current.survEndText) hud.current.survEndText.textContent =
             `you held ${Math.max(0, survWave.current - 1)} wave${survWave.current === 2 ? '' : 's'} · ${snap.stats.kills} down`;
         }
@@ -881,7 +891,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     }
     // DOWN or COMPLETE → restart the operation after a beat
     if (!snap.playerAlive && now - downAt.current > 2.2) restartMission();
-    if (completeAt.current > 0 && performance.now() - completeWallAt.current > 4500 && !advanced.current) { advanced.current = true; onAdvance(); }
+    // MISSION COMPLETE holds for a beat, then hands off to the debrief interstitial.
+    if (completeAt.current > 0 && performance.now() - completeWallAt.current > 2200 && !advanced.current) { advanced.current = true; onComplete(); }
 
     updateHud(snap);
   });
@@ -1201,7 +1212,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       sim.despawnAll();
       survWave.current = 0; survState.current = 'intermission'; survNextAt.current = performance.now() + 3000;
       survOver.current = false; survInit.current = true;
-      if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0';
+      if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; }
     }
   }
 
@@ -1370,7 +1381,7 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
 
   return (
     <div
-      style={{ position: 'absolute', inset: 0, background: 'rgba(3,6,10,.985)', color: '#e9edf2', fontFamily: 'ui-monospace, monospace', cursor: 'auto', pointerEvents: 'auto', overflowY: 'auto', padding: '30px 24px 40px' }}
+      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.985)', color: '#e9edf2', fontFamily: 'ui-monospace, monospace', cursor: 'auto', pointerEvents: 'auto', overflowY: 'auto', padding: '30px 24px 40px' }}
       onClick={onClose}
     >
       <div style={{ maxWidth: 760, margin: '0 auto' }} onClick={(e) => e.stopPropagation()}>
@@ -1464,6 +1475,54 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
   );
 }
 
+/**
+ * The between-mission debrief. After an op is cleared this takes over: it shows
+ * the story lead-in for what's next and lets the player DEPLOY into it, RETRY the
+ * op they just finished, or EXIT to the Operations board. On the last op it
+ * becomes the campaign's ending instead.
+ */
+function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
+  mode: 'next' | 'finale'; cleared: Mission; next: Mission | null;
+  onDeploy: () => void; onRetry: () => void; onExit: () => void;
+}) {
+  const btn = (color: string): React.CSSProperties => ({
+    pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: `1px solid ${color}`,
+    color, fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '11px 22px', borderRadius: 5,
+  });
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.97)', color: '#e9edf2', fontFamily: 'ui-monospace, monospace', cursor: 'auto', pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '30px 24px' }}>
+      <div style={{ maxWidth: 620, textAlign: 'center' }}>
+        {mode === 'finale' ? (
+          <>
+            <div style={{ fontSize: 13, letterSpacing: 8, color: '#9fb4c8' }}>THE FIRE IS OUT</div>
+            <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: 5, margin: '10px 0', color: '#ff5a47' }}>VALOR IS DEAD</div>
+            <div style={{ fontSize: 14, color: '#c6b4ae', letterSpacing: 1, lineHeight: 1.6 }}>You walked all the way into the dark and out the other side. The radio is quiet now. Ashfall can begin again.</div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 30 }}>
+              <button onClick={onRetry} style={btn('#ff8a7a')}>↺ REPLAY FINALE</button>
+              <button onClick={onExit} style={btn('#9fb4c8')}>☰ OPERATIONS</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, letterSpacing: 6, color: '#5fe0a8' }}>{cleared.name} · CLEARED</div>
+            <div style={{ width: 60, height: 1, background: '#2a3440', margin: '18px auto' }} />
+            <div style={{ fontSize: 12, letterSpacing: 6, color: '#37d0e0' }}>{next?.op}</div>
+            <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: 3, margin: '8px 0 14px' }}>{next?.name}</div>
+            <div style={{ fontSize: 15, color: '#c7d2dc', letterSpacing: 0.3, lineHeight: 1.7 }}>{next?.story ?? next?.brief}</div>
+            <div style={{ fontSize: 12, color: '#7f8c99', letterSpacing: 1, marginTop: 12 }}>{next?.brief}</div>
+            <div style={{ fontSize: 13, letterSpacing: 3, color: '#9fb4c8', marginTop: 26 }}>ready?</div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 12 }}>
+              <button onClick={onDeploy} style={{ ...btn('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>▸ DEPLOY</button>
+              <button onClick={onRetry} style={btn('#9fb4c8')}>↺ RETRY</button>
+              <button onClick={onExit} style={btn('#6f7d8c')}>☰ EXIT</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ValorScene() {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
@@ -1504,6 +1563,7 @@ export function ValorScene() {
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }
   };
   const [mode, setMode] = useState<'campaign' | 'survival'>('campaign');
+  const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
   const mission = mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
 
   const unlock = (upto: number) => setProgress((pr) => {
@@ -1530,8 +1590,34 @@ export function ValorScene() {
   const pickSurvival = () => {
     setMode('survival');
     setCampaignDone(false);
+    setDebrief(null);
     setSelect(false);
     setRunNonce((n) => n + 1);
+  };
+
+  // ── Between-mission debrief: clear an op → story of the next → deploy/retry/exit ──
+  const clearComplete = () => { if (hud.current.complete) hud.current.complete.style.opacity = '0'; };
+  const handleComplete = () => {
+    unlock(missionIndex + 1); // the next op is unlocked the moment this one is cleared
+    const last = missionIndex >= CAMPAIGN.length - 1;
+    if (last) setCampaignDone(true);
+    setDebrief(last ? 'finale' : 'next');
+    menuOpenRef.current = true;                 // freeze the scene behind the debrief
+    try { document.exitPointerLock?.(); } catch { /* ignore */ }
+  };
+  const deployNext = () => {
+    const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);
+    try { window.localStorage.setItem(CAMPAIGN_KEY, String(next)); } catch { /* ignore */ }
+    clearComplete(); setDebrief(null); menuOpenRef.current = false;
+    setMissionIndex(next); setRunNonce((n) => n + 1);
+  };
+  const retryMission = () => {
+    clearComplete(); setDebrief(null); menuOpenRef.current = false;
+    setRunNonce((n) => n + 1); // remount the same op fresh
+  };
+  const exitHome = () => {
+    clearComplete(); setCampaignDone(false); setDebrief(null);
+    setSelect(true); // straight to the Operations board (stays paused)
   };
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -1629,7 +1715,7 @@ export function ValorScene() {
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onAdvance={advance} pausedRef={menuOpenRef} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} />
         </Suspense>
       </Canvas>
 
@@ -1743,27 +1829,24 @@ export function ValorScene() {
         <div ref={(r) => { hud.current.complete = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,12,10,.6)', color: '#5fe0a8', fontSize: 40, fontWeight: 800, letterSpacing: 6 }}>MISSION COMPLETE</div>
 
         {/* survival: run-over summary */}
-        <div ref={(r) => { hud.current.survEnd = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, transition: 'opacity .4s', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(16,2,2,.82)', color: '#ff8a7a', textAlign: 'center' }}>
+        <div ref={(r) => { hud.current.survEnd = r; }} style={{ position: 'absolute', inset: 0, zIndex: 40, opacity: 0, pointerEvents: 'none', transition: 'opacity .4s', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(16,2,2,.92)', color: '#ff8a7a', textAlign: 'center' }}>
           <div style={{ fontSize: 13, letterSpacing: 8, color: '#c98' }}>THE KILL-HOUSE</div>
           <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 4, margin: '8px 0', color: '#ff5a47' }}>OVERRUN</div>
           <div ref={(r) => { hud.current.survEndText = r; }} style={{ fontSize: 14, color: '#e6c2bc', letterSpacing: 1 }}>you held 0 waves</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
-            <button onClick={() => { if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0'; setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>↺ AGAIN</button>
-            <button onClick={() => { if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0'; setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>☰ OPERATIONS</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>↺ AGAIN</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>☰ OPERATIONS</button>
           </div>
         </div>
-        {campaignDone && !selectOpen && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,10,8,.82)', color: '#5fe0a8', textAlign: 'center' }}>
-            <div style={{ fontSize: 13, letterSpacing: 8, color: '#9fb4c8' }}>THE FIRE IS OUT</div>
-            <div style={{ fontSize: 46, fontWeight: 800, letterSpacing: 5, margin: '8px 0', color: '#ff5a47' }}>VALOR IS DEAD</div>
-            <div style={{ fontSize: 13, color: '#9fb4c8', letterSpacing: 1 }}>you walked out of the fire · now the radio is quiet</div>
-            <button
-              onClick={() => setSelect(true)}
-              style={{ pointerEvents: 'auto', cursor: 'pointer', marginTop: 26, background: 'transparent', border: '1px solid #5fe0a8', color: '#5fe0a8', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}
-            >
-              ☰ REPLAY AN OPERATION
-            </button>
-          </div>
+        {debrief && !selectOpen && (
+          <MissionDebrief
+            mode={debrief}
+            cleared={CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)]}
+            next={debrief === 'next' ? CAMPAIGN[missionIndex + 1] : null}
+            onDeploy={deployNext}
+            onRetry={retryMission}
+            onExit={exitHome}
+          />
         )}
 
         {selectOpen && (
