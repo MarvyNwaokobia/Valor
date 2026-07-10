@@ -91,9 +91,19 @@ export type FpsEvent =
   | { kind: 'playerHit'; damage: number; part: HitPart; from: Vec3; fromDir: Vec3; hp: number }
   | { kind: 'playerDown' }
   // A boss crossed a health threshold and escalated (2 = wounded, 3 = enraged).
-  | { kind: 'bossPhase'; enemyId: number; phase: number; hpFrac: number };
+  | { kind: 'bossPhase'; enemyId: number; phase: number; hpFrac: number }
+  | { kind: 'attachment'; id: Attachment; on: boolean };
 
 export type HitPart = 'head' | 'torso' | 'arm' | 'leg';
+
+/**
+ * Toggleable operator kit. Two of these change the combat math (owned here so
+ * they're testable); the other two are pure sight (owned by the scene, but the
+ * on/off state still lives here so the HUD reads one place):
+ *   laser — tightens hip-fire · optic — tightens + zooms aimed fire
+ *   nvg   — lifts the dark (the Rift) · light — a forward flashlight cone
+ */
+export type Attachment = 'laser' | 'optic' | 'nvg' | 'light';
 
 export type FireMode = 'semi' | 'burst' | 'auto';
 const BURST_COUNT = 3;
@@ -119,6 +129,8 @@ export interface FpsSimOptions {
   gunId?: GunId;
   /** The weapons you carry (1-2). Overrides `gunId`; slot 0 is the primary. */
   loadout?: GunId[];
+  /** Attachments fitted at the start of the op (e.g. NVG in the Rift). */
+  attachments?: Attachment[];
   enemies: EnemySpec[];
   cover?: CoverBox[];
   /** Injectable RNG for deterministic tests (default Math.random). */
@@ -185,6 +197,13 @@ export const FPS_TUNING = {
     SPREAD_FAR: 0.09,
   },
 
+  // Attachment effects on the spread cone. Laser helps when firing from the hip;
+  // the optic helps when aimed. Both make you tighter, never looser.
+  ATTACH: {
+    LASER_HIP_MULT: 0.55, // hip-fire cone with a laser (at full ADS: no effect)
+    OPTIC_ADS_MULT: 0.68, // aimed cone with an optic (at the hip: no effect)
+  },
+
   // A named boss is not a tougher mook — it escalates. As its health falls
   // through PHASE_AT, it enters phase 2 then 3: telegraph shrinks, rounds land
   // tighter, it closes the distance and moves faster. It also acts OUTSIDE the
@@ -218,6 +237,8 @@ export class FpsSim {
   activeSlot = 0;
   /** Ammo is tracked PER slot, so swapping never refills the other weapon. */
   private ammoBySlot: number[];
+  /** Currently-fitted attachments (the operator's kit, toggled in-mission). */
+  readonly attachments = new Set<Attachment>();
   private enemies: FpsEnemy[] = [];
   private spawns: [number, number][] = [];
   private cover: CoverBox[];
@@ -262,6 +283,7 @@ export class FpsSim {
     this.ammoBySlot = loadout.map((id) => getGun(id).magazine);
     this.gun = getGun(loadout[0]);
     this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
+    for (const a of opts.attachments ?? []) this.attachments.add(a);
     this.cover = opts.cover ?? [];
     this.rng = opts.rng ?? Math.random;
     this.respawnEnabled = opts.respawnEnabled ?? true;
@@ -323,12 +345,25 @@ export class FpsSim {
 
   /** Current effective spread half-angle (radians) for the given input. */
   spreadFor(adsFactor: number, moving: boolean, crouched: boolean): number {
+    const ads = clamp01(adsFactor);
     let s = FPS_TUNING.BASE_SPREAD + FPS_TUNING.ACC_SPREAD * (1 - this.gun.accuracy);
-    s *= lerp(1, FPS_TUNING.ADS_SPREAD_MULT, clamp01(adsFactor));
+    s *= lerp(1, FPS_TUNING.ADS_SPREAD_MULT, ads);
     if (moving) s *= FPS_TUNING.MOVE_SPREAD_MULT;
     if (crouched) s *= FPS_TUNING.CROUCH_SPREAD_MULT;
+    // Attachments only ever tighten: the laser at the hip, the optic when aimed.
+    if (this.attachments.has('laser')) s *= lerp(FPS_TUNING.ATTACH.LASER_HIP_MULT, 1, ads);
+    if (this.attachments.has('optic')) s *= lerp(1, FPS_TUNING.ATTACH.OPTIC_ADS_MULT, ads);
     return s;
   }
+
+  /** Flip an attachment on/off. Returns its new state (true = now on). */
+  toggleAttachment(a: Attachment): boolean {
+    const on = !this.attachments.has(a);
+    if (on) this.attachments.add(a); else this.attachments.delete(a);
+    this.events.push({ kind: 'attachment', id: a, on });
+    return on;
+  }
+  hasAttachment(a: Attachment): boolean { return this.attachments.has(a); }
 
   /** Cycle to this weapon's next fire mode. Single-mode guns don't change. */
   cycleFireMode(): FireMode {
@@ -757,6 +792,7 @@ export class FpsSim {
       gunTier: this.gun.tier,
       slot: this.activeSlot,
       loadout: this.loadout.slice(),
+      attachments: [...this.attachments],
       playerHp: this.playerHp,
       maxPlayerHp: FPS_TUNING.PLAYER_HP,
       playerAlive: this.playerAlive,

@@ -482,3 +482,40 @@ describe('FpsSim loadout + weapon switch', () => {
     expect(sim.ammo).toBe(12);
   });
 });
+
+describe('FpsSim attachments', () => {
+  it('starts with none, toggles on then off, and announces each change', () => {
+    const sim = new FpsSim({ gunId: 'assault_rifle', enemies: [], rng: () => 0 });
+    expect(sim.hasAttachment('laser')).toBe(false);
+    expect(sim.toggleAttachment('laser')).toBe(true);
+    expect(sim.hasAttachment('laser')).toBe(true);
+    const on = sim.drain().find((e) => e.kind === 'attachment');
+    expect(on).toMatchObject({ kind: 'attachment', id: 'laser', on: true });
+    expect(sim.toggleAttachment('laser')).toBe(false);
+    expect(sim.hasAttachment('laser')).toBe(false);
+  });
+
+  it('seeds attachments fitted at op start (NVG in the Rift)', () => {
+    const sim = new FpsSim({ gunId: 'smg', attachments: ['nvg'], enemies: [], rng: () => 0 });
+    expect(sim.hasAttachment('nvg')).toBe(true);
+    expect(sim.snapshot().attachments).toContain('nvg');
+  });
+
+  it('the laser tightens HIP-fire but does nothing while aimed', () => {
+    const sim = new FpsSim({ gunId: 'assault_rifle', enemies: [], rng: () => 0 });
+    const hipOff = sim.spreadFor(0, false, false);
+    const adsOff = sim.spreadFor(1, false, false);
+    sim.toggleAttachment('laser');
+    expect(sim.spreadFor(0, false, false)).toBeLessThan(hipOff); // hip is tighter
+    expect(sim.spreadFor(1, false, false)).toBeCloseTo(adsOff, 6); // aimed is unchanged
+  });
+
+  it('the optic tightens AIMED fire but does nothing at the hip', () => {
+    const sim = new FpsSim({ gunId: 'assault_rifle', enemies: [], rng: () => 0 });
+    const hipOff = sim.spreadFor(0, false, false);
+    const adsOff = sim.spreadFor(1, false, false);
+    sim.toggleAttachment('optic');
+    expect(sim.spreadFor(1, false, false)).toBeLessThan(adsOff); // aimed is tighter
+    expect(sim.spreadFor(0, false, false)).toBeCloseTo(hipOff, 6); // hip is unchanged
+  });
+});
