@@ -73,3 +73,18 @@ lcov.info
 # Local demo / presentation files
 DEMO_SCRIPT.md
 *.mov
+
+# Local dev scratch (Valor build)
+.tmp/
+apps/web/.tmp/
+.claude/
+apps/web/probe-*.mjs
+repro-login-tmp.mjs
+*.mp4
+
+# Heavy sibling projects (kept out of the web app repo)
+apps/game/
+delulu-mini-app/
+
+# Raw shooter-pack FBX (keep the built glb, not the source)
+apps/web/public/characters/raw/
