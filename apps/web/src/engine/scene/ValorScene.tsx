@@ -18,7 +18,7 @@ import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
-import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, type Mission } from '../fps/campaign';
+import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -112,6 +112,8 @@ interface Hud {
   down: HTMLDivElement | null;
   arrows: Array<HTMLDivElement | null>;
   objText: HTMLDivElement | null;
+  survEnd: HTMLDivElement | null;
+  survEndText: HTMLDivElement | null;
   objArrow: HTMLDivElement | null;
   briefing: HTMLDivElement | null;
   complete: HTMLDivElement | null;
@@ -163,6 +165,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
   const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
   const theme = ZONE_THEMES[mission.zone] ?? ZONE_THEMES.ASHFALL;
   const isFinale = mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
+  const survival = !!mission.survival;
 
   const sim = useMemo(() => {
     const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, enemies: ENEMIES, cover: COLLIDERS, respawnEnabled: false });
@@ -204,6 +207,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
   const objective = useRef(0);
   const briefingUntil = useRef(3.5);
   const completeAt = useRef(-99);
+  // ── Survival wave state ──
+  const survInit = useRef(false);
+  const survWave = useRef(0);              // current wave (0 before the first)
+  const survState = useRef<'intermission' | 'active'>('intermission');
+  const survNextAt = useRef(0);            // sim-time the next wave begins
+  const survOver = useRef(false);          // the run has ended (player down)
   const advanced = useRef(false);
   const completeWallAt = useRef(0);
   const waypointRef = useRef<THREE.Group>(null);
@@ -377,7 +386,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     w.__valorKillAll = () => sim.debugKillAll();
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
-    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current });
+    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, wave: survWave.current, waveState: survState.current, survOver: survOver.current });
     w.__valorWarp = (x: number, z: number) => { pos.current.set(x, EYE_STAND, z); };
     w.__valorSkipBriefing = () => { briefingUntil.current = 0; };
     w.__valorXp = () => ({ careerXp: careerXp.current, rank: rankForXp(careerXp.current), intoRank: xpIntoRank(careerXp.current) });
@@ -727,7 +736,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
       if (!g) continue;
       // Bodies stay upright and un-squashed: the sim's hitboxes are fixed, so
       // moving the mesh for a crouch would break "what you see is what you hit".
-      g.visible = true;
+      // A survival slot that's been despawned (deadAt < 0) is hidden entirely.
+      g.visible = e.alive || e.deadAt >= 0;
       g.position.set(e.x, 0, e.z);
       g.rotation.set(0, e.facing, 0); // face the player
       g.scale.set(1, 1, 1);
@@ -789,6 +799,35 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
           else el.style.opacity = '0';
         } else el.style.opacity = '0';
       }
+    }
+
+    // ── Survival flow: escalating waves from a fixed pool ──
+    if (survival) {
+      // The wave timer runs on WALL time (like the mission-complete beat), so a
+      // slow frame rate doesn't stretch the intermission.
+      const wall = performance.now();
+      if (!survInit.current) { sim.despawnAll(); survNextAt.current = wall + 3000; survInit.current = true; }
+      if (!survOver.current && snap.playerAlive) {
+        if (survState.current === 'active') {
+          if (sim.aliveCount() === 0) { survState.current = 'intermission'; survNextAt.current = wall + 3200; }
+        } else if (wall >= survNextAt.current) {
+          survWave.current += 1;
+          sim.startWave(survivalWaveCount(survWave.current), survivalWaveHp(survWave.current));
+          survState.current = 'active';
+        }
+      }
+      if (!snap.playerAlive && !survOver.current) {
+        survOver.current = true;
+        if (hud.current.survEnd) {
+          hud.current.survEnd.style.opacity = '1';
+          if (hud.current.survEndText) hud.current.survEndText.textContent =
+            `you held ${Math.max(0, survWave.current - 1)} wave${survWave.current === 2 ? '' : 's'} · ${snap.stats.kills} down`;
+        }
+      }
+      if (waypointRef.current) waypointRef.current.visible = false;
+      pumpStory(now);
+      updateHud(snap);
+      return;
     }
 
     // ── Mission flow (slice 4): breach → clear → advance → extract ──
@@ -1012,7 +1051,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     // mission HUD: current objective + distance, and the briefing fade
     const objN = OBJECTIVES[objective.current];
     if (h.objText) {
-      if (objN && completeAt.current < 0 && sim.time > briefingUntil.current - 0.5) {
+      if (survival) {
+        // wave banner: count up between waves, "left" while fighting
+        if (survOver.current) h.objText.style.opacity = '0';
+        else if (survState.current === 'active') {
+          h.objText.style.opacity = '1';
+          h.objText.textContent = `WAVE ${survWave.current}  ·  ${snap.aliveCount} LEFT`;
+        } else {
+          h.objText.style.opacity = '1';
+          const t = Math.max(0, Math.ceil((survNextAt.current - performance.now()) / 1000));
+          h.objText.textContent = survWave.current === 0 ? `FIRST WAVE IN ${t}` : `WAVE ${survWave.current + 1} IN ${t}`;
+        }
+      } else if (objN && completeAt.current < 0 && sim.time > briefingUntil.current - 0.5) {
         const d = Math.round(Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]));
         h.objText.style.opacity = '1';
         h.objText.textContent = `OBJECTIVE  ·  ${objN.text}  ·  ${d}m`;
@@ -1146,6 +1196,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
     if (hud.current.complete) hud.current.complete.style.opacity = '0';
     staggerP.current = 0; staggerY.current = 0; shake.current = 0;
     shoveX.current = 0; shoveZ.current = 0;
+    // survival: clear the field and reset the wave counter for a fresh run
+    if (survival) {
+      sim.despawnAll();
+      survWave.current = 0; survState.current = 'intermission'; survNextAt.current = performance.now() + 3000;
+      survOver.current = false; survInit.current = true;
+      if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0';
+    }
   }
 
   // Rotate the red damage indicator to point at where the shot came from.
@@ -1302,8 +1359,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onAdvance, pausedRef
  * furthest-unlocked is replayable; the rest are locked. Grouped by zone so the
  * three theatres of the campaign read at a glance.
  */
-function MissionSelect({ current, progress, onPick, onClose }: {
-  current: number; progress: number; onPick: (i: number) => void; onClose: () => void;
+function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
+  current: number; progress: number; onPick: (i: number) => void; onSurvival: () => void; onClose: () => void;
 }) {
   const zones = CAMPAIGN.reduce<Record<string, { m: Mission; i: number }[]>>((acc, m, i) => {
     (acc[m.zone] ??= []).push({ m, i });
@@ -1379,6 +1436,26 @@ function MissionSelect({ current, progress, onPick, onClose }: {
             </div>
           );
         })}
+
+        {/* Survival — always available, sits apart from the campaign */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, letterSpacing: 5, color: '#ff5a52', marginBottom: 10, borderBottom: '1px solid #ff5a5255', paddingBottom: 6 }}>ENDLESS</div>
+          <button
+            onClick={onSurvival}
+            style={{ pointerEvents: 'auto', textAlign: 'left', font: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '12px 16px', borderRadius: 7, border: '1px solid #ff5a5255', background: 'rgba(255,90,82,.08)', color: 'inherit' }}
+          >
+            <div style={{ fontSize: 20, width: 24, textAlign: 'center', color: '#ff5a52' }}>∞</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1, color: '#ff8a7a' }}>SURVIVAL</span>
+                <span style={{ fontSize: 10, letterSpacing: 2, color: '#ff5a52', border: '1px solid #ff5a5266', padding: '1px 6px', borderRadius: 3 }}>THE KILL-HOUSE</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#9fb4c8', marginTop: 3 }}>endless waves · every kill still pays XP · how long can you hold?</div>
+            </div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#ff5a52' }}>OPEN</div>
+          </button>
+        </div>
+
         <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, textAlign: 'center', marginTop: 8 }}>
           selecting an operation restarts it from the breach · press M to toggle this board
         </div>
@@ -1392,7 +1469,7 @@ export function ValorScene() {
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
-    objText: null, objArrow: null, briefing: null, complete: null,
+    objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null,
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
     bossWrap: null, bossName: null, bossFill: null,
@@ -1426,7 +1503,8 @@ export function ValorScene() {
     menuOpenRef.current = v; setSelectOpen(v);
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }
   };
-  const mission = CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
+  const [mode, setMode] = useState<'campaign' | 'survival'>('campaign');
+  const mission = mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
 
   const unlock = (upto: number) => setProgress((pr) => {
     const np = Math.min(CAMPAIGN.length, Math.max(pr, upto));
@@ -1443,10 +1521,17 @@ export function ValorScene() {
   const pickMission = (i: number) => {
     if (i < 0 || i >= CAMPAIGN.length || i > progress) return;
     try { window.localStorage.setItem(CAMPAIGN_KEY, String(i)); } catch { /* ignore */ }
+    setMode('campaign');
     setCampaignDone(false);
     setSelect(false);
     setMissionIndex(i);
     setRunNonce((n) => n + 1); // force a fresh mount even if it's the same op
+  };
+  const pickSurvival = () => {
+    setMode('survival');
+    setCampaignDone(false);
+    setSelect(false);
+    setRunNonce((n) => n + 1);
   };
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -1458,10 +1543,11 @@ export function ValorScene() {
     };
     w.__valorOpenSelect = (v = true) => setSelect(!!v);
     w.__valorPickMission = (i: number) => pickMission(i);
+    w.__valorSurvival = () => pickSurvival();
     w.__valorProgress = () => progress;
     return () => {
       delete w.__valorCampaign; delete w.__valorNextMission; delete w.__valorResetCampaign;
-      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorProgress;
+      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorSurvival; delete w.__valorProgress;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missionIndex, campaignDone, progress, selectOpen]);
@@ -1543,7 +1629,7 @@ export function ValorScene() {
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
         <Suspense fallback={null}>
-          <FpsWorld key={`${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onAdvance={advance} pausedRef={menuOpenRef} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onAdvance={advance} pausedRef={menuOpenRef} />
         </Suspense>
       </Canvas>
 
@@ -1655,6 +1741,17 @@ export function ValorScene() {
 
         {/* mission complete */}
         <div ref={(r) => { hud.current.complete = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,12,10,.6)', color: '#5fe0a8', fontSize: 40, fontWeight: 800, letterSpacing: 6 }}>MISSION COMPLETE</div>
+
+        {/* survival: run-over summary */}
+        <div ref={(r) => { hud.current.survEnd = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, transition: 'opacity .4s', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(16,2,2,.82)', color: '#ff8a7a', textAlign: 'center' }}>
+          <div style={{ fontSize: 13, letterSpacing: 8, color: '#c98' }}>THE KILL-HOUSE</div>
+          <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 4, margin: '8px 0', color: '#ff5a47' }}>OVERRUN</div>
+          <div ref={(r) => { hud.current.survEndText = r; }} style={{ fontSize: 14, color: '#e6c2bc', letterSpacing: 1 }}>you held 0 waves</div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
+            <button onClick={() => { if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0'; setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>↺ AGAIN</button>
+            <button onClick={() => { if (hud.current.survEnd) hud.current.survEnd.style.opacity = '0'; setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>☰ OPERATIONS</button>
+          </div>
+        </div>
         {campaignDone && !selectOpen && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,10,8,.82)', color: '#5fe0a8', textAlign: 'center' }}>
             <div style={{ fontSize: 13, letterSpacing: 8, color: '#9fb4c8' }}>THE FIRE IS OUT</div>
@@ -1670,12 +1767,12 @@ export function ValorScene() {
         )}
 
         {selectOpen && (
-          <MissionSelect current={missionIndex} progress={progress} onPick={pickMission} onClose={() => setSelect(false)} />
+          <MissionSelect current={mode === 'survival' ? -1 : missionIndex} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onClose={() => setSelect(false)} />
         )}
 
         {/* slice label + an entry point to the Operations board */}
         <div style={{ position: 'absolute', left: 26, top: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{`Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
+          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
           <button
             onClick={() => setSelect(true)}
             style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'rgba(55,208,224,.1)', border: '1px solid #37d0e055', color: '#37d0e0', fontFamily: 'inherit', fontSize: 11, letterSpacing: 2, padding: '4px 9px', borderRadius: 4 }}

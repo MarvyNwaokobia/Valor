@@ -759,6 +759,37 @@ export class FpsSim {
     }
   }
 
+  // ── Survival mode: a fixed pool of enemy slots, spawned in escalating waves ──
+
+  /** Clear the field WITHOUT counting kills. deadAt < 0 marks a slot as hidden
+   *  (never-spawned / cleared between waves), so the scene can hide it. */
+  despawnAll(): void {
+    for (const e of this.enemies) {
+      e.alive = false; e.hp = 0; e.deadAt = -999; e.active = false;
+      e.token = false; e.ai = 'hidden';
+    }
+  }
+
+  /** Bring `count` slots back at their spawn points with health scaled by
+   *  `hpMult`, and wake them. Returns how many actually spawned. */
+  startWave(count: number, hpMult: number): number {
+    let n = 0;
+    for (let i = 0; i < this.enemies.length && n < count; i++) {
+      const e = this.enemies[i];
+      const [sx, sz] = this.spawns[i];
+      e.x = sx; e.z = sz;
+      e.maxHp = Math.max(1, Math.round(FPS_TUNING.DEFAULT_ENEMY_HP * hpMult));
+      e.hp = e.maxHp;
+      e.alive = true; e.deadAt = 0; e.active = true; e.token = false;
+      e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
+      e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
+      e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+      this.events.push({ kind: 'spawn', enemyId: e.id });
+      n++;
+    }
+    return n;
+  }
+
   /** Debug: drop every enemy now (probe hook for headless verification). */
   debugKillAll(): void {
     for (const e of this.enemies) {

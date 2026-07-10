@@ -519,3 +519,38 @@ describe('FpsSim attachments', () => {
     expect(sim.spreadFor(0, false, false)).toBeCloseTo(hipOff, 6); // hip is unchanged
   });
 });
+
+describe('FpsSim survival waves', () => {
+  const arena = () => new FpsSim({
+    gunId: 'assault_rifle',
+    enemies: Array.from({ length: 10 }, (_, i) => ({ pos: [i - 5, -6] as [number, number] })),
+    rng: () => 0.5, respawnEnabled: false,
+  });
+
+  it('despawnAll clears the field WITHOUT counting kills', () => {
+    const sim = arena();
+    const kills = sim.snapshot().stats.kills;
+    sim.despawnAll();
+    expect(sim.aliveCount()).toBe(0);
+    expect(sim.snapshot().stats.kills).toBe(kills);              // not counted as kills
+    for (const e of sim.getEnemies()) expect(e.deadAt).toBeLessThan(0); // marked hidden
+  });
+
+  it('startWave revives exactly `count` slots with scaled, woken enemies', () => {
+    const sim = arena();
+    sim.despawnAll();
+    expect(sim.startWave(4, 1.5)).toBe(4);
+    expect(sim.aliveCount()).toBe(4);
+    const alive = sim.getEnemies().filter((e) => e.alive);
+    expect(alive.every((e) => e.active)).toBe(true);
+    expect(alive[0].maxHp).toBe(Math.round(FPS_TUNING.DEFAULT_ENEMY_HP * 1.5));
+    expect(alive[0].hp).toBe(alive[0].maxHp);
+  });
+
+  it('startWave never spawns more than the pool holds', () => {
+    const sim = arena();
+    sim.despawnAll();
+    expect(sim.startWave(50, 1)).toBe(10);
+    expect(sim.aliveCount()).toBe(10);
+  });
+});

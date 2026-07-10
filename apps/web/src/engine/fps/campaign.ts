@@ -36,7 +36,12 @@ export interface Mission {
   enemies: EnemySpec[];
   objectives: Objective[];
   boss?: boolean;
+  survival?: boolean; // endless-wave arena instead of a doorkicker (no objectives)
 }
+
+/** Survival escalation: how many attackers and how tough, by 1-based wave. */
+export function survivalWaveCount(wave: number): number { return Math.min(3 + wave, 10); }
+export function survivalWaveHp(wave: number): number { return 1 + (wave - 1) * 0.09; }
 
 /** Per-zone look. Lighting is in physical units (single digits for point lights). */
 export interface ZoneTheme {
@@ -70,6 +75,12 @@ export const ZONE_THEMES: Record<string, ZoneTheme> = {
     bg: '#04060a', fog: ['#060a12', 9, 32], hemi: ['#3a4e6a', '#0a0e16', 0.22],
     sun: { color: '#5f7fb0', intensity: 0.45 }, fill: { color: '#7a55ff', intensity: 0.35 },
     ambient: 0.07, practical: '#9a6bff', practicalIntensity: 1.5, floorTint: '#4a4a58', wallTint: '#43454f',
+  },
+  // A stark, red-lit kill-house for the endless mode.
+  SURVIVAL: {
+    bg: '#07060a', fog: ['#0d0810', 16, 50], hemi: ['#7a5566', '#1a1016', 0.4],
+    sun: { color: '#ffc3c0', intensity: 0.9 }, fill: { color: '#a04858', intensity: 0.34 },
+    ambient: 0.16, practical: '#ff5a52', practicalIntensity: 2.0, floorTint: '#7a7076', wallTint: '#6e666c',
   },
 };
 
@@ -250,6 +261,30 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom({ ...C_OBJ, clear2: 'KILL VALOR' }),
   },
 ];
+
+// ── SURVIVAL · an open kill-house; the pool spawns in escalating waves ──
+const SURV_WALLS: CoverBox[] = [
+  { x: -12, z: 0, w: 0.6, d: 24.6, h: WALL_H }, { x: 12, z: 0, w: 0.6, d: 24.6, h: WALL_H },
+  { x: 0, z: 12, w: 24.6, d: 0.6, h: WALL_H }, { x: 0, z: -12, w: 24.6, d: 0.6, h: WALL_H },
+];
+const SURV_COVER: CoverBox[] = [
+  { x: -5, z: 5, w: 1.6, d: 1.6, h: 1.35 }, { x: 5, z: 5, w: 1.6, d: 1.6, h: 1.35 },
+  { x: -5, z: -5, w: 1.6, d: 1.6, h: 1.35 }, { x: 5, z: -5, w: 1.6, d: 1.6, h: 1.35 },
+  { x: 0, z: 7, w: 2.4, d: 1.0, h: 1.3 }, { x: 0, z: -7, w: 2.4, d: 1.0, h: 1.3 },
+  { x: -7.5, z: 0, w: 1.0, d: 2.4, h: 1.4 }, { x: 7.5, z: 0, w: 1.0, d: 2.4, h: 1.4 },
+];
+// 10 spawn slots around the perimeter (the wave system revives a subset).
+const SURV_ENEMIES: EnemySpec[] = Array.from({ length: 10 }, (_, i) => {
+  const a = (i / 10) * Math.PI * 2;
+  return { pos: [Math.round(Math.sin(a) * 9.4 * 10) / 10, Math.round(Math.cos(a) * 9.4 * 10) / 10] as [number, number], room: 1 };
+});
+
+export const SURVIVAL_MISSION: Mission = {
+  id: 'survival', zone: 'SURVIVAL', op: 'SURVIVAL', name: 'THE KILL-HOUSE',
+  brief: 'hold the room · the waves do not stop · every kill still pays',
+  gun: AR, secondary: SMG, survival: true,
+  start: [0, 0], walls: SURV_WALLS, cover: SURV_COVER, enemies: SURV_ENEMIES, objectives: [],
+};
 
 export const CAMPAIGN_KEY = 'valor_mission';   // the op you're currently on
 export const PROGRESS_KEY = 'valor_progress';  // the furthest op you've unlocked (soft gating)
