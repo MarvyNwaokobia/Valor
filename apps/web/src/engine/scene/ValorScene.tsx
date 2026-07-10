@@ -59,6 +59,36 @@ const BOB = 0.014;
 const HIP_POS = new THREE.Vector3(0.2, -0.2, -0.5);
 const ADS_POS = new THREE.Vector3(0, -0.088, -0.32);
 
+// The tactical UI face (loaded in the route via next/font), mono for raw numbers.
+const UI_FONT = 'var(--font-tactical), ui-monospace, monospace';
+
+/** Line-drawn UI glyphs (currentColor), replacing emoji across the HUD/menus. */
+function Icon({ name, size = 16 }: { name: string; size?: number }) {
+  const s = {
+    width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+    strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+    style: { display: 'block', flex: 'none' as const },
+  };
+  switch (name) {
+    case 'lock': return (<svg {...s}><rect x="4.5" y="10.5" width="15" height="10" rx="2" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" /></svg>);
+    case 'check': return (<svg {...s}><path d="M20 6 9 17l-5-5" /></svg>);
+    case 'chevron': return (<svg {...s}><path d="M9 5l7 7-7 7" /></svg>);
+    case 'play': return (<svg {...s} fill="currentColor" stroke="none"><path d="M7 4.5v15l12-7.5-12-7.5z" /></svg>);
+    case 'alert': return (<svg {...s}><path d="M12 3 2.5 20h19L12 3z" /><line x1="12" y1="10" x2="12" y2="14" /><circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none" /></svg>);
+    case 'infinity': return (<svg {...s}><path d="M4 12c0-2.2 1.8-4 4-4s3.2 1.6 4 3c.8-1.4 2-3 4-3s4 1.8 4 4-1.8 4-4 4-3.2-1.6-4-3c-.8 1.4-2 3-4 3s-4-1.8-4-4z" /></svg>);
+    case 'menu': return (<svg {...s}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>);
+    case 'refresh': return (<svg {...s}><path d="M20.5 9A8 8 0 1 0 21 14" /><path d="M21 3.5V9h-5.5" /></svg>);
+    case 'swap': return (<svg {...s}><path d="M16 4l4 4-4 4" /><path d="M20 8H7" /><path d="M8 20l-4-4 4-4" /><path d="M4 16h13" /></svg>);
+    case 'firemode': return (<svg {...s}><circle cx="7" cy="7" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="7" x2="19" y2="7" /><circle cx="7" cy="12" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="12" x2="19" y2="12" /><circle cx="7" cy="17" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="17" x2="19" y2="17" /></svg>);
+    default: return null;
+  }
+}
+
+/** A button label: an icon followed by text, vertically centred. */
+function iconRow(name: string, label: string, size = 15): React.ReactNode {
+  return (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name={name} size={size} />{label}</span>);
+}
+
 // Per-weapon viewmodel framing so each gun reads as a different silhouette off
 // the one shared rifle model: scale = length, z/y = how it sits in the hands.
 // The attachment HUD strip + which key toggles each.
@@ -1089,7 +1119,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
       if (boss) {
         h.bossWrap.style.opacity = '1';
         // name + phase pips (I / II / III) so the escalation reads on the HUD
-        h.bossName.textContent = `${mission.name}${boss.phase >= 2 ? '  ·  ' + '❱'.repeat(boss.phase - 1) : ''}`;
+        h.bossName.textContent = `${mission.name}${boss.phase >= 2 ? '  ·  ' + (['', '', 'II', 'III'][boss.phase] ?? '') : ''}`;
         h.bossFill.style.width = `${Math.max(0, Math.round((boss.hp / boss.maxHp) * 100))}%`;
         // a hotter bar as it enrages, and a glow pulse on the moment it escalates
         h.bossFill.style.background = boss.phase >= 3 ? 'linear-gradient(90deg,#ff2a1e,#ff6a3d)' : 'linear-gradient(90deg,#ff4d3d,#e0455a)';
@@ -1381,7 +1411,7 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
 
   return (
     <div
-      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.985)', color: '#e9edf2', fontFamily: 'ui-monospace, monospace', cursor: 'auto', pointerEvents: 'auto', overflowY: 'auto', padding: '30px 24px 40px' }}
+      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.985)', color: '#e9edf2', fontFamily: UI_FONT, cursor: 'auto', pointerEvents: 'auto', overflowY: 'auto', padding: '30px 24px 40px' }}
       onClick={onClose}
     >
       <div style={{ maxWidth: 760, margin: '0 auto' }} onClick={(e) => e.stopPropagation()}>
@@ -1392,9 +1422,9 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
           </div>
           <button
             onClick={onClose}
-            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #37d0e0', color: '#37d0e0', fontFamily: 'inherit', fontSize: 12, letterSpacing: 2, padding: '8px 14px', borderRadius: 5 }}
+            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #37d0e0', color: '#37d0e0', fontFamily: 'inherit', fontSize: 13, letterSpacing: 2, padding: '8px 14px', borderRadius: 5 }}
           >
-            RESUME ▸
+            {iconRow('chevron', 'RESUME', 14)}
           </button>
         </div>
 
@@ -1426,8 +1456,8 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
                         opacity: locked ? 0.45 : 1, color: 'inherit',
                       }}
                     >
-                      <div style={{ fontSize: 20, width: 24, textAlign: 'center', color: accent }}>
-                        {locked ? '🔒' : m.boss ? '☠' : cleared ? '✓' : '▸'}
+                      <div style={{ width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: accent }}>
+                        <Icon name={locked ? 'lock' : m.boss ? 'alert' : cleared ? 'check' : 'chevron'} size={18} />
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
@@ -1455,7 +1485,7 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
             onClick={onSurvival}
             style={{ pointerEvents: 'auto', textAlign: 'left', font: 'inherit', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '12px 16px', borderRadius: 7, border: '1px solid #ff5a5255', background: 'rgba(255,90,82,.08)', color: 'inherit' }}
           >
-            <div style={{ fontSize: 20, width: 24, textAlign: 'center', color: '#ff5a52' }}>∞</div>
+            <div style={{ width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ff5a52' }}><Icon name="infinity" size={20} /></div>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
                 <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1, color: '#ff8a7a' }}>SURVIVAL</span>
@@ -1490,7 +1520,7 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
     color, fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '11px 22px', borderRadius: 5,
   });
   return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.97)', color: '#e9edf2', fontFamily: 'ui-monospace, monospace', cursor: 'auto', pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '30px 24px' }}>
+    <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.97)', color: '#e9edf2', fontFamily: UI_FONT, cursor: 'auto', pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '30px 24px' }}>
       <div style={{ maxWidth: 620, textAlign: 'center' }}>
         {mode === 'finale' ? (
           <>
@@ -1498,8 +1528,8 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
             <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: 5, margin: '10px 0', color: '#ff5a47' }}>VALOR IS DEAD</div>
             <div style={{ fontSize: 14, color: '#c6b4ae', letterSpacing: 1, lineHeight: 1.6 }}>You walked all the way into the dark and out the other side. The radio is quiet now. Ashfall can begin again.</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 30 }}>
-              <button onClick={onRetry} style={btn('#ff8a7a')}>↺ REPLAY FINALE</button>
-              <button onClick={onExit} style={btn('#9fb4c8')}>☰ OPERATIONS</button>
+              <button onClick={onRetry} style={btn('#ff8a7a')}>{iconRow('refresh', 'REPLAY FINALE', 14)}</button>
+              <button onClick={onExit} style={btn('#9fb4c8')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
             </div>
           </>
         ) : (
@@ -1512,9 +1542,9 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
             <div style={{ fontSize: 12, color: '#7f8c99', letterSpacing: 1, marginTop: 12 }}>{next?.brief}</div>
             <div style={{ fontSize: 13, letterSpacing: 3, color: '#9fb4c8', marginTop: 26 }}>ready?</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 12 }}>
-              <button onClick={onDeploy} style={{ ...btn('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>▸ DEPLOY</button>
-              <button onClick={onRetry} style={btn('#9fb4c8')}>↺ RETRY</button>
-              <button onClick={onExit} style={btn('#6f7d8c')}>☰ EXIT</button>
+              <button onClick={onDeploy} style={{ ...btn('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>{iconRow('play', 'DEPLOY', 13)}</button>
+              <button onClick={onRetry} style={btn('#9fb4c8')}>{iconRow('refresh', 'RETRY', 14)}</button>
+              <button onClick={onExit} style={btn('#6f7d8c')}>{iconRow('menu', 'EXIT', 14)}</button>
             </div>
           </>
         )}
@@ -1720,7 +1750,7 @@ export function ValorScene() {
       </Canvas>
 
       {/* ── HUD overlay ── */}
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: 'ui-monospace, monospace', color: '#e9edf2', userSelect: 'none' }}>
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: UI_FONT, color: '#e9edf2', userSelect: 'none' }}>
         {/* crosshair */}
         <div ref={(r) => { hud.current.ch.t = r; }} style={{ ...s(tick), width: 2, height: 8, transform: 'translate(-50%,-16px)' }} />
         <div ref={(r) => { hud.current.ch.b = r; }} style={{ ...s(tick), width: 2, height: 8, transform: 'translate(-50%,8px)' }} />
@@ -1834,8 +1864,8 @@ export function ValorScene() {
           <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 4, margin: '8px 0', color: '#ff5a47' }}>OVERRUN</div>
           <div ref={(r) => { hud.current.survEndText = r; }} style={{ fontSize: 14, color: '#e6c2bc', letterSpacing: 1 }}>you held 0 waves</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
-            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>↺ AGAIN</button>
-            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 12, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>☰ OPERATIONS</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('refresh', 'AGAIN', 14)}</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('menu', 'OPERATIONS', 14)}</button>
           </div>
         </div>
         {debrief && !selectOpen && (
@@ -1858,9 +1888,9 @@ export function ValorScene() {
           <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
           <button
             onClick={() => setSelect(true)}
-            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'rgba(55,208,224,.1)', border: '1px solid #37d0e055', color: '#37d0e0', fontFamily: 'inherit', fontSize: 11, letterSpacing: 2, padding: '4px 9px', borderRadius: 4 }}
+            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'rgba(55,208,224,.1)', border: '1px solid #37d0e055', color: '#37d0e0', fontFamily: 'inherit', fontSize: 12, letterSpacing: 2, padding: '4px 9px', borderRadius: 4 }}
           >
-            ☰ OPS{!isTouch ? ' · M' : ''}
+            {iconRow('menu', `OPS${!isTouch ? ' · M' : ''}`, 12)}
           </button>
         </div>
         {!isTouch && (
@@ -1896,13 +1926,13 @@ export function ValorScene() {
             style={{ position: 'absolute', right: 138, bottom: 120, width: 70, height: 70, borderRadius: '50%', border: '2px solid rgba(255,255,255,.28)', background: 'rgba(255,255,255,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#e9edf2', touchAction: 'none' }}>ADS</div>
           {/* reload */}
           <div onTouchStart={() => { controls.current.reload = true; }}
-            style={{ position: 'absolute', right: 40, bottom: 228, width: 58, height: 58, borderRadius: '50%', border: '2px solid rgba(255,180,84,.45)', background: 'rgba(255,180,84,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#ffb454', touchAction: 'none' }}>⟳</div>
+            style={{ position: 'absolute', right: 40, bottom: 228, width: 58, height: 58, borderRadius: '50%', border: '2px solid rgba(255,180,84,.45)', background: 'rgba(255,180,84,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffb454', touchAction: 'none' }}><Icon name="refresh" size={22} /></div>
           {/* fire mode */}
           <div onTouchStart={() => { controls.current.fireMode = true; }}
-            style={{ position: 'absolute', right: 120, bottom: 214, width: 52, height: 52, borderRadius: '50%', border: '2px solid rgba(143,184,208,.5)', background: 'rgba(143,184,208,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: '#8fb8d0', touchAction: 'none' }}>⇄</div>
+            style={{ position: 'absolute', right: 120, bottom: 214, width: 52, height: 52, borderRadius: '50%', border: '2px solid rgba(143,184,208,.5)', background: 'rgba(143,184,208,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8fb8d0', touchAction: 'none' }}><Icon name="firemode" size={20} /></div>
           {/* swap weapon */}
           <div onTouchStart={() => { controls.current.swap = true; }}
-            style={{ position: 'absolute', right: 190, bottom: 150, width: 56, height: 56, borderRadius: '50%', border: '2px solid rgba(95,224,168,.5)', background: 'rgba(95,224,168,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#5fe0a8', touchAction: 'none' }}>⇆</div>
+            style={{ position: 'absolute', right: 190, bottom: 150, width: 56, height: 56, borderRadius: '50%', border: '2px solid rgba(95,224,168,.5)', background: 'rgba(95,224,168,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5fe0a8', touchAction: 'none' }}><Icon name="swap" size={22} /></div>
           {/* attachment toggles (compact column, left of the look-pad) */}
           <div style={{ position: 'absolute', left: 14, top: 96, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {ATTACH_CHIPS.map((c) => (

@@ -1,6 +1,16 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { Rajdhani } from 'next/font/google';
+
+// A condensed, technical typeface for the tactical HUD — exposed as a CSS var so
+// the scene's overlays can opt into it (defaulting to mono for raw telemetry).
+const tactical = Rajdhani({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-tactical',
+  display: 'swap',
+});
 
 // Valor clone · slice 1 graybox (docs/the plan.md).
 // This dev sandbox is repurposed for the Valor first-person build (Marvy's rule:
@@ -13,5 +23,9 @@ const ValorScene = dynamic(
 );
 
 export default function ValorPlaygroundPage() {
-  return <ValorScene />;
+  return (
+    <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
+      <ValorScene />
+    </div>
+  );
 }
