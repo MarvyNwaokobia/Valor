@@ -80,8 +80,31 @@ function Icon({ name, size = 16 }: { name: string; size?: number }) {
     case 'refresh': return (<svg {...s}><path d="M20.5 9A8 8 0 1 0 21 14" /><path d="M21 3.5V9h-5.5" /></svg>);
     case 'swap': return (<svg {...s}><path d="M16 4l4 4-4 4" /><path d="M20 8H7" /><path d="M8 20l-4-4 4-4" /><path d="M4 16h13" /></svg>);
     case 'firemode': return (<svg {...s}><circle cx="7" cy="7" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="7" x2="19" y2="7" /><circle cx="7" cy="12" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="12" x2="19" y2="12" /><circle cx="7" cy="17" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="17" x2="19" y2="17" /></svg>);
+    case 'crosshair': return (<svg {...s}><circle cx="12" cy="12" r="7" /><line x1="12" y1="2" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="22" /><line x1="2" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="22" y2="12" /><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" /></svg>);
+    case 'rotate': return (<svg {...s}><rect x="8.5" y="3" width="7" height="18" rx="1.6" /><path d="M4.2 8.4A9 9 0 0 1 7 4.9" /><path d="M3 5l1 3.4 3.3-.8" /><path d="M19.8 15.6A9 9 0 0 1 17 19.1" /><path d="M21 19l-1-3.4-3.3.8" /></svg>);
     default: return null;
   }
+}
+
+/** Wrapped angular difference a-b, in (-π, π]. */
+function angleDiff(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/** A glassy, tactile circular touch button — the shared look for the mobile HUD. */
+function touchBtn(color: string, size: number, strong = false): React.CSSProperties {
+  return {
+    position: 'absolute', width: size, height: size, borderRadius: '50%',
+    border: `1.5px solid ${color}${strong ? 'cc' : '55'}`,
+    background: `radial-gradient(circle at 50% 34%, ${color}${strong ? '40' : '22'}, ${color}0f 66%, rgba(6,10,16,.42))`,
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,.22), inset 0 -8px 16px ${color}14, 0 6px 16px rgba(0,0,0,.5)`,
+    backdropFilter: 'blur(7px)', WebkitBackdropFilter: 'blur(7px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color, fontWeight: 700, letterSpacing: 1, touchAction: 'none', userSelect: 'none', WebkitTapHighlightColor: 'transparent',
+  };
 }
 
 /** A button label: an icon followed by text, vertically centred. */
@@ -449,11 +472,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     };
     w.__valorWakeRoom = (room: number) => sim.setRoomActive(room, true); // headless room activation
     w.__valorSwitch = (n?: number) => (typeof n === 'number' ? sim.switchGun(n) : sim.nextWeapon());
+    w.__valorFire = (on: boolean) => { controls.current.fire = !!on; }; // headless: hold the trigger (aim-assist test)
     w.__valorToggle = (a: Attachment) => sim.toggleAttachment(a);
     return () => {
       delete w.__valorState; delete w.__valorKillAll; delete w.__valorAim; delete w.__valorAudio;
       delete w.__valorMission; delete w.__valorWarp; delete w.__valorSkipBriefing;
-      delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorToggle;
+      delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorFire; delete w.__valorToggle;
     };
   }, [sim, audio]);
 
@@ -499,6 +523,43 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     if (held('ArrowRight')) yaw.current -= keyStep;
     if (held('ArrowUp')) pitch.current += keyStep;
     if (held('ArrowDown')) pitch.current -= keyStep;
+
+    // ── Mobile aim assist ──
+    // On a phone you can't flick-aim, so while engaging (firing or aiming) we
+    // gently magnetise the crosshair to the nearest ON-SCREEN, UNOCCLUDED enemy.
+    // You still choose who by pointing roughly at them; the assist does the fine
+    // targeting. Desktop keeps raw mouse aim (skill decides the hit).
+    if (lowSpec && (ct.fire || adsCur.current > 0.35)) {
+      const eyeApprox = THREE.MathUtils.lerp(EYE_STAND, EYE_CROUCH, crouchCur.current);
+      const px = pos.current.x, pz = pos.current.z;
+      let bestDiff = 0.3; // ~17° acquisition cone
+      let tYaw = 0, tPitch = 0, found = false;
+      for (const e of sim.getEnemies()) {
+        if (!e.alive || !e.active) continue;
+        const dx = e.x - px, dz = e.z - pz, dyC = 1.15 - eyeApprox;
+        const dh = Math.hypot(dx, dz);
+        if (dh < 1.2 || dh > 42) continue;
+        const len = Math.hypot(dx, dyC, dz);
+        const dir: Vec3 = [dx / len, dyC / len, dz / len];
+        const from: Vec3 = [px, eyeApprox, pz];
+        let occluded = false;
+        for (const c of COLLIDERS) {
+          const tc = rayAABB(from, dir, aabbOfCover(c));
+          if (tc !== null && tc < len - 0.5) { occluded = true; break; }
+        }
+        if (occluded) continue;
+        const wantYaw = Math.atan2(-dx, -dz);
+        const wantPitch = Math.atan2(dyC, dh);
+        const diff = Math.hypot(angleDiff(wantYaw, yaw.current), wantPitch - pitch.current);
+        if (diff < bestDiff) { bestDiff = diff; tYaw = wantYaw; tPitch = wantPitch; found = true; }
+      }
+      if (found) {
+        const k = Math.min(0.5, (ct.fire ? 11 : 6) * dt); // stronger while firing
+        yaw.current += angleDiff(tYaw, yaw.current) * k;
+        pitch.current += (tPitch - pitch.current) * k;
+      }
+    }
+
     pitch.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch.current));
 
     // ── Movement (camera-relative on the ground plane; keyboard + touch stick) ──
@@ -1693,7 +1754,21 @@ export function ValorScene({ onOpCleared }: {
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
       new URLSearchParams(window.location.search).has('touch')));
 
-  const JOY_R = 52;
+  // VALOR is a landscape game. On a phone held upright, block play with a rotate
+  // prompt (and try a best-effort orientation lock once we're in landscape).
+  const [portrait, setPortrait] = useState(false);
+  useEffect(() => {
+    if (!isTouch) return;
+    const check = () => setPortrait(window.innerHeight > window.innerWidth);
+    check();
+    window.addEventListener('resize', check);
+    window.addEventListener('orientationchange', check);
+    return () => { window.removeEventListener('resize', check); window.removeEventListener('orientationchange', check); };
+  }, [isTouch]);
+  // Single source of truth for the pause flag: any full-screen overlay freezes play.
+  useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null; }, [portrait, selectOpen, debrief]);
+
+  const JOY_R = 46;
   const joyId = useRef<number | null>(null);
   const joyCenter = useRef({ x: 0, y: 0 });
   const joyKnob = useRef<HTMLDivElement>(null);
@@ -1770,8 +1845,8 @@ export function ValorScene({ onOpCleared }: {
         {/* hitmarker */}
         <div ref={(r) => { hud.current.hit = r; }} style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', fontSize: 26, fontWeight: 700, opacity: 0, transition: 'opacity .08s', textShadow: '0 0 3px #000' }}>✕</div>
 
-        {/* ammo + weapon + reload */}
-        <div style={{ position: 'absolute', right: 26, bottom: 22, textAlign: 'right' }}>
+        {/* ammo + weapon + reload (lifted clear of the thumb cluster on touch) */}
+        <div style={{ position: 'absolute', right: 26, textAlign: 'right', ...(isTouch ? { top: 78 } : { bottom: 22 }) }}>
           <div ref={(r) => { hud.current.weapon = r; }} style={{ fontSize: 13, letterSpacing: 2, fontWeight: 700, color: '#e9edf2', marginBottom: 1 }}>ASSAULT RIFLE</div>
           <div ref={(r) => { hud.current.loadout = r; }} style={{ fontSize: 10, letterSpacing: 2, color: '#6f7d8c', marginBottom: 3 }}>1 · 2</div>
           <div ref={(r) => { hud.current.fireMode = r; }} style={{ fontSize: 12, letterSpacing: 3, fontWeight: 700, color: '#8fb8d0', marginBottom: 2 }}>AUTO</div>
@@ -1782,11 +1857,11 @@ export function ValorScene({ onOpCleared }: {
               <div ref={(r) => { hud.current.reloadBar = r; }} style={{ width: '0%', height: '100%', background: '#ffb454' }} />
             </div>
           </div>
-          <div ref={(r) => { hud.current.reloadHint = r; }} style={{ marginTop: 4, fontSize: 11, letterSpacing: 1, color: '#6f7d8c' }}>{isTouch ? 'TAP ⟳ TO RELOAD' : 'PRESS [R] TO RELOAD'}</div>
+          <div ref={(r) => { hud.current.reloadHint = r; }} style={{ marginTop: 4, fontSize: 11, letterSpacing: 1, color: '#6f7d8c' }}>{isTouch ? 'TAP TO RELOAD' : 'PRESS [R] TO RELOAD'}</div>
         </div>
 
         {/* attachment strip (toggleable kit) */}
-        <div ref={(r) => { hud.current.attachments = r; }} style={{ position: 'absolute', right: 26, bottom: 150, display: 'flex', gap: 6, justifyContent: 'flex-end' }} />
+        <div ref={(r) => { hud.current.attachments = r; }} style={{ position: 'absolute', right: 26, bottom: 150, display: isTouch ? 'none' : 'flex', gap: 6, justifyContent: 'flex-end' }} />
 
         {/* kills */}
         <div ref={(r) => { hud.current.kills = r; }} style={{ position: 'absolute', left: 26, bottom: 22, fontSize: 13, color: '#9fb4c8' }}>KILLS 0   ·   HS 0</div>
@@ -1916,40 +1991,52 @@ export function ValorScene({ onOpCleared }: {
         )}
       </div>
 
-      {/* ── Mobile touch controls (Marvy: mobile feel matters) ── */}
-      {isTouch && !selectOpen && (
+      {/* ── Mobile touch controls — glassy, tucked to the corners ── */}
+      {isTouch && !selectOpen && !portrait && (
         <>
+          {/* right thumb: drag to aim (aim-assist does the fine targeting) */}
+          <div onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
+            style={{ position: 'absolute', right: 0, top: 52, width: '54%', bottom: 0, touchAction: 'none' }} />
+
           {/* left thumb: movement stick */}
           <div onTouchStart={joyStart} onTouchMove={joyMove} onTouchEnd={joyEnd} onTouchCancel={joyEnd}
-            style={{ position: 'absolute', left: 22, bottom: 26, width: 128, height: 128, borderRadius: '50%', border: '2px solid rgba(255,255,255,.18)', background: 'rgba(255,255,255,.05)', touchAction: 'none' }}>
-            <div ref={joyKnob} style={{ position: 'absolute', left: '50%', top: '50%', width: 52, height: 52, marginLeft: -26, marginTop: -26, borderRadius: '50%', background: 'rgba(255,255,255,.24)' }} />
+            style={{ ...touchBtn('#cfe0ea', 108), left: 24, bottom: 24, background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,.10), rgba(6,10,16,.4))', border: '1.5px solid rgba(255,255,255,.22)' }}>
+            <div ref={joyKnob} style={{ position: 'absolute', left: '50%', top: '50%', width: 46, height: 46, marginLeft: -23, marginTop: -23, borderRadius: '50%', background: 'radial-gradient(circle at 50% 35%, rgba(255,255,255,.5), rgba(255,255,255,.16))', boxShadow: '0 3px 8px rgba(0,0,0,.5)' }} />
           </div>
-          {/* right thumb: drag to aim (up/down included) */}
-          <div onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
-            style={{ position: 'absolute', right: 0, top: 64, width: '58%', bottom: 0, touchAction: 'none' }} />
-          {/* fire */}
+
+          {/* fire (primary) */}
           <div onTouchStart={() => { audio.unlock(); controls.current.fire = true; }} onTouchEnd={() => { controls.current.fire = false; }} onTouchCancel={() => { controls.current.fire = false; }}
-            style={{ position: 'absolute', right: 28, bottom: 116, width: 96, height: 96, borderRadius: '50%', border: '2px solid rgba(255,90,60,.55)', background: 'rgba(255,90,60,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#ffd9cf', touchAction: 'none' }}>FIRE</div>
+            style={{ ...touchBtn('#ff6a4d', 78, true), right: 26, bottom: 30 }}><Icon name="crosshair" size={32} /></div>
           {/* ADS (hold) */}
           <div onTouchStart={() => { controls.current.ads = true; }} onTouchEnd={() => { controls.current.ads = false; }} onTouchCancel={() => { controls.current.ads = false; }}
-            style={{ position: 'absolute', right: 138, bottom: 120, width: 70, height: 70, borderRadius: '50%', border: '2px solid rgba(255,255,255,.28)', background: 'rgba(255,255,255,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#e9edf2', touchAction: 'none' }}>ADS</div>
+            style={{ ...touchBtn('#cfe0ea', 56), right: 116, bottom: 40, fontSize: 11 }}>ADS</div>
           {/* reload */}
           <div onTouchStart={() => { controls.current.reload = true; }}
-            style={{ position: 'absolute', right: 40, bottom: 228, width: 58, height: 58, borderRadius: '50%', border: '2px solid rgba(255,180,84,.45)', background: 'rgba(255,180,84,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffb454', touchAction: 'none' }}><Icon name="refresh" size={22} /></div>
-          {/* fire mode */}
-          <div onTouchStart={() => { controls.current.fireMode = true; }}
-            style={{ position: 'absolute', right: 120, bottom: 214, width: 52, height: 52, borderRadius: '50%', border: '2px solid rgba(143,184,208,.5)', background: 'rgba(143,184,208,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8fb8d0', touchAction: 'none' }}><Icon name="firemode" size={20} /></div>
+            style={{ ...touchBtn('#ffb454', 46), right: 36, bottom: 118 }}><Icon name="refresh" size={20} /></div>
           {/* swap weapon */}
           <div onTouchStart={() => { controls.current.swap = true; }}
-            style={{ position: 'absolute', right: 190, bottom: 150, width: 56, height: 56, borderRadius: '50%', border: '2px solid rgba(95,224,168,.5)', background: 'rgba(95,224,168,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5fe0a8', touchAction: 'none' }}><Icon name="swap" size={22} /></div>
-          {/* attachment toggles (compact column, left of the look-pad) */}
-          <div style={{ position: 'absolute', left: 14, top: 96, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            style={{ ...touchBtn('#5fe0a8', 46), right: 100, bottom: 124 }}><Icon name="swap" size={20} /></div>
+          {/* fire mode */}
+          <div onTouchStart={() => { controls.current.fireMode = true; }}
+            style={{ ...touchBtn('#8fb8d0', 42), right: 162, bottom: 104 }}><Icon name="firemode" size={18} /></div>
+
+          {/* attachment toggles — a compact row, top-left under OPS */}
+          <div style={{ position: 'absolute', left: 24, top: 84, display: 'flex', gap: 7 }}>
             {ATTACH_CHIPS.map((c) => (
               <div key={c.id} onTouchStart={() => { controls.current.toggle = c.id; }}
-                style={{ width: 52, height: 34, borderRadius: 6, border: `1px solid ${c.color}88`, background: `${c.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none' }}>{c.label}</div>
+                style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`, boxShadow: `inset 0 1px 0 ${c.color}33`, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}>{c.label}</div>
             ))}
           </div>
         </>
+      )}
+
+      {/* ── Landscape gate: a phone held upright can't play VALOR ── */}
+      {isTouch && portrait && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'radial-gradient(circle at 50% 40%, #0b1018, #05070b)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#cfe0ea', textAlign: 'center', fontFamily: UI_FONT, pointerEvents: 'auto' }}>
+          <div style={{ color: '#37d0e0', animation: 'none' }}><Icon name="rotate" size={64} /></div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 5, marginTop: 22 }}>ROTATE YOUR DEVICE</div>
+          <div style={{ fontSize: 13, color: '#7f8c99', letterSpacing: 3, marginTop: 10 }}>VALOR IS PLAYED IN LANDSCAPE</div>
+        </div>
       )}
     </div>
   );
