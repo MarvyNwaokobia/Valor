@@ -64,32 +64,40 @@ export interface ZoneTheme {
   practicalIntensity: number;
   floorTint: string;
   wallTint: string;
+  /** Gradient sky dome: zenith → horizon colour. This is the actual sky the
+   *  player sees above the compound walls (day blue / evening gold / night). */
+  sky: { top: string; bottom: string };
 }
 
 export const ZONE_THEMES: Record<string, ZoneTheme> = {
-  // Grounded, burned, warm dusk.
+  // ASHFALL — daytime. A real blue sky over the burned village; bright, warm sun.
   ASHFALL: {
-    bg: '#0d1014', fog: ['#191d24', 16, 54], hemi: ['#9fb4c8', '#33291f', 0.62],
-    sun: { color: '#ffeede', intensity: 1.45 }, fill: { color: '#7d97bd', intensity: 0.34 },
-    ambient: 0.32, practical: '#ffd0a0', practicalIntensity: 2.2, floorTint: '#a49a8d', wallTint: '#9c9084',
+    bg: '#aec6de', fog: ['#c2d2e2', 34, 96], hemi: ['#bcd6f0', '#6a5a42', 0.95],
+    sun: { color: '#fff3e0', intensity: 2.5 }, fill: { color: '#8fb0d8', intensity: 0.5 },
+    ambient: 0.6, practical: '#ffd0a0', practicalIntensity: 1.1, floorTint: '#b3a898', wallTint: '#ac9f90',
+    sky: { top: '#3f7ec9', bottom: '#cbd9e4' },
   },
-  // Colder, cleaner, institutional — a training compound.
+  // PROVING GROUND — golden-hour evening. Low warm sun, cool sky opposite it.
   'PROVING GROUND': {
-    bg: '#0c1116', fog: ['#121a22', 18, 60], hemi: ['#b3c6d8', '#282f36', 0.66],
-    sun: { color: '#e6f0ff', intensity: 1.5 }, fill: { color: '#6a8cb4', intensity: 0.42 },
-    ambient: 0.34, practical: '#8fc8e6', practicalIntensity: 2.4, floorTint: '#949aa4', wallTint: '#8d949e',
+    bg: '#c68a54', fog: ['#b67c4c', 30, 86], hemi: ['#d8b489', '#3a3026', 0.78],
+    sun: { color: '#ffb066', intensity: 1.8 }, fill: { color: '#6f86b6', intensity: 0.46 },
+    ambient: 0.44, practical: '#ffc59a', practicalIntensity: 1.7, floorTint: '#a29683', wallTint: '#9a8d7e',
+    sky: { top: '#5566a4', bottom: '#e2a05e' },
   },
-  // The dark place: near-black, a cold violet wash — the NVG world (kept dim on purpose).
+  // THE RIFT — night, but a readable night: deep blue moonlight, not pitch black.
+  // NVG lifts it further; only the blackout op leans all the way into the dark.
   'THE RIFT': {
-    bg: '#05070c', fog: ['#080d16', 10, 34], hemi: ['#44597a', '#0c101a', 0.3],
-    sun: { color: '#6a8cc0', intensity: 0.6 }, fill: { color: '#7a55ff', intensity: 0.4 },
-    ambient: 0.11, practical: '#9a6bff', practicalIntensity: 1.7, floorTint: '#54545f', wallTint: '#4c4e58',
+    bg: '#0d1626', fog: ['#101c34', 18, 58], hemi: ['#617fb2', '#10131e', 0.46],
+    sun: { color: '#93aade', intensity: 1.0 }, fill: { color: '#6a55d0', intensity: 0.5 },
+    ambient: 0.24, practical: '#9a6bff', practicalIntensity: 2.2, floorTint: '#5c5c68', wallTint: '#545660',
+    sky: { top: '#0a1122', bottom: '#1e2f4e' },
   },
-  // A stark, red-lit kill-house for the endless mode.
+  // SURVIVAL — a stark, red-lit kill-house for the endless mode.
   SURVIVAL: {
-    bg: '#08070c', fog: ['#100a14', 18, 56], hemi: ['#8a6274', '#1e131a', 0.52],
-    sun: { color: '#ffc3c0', intensity: 1.2 }, fill: { color: '#b45464', intensity: 0.42 },
-    ambient: 0.3, practical: '#ff5a52', practicalIntensity: 2.2, floorTint: '#8a808a', wallTint: '#7e767e',
+    bg: '#1a0f16', fog: ['#20121a', 20, 60], hemi: ['#8a6274', '#1e131a', 0.56],
+    sun: { color: '#ffc3c0', intensity: 1.3 }, fill: { color: '#b45464', intensity: 0.44 },
+    ambient: 0.34, practical: '#ff5a52', practicalIntensity: 2.2, floorTint: '#8a808a', wallTint: '#7e767e',
+    sky: { top: '#1a0e14', bottom: '#3c1a22' },
   },
 };
 
@@ -426,19 +434,22 @@ export function themeForMission(m: Mission): ZoneTheme {
   const n = zoneOps.length;
   const t = n > 1 && k >= 0 ? k / (n - 1) : 0; // 0 at the zone's first op, 1 at its last
   if (t === 0) return base; // brightest op of the zone: leave the tuned anchor untouched
-  const dim = 1 - t * 0.3; // up to -30% key light by the zone's last op
+  // A GENTLE within-zone step (the big time-of-day shift lives in the zone anchors,
+  // so this must never crush a zone to black by its last op).
+  const dim = 1 - t * 0.16; // ≤ -16% key light by the zone's last op
   return {
     ...base,
-    bg: darken(base.bg, 1 - t * 0.35),
-    fog: [darken(base.fog[0], 1 - t * 0.3), base.fog[1] * (1 - t * 0.22), base.fog[2] * (1 - t * 0.22)],
-    hemi: [base.hemi[0], base.hemi[1], base.hemi[2] * dim],
+    bg: darken(base.bg, 1 - t * 0.16),
+    fog: [darken(base.fog[0], 1 - t * 0.16), base.fog[1] * (1 - t * 0.1), base.fog[2] * (1 - t * 0.1)],
+    hemi: [base.hemi[0], base.hemi[1], base.hemi[2] * (1 - t * 0.12)],
     sun: { color: base.sun.color, intensity: base.sun.intensity * dim },
-    fill: { color: base.fill.color, intensity: base.fill.intensity * (1 - t * 0.15) },
-    ambient: base.ambient * (1 - t * 0.34),
+    fill: { color: base.fill.color, intensity: base.fill.intensity * (1 - t * 0.1) },
+    ambient: base.ambient * (1 - t * 0.18),
     practical: base.practical,
-    practicalIntensity: base.practicalIntensity * (1 + t * 0.12), // artificial light matters more as day fades
-    floorTint: darken(base.floorTint, 1 - t * 0.18),
-    wallTint: darken(base.wallTint, 1 - t * 0.18),
+    practicalIntensity: base.practicalIntensity * (1 + t * 0.18), // artificial light matters more as day fades
+    floorTint: darken(base.floorTint, 1 - t * 0.12),
+    wallTint: darken(base.wallTint, 1 - t * 0.12),
+    sky: { top: darken(base.sky.top, 1 - t * 0.18), bottom: darken(base.sky.bottom, 1 - t * 0.14) },
   };
 }
 
