@@ -32,6 +32,35 @@ const SAMPLE_BASE = '/sounds/fps/';
 const RIFLE_FILES = ['rifle_1.mp3', 'rifle_2.mp3', 'rifle_3.mp3'];
 const WALL_FILE = 'impact_wall.mp3';
 
+const clamp = (lo: number, hi: number, v: number) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * How a weapon's real-sample shot is SHAPED from its GunShotAudio profile —
+ * pure so it's testable without a WebAudio graph. Snappier guns (a higher crack
+ * cutoff) pitch up and stay bright; boomy guns pitch down and roll off the top.
+ */
+export function shotShape(profile: GunShotAudio): { rate: number; toneHz: number; gain: number } {
+  return {
+    rate: clamp(0.72, 1.3, 0.78 + ((profile.hpFreq - 500) / 1200) * 0.48),
+    toneHz: 1400 + profile.hpFreq * 3.4,
+    gain: 0.62 + profile.vol * 0.55,
+  };
+}
+
+/** The ambience config for a zone (falls back to Ashfall). Exported for tests. */
+export function zoneAmbience(zone: string): { lp: number; vol: number; drone?: number } {
+  return ZONE_AMB[zone] ?? ZONE_AMB.ASHFALL;
+}
+
+// Per-zone ambience bed: how dark the room tone is (lowpass), how loud, and an
+// optional low drone — the Rift gets an ominous sub hum, Survival a tense one.
+const ZONE_AMB: Record<string, { lp: number; vol: number; drone?: number }> = {
+  ASHFALL: { lp: 520, vol: 0.05 },
+  'PROVING GROUND': { lp: 360, vol: 0.045 },        // colder, quieter, institutional
+  'THE RIFT': { lp: 240, vol: 0.06, drone: 44 },     // the dark place hums under you
+  SURVIVAL: { lp: 620, vol: 0.055, drone: 70 },      // a taut arena bed
+};
+
 export interface FpsAudioStats {
   shots: number;
   impacts: number;
@@ -39,6 +68,7 @@ export interface FpsAudioStats {
   footsteps: number;
   unlocked: boolean;
   samples: number; // real gunshot buffers decoded (0 = still on synth fallback)
+  zone: string;    // the ambience bed currently loaded
 }
 
 export class FpsAudio {
@@ -50,13 +80,16 @@ export class FpsAudio {
   private uiBus!: GainNode;
   private ambBus!: GainNode;
   private ambBaseVol = 0.05;
+  private ambLp: BiquadFilterNode | null = null; // the ambience tone filter (retuned per zone)
+  private drone: OscillatorNode | null = null;   // optional low zone hum (the Rift / Survival)
+  private zone = 'ASHFALL';
 
   // Listener pose (camera), updated each frame.
   private lx = 0;
   private lz = 0;
   private lyaw = 0;
 
-  private stats_: FpsAudioStats = { shots: 0, impacts: 0, reloads: 0, footsteps: 0, unlocked: false, samples: 0 };
+  private stats_: FpsAudioStats = { shots: 0, impacts: 0, reloads: 0, footsteps: 0, unlocked: false, samples: 0, zone: 'ASHFALL' };
 
   // Real gunshot samples, decoded into this context's graph.
   private rifle: AudioBuffer[] = [];
@@ -147,19 +180,47 @@ export class FpsAudio {
     this.ctx = null;
   }
 
-  // ── The player's own gun: a REAL recorded rifle crack, randomised per shot ──
+  // ── The player's own gun: the REAL recorded crack, SHAPED per weapon ──
+  // Every gun is voiced from the one rifle sample plus its own GunShotAudio
+  // profile, so a pistol snaps, an SMG spits fast and thin, the marksman BOOMS,
+  // and the legendary punches — all distinct, no extra downloads.
   shot(profile: GunShotAudio): void {
     const ctx = this.ctx;
     if (!ctx) return;
     if (this.rifle.length === 0) { this.synthShot(profile); return; } // ~1 frame until decoded
+    const now = ctx.currentTime;
     const buf = this.rifle[(Math.random() * this.rifle.length) | 0];
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.playbackRate.value = 0.95 + Math.random() * 0.1; // subtle shot-to-shot variation
-    src.connect(this.gunBus);
-    src.start();
-    this.duck(0.5, 0.14);
+    const shape = shotShape(profile);
+    src.playbackRate.value = shape.rate * (0.98 + Math.random() * 0.04);
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = shape.toneHz; // boomy(500)->3100Hz, smg(1700)->7180Hz
+    const g = ctx.createGain();
+    g.gain.value = shape.gain;           // louder guns hit harder
+    src.connect(tone).connect(g).connect(this.gunBus);
+    src.start(now);
+    this.bodyPunch(profile, now);                       // per-weapon low-end under the crack
+    if (profile.thump) this.sub(112, 34, 0.6, 0.2);     // the big guns get a sub
+    this.duck(0.4 + profile.vol * 0.2, 0.12 + profile.bodyDur);
     this.stats_.shots++;
+  }
+
+  /** The tonal body punch under a shot — its low-end character, per weapon. */
+  private bodyPunch(shot: GunShotAudio, now: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const body = ctx.createOscillator();
+    body.type = 'sine';
+    body.frequency.setValueAtTime(shot.bodyF0, now);
+    body.frequency.exponentialRampToValueAtTime(shot.bodyF1, now + shot.bodyDur);
+    const bg = ctx.createGain();
+    bg.gain.setValueAtTime(0.36 * shot.vol, now);
+    bg.gain.exponentialRampToValueAtTime(0.001, now + shot.bodyDur + 0.01);
+    body.connect(bg).connect(this.gunBus);
+    body.start(now);
+    body.stop(now + shot.bodyDur + 0.02);
   }
 
   /** Synth fallback, used only for the brief window before the samples decode. */
@@ -167,31 +228,19 @@ export class FpsAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
-    const vol = shot.vol;
-
     const crack = ctx.createBufferSource();
     crack.buffer = this.noise(shot.noiseDur);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = shot.hpFreq;
     const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.55 * vol, now);
+    ng.gain.setValueAtTime(0.55 * shot.vol, now);
     ng.gain.exponentialRampToValueAtTime(0.001, now + shot.noiseDur + 0.01);
     crack.connect(hp).connect(ng).connect(this.gunBus);
     crack.start(now);
     crack.stop(now + shot.noiseDur + 0.02);
 
-    const body = ctx.createOscillator();
-    body.type = 'sine';
-    body.frequency.setValueAtTime(shot.bodyF0, now);
-    body.frequency.exponentialRampToValueAtTime(shot.bodyF1, now + shot.bodyDur);
-    const bg = ctx.createGain();
-    bg.gain.setValueAtTime(0.4 * vol, now);
-    bg.gain.exponentialRampToValueAtTime(0.001, now + shot.bodyDur + 0.01);
-    body.connect(bg).connect(this.gunBus);
-    body.start(now);
-    body.stop(now + shot.bodyDur + 0.02);
-
+    this.bodyPunch(shot, now);
     if (shot.thump) this.sub(110, 35, 0.7, 0.2);
     this.duck(0.45, 0.12);
     this.stats_.shots++;
@@ -505,10 +554,50 @@ export class FpsAudio {
     beat(0.24, 0.35);
   }
 
+  /**
+   * Load a zone's ambience bed (Ashfall / Proving Ground / the Rift / Survival).
+   * Retunes the room tone + level and starts/stops the low zone drone. Safe to
+   * call before unlock — the config is applied when the graph is built.
+   */
+  setZone(zone: string): void {
+    this.zone = zone;
+    this.stats_.zone = zone;
+    const cfg = ZONE_AMB[zone] ?? ZONE_AMB.ASHFALL;
+    this.ambBaseVol = cfg.vol;
+    const ctx = this.ctx;
+    if (!ctx) return; // applied by startAmbience() on the next unlock()
+    if (this.ambLp) this.ambLp.frequency.setTargetAtTime(cfg.lp, ctx.currentTime, 0.4);
+    this.ambBus.gain.cancelScheduledValues(ctx.currentTime);
+    this.ambBus.gain.setTargetAtTime(cfg.vol, ctx.currentTime, 0.6);
+    this.setDrone(cfg.drone);
+  }
+
+  /** Start / retune / stop the low zone drone (an ominous sub under the dark). */
+  private setDrone(freq?: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!freq) {
+      if (this.drone) { try { this.drone.stop(); } catch { /* already stopped */ } this.drone = null; }
+      return;
+    }
+    if (!this.drone) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      g.gain.setTargetAtTime(0.5, ctx.currentTime, 0.8); // relative to the already-quiet ambience bus
+      osc.connect(g).connect(this.ambBus);
+      osc.start();
+      this.drone = osc;
+    }
+    this.drone.frequency.setTargetAtTime(freq, ctx.currentTime, 0.5);
+  }
+
   // ── internals ─────────────────────────────────────────────────────────────
   private startAmbience(): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    const cfg = ZONE_AMB[this.zone] ?? ZONE_AMB.ASHFALL;
     const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     let last = 0;
@@ -522,9 +611,11 @@ export class FpsAudio {
     src.loop = true;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 520;
+    lp.frequency.value = cfg.lp;
     src.connect(lp).connect(this.ambBus);
     src.start();
+    this.ambLp = lp;
+    this.setDrone(cfg.drone);
   }
 
   /** Duck the ambience under a loud event, then let it swell back. */
