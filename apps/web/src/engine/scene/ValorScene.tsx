@@ -104,7 +104,18 @@ function touchBtn(color: string, size: number, strong = false): React.CSSPropert
     backdropFilter: 'blur(7px)', WebkitBackdropFilter: 'blur(7px)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     color, fontWeight: 700, letterSpacing: 1, touchAction: 'none', userSelect: 'none', WebkitTapHighlightColor: 'transparent',
+    transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s', willChange: 'transform',
   };
+}
+
+/** Momentary press feedback for a touch button — a quick squish that springs back. */
+function pressFx(el: HTMLElement | null, down: boolean, color: string) {
+  if (!el) return;
+  el.style.transform = down ? 'scale(0.86)' : 'scale(1)';
+  el.style.filter = down ? 'brightness(1.5)' : 'brightness(1)';
+  el.style.boxShadow = down
+    ? `inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 3px ${color}44, 0 8px 20px rgba(0,0,0,.5)`
+    : `inset 0 1px 0 rgba(255,255,255,.22), inset 0 -8px 16px ${color}14, 0 6px 16px rgba(0,0,0,.5)`;
 }
 
 /** A button label: an icon followed by text, vertically centred. */
@@ -1832,6 +1843,7 @@ export function ValorScene({ onOpCleared, startOnBoard }: {
     fireId.current = t.identifier;
     fireLast.current = { x: t.clientX, y: t.clientY };
     controls.current.fire = true;
+    pressFx(e.currentTarget as HTMLElement, true, '#ff6a4d'); // bounce on shoot
   };
   const fireMove = (e: React.TouchEvent) => {
     for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
@@ -1844,8 +1856,15 @@ export function ValorScene({ onOpCleared, startOnBoard }: {
     for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
       fireId.current = null;
       controls.current.fire = false;
+      pressFx(e.currentTarget as HTMLElement, false, '#ff6a4d');
     }
   };
+  // Quick press reaction for the momentary action buttons.
+  const tap = (color: string, run: () => void) => ({
+    onTouchStart: (e: React.TouchEvent) => { pressFx(e.currentTarget as HTMLElement, true, color); run(); },
+    onTouchEnd: (e: React.TouchEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onTouchCancel: (e: React.TouchEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+  });
 
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
   return (
@@ -2023,9 +2042,10 @@ export function ValorScene({ onOpCleared, startOnBoard }: {
       {/* ── Mobile touch controls — glassy, tucked to the corners ── */}
       {isTouch && !selectOpen && !portrait && (
         <>
-          {/* right thumb: drag to aim (aim-assist does the fine targeting) */}
+          {/* drag ANYWHERE below the top strip to aim — over the gun included; the
+              joystick + action buttons sit on top and capture their own touches */}
           <div onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
-            style={{ position: 'absolute', right: 0, top: 52, width: '54%', bottom: 0, touchAction: 'none' }} />
+            style={{ position: 'absolute', left: 0, right: 0, top: 104, bottom: 0, touchAction: 'none' }} />
 
           {/* left thumb: movement stick */}
           <div onTouchStart={joyStart} onTouchMove={joyMove} onTouchEnd={joyEnd} onTouchCancel={joyEnd}
@@ -2037,16 +2057,18 @@ export function ValorScene({ onOpCleared, startOnBoard }: {
           <div onTouchStart={fireStart} onTouchMove={fireMove} onTouchEnd={fireEnd} onTouchCancel={fireEnd}
             style={{ ...touchBtn('#ff6a4d', 82, true), right: 24, bottom: 28 }}><Icon name="crosshair" size={34} /></div>
           {/* ADS (hold) */}
-          <div onTouchStart={() => { controls.current.ads = true; }} onTouchEnd={() => { controls.current.ads = false; }} onTouchCancel={() => { controls.current.ads = false; }}
+          <div onTouchStart={(e) => { pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
+            onTouchEnd={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
+            onTouchCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
             style={{ ...touchBtn('#cfe0ea', 56), right: 116, bottom: 40, fontSize: 11 }}>ADS</div>
           {/* reload */}
-          <div onTouchStart={() => { controls.current.reload = true; }}
+          <div {...tap('#ffb454', () => { controls.current.reload = true; })}
             style={{ ...touchBtn('#ffb454', 46), right: 36, bottom: 118 }}><Icon name="refresh" size={20} /></div>
           {/* swap weapon */}
-          <div onTouchStart={() => { controls.current.swap = true; }}
+          <div {...tap('#5fe0a8', () => { controls.current.swap = true; })}
             style={{ ...touchBtn('#5fe0a8', 46), right: 100, bottom: 124 }}><Icon name="swap" size={20} /></div>
           {/* fire mode */}
-          <div onTouchStart={() => { controls.current.fireMode = true; }}
+          <div {...tap('#8fb8d0', () => { controls.current.fireMode = true; })}
             style={{ ...touchBtn('#8fb8d0', 42), right: 162, bottom: 104 }}><Icon name="firemode" size={18} /></div>
 
           {/* attachment toggles — a compact row, top-left under OPS */}
