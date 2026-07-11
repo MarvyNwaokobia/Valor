@@ -15,10 +15,16 @@ import type { GunId } from '../combat/GunStats';
 
 export interface Objective {
   text: string;
-  kind: 'reach' | 'clear';
+  // reach  — get within range of a point
+  // clear  — kill everyone in a room
+  // defend — hold a point for `holdSecs` while reinforcements keep coming
+  // rescue — reach the hostage (then a following `reach` walks them to extract)
+  kind: 'reach' | 'clear' | 'defend' | 'rescue';
   pos: [number, number];
   room?: number;
   activateRoom?: number;
+  holdSecs?: number;       // defend: seconds to hold the point
+  reinforceRoom?: number;  // defend: the room reinforcements are drawn from (defaults to `room`)
 }
 
 export interface Mission {
@@ -36,6 +42,8 @@ export interface Mission {
   cover: CoverBox[];
   enemies: EnemySpec[];
   objectives: Objective[];
+  hostage?: [number, number]; // a rescue op's VIP start point
+  blackout?: boolean;  // the Rift with NVG jammed — you fight by muzzle-flash
   boss?: boolean;
   survival?: boolean; // endless-wave arena instead of a doorkicker (no objectives)
 }
@@ -186,7 +194,7 @@ const DMR = 'marksman' as GunId;
 const PROTO = 'legendary' as GunId; // the "Valor Prototype" — the finale weapon
 
 export const CAMPAIGN: Mission[] = [
-  // ── Zone 1 · ASHFALL (layout A) ──
+  // ── Zone 1 · ASHFALL (day → dusk; bosses on op 5) ──
   {
     id: 'ash-1', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'BREACH & CLEAR', gun: AR, story: 'You walked out of the fire alive. Ember found your channel. The crew that lit Ashfall is dug into the first compound — go take it back.',
     brief: 'push the compound · clear both rooms · reach extract',
@@ -208,7 +216,36 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(A2_OBJ),
   },
   {
-    id: 'ash-3', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'CINDER', gun: AR, story: "Cinder is the one who lit the match. He's holed up in the last house on the row. Put him down and Ashfall is yours.", boss: true,
+    // ── SIGNATURE (defend) · hold a burning well while the crew counter-attacks ──
+    id: 'ash-3', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'THE WELL', gun: AR, secondary: SMG,
+    story: "Ashfall's only clean water runs under the old well-house. Take it and hold it — the crew will throw everything they have left to take it back.",
+    brief: 'seize the well-house · hold it until the counter-attack breaks',
+    start: A3_START, walls: A3_WALLS, cover: A3_COVER,
+    enemies: [
+      { pos: [-4, 6], room: 1 }, { pos: [4, 5], room: 1 }, { pos: [-2, 3], room: 1 },
+      // room 2 = the reinforcement pool that keeps rushing the well during the hold
+      { pos: [0, -5], room: 2 }, { pos: [-5, -3], room: 2 }, { pos: [5, -4], room: 2 }, { pos: [3, -6.5], room: 2 }, { pos: [-3, -6], room: 2 }, { pos: [-6, -5], room: 2 },
+    ],
+    objectives: [
+      { text: 'BREACH THE WELL-HOUSE', kind: 'reach', pos: [4, 8], activateRoom: 1 },
+      { text: 'CLEAR A FOOTHOLD', kind: 'clear', room: 1, pos: [4, 4], activateRoom: 2 },
+      { text: 'HOLD THE WELL', kind: 'defend', pos: [0, -2], holdSecs: 24, reinforceRoom: 2 },
+      { text: 'FALL BACK TO EXTRACT', kind: 'reach', pos: [4, -13] },
+    ],
+  },
+  {
+    id: 'ash-4', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'SMOKE & ASH', gun: DMR, secondary: SMG,
+    story: 'Cinder torched the granary to cover his retreat to the last house. Cut through the smoke and run his rearguard down before he digs in.',
+    brief: 'push through the smoke · run the rearguard down',
+    start: A_START, walls: A_WALLS, cover: A_COVER,
+    enemies: [
+      { pos: [-4, 4], room: 1 }, { pos: [4, 5], room: 1 }, { pos: [-1, 3], room: 1 }, { pos: [3.5, 2.5], room: 1 }, { pos: [1, 4], room: 1 },
+      { pos: [-5, -4], room: 2 }, { pos: [5, -5], room: 2 }, { pos: [0, -6], room: 2 }, { pos: [-3, -7], room: 2 }, { pos: [4, -2.5], room: 2 }, { pos: [-7, -4], room: 2 },
+    ],
+    objectives: twoRoom(A_OBJ),
+  },
+  {
+    id: 'ash-5', zone: 'ASHFALL', op: 'OPERATION ASHFALL', name: 'CINDER', gun: AR, story: "Cinder is the one who lit the match. He's holed up in the last house on the row. Put him down and Ashfall is yours.", boss: true,
     brief: 'the man who lit the fire is in that room · put him down',
     start: A3_START, walls: A3_WALLS, cover: A3_COVER,
     enemies: [
@@ -218,7 +255,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom({ ...A3_OBJ, clear2: 'ELIMINATE CINDER' }),
   },
 
-  // ── Zone 2 · PROVING GROUND (layout B) ──
+  // ── Zone 2 · PROVING GROUND (cold evening; boss on op 10) ──
   {
     id: 'pg-1', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE HALL', gun: DMR, story: 'Past the ashes lies the Proving Ground — the compound where Valor trained the crew that burned your home. Take the hall, then the vault.', secondary: SMG,
     brief: 'his crew trained here · take the hall, then the vault',
@@ -230,7 +267,48 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom(B_OBJ),
   },
   {
-    id: 'pg-2', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE WARDEN', gun: AR, story: 'The Warden runs the Proving Ground and he will not step aside. Break him and the road to the Rift opens.', boss: true,
+    id: 'pg-2', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE YARD', gun: AR, secondary: SMG,
+    story: 'The training yard sits between the hall and the cells. Clear it fast — the Warden hears gunfire and he starts moving prisoners.',
+    brief: 'clear the yard · they know you are coming',
+    start: A2_START, walls: A2_WALLS, cover: A2_COVER,
+    enemies: [
+      { pos: [-5, 6], room: 1 }, { pos: [5, 5], room: 1 }, { pos: [-2, 4], room: 1 }, { pos: [3, 6], room: 1 }, { pos: [0, 3], room: 1 },
+      { pos: [-7, -2], room: 2 }, { pos: [6, -4], room: 2 }, { pos: [0, -5], room: 2 }, { pos: [-3, -6], room: 2 }, { pos: [4, -2], room: 2 }, { pos: [2, -6], room: 2 },
+    ],
+    objectives: twoRoom(A2_OBJ),
+  },
+  {
+    // ── SIGNATURE (rescue) · pull the informant out of the holding cells ──
+    id: 'pg-3', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE INFORMANT', gun: SMG, secondary: DMR,
+    story: "One of Valor's own wants out, and he knows the way into the Rift. He's held in the back cells. Get to him and walk him out alive.",
+    brief: 'reach the informant · escort him to extract · keep him alive',
+    start: B_START, walls: B_WALLS, cover: B_COVER,
+    hostage: [0, -13],
+    enemies: [
+      { pos: [-5, 4], room: 1 }, { pos: [5, 3], room: 1 }, { pos: [-2, 0], room: 1 }, { pos: [3, -2], room: 1 },
+      { pos: [-5, -10], room: 2 }, { pos: [5, -11], room: 2 }, { pos: [-3, -15], room: 2 }, { pos: [5, -14], room: 2 },
+    ],
+    objectives: [
+      { text: 'BREACH THE BLOCK', kind: 'reach', pos: B_OBJ.breach, activateRoom: 1 },
+      { text: 'CLEAR THE HALL', kind: 'clear', room: 1, pos: [B_OBJ.breach[0], B_OBJ.breach[1] - 4] },
+      { text: 'PUSH TO THE CELLS', kind: 'reach', pos: B_OBJ.push, activateRoom: 2 },
+      { text: 'REACH THE INFORMANT', kind: 'rescue', pos: [0, -13] },
+      { text: 'ESCORT HIM TO EXTRACT', kind: 'reach', pos: B_OBJ.extract },
+    ],
+  },
+  {
+    id: 'pg-4', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE ARMORY', gun: DMR, secondary: AR,
+    story: "The informant's word is good: the armory feeds the whole compound. Burn it and the Warden fights the last round with what he has on him.",
+    brief: 'take the armory · cut off his resupply',
+    start: A_START, walls: A_WALLS, cover: A_COVER,
+    enemies: [
+      { pos: [-4, 4], room: 1 }, { pos: [4, 5], room: 1 }, { pos: [-1, 3], room: 1 }, { pos: [3.5, 2.5], room: 1 }, { pos: [1, 4], room: 1 }, { pos: [-6, 3], room: 1 },
+      { pos: [-5, -4], room: 2 }, { pos: [5, -5], room: 2 }, { pos: [0, -6], room: 2 }, { pos: [-3, -7], room: 2 }, { pos: [4, -2.5], room: 2 },
+    ],
+    objectives: twoRoom(A_OBJ),
+  },
+  {
+    id: 'pg-5', zone: 'PROVING GROUND', op: 'OPERATION PROVING GROUND', name: 'THE WARDEN', gun: AR, story: 'The Warden runs the Proving Ground and he will not step aside. Break him and the road to the Rift opens.', boss: true,
     brief: 'the Warden runs this place · he will not step aside',
     start: B_START, walls: B_WALLS, cover: B_COVER,
     enemies: [
@@ -240,7 +318,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: twoRoom({ ...B_OBJ, clear2: 'ELIMINATE THE WARDEN' }),
   },
 
-  // ── Zone 3 · THE RIFT (layout C) — the dark place, and where Valor waits ──
+  // ── Zone 3 · THE RIFT (full night, NVG; boss on op 15) ──
   {
     id: 'rift-1', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'INTO THE DARK', gun: SMG, story: "Valor's channel goes quiet past here. This is the Rift — the dark place he disappears into. Push in and find him.", attachments: ['nvg'],
     brief: 'his channel goes quiet here · push through and find him',
@@ -250,6 +328,40 @@ export const CAMPAIGN: Mission[] = [
       { pos: [-5, -10], room: 2 }, { pos: [4, -11], room: 2 }, { pos: [0, -13], room: 2 }, { pos: [-2, -9], room: 2 },
     ],
     objectives: twoRoom(C_OBJ),
+  },
+  {
+    id: 'rift-2', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'DEEPER', gun: SMG, secondary: AR, attachments: ['nvg'],
+    story: 'The tunnels open into a drowned hall. Valor is letting you come to him — every step in is a step you will have to fight back out of.',
+    brief: 'the hall runs deep · clear it in the dark',
+    start: B_START, walls: B_WALLS, cover: B_COVER,
+    enemies: [
+      { pos: [-5, 4], room: 1 }, { pos: [5, 3], room: 1 }, { pos: [-2, 0], room: 1 }, { pos: [3, -2], room: 1 }, { pos: [0, 2], room: 1 },
+      { pos: [-5, -10], room: 2 }, { pos: [5, -11], room: 2 }, { pos: [0, -13], room: 2 }, { pos: [-3, -15], room: 2 }, { pos: [5, -14], room: 2 },
+    ],
+    objectives: twoRoom(B_OBJ),
+  },
+  {
+    // ── SIGNATURE (blackout) · the Rift kills your NVG; fight by muzzle-flash ──
+    id: 'rift-3', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'LIGHTS OUT', gun: SMG, secondary: AR, blackout: true,
+    story: 'Whatever the Rift is, it eats light. Your goggles die at the threshold. There is no seeing your way through this one — only the flash of your own gun.',
+    brief: 'NVG is jammed · clear the dark by muzzle-flash alone',
+    start: C_START, walls: C_WALLS, cover: C_COVER,
+    enemies: [
+      { pos: [-4, 2], room: 1 }, { pos: [4, 1], room: 1 }, { pos: [-1, 0], room: 1 }, { pos: [2, -3], room: 1 },
+      { pos: [-5, -10], room: 2 }, { pos: [4, -11], room: 2 }, { pos: [0, -13], room: 2 }, { pos: [-2, -9], room: 2 },
+    ],
+    objectives: twoRoom(C_OBJ),
+  },
+  {
+    id: 'rift-4', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'THE THRESHOLD', gun: AR, secondary: SMG, attachments: ['nvg'],
+    story: 'His guard closes ranks at the last door. Break the threshold and there is nothing left between you and the voice on the radio.',
+    brief: 'break his last guard · the door to Valor is beyond',
+    start: A2_START, walls: A2_WALLS, cover: A2_COVER,
+    enemies: [
+      { pos: [-5, 6], room: 1 }, { pos: [5, 5], room: 1 }, { pos: [-2, 4], room: 1 }, { pos: [3, 6], room: 1 }, { pos: [0, 3], room: 1 },
+      { pos: [-7, -2], room: 2 }, { pos: [6, -4], room: 2 }, { pos: [0, -5], room: 2 }, { pos: [-3, -6], room: 2 }, { pos: [4, -2], room: 2 }, { pos: [2, -6], room: 2 },
+    ],
+    objectives: twoRoom(A2_OBJ),
   },
   {
     id: 'rift-valor', zone: 'THE RIFT', op: 'OPERATION RIFT', name: 'VALOR', gun: PROTO, story: 'The voice that has been on your radio the whole way finally has a face and a body. This is the last room. End it.', secondary: AR, attachments: ['nvg'], boss: true,
@@ -286,6 +398,49 @@ export const SURVIVAL_MISSION: Mission = {
   gun: AR, secondary: SMG, survival: true,
   start: [0, 0], walls: SURV_WALLS, cover: SURV_COVER, enemies: SURV_ENEMIES, objectives: [],
 };
+
+// ── A1 · the day→evening→night arc ──────────────────────────────────────────
+// The three zones set the broad time band by their colour identity (Ashfall warm
+// day → Proving Ground cold evening → the Rift full night). Within a zone, each
+// successive op steps the light DOWN — the sun dims, fog tightens, tints darken,
+// and the practicals relatively rise as daylight fades. Pure data off a mission's
+// position in its zone, so it scales as each zone grows toward five ops.
+function hexToRgb(h: string): [number, number, number] {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+/** Scale a hex colour's brightness by `f` (0..1). */
+function darken(hex: string, f: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHex(r * f, g * f, b * f);
+}
+
+/** The effective theme for an op: its zone base, dimmed by how deep it sits in the zone. */
+export function themeForMission(m: Mission): ZoneTheme {
+  const base = ZONE_THEMES[m.zone] ?? ZONE_THEMES.ASHFALL;
+  const zoneOps = CAMPAIGN.filter((x) => x.zone === m.zone);
+  const k = zoneOps.indexOf(m);
+  const n = zoneOps.length;
+  const t = n > 1 && k >= 0 ? k / (n - 1) : 0; // 0 at the zone's first op, 1 at its last
+  if (t === 0) return base; // brightest op of the zone: leave the tuned anchor untouched
+  const dim = 1 - t * 0.3; // up to -30% key light by the zone's last op
+  return {
+    ...base,
+    bg: darken(base.bg, 1 - t * 0.35),
+    fog: [darken(base.fog[0], 1 - t * 0.3), base.fog[1] * (1 - t * 0.22), base.fog[2] * (1 - t * 0.22)],
+    hemi: [base.hemi[0], base.hemi[1], base.hemi[2] * dim],
+    sun: { color: base.sun.color, intensity: base.sun.intensity * dim },
+    fill: { color: base.fill.color, intensity: base.fill.intensity * (1 - t * 0.15) },
+    ambient: base.ambient * (1 - t * 0.34),
+    practical: base.practical,
+    practicalIntensity: base.practicalIntensity * (1 + t * 0.12), // artificial light matters more as day fades
+    floorTint: darken(base.floorTint, 1 - t * 0.18),
+    wallTint: darken(base.wallTint, 1 - t * 0.18),
+  };
+}
 
 export const CAMPAIGN_KEY = 'valor_mission';   // the op you're currently on
 export const PROGRESS_KEY = 'valor_progress';  // the furthest op you've unlocked (soft gating)

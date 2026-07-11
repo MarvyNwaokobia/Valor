@@ -554,3 +554,66 @@ describe('FpsSim survival waves', () => {
     expect(sim.aliveCount()).toBe(10);
   });
 });
+
+// ── A2: the varied objective verbs (defend reinforcements, rescue hostage) ──
+describe('FpsSim defend reinforcements', () => {
+  function defendSim() {
+    return new FpsSim({
+      gunId: 'assault_rifle', respawnEnabled: false, rng: () => 0.5,
+      enemies: [
+        { pos: [-1, -6], room: 1 }, { pos: [1, -6], room: 1 },   // front foothold
+        { pos: [-2, -10], room: 2 }, { pos: [2, -10], room: 2 }, // reinforcement pool
+      ],
+    });
+  }
+
+  it('reinforce revives ONLY dead enemies of the named room', () => {
+    const sim = defendSim();
+    for (const e of sim.getEnemies()) if (e.room === 2) { e.alive = false; e.hp = 0; }
+    const n = sim.reinforce(2, 5);
+    expect(n).toBe(2);                                             // both room-2 slots, nothing more
+    const room2 = sim.getEnemies().filter((e) => e.room === 2);
+    expect(room2.every((e) => e.alive && e.active)).toBe(true);
+    // room-1 enemies were alive and untouched
+    expect(sim.getEnemies().filter((e) => e.room === 1).every((e) => e.alive)).toBe(true);
+  });
+
+  it('reinforce leaves a still-living room alone (nothing to revive)', () => {
+    const sim = defendSim();
+    expect(sim.reinforce(2, 5)).toBe(0);
+    expect(sim.aliveCount()).toBe(4);
+  });
+});
+
+describe('FpsSim rescue hostage', () => {
+  function rescueSim() {
+    return new FpsSim({ gunId: 'assault_rifle', enemies: [{ pos: [0, -12] }], hostage: [0, -8], respawnEnabled: false, rng: () => 0.5 });
+  }
+  const at = (x: number, z: number): FpsInput => input({ firing: false, origin: [x, 1.6, z], dir: FWD });
+
+  it('the hostage waits until rescued, then trails the player', () => {
+    const sim = rescueSim();
+    const start = { ...sim.snapshot().hostage! };
+    // not rescued: stays put even as the player moves around
+    sim.step(0.1, at(3, -8));
+    expect(sim.snapshot().hostage!.x).toBeCloseTo(start.x, 5);
+    expect(sim.snapshot().hostage!.rescued).toBe(false);
+    // rescue, then walk away — the hostage closes the gap and follows
+    sim.rescueHostage();
+    expect(sim.snapshot().hostage!.rescued).toBe(true);
+    for (let i = 0; i < 60; i++) sim.step(0.1, at(0, 6)); // player walks toward extract
+    const h = sim.snapshot().hostage!;
+    expect(h.z).toBeGreaterThan(start.z);              // moved toward the player's new side
+    expect(Math.hypot(h.x - 0, h.z - 6)).toBeLessThan(3); // trailing within the follow gap
+  });
+
+  it('a reset un-rescues the hostage and returns them to the mark', () => {
+    const sim = rescueSim();
+    sim.rescueHostage();
+    for (let i = 0; i < 20; i++) sim.step(0.1, at(0, 6));
+    sim.resetEncounter();
+    const h = sim.snapshot().hostage!;
+    expect(h.rescued).toBe(false);
+    expect([h.x, h.z]).toEqual([0, -8]);
+  });
+});

@@ -133,10 +133,21 @@ export interface FpsSimOptions {
   attachments?: Attachment[];
   enemies: EnemySpec[];
   cover?: CoverBox[];
+  /** A rescue op's hostage/VIP start point — they wait here until you reach them,
+   *  then follow you out. Absent on ordinary ops. */
+  hostage?: [number, number];
   /** Injectable RNG for deterministic tests (default Math.random). */
   rng?: () => number;
   /** Sandbox respawns cleared enemies; a mission does not (default true). */
   respawnEnabled?: boolean;
+}
+
+/** A rescue op's hostage: a non-combatant who waits, then trails the player out. */
+export interface Hostage {
+  x: number;
+  z: number;
+  spawn: [number, number];
+  rescued: boolean;
 }
 
 // ── Tunables (feel levers — tune these with Marvy against the muted graybox) ──
@@ -244,6 +255,11 @@ export class FpsSim {
   private cover: CoverBox[];
   private rng: () => number;
   private respawnEnabled: boolean;
+  /** The rescue objective's hostage, or null on ordinary ops. */
+  hostage: Hostage | null = null;
+  /** The player's ground position, cached each step (hostage-follow, defend proximity). */
+  private playerX = 0;
+  private playerZ = 0;
 
   time = 0;
   reloading = false;
@@ -287,7 +303,34 @@ export class FpsSim {
     this.cover = opts.cover ?? [];
     this.rng = opts.rng ?? Math.random;
     this.respawnEnabled = opts.respawnEnabled ?? true;
+    if (opts.hostage) this.hostage = { x: opts.hostage[0], z: opts.hostage[1], spawn: [opts.hostage[0], opts.hostage[1]], rescued: false };
     for (const e of opts.enemies) this.addEnemy(e);
+  }
+
+  /** Mark the hostage reached — from now on they trail the player to extract. */
+  rescueHostage(): void {
+    if (this.hostage) this.hostage.rescued = true;
+  }
+
+  /** Defend/hold pressure: revive up to `count` DEAD enemies of `room` at their
+   *  spawns and wake them, so a held point keeps getting tested. Returns how many. */
+  reinforce(room: number, count: number, hpMult = 1): number {
+    let n = 0;
+    for (let i = 0; i < this.enemies.length && n < count; i++) {
+      const e = this.enemies[i];
+      if (e.alive || e.room !== room) continue;
+      const [sx, sz] = this.spawns[i];
+      e.x = sx; e.z = sz;
+      e.maxHp = Math.max(1, Math.round((e.boss ? e.maxHp : FPS_TUNING.DEFAULT_ENEMY_HP) * hpMult));
+      e.hp = e.maxHp;
+      e.alive = true; e.deadAt = 0; e.active = true; e.token = false;
+      e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
+      e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
+      e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+      this.events.push({ kind: 'spawn', enemyId: e.id });
+      n++;
+    }
+    return n;
   }
 
   private addEnemy(spec: EnemySpec): FpsEnemy {
@@ -428,8 +471,24 @@ export class FpsSim {
       }
     }
 
+    this.playerX = input.origin[0];
+    this.playerZ = input.origin[2];
+
     // Enemies think, take cover, telegraph and shoot back (slice 3).
     this.updateEnemies(dt, input, produced);
+
+    // A rescued hostage trails a step behind the player toward extract.
+    if (this.hostage && this.hostage.rescued) {
+      const h = this.hostage;
+      const dx = this.playerX - h.x, dz = this.playerZ - h.z;
+      const d = Math.hypot(dx, dz);
+      const FOLLOW_GAP = 2.0, SPEED = 3.2;
+      if (d > FOLLOW_GAP) {
+        const step = Math.min(d - FOLLOW_GAP, SPEED * dt);
+        h.x += (dx / d) * step;
+        h.z += (dz / d) * step;
+      }
+    }
 
     this.playerEyeY = input.crouched ? 1.02 : 1.6;
 
@@ -747,6 +806,7 @@ export class FpsSim {
     this.gun = getGun(this.loadout[0]);
     this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
     this.reloading = false;
+    if (this.hostage) { this.hostage.x = this.hostage.spawn[0]; this.hostage.z = this.hostage.spawn[1]; this.hostage.rescued = false; }
     for (let i = 0; i < this.enemies.length; i++) {
       const e = this.enemies[i];
       const [sx, sz] = this.spawns[i];
@@ -832,6 +892,7 @@ export class FpsSim {
         ai: e.ai, ducking: e.ducking, facing: e.facing, token: e.token, room: e.room, active: e.active, boss: e.boss, phase: e.phase,
       })),
       aliveCount: this.aliveCount(),
+      hostage: this.hostage ? { x: this.hostage.x, z: this.hostage.z, rescued: this.hostage.rescued } : null,
       stats: { shotsFired: this.shotsFired, hits: this.hits, headshots: this.headshots, kills: this.kills, enemyShots: this.enemyShots },
       lastHitPart: this.lastHitPart,
       hitParts: { ...this.hitParts },

@@ -18,7 +18,7 @@ import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
-import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
+import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -227,12 +227,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const GUN = mission.gun;
   const LOADOUT = useMemo<GunId[]>(() => [mission.gun, mission.secondary ?? 'sidearm'], [mission]);
   const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
-  const theme = ZONE_THEMES[mission.zone] ?? ZONE_THEMES.ASHFALL;
+  const theme = themeForMission(mission);
   const isFinale = mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
   const survival = !!mission.survival;
+  const blackout = !!mission.blackout; // the Rift with NVG jammed — fight by muzzle-flash
 
   const sim = useMemo(() => {
-    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, enemies: ENEMIES, cover: COLLIDERS, respawnEnabled: false });
+    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
     s.setAllActive(false); // rooms start dormant; breaching each one wakes it
     return s;
   }, []);
@@ -271,6 +272,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const objective = useRef(0);
   const briefingUntil = useRef(3.5);
   const completeAt = useRef(-99);
+  // varied objectives (A2): defend hold timer + reinforcement cadence
+  const holdProgress = useRef(0);       // sim-seconds held on a defend point
+  const lastReinforceAt = useRef(0);    // sim-time of the last reinforcement drop
+  const hostageRef = useRef<THREE.Group>(null);
   // ── Survival wave state ──
   const survInit = useRef(false);
   const survWave = useRef(0);              // current wave (0 before the first)
@@ -679,8 +684,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
 
     // ── Attachments: night vision, optic zoom, flashlight, laser ──
     cam.getWorldDirection(fwd);
-    // NVG lifts the exposure (and the HUD tints green) so the dark reads.
-    nvgAmt.current += ((sim.hasAttachment('nvg') ? 1 : 0) - nvgAmt.current) * Math.min(1, dt * 8);
+    // NVG lifts the exposure (and the HUD tints green) so the dark reads — unless
+    // this op is a BLACKOUT (NVG jammed), where the dark is the whole point.
+    nvgAmt.current += (((sim.hasAttachment('nvg') && !blackout) ? 1 : 0) - nvgAmt.current) * Math.min(1, dt * 8);
     gl.toneMappingExposure = 1.32 + nvgAmt.current * 1.7; // brighter base; NVG lifts further
     // Optic deepens the ADS zoom (narrower FOV); no optic = a gentler aim zoom.
     const fovTarget = THREE.MathUtils.lerp(55, sim.hasAttachment('optic') ? 30 : 45, adsCur.current);
@@ -950,23 +956,46 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
       return;
     }
 
-    // ── Mission flow (slice 4): breach → clear → advance → extract ──
+    // ── Mission flow (slice 4 + A2 verbs): breach → clear/defend/rescue → extract ──
     const obj = OBJECTIVES[objective.current];
     if (obj && snap.playerAlive && completeAt.current < 0 && now > briefingUntil.current) {
-      const done = obj.kind === 'reach'
-        ? Math.hypot(pos.current.x - obj.pos[0], pos.current.z - obj.pos[1]) < REACH_RADIUS
-        : sim.roomAlive(obj.room ?? 0) === 0;
+      const nearObj = Math.hypot(pos.current.x - obj.pos[0], pos.current.z - obj.pos[1]) < REACH_RADIUS;
+      let done = false;
+      if (obj.kind === 'reach') {
+        done = nearObj;
+      } else if (obj.kind === 'clear') {
+        done = sim.roomAlive(obj.room ?? 0) === 0;
+      } else if (obj.kind === 'defend') {
+        // Hold the point: bank time only while you're standing on it and alive.
+        if (nearObj) holdProgress.current += dt;
+        const hold = obj.holdSecs ?? 20;
+        // Keep the pressure up — trickle reinforcements in until the clock runs out.
+        if (holdProgress.current < hold && sim.time - lastReinforceAt.current > 3.5) {
+          lastReinforceAt.current = sim.time;
+          sim.reinforce(obj.reinforceRoom ?? obj.room ?? 0, 2);
+        }
+        done = holdProgress.current >= hold;
+      } else if (obj.kind === 'rescue') {
+        // Reach the hostage; from here they trail you to extract.
+        const h = snap.hostage;
+        const nearHostage = h ? Math.hypot(pos.current.x - h.x, pos.current.z - h.z) < REACH_RADIUS : nearObj;
+        if (nearHostage) sim.rescueHostage();
+        done = nearHostage;
+      }
       if (done) {
+        holdProgress.current = 0; lastReinforceAt.current = 0;
         if (obj.activateRoom) sim.setRoomActive(obj.activateRoom, true); // breach wakes the room
-        // story beats keyed to the objective just completed
+        // story beats keyed to the objective just completed. The "troops cleared"
+        // and push-in lines are doorkicker beats — only fire them after a real room
+        // clear, so a defend/rescue op doesn't announce "Four down".
         if (objective.current === 0) say('opBreach');
-        else if (objective.current === 1) {
+        else if (objective.current === 1 && obj.kind === 'clear') {
           say('troopsCleared');
           // Valor first answers the channel ONCE in the whole campaign.
           try {
             if (!window.localStorage.getItem('valor_heard')) { say('valorFirstWord'); window.localStorage.setItem('valor_heard', '1'); }
           } catch { say('valorFirstWord'); }
-        } else if (objective.current === 2) {
+        } else if (objective.current === 2 && obj.kind === 'clear') {
           say(isFinale ? 'valorReveal' : 'opPushIn'); // the finale: he's finally in the room
         }
         objective.current++;
@@ -997,6 +1026,19 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         if (beacon) beacon.rotation.y += dt * 2;
       } else {
         waypointRef.current.visible = false;
+      }
+    }
+    // the hostage: waits at the mark, then trails you out; its marker pulses
+    if (hostageRef.current) {
+      const h = snap.hostage;
+      if (h) {
+        hostageRef.current.visible = true;
+        hostageRef.current.position.set(h.x, 0, h.z);
+        hostageRef.current.rotation.y = Math.atan2(pos.current.x - h.x, pos.current.z - h.z);
+        const marker = hostageRef.current.children[hostageRef.current.children.length - 1] as THREE.Mesh | undefined;
+        if (marker) { marker.rotation.y += dt * 2.4; marker.position.y = 2.15 + Math.sin(now * 3) * 0.06; }
+      } else {
+        hostageRef.current.visible = false;
       }
     }
     // DOWN or COMPLETE → restart the operation after a beat
@@ -1184,9 +1226,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
           h.objText.textContent = survWave.current === 0 ? `FIRST WAVE IN ${t}` : `WAVE ${survWave.current + 1} IN ${t}`;
         }
       } else if (objN && completeAt.current < 0 && sim.time > briefingUntil.current - 0.5) {
-        const d = Math.round(Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]));
         h.objText.style.opacity = '1';
-        h.objText.textContent = `OBJECTIVE  ·  ${objN.text}  ·  ${d}m`;
+        if (objN.kind === 'defend') {
+          // a hold objective counts down the seconds you still owe on the point
+          const left = Math.max(0, Math.ceil((objN.holdSecs ?? 20) - holdProgress.current));
+          const onPoint = Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]) < REACH_RADIUS;
+          h.objText.textContent = `OBJECTIVE  ·  ${objN.text}  ·  ${onPoint ? `HOLD ${left}s` : 'GET TO THE POINT'}`;
+        } else {
+          const d = Math.round(Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]));
+          h.objText.textContent = `OBJECTIVE  ·  ${objN.text}  ·  ${d}m`;
+        }
       } else {
         h.objText.style.opacity = '0';
       }
@@ -1307,6 +1356,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     sim.resetEncounter();
     sim.setAllActive(false);
     objective.current = 0;
+    holdProgress.current = 0; lastReinforceAt.current = 0;
     briefingUntil.current = sim.time + 3.5;
     completeAt.current = -99;
     advanced.current = false;
@@ -1397,6 +1447,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         <mesh position={[0, 1.15, 0]}>
           <cylinderGeometry args={[0.05, 0.05, 2.3, 6]} />
           <meshBasicMaterial color="#37d0e0" transparent opacity={0.32} />
+        </mesh>
+      </group>
+
+      {/* the hostage: a distinct unarmed friendly, marked cyan so it never reads
+          as a target. Shown only on rescue ops; positioned each frame from the sim. */}
+      <group ref={hostageRef} visible={false}>
+        <mesh position={[0, 1.18, 0]} castShadow>
+          <capsuleGeometry args={[0.22, 0.7, 4, 8]} />
+          <meshStandardMaterial color="#8fdce6" emissive="#1c6c78" emissiveIntensity={0.5} roughness={0.7} />
+        </mesh>
+        <mesh position={[0, 1.72, 0]} castShadow>
+          <sphereGeometry args={[0.17, 12, 12]} />
+          <meshStandardMaterial color="#cfeef2" emissive="#2a7c88" emissiveIntensity={0.4} roughness={0.8} />
+        </mesh>
+        {/* floating friendly marker (downward chevron) */}
+        <mesh position={[0, 2.15, 0]} rotation={[Math.PI, 0, 0]}>
+          <coneGeometry args={[0.2, 0.32, 4]} />
+          <meshBasicMaterial color="#37e0c0" transparent opacity={0.92} />
         </mesh>
       </group>
 

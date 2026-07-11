@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CAMPAIGN, ZONE_THEMES, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp } from './campaign';
+import { CAMPAIGN, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp } from './campaign';
 import type { CoverBox } from './index';
 
 // A spawned enemy / a standing objective marker must not overlap a wall or a
@@ -12,11 +12,25 @@ function inside(px: number, pz: number, b: CoverBox, margin: number): boolean {
 }
 
 describe('campaign geometry', () => {
-  it('has 7 missions across 3 themed zones', () => {
-    expect(CAMPAIGN).toHaveLength(7);
-    const zones = new Set(CAMPAIGN.map((m) => m.zone));
-    expect(zones).toEqual(new Set(['ASHFALL', 'PROVING GROUND', 'THE RIFT']));
-    for (const z of zones) expect(ZONE_THEMES[z]).toBeDefined();
+  it('has 15 missions, 5 per zone, across 3 themed zones', () => {
+    expect(CAMPAIGN).toHaveLength(15);
+    const order = ['ASHFALL', 'PROVING GROUND', 'THE RIFT'];
+    expect(Array.from(new Set(CAMPAIGN.map((m) => m.zone)))).toEqual(order);
+    for (const z of order) {
+      expect(CAMPAIGN.filter((m) => m.zone === z)).toHaveLength(5);
+      expect(ZONE_THEMES[z]).toBeDefined();
+    }
+  });
+
+  it('puts a boss on op 5, 10 and 15 and nowhere else', () => {
+    expect(CAMPAIGN.map((m, i) => (m.boss ? i : -1)).filter((i) => i >= 0)).toEqual([4, 9, 14]);
+  });
+
+  it('gives each zone exactly one signature non-doorkicker op', () => {
+    const verbs = (kind: string) => CAMPAIGN.filter((m) => m.objectives.some((o) => o.kind === kind));
+    expect(verbs('defend').map((m) => m.zone)).toEqual(['ASHFALL']);
+    expect(verbs('rescue').map((m) => m.zone)).toEqual(['PROVING GROUND']);
+    expect(CAMPAIGN.filter((m) => m.blackout).map((m) => m.zone)).toEqual(['THE RIFT']);
   });
 
   for (const m of CAMPAIGN) {
@@ -46,14 +60,50 @@ describe('campaign geometry', () => {
         expect(bosses).toHaveLength(m.boss ? 1 : 0);
       });
 
-      it('routes objectives through the doorkicker sequence', () => {
-        // reach → clear(room1) → reach → clear(room2) → reach
-        expect(m.objectives.map((o) => o.kind)).toEqual(['reach', 'clear', 'reach', 'clear', 'reach']);
+      it('opens on a breach and ends on extract, using only valid verbs', () => {
+        const kinds = m.objectives.map((o) => o.kind);
+        expect(kinds[0], 'first objective is a breach reach').toBe('reach');
+        expect(kinds[kinds.length - 1], 'last objective is an extract reach').toBe('reach');
+        for (const k of kinds) expect(['reach', 'clear', 'defend', 'rescue']).toContain(k);
         expect(m.enemies.some((e) => e.room === 1)).toBe(true);
         expect(m.enemies.some((e) => e.room === 2)).toBe(true);
       });
+
+      it('defend objectives declare a positive hold time and a reinforcement pool', () => {
+        for (const o of m.objectives) {
+          if (o.kind !== 'defend') continue;
+          expect(o.holdSecs && o.holdSecs > 0, `${o.text} needs holdSecs`).toBeTruthy();
+          const room = o.reinforceRoom ?? o.room ?? 0;
+          expect(m.enemies.some((e) => e.room === room), `${o.text} has no reinforcements`).toBe(true);
+        }
+      });
+
+      it('a rescue objective iff the op carries a hostage', () => {
+        expect(m.objectives.some((o) => o.kind === 'rescue')).toBe(!!m.hostage);
+        const hostage = m.hostage;
+        if (hostage) {
+          const hit = m.walls.find((b) => inside(hostage[0], hostage[1], b, CLEAR));
+          expect(hit, `hostage at [${hostage}] is inside a wall`).toBeUndefined();
+        }
+      });
     });
   }
+});
+
+describe('day → night arc (A1)', () => {
+  it('the first op of a zone keeps the tuned anchor theme', () => {
+    const ash1 = CAMPAIGN.find((m) => m.id === 'ash-1')!;
+    expect(themeForMission(ash1)).toEqual(ZONE_THEMES.ASHFALL);
+  });
+
+  it('later ops in a zone step the key light down and the ambient darker', () => {
+    const zoneOps = CAMPAIGN.filter((m) => m.zone === 'ASHFALL');
+    const first = themeForMission(zoneOps[0]);
+    const last = themeForMission(zoneOps[zoneOps.length - 1]);
+    expect(last.sun.intensity).toBeLessThan(first.sun.intensity);
+    expect(last.ambient).toBeLessThan(first.ambient);
+    expect(last.practicalIntensity).toBeGreaterThan(first.practicalIntensity); // lamps matter more at dusk
+  });
 });
 
 describe('debrief', () => {
