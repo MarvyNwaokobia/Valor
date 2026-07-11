@@ -265,10 +265,38 @@ export class FpsAudio {
     if (killed) this.tick(1600, 0.14, 0.05);
   }
 
+  /** A meaty mechanical knock (mag/bolt) — noise through a low bandpass with body. */
+  private clack(freq: number, vol: number, delay: number, dur = 0.08): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise(dur + 0.02);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = 2.2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    src.connect(bp).connect(g).connect(this.uiBus);
+    src.start(now);
+    src.stop(now + dur + 0.02);
+  }
+
+  /** Reload BEGIN: mag-release click, then the magazine sliding/dropping out. */
   reloadStart(): void {
-    this.tick(2600, 0.13, 0);
-    this.tick(1800, 0.1, 0.09);
+    this.tick(2200, 0.10, 0);          // release button
+    this.clack(430, 0.15, 0.07, 0.10); // mag unseats
+    this.clack(300, 0.11, 0.17, 0.13); // mag drops clear
     this.stats_.reloads++;
+  }
+
+  /** Reload COMPLETE: fresh mag slapped in, then the charging handle racked. */
+  reloadDone(): void {
+    this.clack(520, 0.17, 0, 0.09);    // mag seats hard
+    this.clack(1500, 0.12, 0.11, 0.06);// handle drawn back
+    this.clack(820, 0.16, 0.19, 0.10); // handle forward — round chambered
   }
 
   reloadEnd(): void {

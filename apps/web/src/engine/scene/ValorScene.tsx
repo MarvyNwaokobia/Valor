@@ -294,6 +294,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const mouseBtn = useRef<Set<number>>(new Set());
   const mouseDX = useRef(0);
   const mouseDY = useRef(0);
+  const lookAccum = useRef({ x: 0, y: 0 }); // touch-drag buffer, eased out for smooth aim
   const wantReload = useRef(false);
   const cycleFireMode = useRef(false);
   const locked = useRef(false);
@@ -526,9 +527,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
 
     // ── Look: mouse (pointer-lock) + touch drag + arrow keys, slowed by ADS ──
     const adsMult = THREE.MathUtils.lerp(1, ADS_SENS, adsCur.current);
-    yaw.current -= (mouseDX.current * LOOK_SENS + ct.lookX * TOUCH_LOOK_SENS) * adsMult;
-    pitch.current -= (mouseDY.current * LOOK_SENS + ct.lookY * TOUCH_LOOK_SENS) * adsMult;
-    mouseDX.current = 0; mouseDY.current = 0; ct.lookX = 0; ct.lookY = 0;
+    // Touch drag feeds a buffer we EASE out of, so aiming glides instead of
+    // jittering frame-to-frame (mouse stays raw — desktop wants 1:1).
+    lookAccum.current.x += ct.lookX; lookAccum.current.y += ct.lookY;
+    ct.lookX = 0; ct.lookY = 0;
+    const ease = Math.min(1, dt * 19);
+    const tx = lookAccum.current.x * ease, ty = lookAccum.current.y * ease;
+    lookAccum.current.x -= tx; lookAccum.current.y -= ty;
+    yaw.current -= (mouseDX.current * LOOK_SENS + tx * TOUCH_LOOK_SENS) * adsMult;
+    pitch.current -= (mouseDY.current * LOOK_SENS + ty * TOUCH_LOOK_SENS) * adsMult;
+    mouseDX.current = 0; mouseDY.current = 0;
     const keyStep = KEY_LOOK * adsMult * dt;
     if (held('ArrowLeft')) yaw.current += keyStep;
     if (held('ArrowRight')) yaw.current -= keyStep;
@@ -565,7 +573,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         if (diff < bestDiff) { bestDiff = diff; tYaw = wantYaw; tPitch = wantPitch; found = true; }
       }
       if (found) {
-        const k = Math.min(0.5, (ct.fire ? 11 : 6) * dt); // stronger while firing
+        const k = Math.min(0.22, (ct.fire ? 6 : 3.5) * dt); // gentle magnetism, not a snap
         yaw.current += angleDiff(tYaw, yaw.current) * k;
         pitch.current += (tPitch - pitch.current) * k;
       }
@@ -753,7 +761,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
       } else if (ev.kind === 'reloadStart') {
         audio.reloadStart();
       } else if (ev.kind === 'reloadEnd') {
-        audio.reloadEnd();
+        audio.reloadDone();         // mag-in + charging-handle rack
       } else if (ev.kind === 'empty') {
         audio.empty();
       } else if (ev.kind === 'enemyFire') {
@@ -2017,15 +2025,9 @@ export function ValorScene({ onOpCleared, startMission }: {
           <MissionSelect current={mode === 'survival' ? -1 : missionIndex} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onClose={() => setSelect(false)} />
         )}
 
-        {/* slice label + an entry point to the Operations board */}
-        <div style={{ position: 'absolute', left: 26, top: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* zone / op label (operations are chosen outside the game now) */}
+        <div style={{ position: 'absolute', left: 26, top: 20 }}>
           <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
-          <button
-            onClick={() => setSelect(true)}
-            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'rgba(55,208,224,.1)', border: '1px solid #37d0e055', color: '#37d0e0', fontFamily: 'inherit', fontSize: 12, letterSpacing: 2, padding: '4px 9px', borderRadius: 4 }}
-          >
-            {iconRow('menu', `OPS${!isTouch ? ' · M' : ''}`, 12)}
-          </button>
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
@@ -2057,21 +2059,19 @@ export function ValorScene({ onOpCleared, startMission }: {
 
           {/* fire (primary) — also an aim pad: press to shoot, slide to steer */}
           <div onTouchStart={fireStart} onTouchMove={fireMove} onTouchEnd={fireEnd} onTouchCancel={fireEnd}
-            style={{ ...touchBtn('#ff6a4d', 82, true), right: 24, bottom: 28 }}><Icon name="crosshair" size={34} /></div>
-          {/* ADS (hold) */}
+            style={{ ...touchBtn('#ff6a4d', 78, true), right: 20, bottom: 24 }}><Icon name="crosshair" size={32} /></div>
+          {/* ADS (hold) — left of fire */}
           <div onTouchStart={(e) => { pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
             onTouchEnd={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
             onTouchCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
-            style={{ ...touchBtn('#cfe0ea', 56), right: 116, bottom: 40, fontSize: 11 }}>ADS</div>
-          {/* reload */}
+            style={{ ...touchBtn('#cfe0ea', 52), right: 108, bottom: 30, fontSize: 11 }}>ADS</div>
+          {/* secondary actions — a slim column hugging the right edge, up off the gun */}
           <div {...tap('#ffb454', () => { controls.current.reload = true; })}
-            style={{ ...touchBtn('#ffb454', 46), right: 36, bottom: 118 }}><Icon name="refresh" size={20} /></div>
-          {/* swap weapon */}
+            style={{ ...touchBtn('#ffb454', 44), right: 22, bottom: 116 }}><Icon name="refresh" size={19} /></div>
           <div {...tap('#5fe0a8', () => { controls.current.swap = true; })}
-            style={{ ...touchBtn('#5fe0a8', 46), right: 100, bottom: 124 }}><Icon name="swap" size={20} /></div>
-          {/* fire mode */}
+            style={{ ...touchBtn('#5fe0a8', 44), right: 22, bottom: 170 }}><Icon name="swap" size={19} /></div>
           <div {...tap('#8fb8d0', () => { controls.current.fireMode = true; })}
-            style={{ ...touchBtn('#8fb8d0', 42), right: 162, bottom: 104 }}><Icon name="firemode" size={18} /></div>
+            style={{ ...touchBtn('#8fb8d0', 42), right: 24, bottom: 222 }}><Icon name="firemode" size={17} /></div>
 
           {/* attachment toggles — a compact row, top-left under OPS */}
           <div style={{ position: 'absolute', left: 24, top: 84, display: 'flex', gap: 7 }}>
