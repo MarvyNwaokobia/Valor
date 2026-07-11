@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration, N8AO } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
 import { usePbr } from './usePbr';
@@ -19,6 +19,7 @@ import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
+import { dressingFor, type PropSpec } from './setDressing';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -108,6 +109,64 @@ function SkyDome({ top, bottom }: { top: string; bottom: string }) {
       <primitive object={mat} attach="material" />
     </mesh>
   );
+}
+
+function Prop({ kind, x, z, rot }: PropSpec) {
+  if (kind === 'barrels') {
+    const cols = ['#5c4a34', '#4a5240', '#6a4838'];
+    return (
+      <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+        {[[0, 0], [0.34, 0.06], [0.16, 0.34]].map(([dx, dz], i) => (
+          <mesh key={i} position={[dx, 0.45, dz]} castShadow receiveShadow>
+            <cylinderGeometry args={[0.26, 0.28, 0.9, 12]} />
+            <meshStandardMaterial color={cols[i]} metalness={0.5} roughness={0.55} />
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+  if (kind === 'crates') {
+    return (
+      <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+        <mesh position={[0, 0.32, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.66, 0.64, 0.66]} />
+          <meshStandardMaterial color="#6b5539" roughness={0.9} metalness={0.02} />
+        </mesh>
+        <mesh position={[0.12, 0.82, -0.1]} rotation={[0, 0.4, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.5, 0.46, 0.5]} />
+          <meshStandardMaterial color="#5f4c34" roughness={0.9} metalness={0.02} />
+        </mesh>
+      </group>
+    );
+  }
+  if (kind === 'sandbags') {
+    return (
+      <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+        {[[-0.34, 0, 0.16], [0.34, 0, 0.16], [0, 0, 0.16], [-0.17, 0.28, 0.16], [0.17, 0.28, 0.16]].map(([dx, dy, h], i) => (
+          <mesh key={i} position={[dx, 0.14 + dy, 0]} rotation={[0, (i % 2) * 0.3, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.42, 0.26, h + 0.3]} />
+            <meshStandardMaterial color={i % 2 ? '#877a5b' : '#7d7052'} roughness={1} metalness={0} />
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+  // debris — a low scatter of rubble that can never hide anyone
+  return (
+    <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+      {[[0, 0.12, 0, 0.5], [0.3, 0.08, 0.2, 0.3], [-0.25, 0.1, -0.15, 0.34]].map(([dx, s, dz, w], i) => (
+        <mesh key={i} position={[dx, s, dz]} rotation={[rot * 0.3, i, 0]} castShadow receiveShadow>
+          <boxGeometry args={[w, s * 2, w * 0.8]} />
+          <meshStandardMaterial color="#565259" roughness={0.95} metalness={0.03} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function SetDressing({ mission }: { mission: Mission }) {
+  const props = useMemo(() => dressingFor(mission), [mission]);
+  return <>{props.map((p, i) => <Prop key={i} {...p} />)}</>;
 }
 
 function angleDiff(a: number, b: number): number {
@@ -489,6 +548,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__valorState = () => sim.snapshot();
+    w.__valorProps = () => dressingFor(mission); // set-dressing placements (headless visual check)
     w.__valorKillAll = () => sim.debugKillAll();
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
@@ -1446,16 +1506,19 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         <meshStandardMaterial {...floorMaps} color={theme.floorTint} roughness={1} metalness={0} />
       </mesh>
 
-      {/* compound walls: brick perimeter, plastered interior dividers */}
+      {/* compound walls: brick perimeter, plastered interior dividers, each capped
+          with a concrete coping so the tops read as built, not sliced graybox */}
       {LEVEL_WALLS.map((c, i) => (
-        <mesh key={`w${i}`} position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
-          <boxGeometry args={[c.w, c.h, c.d]} />
-          <meshStandardMaterial
-            {...(i < 3 ? brickMaps : plasterMaps)}
-            color={theme.wallTint}
-            roughness={1} metalness={0}
-          />
-        </mesh>
+        <group key={`w${i}`}>
+          <mesh position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
+            <boxGeometry args={[c.w, c.h, c.d]} />
+            <meshStandardMaterial {...(i < 3 ? brickMaps : plasterMaps)} color={theme.wallTint} roughness={1} metalness={0} />
+          </mesh>
+          <mesh position={[c.x, c.h + 0.02, c.z]} castShadow receiveShadow>
+            <boxGeometry args={[c.w + 0.14, 0.18, c.d + 0.14]} />
+            <meshStandardMaterial color="#3b3a3e" roughness={0.85} metalness={0} />
+          </mesh>
+        </group>
       ))}
 
       {/* cover: scorched planking */}
@@ -1465,6 +1528,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
           <meshStandardMaterial {...plankMaps} color="#6b6055" roughness={0.95} metalness={0.05} />
         </mesh>
       ))}
+
+      {/* set dressing: barrels, crates, sandbags, rubble hugging the walls */}
+      {!survival && <SetDressing mission={mission} />}
 
       {/* waypoint beacon at the current objective */}
       <group ref={waypointRef}>
@@ -1560,8 +1626,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         </mesh>
       ))}
 
-      {/* ── bodycam post: grain, vignette, a chromatic edge, filmic curve ── */}
-      <EffectComposer multisampling={0}>
+      {/* ── bodycam post: AO grounds the geometry, then grain, vignette, a
+          chromatic edge, filmic curve ── */}
+      <EffectComposer multisampling={0} enableNormalPass>
+        <N8AO aoRadius={1.4} intensity={lowSpec ? 1.6 : 2.6} distanceFalloff={1} halfRes={lowSpec} quality={lowSpec ? 'low' : 'medium'} color="#0a0a0e" />
         <Bloom intensity={0.18} luminanceThreshold={0.9} luminanceSmoothing={0.2} mipmapBlur />
         <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
         <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={lowSpec ? 0.2 : 0.3} />
