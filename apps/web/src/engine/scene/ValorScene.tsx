@@ -662,7 +662,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     cam.getWorldDirection(fwd);
     // NVG lifts the exposure (and the HUD tints green) so the dark reads.
     nvgAmt.current += ((sim.hasAttachment('nvg') ? 1 : 0) - nvgAmt.current) * Math.min(1, dt * 8);
-    gl.toneMappingExposure = 1 + nvgAmt.current * 1.7;
+    gl.toneMappingExposure = 1.32 + nvgAmt.current * 1.7; // brighter base; NVG lifts further
     // Optic deepens the ADS zoom (narrower FOV); no optic = a gentler aim zoom.
     const fovTarget = THREE.MathUtils.lerp(55, sim.hasAttachment('optic') ? 30 : 45, adsCur.current);
     if (Math.abs(cam.fov - fovTarget) > 0.02) { cam.fov = fovTarget; cam.updateProjectionMatrix(); }
@@ -1818,6 +1818,32 @@ export function ValorScene({ onOpCleared }: {
     for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) lookId.current = null;
   };
 
+  // The fire button doubles as an aim pad: press to shoot, and SLIDE your thumb to
+  // steer the crosshair (with aim-assist doing the fine lock). Target and shoot in
+  // one thumb — no need to aim on one side and fire on the other.
+  const fireId = useRef<number | null>(null);
+  const fireLast = useRef({ x: 0, y: 0 });
+  const fireStart = (e: React.TouchEvent) => {
+    audio.unlock();
+    const t = e.changedTouches[0];
+    fireId.current = t.identifier;
+    fireLast.current = { x: t.clientX, y: t.clientY };
+    controls.current.fire = true;
+  };
+  const fireMove = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
+      controls.current.lookX += t.clientX - fireLast.current.x;
+      controls.current.lookY += t.clientY - fireLast.current.y;
+      fireLast.current = { x: t.clientX, y: t.clientY };
+    }
+  };
+  const fireEnd = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
+      fireId.current = null;
+      controls.current.fire = false;
+    }
+  };
+
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
   return (
     <div ref={(r) => { hud.current.root = r; }} style={{ position: 'fixed', inset: 0, background: '#000', cursor: 'none', touchAction: 'none' }}>
@@ -2004,9 +2030,9 @@ export function ValorScene({ onOpCleared }: {
             <div ref={joyKnob} style={{ position: 'absolute', left: '50%', top: '50%', width: 46, height: 46, marginLeft: -23, marginTop: -23, borderRadius: '50%', background: 'radial-gradient(circle at 50% 35%, rgba(255,255,255,.5), rgba(255,255,255,.16))', boxShadow: '0 3px 8px rgba(0,0,0,.5)' }} />
           </div>
 
-          {/* fire (primary) */}
-          <div onTouchStart={() => { audio.unlock(); controls.current.fire = true; }} onTouchEnd={() => { controls.current.fire = false; }} onTouchCancel={() => { controls.current.fire = false; }}
-            style={{ ...touchBtn('#ff6a4d', 78, true), right: 26, bottom: 30 }}><Icon name="crosshair" size={32} /></div>
+          {/* fire (primary) — also an aim pad: press to shoot, slide to steer */}
+          <div onTouchStart={fireStart} onTouchMove={fireMove} onTouchEnd={fireEnd} onTouchCancel={fireEnd}
+            style={{ ...touchBtn('#ff6a4d', 82, true), right: 24, bottom: 28 }}><Icon name="crosshair" size={34} /></div>
           {/* ADS (hold) */}
           <div onTouchStart={() => { controls.current.ads = true; }} onTouchEnd={() => { controls.current.ads = false; }} onTouchCancel={() => { controls.current.ads = false; }}
             style={{ ...touchBtn('#cfe0ea', 56), right: 116, bottom: 40, fontSize: 11 }}>ADS</div>
