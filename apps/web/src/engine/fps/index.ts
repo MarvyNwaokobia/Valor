@@ -30,4 +30,5 @@ export type {
   EnemySpec,
   FpsSimOptions,
   Attachment,
+  Hostage,
 } from './FpsSim';
