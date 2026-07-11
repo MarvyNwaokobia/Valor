@@ -8,6 +8,7 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
+import OperationsSelect from '@/components/battle/OperationsSelect'
 import BattlePvP from '@/components/battle/BattlePvP'
 import ChallengeBattle from '@/components/battle/ChallengeBattle'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -20,7 +21,7 @@ export default function BattlePage() {
   const searchParams = useSearchParams()
   const challengeTarget = searchParams.get('challenge') ?? undefined
 
-  const [view, setView] = useState<'menu' | 'pvp' | 'challenge'>(
+  const [view, setView] = useState<'menu' | 'operations' | 'pvp' | 'challenge'>(
     challengeTarget ? 'challenge' : 'menu'
   )
 
@@ -30,6 +31,10 @@ export default function BattlePage() {
   if (!player) { router.replace('/'); return null }
 
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
+
+  if (view === 'operations') {
+    return <OperationsSelect player={player} onBack={() => setView('menu')} />
+  }
 
   if (view === 'pvp') {
     return <BattlePvP player={player} walletAddress={address} onBack={() => setView('menu')} />
@@ -60,9 +65,9 @@ export default function BattlePage() {
         <p className="text-slate-500 text-sm mt-1">Win = +100 XP · Loss = +30 XP · Every fight counts.</p>
       </motion.div>
 
-      {/* Campaign → the first-person Operations board */}
+      {/* Campaign → the first-person Operations list */}
       <motion.button
-        onClick={() => router.push('/fight?ops=1')}
+        onClick={() => setView('operations')}
         className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
         style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
         whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
