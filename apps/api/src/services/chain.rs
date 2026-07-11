@@ -35,6 +35,7 @@ abigen!(
     r#"[
         function distributeRankUpReward(address player, string newRank) external
         function distributeDailyClaim(address player) external
+        function distributeReward(address player, uint256 amount, bytes32 ref) external
     ]"#
 );
 
@@ -220,6 +221,27 @@ impl ChainWriter {
             .await
             .map_err(|e| format!("distributeRankUpReward tx failed: {}", e))?;
         tracing::info!("distributeRankUpReward: {} → {}", player, rank);
+        Ok(true)
+    }
+
+    /// Pays a one-time G$ bounty (first-clear reward, competition payout) from the
+    /// ValorRewardPool. `amount_g` is whole G$; `ref` is an idempotency key so the
+    /// same bounty can never pay twice on-chain (a duplicate call reverts).
+    /// Returns Ok(true) on success, Ok(false) if the pool isn't configured.
+    pub async fn distribute_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<bool, String> {
+        let pool = match &self.reward_pool {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        // G$ has 18 decimals; amount_g is whole tokens.
+        let amount = U256::from(amount_g) * U256::exp10(18);
+        pool.distribute_reward(player, amount, reference)
+            .send()
+            .await
+            .map_err(|e| format!("distributeReward failed: {}", e))?
+            .await
+            .map_err(|e| format!("distributeReward tx failed: {}", e))?;
+        tracing::info!("distributeReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
         Ok(true)
     }
 

@@ -86,4 +86,54 @@ contract ValorRewardPoolTest is Test {
     function test_PoolBalance() public view {
         assertEq(pool.poolBalance(), 10_000e18);
     }
+
+    // ── Generic one-time bounties (first-clear rewards) ──
+    function test_DistributeReward() public {
+        bytes32 ref = keccak256("first_clear:1:player");
+        vm.prank(backend);
+        pool.distributeReward(player, 12e18, ref);
+        assertEq(gToken.balanceOf(player), 12e18);
+        assertTrue(pool.rewardRefUsed(ref));
+    }
+
+    function test_DistributeReward_OnlyBackend() public {
+        vm.prank(player);
+        vm.expectRevert(ValorRewardPool.OnlyBackend.selector);
+        pool.distributeReward(player, 12e18, keccak256("x"));
+    }
+
+    function test_DistributeReward_IdempotentByRef() public {
+        bytes32 ref = keccak256("first_clear:5:player");
+        vm.prank(backend);
+        pool.distributeReward(player, 30e18, ref);
+        // the SAME ref can never pay twice — a retry reverts, no double-spend
+        vm.prank(backend);
+        vm.expectRevert(ValorRewardPool.RefAlreadyUsed.selector);
+        pool.distributeReward(player, 30e18, ref);
+        assertEq(gToken.balanceOf(player), 30e18);
+    }
+
+    function test_DistributeReward_RejectsZeroAndOverCap() public {
+        uint256 overCap = pool.MAX_REWARD() + 1; // read the view BEFORE expectRevert
+
+        vm.prank(backend);
+        vm.expectRevert(ValorRewardPool.BadAmount.selector);
+        pool.distributeReward(player, 0, keccak256("a"));
+
+        vm.prank(backend);
+        vm.expectRevert(ValorRewardPool.BadAmount.selector);
+        pool.distributeReward(player, overCap, keccak256("b"));
+    }
+
+    function test_DistributeReward_InsufficientBalance() public {
+        MockGToken2 smallToken = new MockGToken2();
+        ValorRewardPool impl = new ValorRewardPool();
+        ValorRewardPool smallPool = ValorRewardPool(address(new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorRewardPool.initialize, (address(smallToken), backend, owner))
+        )));
+        vm.prank(backend);
+        vm.expectRevert(ValorRewardPool.InsufficientPoolBalance.selector);
+        smallPool.distributeReward(player, 12e18, keccak256("c"));
+    }
 }
