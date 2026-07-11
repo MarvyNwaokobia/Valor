@@ -61,27 +61,27 @@ export interface ZoneTheme {
 export const ZONE_THEMES: Record<string, ZoneTheme> = {
   // Grounded, burned, warm dusk.
   ASHFALL: {
-    bg: '#0b0d10', fog: ['#13161b', 14, 48], hemi: ['#8ea3b8', '#2b241d', 0.45],
-    sun: { color: '#ffeede', intensity: 1.1 }, fill: { color: '#6b86ad', intensity: 0.22 },
-    ambient: 0.18, practical: '#ffd0a0', practicalIntensity: 2.0, floorTint: '#8f877c', wallTint: '#8a7f74',
+    bg: '#0d1014', fog: ['#191d24', 16, 54], hemi: ['#9fb4c8', '#33291f', 0.62],
+    sun: { color: '#ffeede', intensity: 1.45 }, fill: { color: '#7d97bd', intensity: 0.34 },
+    ambient: 0.32, practical: '#ffd0a0', practicalIntensity: 2.2, floorTint: '#a49a8d', wallTint: '#9c9084',
   },
   // Colder, cleaner, institutional — a training compound.
   'PROVING GROUND': {
-    bg: '#0a0e12', fog: ['#0e141a', 16, 54], hemi: ['#a3b8cc', '#20262c', 0.5],
-    sun: { color: '#e6f0ff', intensity: 1.15 }, fill: { color: '#5578a0', intensity: 0.3 },
-    ambient: 0.2, practical: '#8fc8e6', practicalIntensity: 2.2, floorTint: '#828892', wallTint: '#7c828c',
+    bg: '#0c1116', fog: ['#121a22', 18, 60], hemi: ['#b3c6d8', '#282f36', 0.66],
+    sun: { color: '#e6f0ff', intensity: 1.5 }, fill: { color: '#6a8cb4', intensity: 0.42 },
+    ambient: 0.34, practical: '#8fc8e6', practicalIntensity: 2.4, floorTint: '#949aa4', wallTint: '#8d949e',
   },
-  // The dark place: near-black, a cold violet wash — the NVG world.
+  // The dark place: near-black, a cold violet wash — the NVG world (kept dim on purpose).
   'THE RIFT': {
-    bg: '#04060a', fog: ['#060a12', 9, 32], hemi: ['#3a4e6a', '#0a0e16', 0.22],
-    sun: { color: '#5f7fb0', intensity: 0.45 }, fill: { color: '#7a55ff', intensity: 0.35 },
-    ambient: 0.07, practical: '#9a6bff', practicalIntensity: 1.5, floorTint: '#4a4a58', wallTint: '#43454f',
+    bg: '#05070c', fog: ['#080d16', 10, 34], hemi: ['#44597a', '#0c101a', 0.3],
+    sun: { color: '#6a8cc0', intensity: 0.6 }, fill: { color: '#7a55ff', intensity: 0.4 },
+    ambient: 0.11, practical: '#9a6bff', practicalIntensity: 1.7, floorTint: '#54545f', wallTint: '#4c4e58',
   },
   // A stark, red-lit kill-house for the endless mode.
   SURVIVAL: {
-    bg: '#07060a', fog: ['#0d0810', 16, 50], hemi: ['#7a5566', '#1a1016', 0.4],
-    sun: { color: '#ffc3c0', intensity: 0.9 }, fill: { color: '#a04858', intensity: 0.34 },
-    ambient: 0.16, practical: '#ff5a52', practicalIntensity: 2.0, floorTint: '#7a7076', wallTint: '#6e666c',
+    bg: '#08070c', fog: ['#100a14', 18, 56], hemi: ['#8a6274', '#1e131a', 0.52],
+    sun: { color: '#ffc3c0', intensity: 1.2 }, fill: { color: '#b45464', intensity: 0.42 },
+    ambient: 0.3, practical: '#ff5a52', practicalIntensity: 2.2, floorTint: '#8a808a', wallTint: '#7e767e',
   },
 };
 
