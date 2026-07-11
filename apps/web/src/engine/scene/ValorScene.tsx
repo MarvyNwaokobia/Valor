@@ -458,6 +458,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     if (hud.current.survEnd) hud.current.survEnd.style.pointerEvents = 'none';
   }, [hud]);
 
+  // Load this op's ambience bed (retunes the room tone + zone drone; the mission
+  // remounts per op, so this fires whenever the zone changes).
+  useEffect(() => { audio.setZone(mission.zone); }, [audio, mission.zone]);
+
   // ── Probe hooks (headless verification) ──
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -745,7 +749,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         const kick = 0.02 * feel.kick * (1 - 0.4 * adsCur.current);
         recoilP.current += kick;
         recoilY.current += (Math.random() - 0.5) * kick * 0.5;
-        audio.shot(feel.audio);
+        audio.shot((GUN_FEEL[sim.gun.id] ?? feel).audio); // the ACTIVE weapon's voice, not just the primary's
       } else if (ev.kind === 'hit' || ev.kind === 'wall' || ev.kind === 'miss') {
         muzzleLocal.getWorldPosition(tmp2);
         spawnBeam(tmp2, ev.point, false);                       // your tracer line, restored
