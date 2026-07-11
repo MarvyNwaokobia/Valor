@@ -19,7 +19,7 @@ const DIFFICULTY_LABEL: Record<string, string> = {
 /**
  * PvE Campaign level select. The next playable level is pve_level + 1; cleared
  * levels are replayable for XP; later levels are locked. Picking one starts a
- * Campaign fight via /fight?level=N (the level sets the enemy gun/HP/difficulty).
+ * Campaign fight via /fight-legacy?level=N (the level sets the enemy gun/HP/difficulty).
  */
 export default function CampaignSelect({ player, onBack }: Props) {
   const router = useRouter()
@@ -29,7 +29,7 @@ export default function CampaignSelect({ player, onBack }: Props) {
   const play = (n: number) => {
     const el = document.documentElement
     if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
-    router.push(`/fight?level=${n}`)
+    router.push(`/fight-legacy?level=${n}`)
   }
 
   const endlessUnlocked = cleared >= ENDLESS_UNLOCK_LEVEL

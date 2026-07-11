@@ -1614,11 +1614,14 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
   );
 }
 
-export function ValorScene({ onOpCleared }: {
+export function ValorScene({ onOpCleared, startOnBoard }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
   onOpCleared?: (level: number, durationSecs: number) => void;
+  /** Open on the Operations board (the campaign entry from the app), so the
+   *  player picks an operation instead of dropping straight into one. */
+  startOnBoard?: boolean;
 } = {}) {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
@@ -1652,8 +1655,8 @@ export function ValorScene({ onOpCleared }: {
     } catch { return 0; }
   });
   const [runNonce, setRunNonce] = useState(0); // bump to remount = restart the op
-  const [selectOpen, setSelectOpen] = useState(false);
-  const menuOpenRef = useRef(false); // read by FpsWorld's frame loop to pause
+  const [selectOpen, setSelectOpen] = useState(!!startOnBoard);
+  const menuOpenRef = useRef(!!startOnBoard); // read by FpsWorld's frame loop to pause
   const setSelect = (v: boolean) => {
     menuOpenRef.current = v; setSelectOpen(v);
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }

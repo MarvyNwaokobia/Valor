@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 
@@ -37,6 +37,13 @@ const ValorScene = dynamic(
 export default function FightPage() {
   const { submitResult } = useFightRewards();
 
+  // Arriving from the app's Campaign entry (/fight?ops=1) opens the Operations
+  // board first, so the player picks their operation — the level-select IS the
+  // board, tied into Valor rather than a bolt-on game.
+  const [startOnBoard] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ops') === '1',
+  );
+
   // Each cleared operation is a server-authoritative "fight win": the backend
   // applies the real XP → rank → G$ and advances the PvE level. If the player
   // isn't signed in, submitResult is a graceful no-op (the game still plays).
@@ -49,7 +56,7 @@ export default function FightPage() {
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
-      <ValorScene onOpCleared={onOpCleared} />
+      <ValorScene onOpCleared={onOpCleared} startOnBoard={startOnBoard} />
     </div>
   );
 }
