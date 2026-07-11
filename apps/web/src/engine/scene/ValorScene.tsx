@@ -87,6 +87,29 @@ function Icon({ name, size = 16 }: { name: string; size?: number }) {
 }
 
 /** Wrapped angular difference a-b, in (-π, π]. */
+/** A gradient sky dome (zenith → horizon), the actual sky above the compound
+ *  walls. fog:false keeps it crisp; it re-tints when the zone theme changes. */
+function SkyDome({ top, bottom }: { top: string; bottom: string }) {
+  const mat = useMemo(() => new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: { uTop: { value: new THREE.Color(top) }, uBottom: { value: new THREE.Color(bottom) } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'varying vec3 vP; uniform vec3 uTop; uniform vec3 uBottom; void main(){ float h = clamp(normalize(vP).y * 0.5 + 0.5, 0.0, 1.0); gl_FragColor = vec4(mix(uBottom, uTop, pow(h, 0.8)), 1.0); }',
+  }), []);
+  useEffect(() => {
+    (mat.uniforms.uTop.value as THREE.Color).set(top);
+    (mat.uniforms.uBottom.value as THREE.Color).set(bottom);
+  }, [top, bottom, mat]);
+  return (
+    <mesh scale={[300, 300, 300]} renderOrder={-1} frustumCulled={false}>
+      <sphereGeometry args={[1, 24, 16]} />
+      <primitive object={mat} attach="material" />
+    </mesh>
+  );
+}
+
 function angleDiff(a: number, b: number): number {
   let d = a - b;
   while (d > Math.PI) d -= Math.PI * 2;
@@ -1397,6 +1420,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     <>
       <color attach="background" args={[theme.bg]} />
       <fog attach="fog" args={theme.fog} />
+      <SkyDome top={theme.sky.top} bottom={theme.sky.bottom} />
 
       {/* low ash-lit sun + cold fill, then restrained practicals so darkness has
           shape. Point-light intensity is in physical units: single digits, not tens. */}
