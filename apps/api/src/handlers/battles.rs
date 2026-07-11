@@ -76,13 +76,15 @@ fn next_rank(rank: &str) -> Option<&'static str> {
     }
 }
 
-fn rank_g_reward(rank: &str) -> i64 {
-    match rank {
-        "Silver"   => 20,
-        "Gold"     => 40,
-        "Platinum" => 80,
-        "Diamond"  => 150,
-        _          => 0,
+/// One-time G$ bounty for the FIRST clear of a Campaign op (B0). Scarce and
+/// capped: ordinary ops pay a little, the zone bosses (op 5/10/15) pay more. A
+/// full campaign clear totals ~74 G$, paid once — not a repeatable grind faucet.
+fn first_clear_bounty(level: i32) -> u64 {
+    match level {
+        5  => 10, // Cinder
+        10 => 15, // the Warden
+        15 => 25, // Valor
+        _  => 2,
     }
 }
 
@@ -134,7 +136,10 @@ async fn award_player(
     let ranked_up  = raw_new_xp >= XP_PER_RANK;
     let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
     let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
-    let g_awarded  = new_rank.map(rank_g_reward).unwrap_or(0);
+    // B0: XP is DECOUPLED from G$. Ranking up is pure progression/unlocks — it no
+    // longer mints G$ (that was the grind faucet). G$ now comes from one-time
+    // first-clear bounties (see complete_live_fight) and, later, competition.
+    let g_awarded  = 0i64;
 
     let wins   = if won { player.wins + 1 } else { player.wins };
     let losses = if !won { player.losses + 1 } else { player.losses };
@@ -165,38 +170,11 @@ async fn award_player(
     if let Some(rank) = new_rank {
         if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
             let rank_str = rank.to_string();
-            let wallet2  = wallet.to_string();
-            let db       = state.db.clone();
             tokio::spawn(async move {
+                // Rank progression is on-chain (records + leaderboard-pool enrollment),
+                // but B0 decoupled the G$ mint — no distribute_rank_up_reward here.
                 chain.record_rank_up(addr, rank_str.clone()).await;
                 chain.enroll_in_rank_pool(addr, &rank_str).await;
-
-                // Real G$ transfer for the rank-up reward — only bump
-                // g_earned_lifetime and log the ledger entry once this
-                // actually confirms on-chain (mirrors the pattern this
-                // superseded from the now-removed players.rs::rank_up_reward).
-                match chain.distribute_rank_up_reward(addr, rank_str.clone()).await {
-                    Ok(true) => {
-                        let _ = sqlx::query(
-                            "UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2",
-                        )
-                        .bind(g_awarded)
-                        .bind(&wallet2)
-                        .execute(&db)
-                        .await;
-                        crate::handlers::ledger::insert_ledger_entry(
-                            &db, &wallet2, "battle_reward",
-                            rust_decimal::Decimal::from(g_awarded), None, None,
-                        ).await;
-                        tracing::info!("G$ distributed + recorded: {} +{}", wallet2, g_awarded);
-                    }
-                    Ok(false) => {
-                        tracing::warn!("Reward pool not configured — skipping G$ distribution for {}", wallet2);
-                    }
-                    Err(e) => {
-                        tracing::error!("G$ distribution failed for {}: {}", wallet2, e);
-                    }
-                }
             });
         }
     }
@@ -549,7 +527,9 @@ pub async fn complete_live_fight(
         Err(resp) => return resp,
     };
 
-    // First clear advances the Campaign unlock (monotonic — never regresses).
+    // First clear advances the Campaign unlock (monotonic) AND pays a one-time
+    // G$ bounty — the PvE G$ source now that ranking up no longer mints G$.
+    let mut bounty_awarded: u64 = 0;
     if first_clear {
         if let Some(level) = body.level {
             let _ = sqlx::query("UPDATE players SET pve_level = $1 WHERE wallet_address = $2 AND pve_level < $1")
@@ -557,20 +537,75 @@ pub async fn complete_live_fight(
                 .bind(&wallet)
                 .execute(&state.db)
                 .await;
+
+            let amount = first_clear_bounty(level);
+            // Claim the payout slot idempotently: only the first request to insert
+            // the (wallet, level) row owns the payout. A retry or a concurrent
+            // duplicate hits the PK conflict and pays nothing (and the on-chain ref
+            // guard is a second line of defence).
+            let claimed = sqlx::query(
+                "INSERT INTO first_clear_bounties (wallet_address, level, amount)
+                 VALUES ($1, $2, $3) ON CONFLICT (wallet_address, level) DO NOTHING",
+            )
+            .bind(&wallet).bind(level).bind(amount as i64)
+            .execute(&state.db).await
+            .map(|r| r.rows_affected() == 1)
+            .unwrap_or(false);
+
+            if claimed {
+                bounty_awarded = amount;
+                pay_first_clear_bounty(&state, wallet.clone(), level, amount);
+            }
         }
     }
 
     HttpResponse::Ok().json(json!({
-        "won":           outcome.won,
-        "xp_awarded":    outcome.xp_earned,
-        "xp_multiplier": xp_multiplier,
-        "new_xp":        outcome.new_xp,
-        "ranked_up":     outcome.ranked_up,
-        "new_rank":      outcome.new_rank,
-        "g_awarded":     outcome.g_awarded,
-        "battle_id":     outcome.battle_id,
-        "first_clear":   first_clear,
+        "won":            outcome.won,
+        "xp_awarded":     outcome.xp_earned,
+        "xp_multiplier":  xp_multiplier,
+        "new_xp":         outcome.new_xp,
+        "ranked_up":      outcome.ranked_up,
+        "new_rank":       outcome.new_rank,
+        "g_awarded":      outcome.g_awarded,
+        "bounty_awarded": bounty_awarded,
+        "battle_id":      outcome.battle_id,
+        "first_clear":    first_clear,
     }))
+}
+
+/// Fire-and-forget the on-chain first-clear bounty payout, then reconcile the
+/// bounty row + ledger + lifetime stat. The DB row was already claimed by the
+/// caller (idempotent), so this runs at most once per (wallet, op).
+fn pay_first_clear_bounty(state: &AppState, wallet: String, level: i32, amount: u64) {
+    let Some(chain) = state.chain.as_ref().cloned() else { return; };
+    let Ok(addr) = wallet.parse::<Address>() else { return; };
+    let db = state.db.clone();
+    // Deterministic on-chain idempotency key per (wallet, op).
+    let reference = ethers::utils::keccak256(format!("first_clear:{}:{}", wallet, level).as_bytes());
+    tokio::spawn(async move {
+        match chain.distribute_reward(addr, amount, reference).await {
+            Ok(true) => {
+                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'paid' WHERE wallet_address = $1 AND level = $2")
+                    .bind(&wallet).bind(level).execute(&db).await;
+                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                    .bind(amount as i64).bind(&wallet).execute(&db).await;
+                crate::handlers::ledger::insert_ledger_entry(
+                    &db, &wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                ).await;
+                tracing::info!("first-clear bounty paid: {} op{} +{} G$", wallet, level, amount);
+            }
+            Ok(false) => {
+                tracing::warn!("Reward pool not configured — first-clear bounty for {} op{} not paid", wallet, level);
+                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
+                    .bind(&wallet).bind(level).execute(&db).await;
+            }
+            Err(e) => {
+                tracing::error!("first-clear bounty on-chain failed for {} op{}: {}", wallet, level, e);
+                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
+                    .bind(&wallet).bind(level).execute(&db).await;
+            }
+        }
+    });
 }
 
 #[derive(Deserialize)]

@@ -406,6 +406,7 @@ mod tests {
             decay_frozen_until:      None,
             wins:                    0,
             losses:                  0,
+            pve_level:               0,
             created_at:              Utc::now(),
             character_claim_tx:      None,
         }

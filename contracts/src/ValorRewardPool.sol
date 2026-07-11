@@ -19,14 +19,23 @@ contract ValorRewardPool is OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable
 
     uint256 public constant DAILY_CLAIM_AMOUNT = 5e18; // 5 G$
 
+    // ── Generic one-time bounties (e.g. first-clear rewards). Appended storage,
+    //    so this stays UUPS-upgrade-safe. `ref` makes each bounty idempotent
+    //    on-chain: a given ref pays out at most once, ever. ──
+    uint256 public constant MAX_REWARD = 500e18; // hard cap on any single bounty
+    mapping(bytes32 => bool) public rewardRefUsed;
+
     event RewardDistributed(address indexed player, string rank, uint256 amount);
     event DailyClaimDistributed(address indexed player, uint256 amount);
+    event BountyDistributed(address indexed player, uint256 amount, bytes32 indexed ref);
     event BackendSignerUpdated(address indexed signer);
     event FundsDeposited(address indexed from, uint256 amount);
 
     error OnlyBackend();
     error InsufficientPoolBalance();
     error ZeroAddress();
+    error BadAmount();
+    error RefAlreadyUsed();
 
     modifier onlyBackend() {
         if (msg.sender != backendSigner) revert OnlyBackend();
@@ -65,6 +74,24 @@ contract ValorRewardPool is OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable
 
         gToken.transfer(player, amount);
         emit RewardDistributed(player, newRank, amount);
+    }
+
+    /// @notice Pay an arbitrary one-time bounty (first-clear, competition, etc.).
+    /// @dev `ref` is a caller-chosen idempotency key — the same ref can only ever
+    ///      pay once, so a retrying/duplicating backend can never double-spend.
+    function distributeReward(address player, uint256 amount, bytes32 ref)
+        external
+        onlyBackend
+        nonReentrant
+    {
+        if (player == address(0)) revert ZeroAddress();
+        if (amount == 0 || amount > MAX_REWARD) revert BadAmount();
+        if (rewardRefUsed[ref]) revert RefAlreadyUsed();
+        if (gToken.balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
+
+        rewardRefUsed[ref] = true; // set BEFORE transfer (checks-effects-interactions)
+        gToken.transfer(player, amount);
+        emit BountyDistributed(player, amount, ref);
     }
 
     function distributeDailyClaim(address player) external onlyBackend nonReentrant {
