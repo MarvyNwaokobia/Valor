@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { claimUBI, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
+import { claimUBI, createReadOnlyClaimSDK, getIdentityExpiryReadOnly, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -74,10 +74,16 @@ export function useGoodDollarClaim(
         setEntitlement('0')
         setNextClaimTime(walletStatus.nextClaimTime ?? null)
       } else {
-        // not_whitelisted
-        setStatus('not_whitelisted')
+        // The SDK reports 'not_whitelisted' from GoodDollar's getWhitelistedRoot,
+        // but that read is COARSE — it goes false on a genuine expiry AND on a
+        // flaky/degraded read. Per our hard rule we NEVER nag a user to re-verify
+        // on our own judgement: only prompt when GoodDollar's OWN expiry data
+        // explicitly says the identity lapsed. Otherwise FAIL OPEN — treat it as a
+        // soft "couldn't load", never an accusation. (feedback-identity-reverify)
+        const expiry = await getIdentityExpiryReadOnly(walletAddress).catch(() => null)
         setEntitlement('0')
         setNextClaimTime(null)
+        setStatus(expiry?.isExpired ? 'not_whitelisted' : 'error')
       }
     } catch (err) {
       console.error('[Claim] refresh failed:', err)
