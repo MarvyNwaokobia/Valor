@@ -1625,14 +1625,14 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
   );
 }
 
-export function ValorScene({ onOpCleared, startOnBoard }: {
+export function ValorScene({ onOpCleared, startMission }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
   onOpCleared?: (level: number, durationSecs: number) => void;
-  /** Open on the Operations board (the campaign entry from the app), so the
-   *  player picks an operation instead of dropping straight into one. */
-  startOnBoard?: boolean;
+  /** Boot straight into this operation index (chosen on the external Operations
+   *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
+  startMission?: number;
 } = {}) {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
@@ -1651,23 +1651,25 @@ export function ValorScene({ onOpCleared, startOnBoard }: {
   useEffect(() => () => audio.dispose(), [audio]);
 
   // ── Mission campaign (slice 8): run CAMPAIGN[missionIndex]; complete → next ──
+  // A `startMission` (from the external Operations list) wins over the resume slot.
   const [missionIndex, setMissionIndex] = useState(() => {
+    if (typeof startMission === 'number' && startMission >= 0 && startMission < CAMPAIGN.length) return startMission;
     try { const v = Number(window.localStorage.getItem(CAMPAIGN_KEY)); if (Number.isFinite(v) && v >= 0 && v < CAMPAIGN.length) return v; } catch { /* private mode */ }
     return 0;
   });
   const [campaignDone, setCampaignDone] = useState(false);
   // How far you've unlocked (soft gating). Seed from stored progress, but never
-  // behind the op you were last on, so older saves aren't locked out.
+  // behind the op you started on, so a chosen op is always reachable.
   const [progress, setProgress] = useState(() => {
     try {
       const p = Number(window.localStorage.getItem(PROGRESS_KEY));
       const m = Number(window.localStorage.getItem(CAMPAIGN_KEY));
-      return Math.min(CAMPAIGN.length, Math.max(Number.isFinite(p) ? p : 0, Number.isFinite(m) ? m : 0, 0));
-    } catch { return 0; }
+      return Math.min(CAMPAIGN.length, Math.max(Number.isFinite(p) ? p : 0, Number.isFinite(m) ? m : 0, startMission ?? 0, 0));
+    } catch { return startMission ?? 0; }
   });
   const [runNonce, setRunNonce] = useState(0); // bump to remount = restart the op
-  const [selectOpen, setSelectOpen] = useState(!!startOnBoard);
-  const menuOpenRef = useRef(!!startOnBoard); // read by FpsWorld's frame loop to pause
+  const [selectOpen, setSelectOpen] = useState(false);
+  const menuOpenRef = useRef(false); // read by FpsWorld's frame loop to pause
   const setSelect = (v: boolean) => {
     menuOpenRef.current = v; setSelectOpen(v);
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }

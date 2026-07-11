@@ -37,12 +37,13 @@ const ValorScene = dynamic(
 export default function FightPage() {
   const { submitResult } = useFightRewards();
 
-  // Arriving from the app's Campaign entry (/fight?ops=1) opens the Operations
-  // board first, so the player picks their operation — the level-select IS the
-  // board, tied into Valor rather than a bolt-on game.
-  const [startOnBoard] = useState(
-    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ops') === '1',
-  );
+  // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
+  // routes here as /fight?op=N — so we boot straight into that operation.
+  const [startMission] = useState(() => {
+    if (typeof window === 'undefined') return undefined;
+    const v = Number(new URLSearchParams(window.location.search).get('op'));
+    return Number.isFinite(v) && v >= 0 ? v : undefined;
+  });
 
   // Each cleared operation is a server-authoritative "fight win": the backend
   // applies the real XP → rank → G$ and advances the PvE level. If the player
@@ -56,7 +57,7 @@ export default function FightPage() {
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
-      <ValorScene onOpCleared={onOpCleared} startOnBoard={startOnBoard} />
+      <ValorScene onOpCleared={onOpCleared} startMission={startMission} />
     </div>
   );
 }
