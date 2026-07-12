@@ -45,40 +45,52 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
   const check = useCallback(
     async (address: `0x${string}`): Promise<boolean> => {
       console.log('[Identity] check called for address:', address, 'status:', status)
+      const key = `gd_verified_${address.toLowerCase()}`
+
+      // ── Fast path: a wallet we've SEEN verified recently is a recognised user.
+      // Verification lives on-chain and is stable, so once true we trust it for a
+      // window and never make the user sit through the RPC/verify screen again.
+      // A background re-check keeps it honest (clears the cache if it ever lapses).
+      try {
+        const cached = Number(localStorage.getItem(key) || 0)
+        if (cached && Date.now() - cached < 7 * 24 * 3600 * 1000) {
+          setStatus('whitelisted')
+          void checkWhitelistStatusReadOnly(address)
+            .then(({ isWhitelisted }) => {
+              if (isWhitelisted) localStorage.setItem(key, String(Date.now()))
+              else { localStorage.removeItem(key); setStatus('not_whitelisted') } // GoodDollar says it lapsed
+            })
+            .catch(() => { /* keep trusting the cache on a flaky read */ })
+          return true
+        }
+      } catch { /* private mode — fall through to the live check */ }
 
       setStatus('checking')
       setError(null)
-      console.log('[Identity] check: checking whitelist status for address:', address)
 
-      try {
-        const { isWhitelisted } = await checkWhitelistStatusReadOnly(address)
-        console.log('[Identity] check whitelist result for', address, 'isWhitelisted:', isWhitelisted)
-
-        if (isWhitelisted) {
-          setStatus('whitelisted')
-          console.log('[Identity] check: whitelisted. Fetching expiry in background...')
-          // Fetch expiry in background — non-blocking, non-fatal
-          getIdentityExpiryReadOnly(address)
-            .then((expiry) => {
-              console.log('[Identity] Background expiry fetched:', expiry)
-              setIdentityExpiry(expiry)
-            })
-            .catch((err) => {
-              console.warn('[Identity] Background expiry fetch failed:', err)
-            })
-          return true
-        } else {
+      // Live check, with one retry — a single flaky forno read must NOT make a
+      // verified user look unverified.
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { isWhitelisted } = await checkWhitelistStatusReadOnly(address)
+          console.log('[Identity] whitelist result for', address, '=', isWhitelisted, `(try ${attempt + 1})`)
+          if (isWhitelisted) {
+            try { localStorage.setItem(key, String(Date.now())) } catch { /* ignore */ }
+            setStatus('whitelisted')
+            getIdentityExpiryReadOnly(address).then(setIdentityExpiry).catch(() => {})
+            return true
+          }
           setStatus('not_whitelisted')
-          console.log('[Identity] check: not whitelisted.')
           return false
+        } catch (err) {
+          lastErr = err
         }
-      } catch (err) {
-        console.error('[Identity] check failed or timed out:', err)
-        const msg = err instanceof Error ? err.message : 'Identity check failed'
-        setError(msg)
-        setStatus('error')
-        return false
       }
+      console.error('[Identity] check failed after retries:', lastErr)
+      setError(lastErr instanceof Error ? lastErr.message : 'Identity check failed')
+      setStatus('error')
+      return false
     },
     [status],
   )
