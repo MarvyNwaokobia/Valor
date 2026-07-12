@@ -209,6 +209,30 @@ function iconRow(name: string, label: string, size = 15): React.ReactNode {
   return (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name={name} size={size} />{label}</span>);
 }
 
+/**
+ * Is this a touch-first device (phone / tablet) that should get the mobile
+ * controls? Handles the tricky cases: an iPad on iPadOS 13+ Safari masquerades as
+ * DESKTOP macOS ("Macintosh" UA, no `ontouchstart`) but still reports multi-touch;
+ * Android "Desktop site" mode can strip touch hints too. So we check the UA for the
+ * known mobile/tablet families first, then the iPad-as-Mac tell, then a coarse
+ * touch pointer — while a mouse-driven touchscreen laptop stays desktop.
+ * `?touch` / `?desktop` force it either way for testing.
+ */
+function detectTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const q = new URLSearchParams(window.location.search);
+  if (q.has('touch')) return true;
+  if (q.has('desktop')) return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPod|iPad|Android|Windows Phone|IEMobile|BlackBerry/i.test(ua)) return true;
+  // iPadOS desktop-mode: reports as a Mac but has a touchscreen (real Macs report 0).
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 0) return true;
+  // Any remaining touch-primary device (coarse pointer) — excludes mouse desktops
+  // and trackpad laptops that merely happen to have a touchscreen.
+  if (navigator.maxTouchPoints > 0 && window.matchMedia?.('(pointer: coarse)')?.matches) return true;
+  return false;
+}
+
 /** Shared outlined-button style for the pause menu (C4). */
 function btnC4(color: string): React.CSSProperties {
   return { pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: `1px solid ${color}`, color, fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '11px 22px', borderRadius: 6 };
@@ -2261,10 +2285,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectOpen, paused, debrief]);
-  const [isTouch] = useState(() =>
-    typeof window !== 'undefined' &&
-    (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
-      new URLSearchParams(window.location.search).has('touch')));
+  const [isTouch] = useState(detectTouchDevice);
 
   // Lock the PAGE to the game while the scene is mounted (restored on unmount so
   // other pages still scroll). Without this, iOS Safari lets a stray double-tap /
