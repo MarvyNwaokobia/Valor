@@ -17,6 +17,7 @@ export {
   xpIntoRank,
   rankUpsBetween,
   gReward,
+  careerXpFor,
 } from './xp';
 export type { Rank } from './xp';
 export type {

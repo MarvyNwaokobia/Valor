@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import {
   FpsSim,
-  xpForKill, rankForXp, xpIntoRank, rankUpsBetween, gReward, XP_REWARD, XP_PER_RANK, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
+  xpForKill, rankForXp, xpIntoRank, rankUpsBetween, gReward, careerXpFor, XP_REWARD, XP_PER_RANK, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
 } from '../fps';
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
@@ -293,10 +293,14 @@ interface Controls {
   toggle: Attachment | null; // mobile attachment chip → toggle this
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef }: {
+function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
+  // C1: the real server account standing. When present, the HUD's rank bar is
+  // SEEDED from it (so it shows your true rank/progress, not a local number) and
+  // climbs live per-kill; the server reconciles on op-clear. Omitted at /dev/verb.
+  accountRank?: Rank; accountXp?: number;
 }) {
   const { camera, gl } = useThree();
 
@@ -607,13 +611,20 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     };
   }, [sim, audio]);
 
-  // career XP persists locally across runs in the sandbox
+  // C1: with a real account, SEED the live rank bar from the server's rank/XP so
+  // the HUD shows your true standing (re-seeds whenever the server value changes,
+  // e.g. after an op-clear reconciles). Without an account (/dev/verb sandbox), fall
+  // back to the locally-persisted career total.
   useEffect(() => {
+    if (accountRank) {
+      careerXp.current = careerXpFor(accountRank, accountXp ?? 0);
+      return;
+    }
     try {
       const v = Number(window.localStorage.getItem(XP_KEY));
       if (Number.isFinite(v) && v > 0) careerXp.current = v;
     } catch { /* private mode */ }
-  }, []);
+  }, [accountRank, accountXp]);
 
   const tmp = useMemo(() => new THREE.Vector3(), []);
   const tmp2 = useMemo(() => new THREE.Vector3(), []);
@@ -1416,7 +1427,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     const before = careerXp.current;
     const after = before + amount;
     careerXp.current = after;
-    try { window.localStorage.setItem(XP_KEY, String(after)); } catch { /* private mode */ }
+    // Only the sandbox persists a local career total; with a real account the
+    // server is the source of truth and the bar re-seeds from it each mission.
+    if (!accountRank) { try { window.localStorage.setItem(XP_KEY, String(after)); } catch { /* private mode */ } }
     popXp(amount);
     for (const r of rankUpsBetween(before, after)) showRankUp(r);
   }
@@ -2032,7 +2045,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, walletAddress }: {
+export function ValorScene({ onOpCleared, startMission, walletAddress, accountRank, accountXp }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2043,6 +2056,10 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
   /** Signed-in wallet — enables the Survival re-arm G$ sink (B1). Omitted at
    *  `/dev/verb` (sandbox) so the re-arm controls + wallet hooks never mount there. */
   walletAddress?: string;
+  /** The real account rank + XP-into-rank (C1). When present, the in-game rank bar
+   *  reflects your true server standing instead of a local number. */
+  accountRank?: Rank;
+  accountXp?: number;
 } = {}) {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
@@ -2300,7 +2317,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} />
         </Suspense>
       </Canvas>
 
