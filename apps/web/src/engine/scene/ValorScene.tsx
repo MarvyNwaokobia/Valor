@@ -86,6 +86,7 @@ function Icon({ name, size = 16 }: { name: string; size?: number }) {
     case 'firemode': return (<svg {...s}><circle cx="7" cy="7" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="7" x2="19" y2="7" /><circle cx="7" cy="12" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="12" x2="19" y2="12" /><circle cx="7" cy="17" r="1.4" fill="currentColor" stroke="none" /><line x1="11" y1="17" x2="19" y2="17" /></svg>);
     case 'crosshair': return (<svg {...s}><circle cx="12" cy="12" r="7" /><line x1="12" y1="2" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="22" /><line x1="2" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="22" y2="12" /><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" /></svg>);
     case 'rotate': return (<svg {...s}><rect x="8.5" y="3" width="7" height="18" rx="1.6" /><path d="M4.2 8.4A9 9 0 0 1 7 4.9" /><path d="M3 5l1 3.4 3.3-.8" /><path d="M19.8 15.6A9 9 0 0 1 17 19.1" /><path d="M21 19l-1-3.4-3.3.8" /></svg>);
+    case 'pause': return (<svg {...s} fill="currentColor" stroke="none"><rect x="6.5" y="5" width="3.5" height="14" rx="1" /><rect x="14" y="5" width="3.5" height="14" rx="1" /></svg>);
     default: return null;
   }
 }
@@ -206,6 +207,11 @@ function pressFx(el: HTMLElement | null, down: boolean, color: string) {
 /** A button label: an icon followed by text, vertically centred. */
 function iconRow(name: string, label: string, size = 15): React.ReactNode {
   return (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name={name} size={size} />{label}</span>);
+}
+
+/** Shared outlined-button style for the pause menu (C4). */
+function btnC4(color: string): React.CSSProperties {
+  return { pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: `1px solid ${color}`, color, fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '11px 22px', borderRadius: 6 };
 }
 
 // Per-weapon viewmodel framing so each gun reads as a different silhouette off
@@ -2140,6 +2146,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
   });
   const [runNonce, setRunNonce] = useState(0); // bump to remount = restart the op
   const [selectOpen, setSelectOpen] = useState(false);
+  const [paused, setPaused] = useState(false); // C4: deliberate pause menu (Esc / ⏸)
   const menuOpenRef = useRef(false); // read by FpsWorld's frame loop to pause
   const setSelect = (v: boolean) => {
     menuOpenRef.current = v; setSelectOpen(v);
@@ -2228,25 +2235,32 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     w.__valorPickMission = (i: number) => pickMission(i);
     w.__valorSurvival = () => pickSurvival();
     w.__valorGauntlet = () => { setMode('gauntlet'); setCampaignDone(false); setDebrief(null); setSelect(false); setRunNonce((n) => n + 1); }; // probe: force ranked mode (bypasses unlock)
+    w.__valorPause = (v = true) => (v ? openPause() : resume()); // C4 probe
     w.__valorProgress = () => progress;
     return () => {
       delete w.__valorCampaign; delete w.__valorNextMission; delete w.__valorResetCampaign;
-      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorSurvival; delete w.__valorGauntlet; delete w.__valorProgress;
+      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorSurvival; delete w.__valorGauntlet; delete w.__valorPause; delete w.__valorProgress;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missionIndex, campaignDone, progress, selectOpen]);
 
-  // M toggles the Operations board (Esc closes it). Kept at the page level so it
-  // works even while the pointer is unlocked.
+  // M toggles the Operations board; Esc drives the pause menu (close board →
+  // resume → open pause). Kept at the page level so it works with the pointer
+  // unlocked. Depends on the overlay states so it always sees the current one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'KeyM') { e.preventDefault(); setSelect(!menuOpenRef.current); }
-      else if (e.code === 'Escape' && menuOpenRef.current) setSelect(false);
+      else if (e.code === 'Escape') {
+        e.preventDefault();
+        if (selectOpen) setSelect(false);
+        else if (paused) resume();
+        else if (!debrief) openPause();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectOpen, paused, debrief]);
   const [isTouch] = useState(() =>
     typeof window !== 'undefined' &&
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
@@ -2274,7 +2288,14 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     return () => { window.removeEventListener('resize', check); window.removeEventListener('orientationchange', check); };
   }, [isTouch]);
   // Single source of truth for the pause flag: any full-screen overlay freezes play.
-  useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null; }, [portrait, selectOpen, debrief]);
+  useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null || paused; }, [portrait, selectOpen, debrief, paused]);
+
+  // C4 · deliberate pause menu. Non-destructive: opening it just freezes the game,
+  // so an accidental open is a one-tap RESUME away (unlike the old exit-to-OPS button).
+  const openPause = () => { setPaused(true); try { document.exitPointerLock?.(); } catch { /* ignore */ } };
+  const resume = () => setPaused(false);
+  const restartFromPause = () => { setPaused(false); setDebrief(null); setRunNonce((n) => n + 1); };
+  const exitToOps = () => { setPaused(false); setSelect(true); };
 
   const JOY_R = 46;
   const joyId = useRef<number | null>(null);
@@ -2508,6 +2529,22 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
         {walletAddress && <SurvivalRearmControls walletAddress={walletAddress} />}
         {/* Prestige Gauntlet run token + ranked result (B2) */}
         {walletAddress && <GauntletRunController walletAddress={walletAddress} />}
+        {/* C4 · pause menu — deliberate, non-destructive, works in every mode */}
+        {paused && !selectOpen && !debrief && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 46, background: 'rgba(3,6,10,.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: UI_FONT, color: '#e9edf2', pointerEvents: 'auto', cursor: 'auto' }}>
+            <div style={{ fontSize: 12, letterSpacing: 8, color: '#37d0e0' }}>PAUSED</div>
+            <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 3, margin: '10px 0 4px' }}>
+              {mode === 'gauntlet' ? 'THE GAUNTLET' : mode === 'survival' ? 'THE KILL-HOUSE' : mission.name}
+            </div>
+            <div style={{ fontSize: 12, color: '#6f7d8c', letterSpacing: 1 }}>{mode === 'campaign' ? `OP ${missionIndex + 1} / ${CAMPAIGN.length}` : mode === 'gauntlet' ? 'RANKED' : 'ENDLESS'}</div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 26, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button onClick={resume} style={{ ...btnC4('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>{iconRow('play', 'RESUME', 13)}</button>
+              <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
+              <button onClick={exitToOps} style={btnC4('#6f7d8c')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
+            </div>
+            <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, marginTop: 22 }}>{isTouch ? 'tap RESUME to return to the fight' : 'ESC resumes · this pause is safe, nothing is lost'}</div>
+          </div>
+        )}
         {debrief && !selectOpen && (
           <MissionDebrief
             mode={debrief}
@@ -2529,7 +2566,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
-            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops
+            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops · ESC pause
           </div>
         )}
 
@@ -2542,8 +2579,15 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
       </div>
 
       {/* ── Mobile touch controls — glassy, tucked to the corners ── */}
-      {isTouch && !selectOpen && !portrait && (
+      {isTouch && !selectOpen && !portrait && !paused && (
         <>
+          {/* C4 pause button — top-centre, ABOVE the aim strip (top:104) so it never
+              eats an aim touch. Safe to mis-tap: pause just freezes + offers RESUME. */}
+          <div onTouchStart={(e) => { e.stopPropagation(); openPause(); }} onClick={openPause}
+            style={{ position: 'absolute', left: '50%', top: 8, transform: 'translateX(-50%)', zIndex: 20, width: 40, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(255,255,255,.18)', color: '#cfe0ea', backdropFilter: 'blur(6px)', pointerEvents: 'auto' }}>
+            <Icon name="pause" size={18} />
+          </div>
+
           {/* drag ANYWHERE below the top strip to aim — over the gun included; the
               joystick + action buttons sit on top and capture their own touches */}
           <div onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
