@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { claimUBI, createReadOnlyClaimSDK, getIdentityExpiryReadOnly, withTimeout } from '@/lib/gooddollar'
+import { claimUBI, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -57,37 +57,39 @@ export function useGoodDollarClaim(
     }
     setStatus('loading')
     setError(null)
-    try {
-      const sdk = createReadOnlyClaimSDK(walletAddress)
-      const walletStatus = await withTimeout(
-        sdk.getWalletClaimStatus(),
-        12000,
-        'GoodDollar claim status check timed out'
-      )
 
-      if (walletStatus.status === 'can_claim') {
-        setStatus('can_claim')
-        setEntitlement((Number(walletStatus.entitlement) / 1e18).toFixed(2))
-        setNextClaimTime(null)
-      } else if (walletStatus.status === 'already_claimed') {
-        setStatus('already_claimed')
-        setEntitlement('0')
-        setNextClaimTime(walletStatus.nextClaimTime ?? null)
-      } else {
-        // The SDK reports 'not_whitelisted' from GoodDollar's getWhitelistedRoot,
-        // but that read is COARSE — it goes false on a genuine expiry AND on a
-        // flaky/degraded read. Per our hard rule we NEVER nag a user to re-verify
-        // on our own judgement: only prompt when GoodDollar's OWN expiry data
-        // explicitly says the identity lapsed. Otherwise FAIL OPEN — treat it as a
-        // soft "couldn't load", never an accusation. (feedback-identity-reverify)
-        const expiry = await getIdentityExpiryReadOnly(walletAddress).catch(() => null)
-        setEntitlement('0')
-        setNextClaimTime(null)
-        setStatus(expiry?.isExpired ? 'not_whitelisted' : 'error')
+    // The status read hits GoodDollar's contracts through a public RPC that can
+    // hiccup (load spikes, mobile privacy). Retry once so a single flaky read
+    // doesn't strand a user on "couldn't load".
+    const sdk = createReadOnlyClaimSDK(walletAddress)
+    let walletStatus: Awaited<ReturnType<typeof sdk.getWalletClaimStatus>> | null = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        walletStatus = await withTimeout(sdk.getWalletClaimStatus(), 15000, 'GoodDollar claim status check timed out')
+        break
+      } catch (err) {
+        if (attempt === 1) { console.error('[Claim] status read failed after retry:', err); setStatus('error'); return }
       }
-    } catch (err) {
-      console.error('[Claim] refresh failed:', err)
-      setStatus('error')
+    }
+    if (!walletStatus) { setStatus('error'); return }
+
+    if (walletStatus.status === 'can_claim') {
+      setStatus('can_claim')
+      setEntitlement((Number(walletStatus.entitlement) / 1e18).toFixed(2))
+      setNextClaimTime(null)
+    } else if (walletStatus.status === 'already_claimed') {
+      setStatus('already_claimed')
+      setEntitlement('0')
+      setNextClaimTime(walletStatus.nextClaimTime ?? null)
+    } else {
+      // A CLEAN read that reports not-whitelisted means the wallet genuinely isn't
+      // verified on GoodDollar (never verified or lapsed) — show an ACTIONABLE
+      // "verify" prompt. This is not nagging a verified user: a verified wallet
+      // returns can_claim/already_claimed. Read FAILURES fall to 'error' above,
+      // never here. (feedback-identity-reverify)
+      setStatus('not_whitelisted')
+      setEntitlement('0')
+      setNextClaimTime(null)
     }
   }, [walletAddress])
 

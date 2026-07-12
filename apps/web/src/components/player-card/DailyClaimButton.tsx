@@ -124,7 +124,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
         {status === 'not_whitelisted' && (
           <div className="flex flex-col gap-2">
             <p className="text-xs text-amber-400/80 text-center">
-              Your GoodDollar identity has expired. Re-verify to claim daily G$.
+              Verify your GoodDollar identity to claim daily G$.
             </p>
             <div className="flex gap-2">
               <motion.button
@@ -134,7 +134,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
                 className="flex-1 py-2 text-xs font-bold rounded-lg transition-colors disabled:opacity-50"
                 style={{ background: '#00bf72', color: '#04030c' }}
               >
-                {reverifying ? 'Opening...' : 'Re-verify Identity'}
+                {reverifying ? 'Opening...' : 'Verify Identity'}
               </motion.button>
               <button
                 onClick={() => refresh()}
