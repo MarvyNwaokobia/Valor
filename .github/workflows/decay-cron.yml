@@ -1,0 +1,32 @@
+name: decay-cron
+
+# Replaces the old Railway decay-cron. Character decay is a slow (days) mechanic,
+# so a sweep every 3 hours is plenty — and the gaps let the free Render/Neon
+# instances sleep, keeping us inside the free tiers. Adjust the cron if needed.
+#
+# Requires two repository secrets (Settings → Secrets and variables → Actions):
+#   API_URL            e.g. https://valor-api-xxxx.onrender.com
+#   DECAY_CRON_SECRET  same value as the API's DECAY_CRON_SECRET env var
+on:
+  schedule:
+    - cron: '0 */3 * * *'   # every 3 hours (GitHub may delay a few min under load — fine for decay)
+  workflow_dispatch: {}      # allow manual runs from the Actions tab
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger decay sweep
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          DECAY_CRON_SECRET: ${{ secrets.DECAY_CRON_SECRET }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$DECAY_CRON_SECRET" ]; then
+            echo "API_URL or DECAY_CRON_SECRET secret not set — skipping."; exit 0
+          fi
+          code=$(curl -sS -X POST "$API_URL/decay/run" \
+            -H "x-cron-secret: $DECAY_CRON_SECRET" \
+            -o /tmp/out.txt -w "%{http_code}" --max-time 90 || echo "000")
+          echo "HTTP $code"; cat /tmp/out.txt || true
+          # A cold-started free instance can take a while; only fail on a real error.
+          case "$code" in 2*) exit 0;; *) echo "decay sweep did not return 2xx"; exit 1;; esac
