@@ -1,6 +1,6 @@
 # Valor — Frontend
 
-Next.js 15 App Router frontend for [Valor](https://playvalor.vercel.app), a Web3 fighting game on GoodDollar + Celo.
+Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 fighting game on GoodDollar + Celo.
 
 ## Stack
 

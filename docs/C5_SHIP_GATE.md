@@ -14,7 +14,7 @@
   cellular or a different network than yours.
 - Use a **brand-new Google account / wallet** the tester has never used, so you
   see true first-run onboarding (not your cached session).
-- Open **https://playvalor.vercel.app** and hand it over. Start a stopwatch.
+- Open **https://playvalor.app** and hand it over. Start a stopwatch.
 - Success = they reach "I have G$" on their own. Record **where they paused**,
   **what they tapped that did nothing**, and **time-to-first-G$**.
 
@@ -70,7 +70,7 @@ If any box fails, that step is the next thing to fix — then re-run with a new 
 
 These need a real device too, so do them alongside the stranger test:
 
-- **C3 perf** — open `playvalor.vercel.app/fight?op=1&perf=1`; a meter shows top-left.
+- **C3 perf** — open `playvalor.app/fight?op=1&perf=1`; a meter shows top-left.
   Play a busy wave and confirm it holds **≥30 FPS** (amber/green, not red). Note any
   spot that dips red (a specific wave / the Rift) so it can be tuned.
 - **B1 re-arm (sink)** — Fight → Survival → play until you die → tap **REVIVE** →
