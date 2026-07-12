@@ -17,11 +17,15 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FILES = [
-  'apps/api/migrations/init.sql',              // core tables (players, battles, items, …)
-  'apps/api/migrations/add_chain_tx_columns.sql', // character_claim_tx, game_record_tx
-  'apps/api/migrations/fix_decimal_columns.sql',  // g_earned_lifetime / price_g → NUMERIC
-  'supabase/migrations/005_pve_level.sql',        // players.pve_level
-  'apps/api/migrations/add_gdollar_ledger.sql',   // g_ledger, seasons
+  'apps/api/migrations/init.sql',              // core tables (players, battles, items, …) — 001+003
+  'supabase/migrations/004_guns.sql',          // items.layer/stat columns + gun catalogue
+  'supabase/migrations/005_pve_level.sql',     // players.pve_level
+  'supabase/migrations/006_endless.sql',       // endless_scores (survival leaderboard)
+  'supabase/migrations/007_remove_melee_items.sql', // prune legacy melee items
+  'supabase/migrations/008_ammo_attachments.sql',   // ammo/attachment items
+  'apps/api/migrations/add_chain_tx_columns.sql',   // character_claim_tx, game_record_tx
+  'apps/api/migrations/fix_decimal_columns.sql',    // g_earned_lifetime / price_g → NUMERIC
+  'apps/api/migrations/add_gdollar_ledger.sql',     // g_ledger, seasons
   'apps/api/migrations/add_first_clear_bounties.sql', // B0 bounties
 ];
 
