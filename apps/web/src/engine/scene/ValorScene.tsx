@@ -18,9 +18,10 @@ import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
-import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
+import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import { dressingFor, type PropSpec } from './setDressing';
 import { useSurvivalRearm, NeedArmError, type RearmAction } from '@/hooks/useSurvivalRearm';
+import { useGauntlet, type GauntletBoardRow } from '@/hooks/useGauntlet';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -553,7 +554,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     w.__valorKillAll = () => sim.debugKillAll();
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
-    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, wave: survWave.current, waveState: survState.current, survOver: survOver.current });
+    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills });
     w.__valorWarp = (x: number, z: number) => { pos.current.set(x, EYE_STAND, z); };
     w.__valorSkipBriefing = () => { briefingUntil.current = 0; };
     w.__valorXp = () => ({ careerXp: careerXp.current, rank: rankForXp(careerXp.current), intoRank: xpIntoRank(careerXp.current) });
@@ -1045,7 +1046,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
           if (sim.aliveCount() === 0) { survState.current = 'intermission'; survNextAt.current = wall + 3200; }
         } else if (wall >= survNextAt.current) {
           survWave.current += 1;
-          sim.startWave(survivalWaveCount(survWave.current), survivalWaveHp(survWave.current));
+          // The Gauntlet (prestige) runs a steeper curve than practice Survival.
+          const waveCount = mission.gauntlet ? gauntletWaveCount : survivalWaveCount;
+          const waveHp = mission.gauntlet ? gauntletWaveHp : survivalWaveHp;
+          sim.startWave(waveCount(survWave.current), waveHp(survWave.current));
           survState.current = 'active';
         }
       }
@@ -1665,8 +1669,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
  * furthest-unlocked is replayable; the rest are locked. Grouped by zone so the
  * three theatres of the campaign read at a glance.
  */
-function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
-  current: number; progress: number; onPick: (i: number) => void; onSurvival: () => void; onClose: () => void;
+function MissionSelect({ current, progress, onPick, onSurvival, onGauntlet, gauntletUnlocked, onClose }: {
+  current: number; progress: number; onPick: (i: number) => void; onSurvival: () => void;
+  onGauntlet: () => void; gauntletUnlocked: boolean; onClose: () => void;
 }) {
   const zones = CAMPAIGN.reduce<Record<string, { m: Mission; i: number }[]>>((acc, m, i) => {
     (acc[m.zone] ??= []).push({ m, i });
@@ -1760,6 +1765,23 @@ function MissionSelect({ current, progress, onPick, onSurvival, onClose }: {
             </div>
             <div style={{ fontSize: 10, letterSpacing: 2, color: '#ff5a52' }}>OPEN</div>
           </button>
+
+          {/* Gauntlet — the prestige, ranked tier. Locked until the campaign is done. */}
+          <button
+            onClick={() => gauntletUnlocked && onGauntlet()}
+            disabled={!gauntletUnlocked}
+            style={{ pointerEvents: 'auto', textAlign: 'left', font: 'inherit', cursor: gauntletUnlocked ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 14, width: '100%', marginTop: 10, padding: '12px 16px', borderRadius: 7, border: `1px solid ${gauntletUnlocked ? '#e0b737' : '#2a3440'}`, background: gauntletUnlocked ? 'rgba(224,183,55,.08)' : 'rgba(255,255,255,.015)', opacity: gauntletUnlocked ? 1 : 0.5, color: 'inherit' }}
+          >
+            <div style={{ width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: gauntletUnlocked ? '#e0b737' : '#6f7d8c' }}><Icon name={gauntletUnlocked ? 'alert' : 'lock'} size={20} /></div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1, color: gauntletUnlocked ? '#e6c766' : '#9fb4c8' }}>GAUNTLET</span>
+                <span style={{ fontSize: 10, letterSpacing: 2, color: '#e0b737', border: '1px solid #e0b73766', padding: '1px 6px', borderRadius: 3 }}>RANKED</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#9fb4c8', marginTop: 3 }}>{gauntletUnlocked ? 'harder every wave · your best run climbs the season leaderboard' : 'finish the campaign to unlock the ranked Gauntlet'}</div>
+            </div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: gauntletUnlocked ? '#e0b737' : '#6f7d8c' }}>{gauntletUnlocked ? 'RANKED' : 'LOCKED'}</div>
+          </button>
         </div>
 
         <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, textAlign: 'center', marginTop: 8 }}>
@@ -1835,19 +1857,21 @@ const rearmCostPreview = (action: RearmAction, wave: number): number => {
  */
 function SurvivalRearmControls({ walletAddress }: { walletAddress: string }) {
   const { arm, rearm, armed, capG, pending } = useSurvivalRearm(walletAddress);
-  const [hud, setHud] = useState<{ survival: boolean; wave: number; survOver: boolean }>({ survival: false, wave: 0, survOver: false });
+  const [hud, setHud] = useState<{ survival: boolean; gauntlet: boolean; wave: number; survOver: boolean }>({ survival: false, gauntlet: false, wave: 0, survOver: false });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => {
-      const m = (window as unknown as { __valorMission?: () => { survival?: boolean; wave?: number; survOver?: boolean } }).__valorMission?.();
-      if (m) setHud({ survival: !!m.survival, wave: m.wave ?? 0, survOver: !!m.survOver });
+      const m = (window as unknown as { __valorMission?: () => { survival?: boolean; gauntlet?: boolean; wave?: number; survOver?: boolean } }).__valorMission?.();
+      if (m) setHud({ survival: !!m.survival, gauntlet: !!m.gauntlet, wave: m.wave ?? 0, survOver: !!m.survOver });
     }, 400);
     return () => clearInterval(id);
   }, []);
 
-  if (!hud.survival) return null;
+  // Re-arm is a PRACTICE-only sink. The ranked Gauntlet is pure skill — no buying
+  // your way back — so the leaderboard it feeds stays legitimate.
+  if (!hud.survival || hud.gauntlet) return null;
 
   const bridge = window as unknown as { __valorRevive?: () => boolean; __valorResupply?: () => boolean; __valorWaveSkip?: () => boolean };
 
@@ -1897,6 +1921,93 @@ function SurvivalRearmControls({ walletAddress }: { walletAddress: string }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Prestige Gauntlet run controller (B2). Self-contained, only mounted with a wallet.
+ * Watches the sim's mission hook: gets a server run token as the run begins, and on
+ * death submits waves+kills (server validates elapsed time before recording). Shows
+ * a ranked result card + the season leaderboard. No re-arm here — the Gauntlet is
+ * pure skill, so its board stays honest.
+ */
+function GauntletRunController({ walletAddress }: { walletAddress: string }) {
+  const { start, submit, leaderboard } = useGauntlet(walletAddress);
+  const tokenRef = useRef<string | null>(null);
+  const submittedRef = useRef<string | null>(null);
+  const startingRef = useRef(false);
+  const [status, setStatus] = useState<'idle' | 'locked' | 'live' | 'result'>('idle');
+  const [result, setResult] = useState<{ waves: number; best: number } | null>(null);
+  const [board, setBoard] = useState<GauntletBoardRow[]>([]);
+
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const m = (window as unknown as { __valorMission?: () => { gauntlet?: boolean; wave?: number; survOver?: boolean; kills?: number } }).__valorMission?.();
+      if (!m || !m.gauntlet) return;
+
+      // A fresh run (remount via AGAIN) resets wave to 0 with the player alive.
+      if (!m.survOver && (m.wave ?? 0) === 0 && (tokenRef.current || submittedRef.current)) {
+        tokenRef.current = null; submittedRef.current = null; setResult(null); setStatus('idle');
+      }
+      // Claim a run token as EARLY as possible so started_at ≈ real run start.
+      if (!m.survOver && !tokenRef.current && !startingRef.current) {
+        startingRef.current = true;
+        try {
+          const r = await start();
+          if ('locked' in r) setStatus('locked');
+          else { tokenRef.current = r.token; setStatus('live'); }
+        } catch { /* offline — the run still plays, it just won't rank */ }
+        finally { startingRef.current = false; }
+      }
+      // Submit once, on death.
+      if (m.survOver && tokenRef.current && submittedRef.current !== tokenRef.current) {
+        const tok = tokenRef.current; submittedRef.current = tok;
+        const waves = Math.max(0, (m.wave ?? 1) - 1);
+        const kills = m.kills ?? 0;
+        try {
+          const res = await submit(tok, waves, kills);
+          setResult({ waves: res.waves, best: res.seasonBest });
+        } catch { setResult({ waves, best: 0 }); }
+        setStatus('result');
+        leaderboard('weekly').then(setBoard).catch(() => { /* board optional */ });
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [start, submit, leaderboard]);
+
+  if (status === 'locked') {
+    return (
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 70, zIndex: 45, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+        <div style={{ background: 'rgba(20,16,4,.82)', border: '1px solid #e0b73766', color: '#e6c766', fontSize: 11, letterSpacing: 1, padding: '7px 12px', borderRadius: 6, backdropFilter: 'blur(6px)' }}>
+          not ranked — finish the campaign to unlock the Gauntlet
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'result' && result) {
+    const short = (r: GauntletBoardRow) => r.username || `${r.wallet_address.slice(0, 6)}…${r.wallet_address.slice(-4)}`;
+    return (
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 46, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+        <div style={{ pointerEvents: 'auto', width: 300, maxWidth: '86vw', background: 'rgba(14,12,4,.92)', border: '1px solid #e0b73755', borderRadius: 10, padding: '14px 16px', color: '#e9edf2', fontFamily: UI_FONT, backdropFilter: 'blur(8px)' }}>
+          <div style={{ fontSize: 11, letterSpacing: 5, color: '#e0b737' }}>GAUNTLET · RANKED</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '6px 0 12px' }}>
+            <span style={{ fontSize: 34, fontWeight: 800, color: '#e6c766' }}>{result.waves}</span>
+            <span style={{ fontSize: 12, color: '#9fb4c8' }}>waves · season best {result.best}</span>
+          </div>
+          <div style={{ fontSize: 10, letterSpacing: 3, color: '#7f8c99', borderBottom: '1px solid #2a3440', paddingBottom: 5, marginBottom: 6 }}>THIS SEASON</div>
+          {board.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#6f7d8c' }}>be the first on the board</div>
+          ) : board.slice(0, 6).map((r, i) => (
+            <div key={r.wallet_address} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '2px 0', color: i === 0 ? '#e6c766' : '#c7d2dc' }}>
+              <span>{i + 1}. {short(r)}</span><span>{r.best}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export function ValorScene({ onOpCleared, startMission, walletAddress }: {
@@ -1951,11 +2062,13 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
     menuOpenRef.current = v; setSelectOpen(v);
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }
   };
-  const [mode, setMode] = useState<'campaign' | 'survival'>('campaign');
+  const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet'>('campaign');
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
   const missionStartWall = useRef(performance.now()); // for the op's clear time
   useEffect(() => { missionStartWall.current = performance.now(); }, [missionIndex, runNonce, mode]);
-  const mission = mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
+  const mission = mode === 'gauntlet' ? GAUNTLET_MISSION : mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
+  // The Gauntlet is a prestige tier — earned by finishing the campaign.
+  const gauntletUnlocked = progress >= CAMPAIGN.length;
 
   const unlock = (upto: number) => setProgress((pr) => {
     const np = Math.min(CAMPAIGN.length, Math.max(pr, upto));
@@ -1980,6 +2093,14 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
   };
   const pickSurvival = () => {
     setMode('survival');
+    setCampaignDone(false);
+    setDebrief(null);
+    setSelect(false);
+    setRunNonce((n) => n + 1);
+  };
+  const pickGauntlet = () => {
+    if (!gauntletUnlocked) return; // prestige tier — locked until the campaign is done
+    setMode('gauntlet');
     setCampaignDone(false);
     setDebrief(null);
     setSelect(false);
@@ -2023,10 +2144,11 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
     w.__valorOpenSelect = (v = true) => setSelect(!!v);
     w.__valorPickMission = (i: number) => pickMission(i);
     w.__valorSurvival = () => pickSurvival();
+    w.__valorGauntlet = () => { setMode('gauntlet'); setCampaignDone(false); setDebrief(null); setSelect(false); setRunNonce((n) => n + 1); }; // probe: force ranked mode (bypasses unlock)
     w.__valorProgress = () => progress;
     return () => {
       delete w.__valorCampaign; delete w.__valorNextMission; delete w.__valorResetCampaign;
-      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorSurvival; delete w.__valorProgress;
+      delete w.__valorOpenSelect; delete w.__valorPickMission; delete w.__valorSurvival; delete w.__valorGauntlet; delete w.__valorProgress;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missionIndex, campaignDone, progress, selectOpen]);
@@ -2281,6 +2403,8 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
         </div>
         {/* Survival re-arm G$ sink (B1) — only with a wallet; sandbox stays local */}
         {walletAddress && <SurvivalRearmControls walletAddress={walletAddress} />}
+        {/* Prestige Gauntlet run token + ranked result (B2) */}
+        {walletAddress && <GauntletRunController walletAddress={walletAddress} />}
         {debrief && !selectOpen && (
           <MissionDebrief
             mode={debrief}
@@ -2293,12 +2417,12 @@ export function ValorScene({ onOpCleared, startMission, walletAddress }: {
         )}
 
         {selectOpen && (
-          <MissionSelect current={mode === 'survival' ? -1 : missionIndex} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onClose={() => setSelect(false)} />
+          <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => setSelect(false)} />
         )}
 
         {/* zone / op label (operations are chosen outside the game now) */}
         <div style={{ position: 'absolute', left: 26, top: 20 }}>
-          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
+          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'gauntlet' ? 'Valor · GAUNTLET · RANKED' : mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
