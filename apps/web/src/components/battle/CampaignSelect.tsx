@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { ChevronLeft, Lock, Skull, Check, Crosshair, Infinity as InfinityIcon } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN_LEVELS, ENDLESS_UNLOCK_LEVEL } from '@/engine/campaign/levels'
+import { tryFullscreen } from '@/lib/fullscreen'
 import { GUN_CATALOG } from '@/engine/combat'
 
 interface Props {
@@ -27,16 +28,14 @@ export default function CampaignSelect({ player, onBack }: Props) {
   const nextLevel = cleared + 1
 
   const play = (n: number) => {
-    const el = document.documentElement
-    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+    tryFullscreen()
     router.push(`/fight-legacy?level=${n}`)
   }
 
   const endlessUnlocked = cleared >= ENDLESS_UNLOCK_LEVEL
   const playEndless = () => {
     if (!endlessUnlocked) return
-    const el = document.documentElement
-    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+    tryFullscreen()
     router.push('/endless')
   }
 

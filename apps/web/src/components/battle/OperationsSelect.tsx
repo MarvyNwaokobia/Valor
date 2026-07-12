@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { ChevronLeft, Lock, Skull, Check, ChevronRight } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN } from '@/engine/fps/campaign'
+import { tryFullscreen } from '@/lib/fullscreen'
 
 interface Props {
   player: Player
@@ -27,8 +28,7 @@ export default function OperationsSelect({ player, onBack }: Props) {
   const cleared = player.pve_level ?? 0 // number of ops cleared
 
   const play = (i: number) => {
-    const el = document.documentElement
-    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+    tryFullscreen()               // best-effort; must never block the navigation below
     router.push(`/fight?op=${i}`)
   }
 
