@@ -10,6 +10,7 @@ pub mod rewards;
 pub mod auth;
 pub mod ws;
 pub mod endless;
+pub mod survival;
 pub mod ledger;
 pub mod admin;
 
@@ -80,6 +81,11 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/endless")
                 .route("/score", web::post().to(endless::submit_score))
                 .route("/leaderboard", web::get().to(endless::get_leaderboard)),
+        )
+        .service(
+            web::scope("/survival")
+                .route("/arm", web::post().to(survival::arm_session))
+                .route("/rearm", web::post().to(survival::rearm)),
         )
         .service(
             web::scope("/auth")

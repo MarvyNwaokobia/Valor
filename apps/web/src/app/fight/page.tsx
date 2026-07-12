@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useState } from 'react';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
+import { usePlayerStore } from '@/stores/usePlayerStore';
 
 // The tactical HUD face (see /dev/verb) — exposed as a CSS var for the scene.
 const tactical = Rajdhani({
@@ -36,6 +37,7 @@ const ValorScene = dynamic(
 
 export default function FightPage() {
   const { submitResult } = useFightRewards();
+  const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
 
   // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
   // routes here as /fight?op=N — so we boot straight into that operation.
@@ -57,7 +59,7 @@ export default function FightPage() {
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
-      <ValorScene onOpCleared={onOpCleared} startMission={startMission} />
+      <ValorScene onOpCleared={onOpCleared} startMission={startMission} walletAddress={walletAddress} />
     </div>
   );
 }
