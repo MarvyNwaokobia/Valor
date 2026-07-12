@@ -6,6 +6,7 @@ import { motion, AnimatePresence, useAnimation } from 'framer-motion'
 import { Sword, Shield, Zap, Users, ChevronLeft, Smartphone, Crosshair, Target } from 'lucide-react'
 import type { Player, BattleMove } from '@/types'
 import { useBattle } from '@/hooks/useBattle'
+import { tryFullscreen } from '@/lib/fullscreen'
 import { useValorEngagementRewards } from '@/hooks/useEngagementRewards'
 import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
@@ -358,8 +359,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           )}
 
           <motion.button onClick={() => {
-              const el = document.documentElement
-              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+              tryFullscreen()
               setShowChallenge(true)
             }}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
@@ -385,8 +385,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           </motion.button>
 
           <motion.button onClick={() => {
-              const el = document.documentElement
-              if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {})
+              tryFullscreen()
               setShowDirectChallenge(true)
             }}
             className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
