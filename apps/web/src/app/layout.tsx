@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Providers } from './providers'
+import { NoZoom } from '@/components/NoZoom'
 import './globals.css'
 
 export const dynamic = 'force-dynamic'
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
+        <NoZoom />
         <Providers>{children}</Providers>
       </body>
     </html>

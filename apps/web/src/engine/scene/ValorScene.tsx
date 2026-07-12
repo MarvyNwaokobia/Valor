@@ -2119,7 +2119,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, walletAddress, accountRank, accountXp }: {
+export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2127,6 +2127,10 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
+  /** Server-authoritative campaign progress (pve_level = ops cleared). When no op is
+   *  chosen, RESUME here — survives a sign-out that cleared local storage, and unlocks
+   *  the board up to it (so progress is never lost to a fresh device/session). */
+  resumeLevel?: number;
   /** Signed-in wallet — enables the Survival re-arm G$ sink (B1). Omitted at
    *  `/dev/verb` (sandbox) so the re-arm controls + wallet hooks never mount there. */
   walletAddress?: string;
@@ -2135,6 +2139,10 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
   accountRank?: Rank;
   accountXp?: number;
 } = {}) {
+  // Server progress (ops cleared), clamped to a valid campaign index — the resume
+  // target and the unlock floor.
+  const serverResume = typeof resumeLevel === 'number' && resumeLevel >= 0
+    ? Math.min(resumeLevel, CAMPAIGN.length - 1) : -1;
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
@@ -2155,18 +2163,20 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
   // A `startMission` (from the external Operations list) wins over the resume slot.
   const [missionIndex, setMissionIndex] = useState(() => {
     if (typeof startMission === 'number' && startMission >= 0 && startMission < CAMPAIGN.length) return startMission;
+    if (serverResume >= 0) return serverResume; // resume at the server's next op (survives sign-out)
     try { const v = Number(window.localStorage.getItem(CAMPAIGN_KEY)); if (Number.isFinite(v) && v >= 0 && v < CAMPAIGN.length) return v; } catch { /* private mode */ }
     return 0;
   });
   const [campaignDone, setCampaignDone] = useState(false);
-  // How far you've unlocked (soft gating). Seed from stored progress, but never
-  // behind the op you started on, so a chosen op is always reachable.
+  // How far you've unlocked (soft gating). Never behind the op you started on OR the
+  // server's cleared progress, so a chosen op is always reachable and progress isn't
+  // lost when local storage is cleared.
   const [progress, setProgress] = useState(() => {
     try {
       const p = Number(window.localStorage.getItem(PROGRESS_KEY));
       const m = Number(window.localStorage.getItem(CAMPAIGN_KEY));
-      return Math.min(CAMPAIGN.length, Math.max(Number.isFinite(p) ? p : 0, Number.isFinite(m) ? m : 0, startMission ?? 0, 0));
-    } catch { return startMission ?? 0; }
+      return Math.min(CAMPAIGN.length, Math.max(Number.isFinite(p) ? p : 0, Number.isFinite(m) ? m : 0, startMission ?? 0, serverResume, 0));
+    } catch { return Math.max(startMission ?? 0, serverResume, 0); }
   });
   const [runNonce, setRunNonce] = useState(0); // bump to remount = restart the op
   const [selectOpen, setSelectOpen] = useState(false);
