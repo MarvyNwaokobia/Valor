@@ -21,7 +21,7 @@ import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import { dressingFor, type PropSpec } from './setDressing';
 import { useSurvivalRearm, NeedArmError, type RearmAction } from '@/hooks/useSurvivalRearm';
-import { useGauntlet, type GauntletBoardRow } from '@/hooks/useGauntlet';
+import { useGauntlet, type GauntletBoardRow, type SeasonInfo } from '@/hooks/useGauntlet';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -1931,13 +1931,14 @@ function SurvivalRearmControls({ walletAddress }: { walletAddress: string }) {
  * pure skill, so its board stays honest.
  */
 function GauntletRunController({ walletAddress }: { walletAddress: string }) {
-  const { start, submit, leaderboard } = useGauntlet(walletAddress);
+  const { start, submit, leaderboard, season } = useGauntlet(walletAddress);
   const tokenRef = useRef<string | null>(null);
   const submittedRef = useRef<string | null>(null);
   const startingRef = useRef(false);
   const [status, setStatus] = useState<'idle' | 'locked' | 'live' | 'result'>('idle');
   const [result, setResult] = useState<{ waves: number; best: number } | null>(null);
   const [board, setBoard] = useState<GauntletBoardRow[]>([]);
+  const [seasonInfo, setSeasonInfo] = useState<SeasonInfo | null>(null);
 
   useEffect(() => {
     const id = setInterval(async () => {
@@ -1969,6 +1970,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
         } catch { setResult({ waves, best: 0 }); }
         setStatus('result');
         leaderboard('weekly').then(setBoard).catch(() => { /* board optional */ });
+        season().then(setSeasonInfo).catch(() => { /* season optional */ });
       }
     }, 500);
     return () => clearInterval(id);
@@ -1985,21 +1987,41 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   }
 
   if (status === 'result' && result) {
-    const short = (r: GauntletBoardRow) => r.username || `${r.wallet_address.slice(0, 6)}…${r.wallet_address.slice(-4)}`;
+    const short = (name: string | null, addr: string) => name || `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+    const s = seasonInfo?.season;
+    const pool = s && s.prize_pool_g > 0 ? s : null;
+    // With a funded season, show the windowed board + est payouts; else the weekly board.
+    const seasonRows = seasonInfo?.leaderboard ?? [];
+    const mine = walletAddress ? seasonRows.find((e) => e.wallet_address.toLowerCase() === walletAddress.toLowerCase()) : undefined;
     return (
       <div style={{ position: 'absolute', left: 0, right: 0, top: 46, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-        <div style={{ pointerEvents: 'auto', width: 300, maxWidth: '86vw', background: 'rgba(14,12,4,.92)', border: '1px solid #e0b73755', borderRadius: 10, padding: '14px 16px', color: '#e9edf2', fontFamily: UI_FONT, backdropFilter: 'blur(8px)' }}>
+        <div style={{ pointerEvents: 'auto', width: 312, maxWidth: '88vw', background: 'rgba(14,12,4,.92)', border: '1px solid #e0b73755', borderRadius: 10, padding: '14px 16px', color: '#e9edf2', fontFamily: UI_FONT, backdropFilter: 'blur(8px)' }}>
           <div style={{ fontSize: 11, letterSpacing: 5, color: '#e0b737' }}>GAUNTLET · RANKED</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '6px 0 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '6px 0 10px' }}>
             <span style={{ fontSize: 34, fontWeight: 800, color: '#e6c766' }}>{result.waves}</span>
             <span style={{ fontSize: 12, color: '#9fb4c8' }}>waves · season best {result.best}</span>
           </div>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: '#7f8c99', borderBottom: '1px solid #2a3440', paddingBottom: 5, marginBottom: 6 }}>THIS SEASON</div>
-          {board.length === 0 ? (
+          {pool && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(224,183,55,.10)', border: '1px solid #e0b73733', borderRadius: 7, padding: '7px 10px', marginBottom: 10 }}>
+              <span style={{ fontSize: 11, letterSpacing: 2, color: '#e6c766' }}>{pool.name} · POOL {pool.prize_pool_g} G$</span>
+              {mine ? <span style={{ fontSize: 11, color: mine.est_payout_g > 0 ? '#5fe0a8' : '#9fb4c8' }}>#{mine.rank} · ~{mine.est_payout_g} G$</span> : null}
+            </div>
+          )}
+          <div style={{ fontSize: 10, letterSpacing: 3, color: '#7f8c99', borderBottom: '1px solid #2a3440', paddingBottom: 5, marginBottom: 6 }}>
+            {pool ? `SEASON · ${pool.active ? 'LIVE' : 'CLOSED'}` : 'THIS WEEK'}
+          </div>
+          {pool && seasonRows.length > 0 ? (
+            seasonRows.slice(0, 6).map((r) => (
+              <div key={r.wallet_address} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '2px 0', color: r.rank === 1 ? '#e6c766' : '#c7d2dc' }}>
+                <span>{r.rank}. {short(r.username, r.wallet_address)}</span>
+                <span>{r.best}{r.est_payout_g > 0 ? <span style={{ color: '#5fe0a8' }}> · {r.est_payout_g} G$</span> : null}</span>
+              </div>
+            ))
+          ) : board.length === 0 ? (
             <div style={{ fontSize: 11, color: '#6f7d8c' }}>be the first on the board</div>
           ) : board.slice(0, 6).map((r, i) => (
             <div key={r.wallet_address} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '2px 0', color: i === 0 ? '#e6c766' : '#c7d2dc' }}>
-              <span>{i + 1}. {short(r)}</span><span>{r.best}</span>
+              <span>{i + 1}. {short(r.username, r.wallet_address)}</span><span>{r.best}</span>
             </div>
           ))}
         </div>

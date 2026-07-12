@@ -30,7 +30,7 @@ fn admin_allowlist() -> Vec<String> {
         .collect()
 }
 
-fn verify_admin_token(req: &HttpRequest) -> Result<String, HttpResponse> {
+pub(crate) fn verify_admin_token(req: &HttpRequest) -> Result<String, HttpResponse> {
     let jwt_secret = std::env::var("ADMIN_JWT_SECRET").map_err(|_| {
         HttpResponse::ServiceUnavailable().json(json!({"error": "Admin auth not configured"}))
     })?;
