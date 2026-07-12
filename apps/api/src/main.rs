@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     // Defaults to production URL so deploys work without manual env var setup.
     // Always allows localhost for local dev.
     let raw_origins = std::env::var("FRONTEND_ORIGIN")
-        .unwrap_or_else(|_| "https://playvalor.vercel.app".into());
+        .unwrap_or_else(|_| "https://playvalor.app,https://playvalor.vercel.app".into());
     let allowed_origins: Vec<String> = raw_origins
         .split(',')
         .map(|s| s.trim().to_string())

@@ -4,10 +4,10 @@ A Web3 real-time 1v1 stat-duel SHOOTER built on [GoodDollar](https://gooddollar.
 
 Players verify their identity via GoodDollar, choose a character class, and enter a 3D arena where two fighters stand at range and trade shots. The only player skill is dodge timing — better guns mean more power. Gun economy drives the marketplace. Earn XP and rank up, buy guns/ammo/attachments from the on-chain marketplace using G$ — with no gas fees required.
 
-**Live**: https://playvalor.vercel.app  
+**Live**: https://playvalor.app  
 **API**: https://valor-production.up.railway.app  
 **Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)  
-**Domain**: [playvalor.app](https://playvalor.vercel.app ) (custom domain — configure DNS to point to Vercel)
+**Domain**: [playvalor.app](https://playvalor.app) (primary; playvalor.vercel.app still resolves)
 
 ---
 
