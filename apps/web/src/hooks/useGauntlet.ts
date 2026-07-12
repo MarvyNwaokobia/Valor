@@ -5,6 +5,12 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 export interface GauntletBoardRow { wallet_address: string; username: string | null; best: number }
 export type StartResult = { token: string } | { locked: true; needLevel: number; haveLevel: number }
 
+export interface SeasonEntry { rank: number; wallet_address: string; username: string | null; best: number; est_payout_g: number }
+export interface SeasonInfo {
+  season: { id: string; name: string; active: boolean; ends_at: string | null; prize_pool_g: number; payout_status: string } | null
+  leaderboard: SeasonEntry[]
+}
+
 /**
  * Prestige Gauntlet run lifecycle (B2). `start()` gets a single-use run token from
  * the server (which records the real start time — the anti-cheat anchor); `submit()`
@@ -41,5 +47,11 @@ export function useGauntlet(walletAddress: string | undefined) {
     return (body.entries ?? []) as GauntletBoardRow[]
   }, [])
 
-  return { start, submit, leaderboard }
+  const season = useCallback(async (): Promise<SeasonInfo> => {
+    const res = await fetch(`${API}/seasons/current`)
+    const body = await res.json().catch(() => ({ season: null, leaderboard: [] }))
+    return { season: body.season ?? null, leaderboard: body.leaderboard ?? [] }
+  }, [])
+
+  return { start, submit, leaderboard, season }
 }

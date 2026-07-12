@@ -30,6 +30,7 @@ const FILES = [
   'apps/api/migrations/add_character_confirmed.sql',  // confirm-your-class flag
   'apps/api/migrations/add_survival_rearms.sql',      // B1 survival re-arm sink
   'apps/api/migrations/add_survival_runs.sql',        // B2 prestige gauntlet runs
+  'apps/api/migrations/add_season_payouts.sql',       // B3 season prize pool + payouts
 ];
 
 if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }
