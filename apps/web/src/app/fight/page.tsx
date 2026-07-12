@@ -38,6 +38,9 @@ const ValorScene = dynamic(
 export default function FightPage() {
   const { submitResult } = useFightRewards();
   const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
+  // C1: the real account rank + XP so the in-game HUD reflects true server standing.
+  const accountRank = usePlayerStore((s) => s.player?.rank);
+  const accountXp = usePlayerStore((s) => s.player?.xp);
 
   // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
   // routes here as /fight?op=N — so we boot straight into that operation.
@@ -59,7 +62,7 @@ export default function FightPage() {
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
-      <ValorScene onOpCleared={onOpCleared} startMission={startMission} walletAddress={walletAddress} />
+      <ValorScene onOpCleared={onOpCleared} startMission={startMission} walletAddress={walletAddress} accountRank={accountRank} accountXp={accountXp} />
     </div>
   );
 }

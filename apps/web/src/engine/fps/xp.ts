@@ -64,5 +64,17 @@ export function gReward(rank: Rank): number {
   return RANK_G_REWARD[rank];
 }
 
+/**
+ * The career-XP total that reproduces a given ACCOUNT standing (server rank +
+ * progress into that rank). The HUD seeds its live per-kill bar from this so it
+ * always shows the player's real rank/progress — not a separate local number —
+ * and `rankForXp`/`xpIntoRank` of the result round-trip back to (rank, intoRank).
+ */
+export function careerXpFor(rank: Rank, intoRank: number): number {
+  const idx = Math.max(0, RANKS.indexOf(rank));
+  const into = Math.max(0, Math.min(XP_PER_RANK, Math.floor(intoRank || 0)));
+  return idx * XP_PER_RANK + into;
+}
+
 export { XP_PER_RANK, RANKS };
 export type { Rank };

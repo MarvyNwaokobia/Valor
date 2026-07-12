@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { xpForKill, rankForXp, rankIndexForXp, xpIntoRank, rankUpsBetween, gReward, XP_REWARD, XP_PER_RANK } from '../xp';
+import { xpForKill, rankForXp, rankIndexForXp, xpIntoRank, rankUpsBetween, gReward, careerXpFor, XP_REWARD, XP_PER_RANK } from '../xp';
 
 describe('earn loop: XP per kill', () => {
   it('a body kill is worth the base, a headshot kill more', () => {
@@ -55,3 +55,24 @@ describe('earn loop: rank from XP', () => {
     expect(gReward('Diamond')).toBeGreaterThan(gReward('Bronze'));
   });
 });
+
+describe('C1: seeding the HUD from the server account', () => {
+  it('careerXpFor round-trips back to the account rank + progress', () => {
+    // Below the top rank, both rank and progress round-trip exactly.
+    for (const [rank, into] of [['Bronze', 0], ['Bronze', 750], ['Silver', 120], ['Platinum', 999]] as const) {
+      const seed = careerXpFor(rank, into);
+      expect(rankForXp(seed)).toBe(rank);
+      expect(xpIntoRank(seed)).toBe(into);
+    }
+    // Diamond is the top rank → the bar reads full regardless of stored progress.
+    const dia = careerXpFor('Diamond', 500);
+    expect(rankForXp(dia)).toBe('Diamond');
+    expect(xpIntoRank(dia)).toBe(XP_PER_RANK);
+  });
+
+  it('is robust to junk input', () => {
+    expect(careerXpFor('Bronze', -50)).toBe(0);
+    expect(careerXpFor('Bronze', 5000)).toBe(1000); // clamped into the rank band
+    expect(careerXpFor('Diamond', 300)).toBe(4 * XP_PER_RANK + 300);
+  });
+})
