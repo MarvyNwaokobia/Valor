@@ -63,6 +63,15 @@ pub struct ChainWriter {
     marketplace:  Option<Arc<ValorMarketplace<ChainClient>>>,
     reward_pool:  Option<Arc<ValorRewardPool<ChainClient>>>,
     g_token:      Arc<GDollarToken<ChainClient>>,
+    // Serializes every state-changing tx from the signer. A fight-complete fires
+    // several writes concurrently (recordBattle + a bounty/reward payout), and a
+    // plain SignerMiddleware reads the *pending* nonce independently per tx — so
+    // two racing writes grab the SAME nonce and the loser is rejected as
+    // "replacement transaction underpriced". Holding this lock across each
+    // broadcast means the next tx reads the nonce only after the previous is in
+    // the mempool. Self-healing: the nonce is always re-read from chain, so a
+    // failed send never leaves a local counter out of sync (unlike a nonce manager).
+    tx_lock:      Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ChainWriter {
@@ -129,7 +138,7 @@ impl ChainWriter {
         let g_token = Arc::new(GDollarToken::new(g_token_addr, client.clone()));
 
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract, client, rank_pools, marketplace, reward_pool, g_token })
+        Some(Self { contract, client, rank_pools, marketplace, reward_pool, g_token, tx_lock: Arc::new(tokio::sync::Mutex::new(())) })
     }
 
     pub async fn claim_character(
@@ -138,6 +147,7 @@ impl ChainWriter {
         class: String,
         name: String,
     ) -> Option<H256> {
+        let _tx = self.tx_lock.lock().await;
         match self.contract.claim_character(player, class, name).send().await {
             Ok(pending) => {
                 let hash = pending.tx_hash();
@@ -160,6 +170,7 @@ impl ChainWriter {
         xp_loser: u8,
         is_bot: bool,
     ) -> Option<H256> {
+        let _tx = self.tx_lock.lock().await;
         match self
             .contract
             .record_battle(battle_id, winner, loser, xp_winner, xp_loser, is_bot)
@@ -179,6 +190,7 @@ impl ChainWriter {
     }
 
     pub async fn record_rank_up(&self, player: Address, rank: String) -> Option<H256> {
+        let _tx = self.tx_lock.lock().await;
         match self.contract.record_rank_up(player, rank).send().await {
             Ok(pending) => {
                 let hash = pending.tx_hash();
@@ -195,6 +207,7 @@ impl ChainWriter {
     pub async fn enroll_in_rank_pool(&self, player: Address, rank: &str) -> Option<H256> {
         let pool_addr = self.rank_pools.get(rank)?;
         let pool = GoodCollectiveUBIPool::new(*pool_addr, self.client.clone());
+        let _tx = self.tx_lock.lock().await;
         match pool.add_member(player).send().await {
             Ok(pending) => {
                 let hash = pending.tx_hash();
@@ -215,6 +228,7 @@ impl ChainWriter {
             Some(p) => p,
             None => return Ok(false),
         };
+        let _tx = self.tx_lock.lock().await;
         pool.distribute_rank_up_reward(player, rank.clone())
             .send()
             .await
@@ -236,6 +250,7 @@ impl ChainWriter {
         };
         // G$ has 18 decimals; amount_g is whole tokens.
         let amount = U256::from(amount_g) * U256::exp10(18);
+        let _tx = self.tx_lock.lock().await;
         pool.distribute_reward(player, amount, reference)
             .send()
             .await
@@ -269,6 +284,7 @@ impl ChainWriter {
             Some(p) => p,
             None => return Ok(false),
         };
+        let _tx = self.tx_lock.lock().await;
         pool.distribute_daily_claim(player)
             .send()
             .await
@@ -311,8 +327,13 @@ impl ChainWriter {
             r,
             s,
         );
-        let pending = call.send().await
-            .map_err(|e| format!("TX submission failed: {}", e))?;
+        // Hold the tx lock only across broadcast (nonce assignment), then release
+        // so the ~90s confirmation wait doesn't serialize other writes behind it.
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send().await
+                .map_err(|e| format!("TX submission failed: {}", e))?
+        };
 
         let hash = pending.tx_hash();
         tracing::info!("purchaseWithPermit submitted: {:?}", hash);
@@ -354,8 +375,11 @@ impl ChainWriter {
 
         // 1. Consume the permit — grants this wallet an allowance for `amount`.
         let permit_call = self.g_token.permit(from, spender, amount, U256::from(deadline), v, r, s);
-        let permit_pending = permit_call.send().await
-            .map_err(|e| format!("permit submission failed: {}", e))?;
+        let permit_pending = {
+            let _tx = self.tx_lock.lock().await;
+            permit_call.send().await
+                .map_err(|e| format!("permit submission failed: {}", e))?
+        };
         tokio::time::timeout(Duration::from_secs(90), permit_pending.confirmations(1))
             .await
             .map_err(|_| "permit tx timed out".to_string())?
@@ -364,8 +388,11 @@ impl ChainWriter {
 
         // 2. Move the funds straight to the destination.
         let transfer_call = self.g_token.transfer_from(from, to, amount);
-        let transfer_pending = transfer_call.send().await
-            .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+        let transfer_pending = {
+            let _tx = self.tx_lock.lock().await;
+            transfer_call.send().await
+                .map_err(|e| format!("transferFrom submission failed: {}", e))?
+        };
         let hash = transfer_pending.tx_hash();
         tokio::time::timeout(Duration::from_secs(90), transfer_pending.confirmations(1))
             .await
