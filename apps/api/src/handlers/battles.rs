@@ -573,39 +573,129 @@ pub async fn complete_live_fight(
     }))
 }
 
-/// Fire-and-forget the on-chain first-clear bounty payout, then reconcile the
-/// bounty row + ledger + lifetime stat. The DB row was already claimed by the
-/// caller (idempotent), so this runs at most once per (wallet, op).
+/// Fire-and-forget the on-chain first-clear bounty payout. The DB row was already
+/// claimed by the caller (idempotent), so this runs at most once per (wallet, op).
+/// Delegates to `settle_first_clear_bounty`, which is shared with the reconcile job.
 fn pay_first_clear_bounty(state: &AppState, wallet: String, level: i32, amount: u64) {
     let Some(chain) = state.chain.as_ref().cloned() else { return; };
-    let Ok(addr) = wallet.parse::<Address>() else { return; };
     let db = state.db.clone();
+    tokio::spawn(async move {
+        settle_first_clear_bounty(&db, &chain, &wallet, level, amount).await;
+    });
+}
+
+/// Attempt (or re-attempt) the on-chain payout for one claimed bounty row and
+/// reconcile the row + ledger + lifetime stat to match the chain. Shared by the
+/// live-fight path and the reconcile sweep, so both settle a bounty identically.
+///
+/// Idempotency is airtight: the on-chain `ref` guard means a given (wallet, op) can
+/// pay at most once, ever. Before sending a transaction we read `rewardRefUsed(ref)`
+/// so a row whose payout DID land on-chain but whose DB update was lost (RPC blip
+/// after the transfer) is reconciled to `paid` without a doomed, gas-wasting retry.
+/// A `failed` row never credited the ledger/lifetime, so crediting them here on a
+/// successful settle cannot double-count.
+async fn settle_first_clear_bounty(
+    db: &sqlx::PgPool,
+    chain: &crate::services::chain::ChainWriter,
+    wallet: &str,
+    level: i32,
+    amount: u64,
+) -> &'static str {
+    let Ok(addr) = wallet.parse::<Address>() else {
+        tracing::error!("first-clear bounty: bad wallet {}", wallet);
+        return "bad_wallet";
+    };
     // Deterministic on-chain idempotency key per (wallet, op).
     let reference = ethers::utils::keccak256(format!("first_clear:{}:{}", wallet, level).as_bytes());
-    tokio::spawn(async move {
-        match chain.distribute_reward(addr, amount, reference).await {
-            Ok(true) => {
-                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'paid' WHERE wallet_address = $1 AND level = $2")
-                    .bind(&wallet).bind(level).execute(&db).await;
-                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
-                    .bind(amount as i64).bind(&wallet).execute(&db).await;
-                crate::handlers::ledger::insert_ledger_entry(
-                    &db, &wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
-                ).await;
-                tracing::info!("first-clear bounty paid: {} op{} +{} G$", wallet, level, amount);
-            }
-            Ok(false) => {
-                tracing::warn!("Reward pool not configured — first-clear bounty for {} op{} not paid", wallet, level);
-                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
-                    .bind(&wallet).bind(level).execute(&db).await;
-            }
-            Err(e) => {
-                tracing::error!("first-clear bounty on-chain failed for {} op{}: {}", wallet, level, e);
-                let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
-                    .bind(&wallet).bind(level).execute(&db).await;
-            }
+
+    // If the chain already recorded this ref, the payout landed — reconcile the DB
+    // instead of sending a transaction that would revert with RefAlreadyUsed.
+    let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
+    let result = if already_paid { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+
+    match result {
+        Ok(true) => {
+            let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'paid' WHERE wallet_address = $1 AND level = $2")
+                .bind(wallet).bind(level).execute(db).await;
+            let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                .bind(amount as i64).bind(wallet).execute(db).await;
+            crate::handlers::ledger::insert_ledger_entry(
+                db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+            ).await;
+            tracing::info!(
+                "first-clear bounty paid: {} op{} +{} G${}",
+                wallet, level, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
+            );
+            "paid"
         }
-    });
+        Ok(false) => {
+            tracing::warn!("Reward pool not configured — first-clear bounty for {} op{} not paid", wallet, level);
+            let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
+                .bind(wallet).bind(level).execute(db).await;
+            "unconfigured"
+        }
+        Err(e) => {
+            tracing::error!("first-clear bounty on-chain failed for {} op{}: {}", wallet, level, e);
+            let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
+                .bind(wallet).bind(level).execute(db).await;
+            "failed"
+        }
+    }
+}
+
+/// Cron-triggered sweep that re-attempts every `status='failed'` first-clear bounty.
+/// A bounty lands in `failed` when its on-chain payout didn't confirm (RPC blip, a
+/// briefly-empty or unconfigured pool) — and, because pve_level already advanced,
+/// the live path never retries it. This is that retry. Safe to run repeatedly: the
+/// on-chain `ref` guard makes every re-attempt idempotent (never double-pays), and
+/// rows already paid on-chain are reconciled without spending gas.
+///
+/// Auth: shares the decay cron's `x-cron-secret` (DECAY_CRON_SECRET) so it needs no
+/// new secret. Processes a bounded batch per run to cap gas/latency on the free tier.
+pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    let expected = std::env::var("DECAY_CRON_SECRET").unwrap_or_default();
+    let provided = req
+        .headers()
+        .get("x-cron-secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if expected.is_empty() || provided != expected {
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    let Some(chain) = state.chain.as_ref().cloned() else {
+        return HttpResponse::Ok().json(json!({
+            "reconciled": 0, "still_failed": 0, "skipped": "chain not configured",
+        }));
+    };
+
+    // Oldest-first, capped so a backlog can't make one sweep run unbounded.
+    let rows: Vec<(String, i32, i64)> = sqlx::query_as(
+        "SELECT wallet_address, level, amount
+         FROM first_clear_bounties
+         WHERE status = 'failed'
+         ORDER BY created_at ASC
+         LIMIT 25",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let attempted = rows.len();
+    let mut reconciled = 0u32;
+    for (wallet, level, amount) in rows {
+        if settle_first_clear_bounty(&state.db, &chain, &wallet, level, amount.max(0) as u64).await == "paid" {
+            reconciled += 1;
+        }
+    }
+
+    tracing::info!("bounty reconcile: {}/{} failed bounties settled", reconciled, attempted);
+    HttpResponse::Ok().json(json!({
+        "attempted":    attempted,
+        "reconciled":   reconciled,
+        "still_failed": attempted as u32 - reconciled,
+        "ran_at":       Utc::now().to_rfc3339(),
+    }))
 }
 
 #[derive(Deserialize)]

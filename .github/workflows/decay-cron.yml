@@ -30,3 +30,19 @@ jobs:
           echo "HTTP $code"; cat /tmp/out.txt || true
           # A cold-started free instance can take a while; only fail on a real error.
           case "$code" in 2*) exit 0;; *) echo "decay sweep did not return 2xx"; exit 1;; esac
+
+      - name: Reconcile failed first-clear bounties
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          DECAY_CRON_SECRET: ${{ secrets.DECAY_CRON_SECRET }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$DECAY_CRON_SECRET" ]; then
+            echo "API_URL or DECAY_CRON_SECRET secret not set — skipping."; exit 0
+          fi
+          # Re-attempts any bounty whose on-chain payout didn't confirm. Idempotent
+          # (on-chain ref guard), so it's safe to run on the same cadence as decay.
+          code=$(curl -sS -X POST "$API_URL/battles/bounties/reconcile" \
+            -H "x-cron-secret: $DECAY_CRON_SECRET" \
+            -o /tmp/rec.txt -w "%{http_code}" --max-time 90 || echo "000")
+          echo "HTTP $code"; cat /tmp/rec.txt || true
+          case "$code" in 2*) exit 0;; *) echo "bounty reconcile did not return 2xx"; exit 1;; esac

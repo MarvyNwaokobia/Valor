@@ -36,6 +36,7 @@ abigen!(
         function distributeRankUpReward(address player, string newRank) external
         function distributeDailyClaim(address player) external
         function distributeReward(address player, uint256 amount, bytes32 ref) external
+        function rewardRefUsed(bytes32 ref) external view returns (bool)
     ]"#
 );
 
@@ -243,6 +244,22 @@ impl ChainWriter {
             .map_err(|e| format!("distributeReward tx failed: {}", e))?;
         tracing::info!("distributeReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
         Ok(true)
+    }
+
+    /// Reads the on-chain idempotency flag for a bounty `ref`. `true` means that ref
+    /// has already paid out on-chain, so a re-attempt would revert (`RefAlreadyUsed`).
+    /// The reconcile job uses this to tell "genuinely never paid" apart from "paid, but
+    /// our DB missed the confirmation" without sending a doomed transaction.
+    /// Returns Ok(false) if the pool isn't configured (nothing could have paid).
+    pub async fn reward_ref_used(&self, reference: [u8; 32]) -> Result<bool, String> {
+        let pool = match &self.reward_pool {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        pool.reward_ref_used(reference)
+            .call()
+            .await
+            .map_err(|e| format!("rewardRefUsed read failed: {}", e))
     }
 
     /// Distributes the daily claim G$ reward from the ValorRewardPool to the player's wallet.
