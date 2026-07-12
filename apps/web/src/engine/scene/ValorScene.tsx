@@ -20,6 +20,7 @@ import { useRiflePrototype, cloneRifle } from './rifle';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp, type Mission } from '../fps/campaign';
 import { dressingFor, type PropSpec } from './setDressing';
+import { useSurvivalRearm, NeedArmError, type RearmAction } from '@/hooks/useSurvivalRearm';
 
 /**
  * Valor clone · slice 1 graybox (docs/the plan.md).
@@ -578,10 +579,30 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     w.__valorSwitch = (n?: number) => (typeof n === 'number' ? sim.switchGun(n) : sim.nextWeapon());
     w.__valorFire = (on: boolean) => { controls.current.fire = !!on; }; // headless: hold the trigger (aim-assist test)
     w.__valorToggle = (a: Attachment) => sim.toggleAttachment(a);
+    // ── Survival re-arm bridge (B1): applies a PAID re-arm's effect to the sim.
+    //    The outer component charges the G$ first, then calls these on success. ──
+    w.__valorRevive = () => {
+      if (!survival || sim.snapshot().playerAlive) return false;
+      sim.revive();
+      survOver.current = false;
+      survState.current = 'intermission';
+      survNextAt.current = performance.now() + 1600;      // a breath, then the next wave
+      if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; }
+      return true;
+    };
+    w.__valorResupply = () => { if (!survival || !sim.snapshot().playerAlive) return false; sim.resupply(); return true; };
+    w.__valorWaveSkip = () => {
+      if (!survival || !sim.snapshot().playerAlive) return false;
+      sim.despawnAll();                                    // clear the field → next wave
+      survState.current = 'intermission';
+      survNextAt.current = performance.now() + 900;
+      return true;
+    };
     return () => {
       delete w.__valorState; delete w.__valorKillAll; delete w.__valorAim; delete w.__valorAudio;
       delete w.__valorMission; delete w.__valorWarp; delete w.__valorSkipBriefing;
       delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorFire; delete w.__valorToggle;
+      delete w.__valorRevive; delete w.__valorResupply; delete w.__valorWaveSkip;
     };
   }, [sim, audio]);
 
@@ -1797,7 +1818,88 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
   );
 }
 
-export function ValorScene({ onOpCleared, startMission }: {
+// Server-authoritative pricing mirror (display only; /survival/rearm is the truth).
+const rearmCostPreview = (action: RearmAction, wave: number): number => {
+  const w = Math.max(0, wave);
+  if (action === 'revive') return Math.min(3 + Math.floor(w / 2), 15);
+  if (action === 'waveskip') return Math.min(3 + Math.floor(w / 3), 12);
+  return 2; // restock
+};
+
+/**
+ * Survival re-arm controls (B1 G$ sink). Self-contained + only mounted when a
+ * wallet is present, so `/dev/verb` (sandbox, no wallet providers) never calls the
+ * wallet hooks. Polls the sim's mission hook to know the wave + whether the player
+ * is down, charges G$ via the session allowance, then applies the paid effect
+ * through the __valorRevive/Resupply/WaveSkip bridge.
+ */
+function SurvivalRearmControls({ walletAddress }: { walletAddress: string }) {
+  const { arm, rearm, armed, capG, pending } = useSurvivalRearm(walletAddress);
+  const [hud, setHud] = useState<{ survival: boolean; wave: number; survOver: boolean }>({ survival: false, wave: 0, survOver: false });
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const m = (window as unknown as { __valorMission?: () => { survival?: boolean; wave?: number; survOver?: boolean } }).__valorMission?.();
+      if (m) setHud({ survival: !!m.survival, wave: m.wave ?? 0, survOver: !!m.survOver });
+    }, 400);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!hud.survival) return null;
+
+  const bridge = window as unknown as { __valorRevive?: () => boolean; __valorResupply?: () => boolean; __valorWaveSkip?: () => boolean };
+
+  const doRearm = async (action: RearmAction) => {
+    if (busy || pending) return;
+    setBusy(true); setMsg(action === 'revive' ? 'reviving…' : 'paying…');
+    try {
+      if (!armed) await arm(20);                        // one signature per run (cap 20 G$)
+      const res = await rearm(action, hud.wave);
+      const ok = action === 'revive' ? bridge.__valorRevive?.() : action === 'restock' ? bridge.__valorResupply?.() : bridge.__valorWaveSkip?.();
+      setMsg(ok ? `−${res.cost_g} G$` : 'not available');
+    } catch (e) {
+      setMsg(e instanceof NeedArmError ? 'arm more G$' : ((e as Error)?.message ?? 're-arm failed'));
+    } finally {
+      setBusy(false);
+      setTimeout(() => setMsg(''), 2600);
+    }
+  };
+
+  const chip = (label: string, action: RearmAction, color: string): React.ReactNode => (
+    <button onClick={() => doRearm(action)} disabled={busy || pending} style={{
+      pointerEvents: 'auto', cursor: busy ? 'wait' : 'pointer', background: 'rgba(10,14,20,.72)',
+      border: `1px solid ${color}`, color, fontFamily: 'inherit', fontSize: 12, letterSpacing: 2,
+      padding: '9px 14px', borderRadius: 6, backdropFilter: 'blur(6px)', opacity: busy || pending ? 0.55 : 1,
+    }}>{label}</button>
+  );
+
+  // Down → offer REVIVE above the survEnd overlay (z50 > survEnd's z40).
+  if (hud.survOver) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', pointerEvents: 'none' }}>
+        <div style={{ marginTop: '58vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          {chip(busy ? 'REVIVING…' : `REVIVE — ${rearmCostPreview('revive', hud.wave)} G$`, 'revive', '#5fe0a8')}
+          {msg && <div style={{ fontSize: 11, color: '#9fb4c8', letterSpacing: 1 }}>{msg}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // Mid-run → a small re-arm bar (resupply + skip) at bottom-centre.
+  return (
+    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 96, zIndex: 30, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>
+      {chip(`RESUPPLY ${rearmCostPreview('restock', hud.wave)} G$`, 'restock', '#37d0e0')}
+      {chip(`SKIP WAVE ${rearmCostPreview('waveskip', hud.wave)} G$`, 'waveskip', '#e0b737')}
+      <div style={{ fontSize: 10, color: armed ? '#5fe0a8' : '#6f7d8c', letterSpacing: 1, pointerEvents: 'none' }}>
+        {armed ? `ARMED ${capG} G$` : 'tap to arm'}{msg ? ` · ${msg}` : ''}
+      </div>
+    </div>
+  );
+}
+
+export function ValorScene({ onOpCleared, startMission, walletAddress }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -1805,6 +1907,9 @@ export function ValorScene({ onOpCleared, startMission }: {
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
+  /** Signed-in wallet — enables the Survival re-arm G$ sink (B1). Omitted at
+   *  `/dev/verb` (sandbox) so the re-arm controls + wallet hooks never mount there. */
+  walletAddress?: string;
 } = {}) {
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
@@ -2174,6 +2279,8 @@ export function ValorScene({ onOpCleared, startMission }: {
             <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('menu', 'OPERATIONS', 14)}</button>
           </div>
         </div>
+        {/* Survival re-arm G$ sink (B1) — only with a wallet; sandbox stays local */}
+        {walletAddress && <SurvivalRearmControls walletAddress={walletAddress} />}
         {debrief && !selectOpen && (
           <MissionDebrief
             mode={debrief}

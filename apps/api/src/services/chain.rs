@@ -47,6 +47,8 @@ abigen!(
     r#"[
         function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
         function transferFrom(address from, address to, uint256 value) external returns (bool)
+        function allowance(address owner, address spender) external view returns (uint256)
+        function balanceOf(address account) external view returns (uint256)
     ]"#
 );
 
@@ -402,6 +404,74 @@ impl ChainWriter {
 
         tracing::info!("transferG: {} -> {} amount={} tx={:?}", from, to, amount, hash);
         Ok(hash)
+    }
+
+    /// The ValorRewardPool address — the sink destination for Survival re-arm G$
+    /// (spent G$ flows into the prize pool). `None` if the pool isn't configured.
+    pub fn reward_pool_address(&self) -> Option<Address> {
+        self.reward_pool.as_ref().map(|p| p.address())
+    }
+
+    /// Survival re-arm — step 1 of the session-allowance model. Relays the player's
+    /// EIP-2612 permit so this backend wallet gets an allowance of `cap` G$ to spend
+    /// on their behalf for the run. ONE signature (this permit) authorizes many
+    /// instant re-arms after. Waits for confirmation so the allowance is live before
+    /// the run starts (this happens at the pre-run screen, not mid-combat).
+    pub async fn set_rearm_allowance(
+        &self,
+        owner: Address,
+        cap: U256,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let r: [u8; 32] = H256::from_str(r_hex).map_err(|_| format!("Invalid r: {}", r_hex))?.0;
+        let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {}", s_hex))?.0;
+        let spender = self.client.address();
+
+        let call = self.g_token.permit(owner, spender, cap, U256::from(deadline), v, r, s);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send().await.map_err(|e| format!("permit submission failed: {}", e))?
+        };
+        let hash = pending.tx_hash();
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+            .await
+            .map_err(|_| "arm permit timed out".to_string())?
+            .map_err(|e| format!("arm permit failed on-chain: {}", e))?
+            .ok_or_else(|| "arm permit dropped from mempool".to_string())?;
+        tracing::info!("rearm allowance set: {} cap={} tx={:?}", owner, cap, hash);
+        Ok(hash)
+    }
+
+    /// Survival re-arm — step 2. Spends `cost` G$ from the player's pre-authorized
+    /// allowance into `to` (the RewardPool sink). Broadcast-only (no confirmation
+    /// wait) so re-arms feel instant; the allowance + a balance pre-check make the
+    /// transfer a near-certainty to land. Returns the tx hash once broadcast.
+    pub async fn spend_rearm(&self, owner: Address, to: Address, cost: U256) -> Result<H256, String> {
+        let call = self.g_token.transfer_from(owner, to, cost);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send().await.map_err(|e| format!("re-arm transfer failed: {}", e))?
+        };
+        let hash = pending.tx_hash();
+        tracing::info!("rearm spend: {} -{} G$(wei) → {:?} tx={:?}", owner, cost, to, hash);
+        Ok(hash)
+    }
+
+    /// Reads how much of the player's G$ this backend wallet is currently allowed to
+    /// spend (the live session-allowance remaining). Used to gate a re-arm.
+    pub async fn g_allowance(&self, owner: Address) -> Result<U256, String> {
+        let spender = self.client.address();
+        self.g_token.allowance(owner, spender).call().await
+            .map_err(|e| format!("allowance read failed: {}", e))
+    }
+
+    /// Reads the player's on-chain G$ balance. Used to gate a re-arm.
+    pub async fn g_balance(&self, owner: Address) -> Result<U256, String> {
+        self.g_token.balance_of(owner).call().await
+            .map_err(|e| format!("balance read failed: {}", e))
     }
 
     /// This wallet's own address — the frontend needs it as the `spender` in

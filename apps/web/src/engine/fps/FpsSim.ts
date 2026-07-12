@@ -850,6 +850,27 @@ export class FpsSim {
     return n;
   }
 
+  /** Survival re-arm · REVIVE: bring the player back from death at full health
+   *  with a longer mercy window, and clear the swarm that downed them so the
+   *  restart is fair. The scene resumes the wave loop from here. No-op if alive. */
+  revive(): void {
+    if (this.playerAlive) return;
+    this.playerAlive = true;
+    this.playerHp = FPS_TUNING.PLAYER_HP;
+    this.mercyUntil = this.time + 1.5;
+    this.despawnAll();
+  }
+
+  /** Survival re-arm · RESUPPLY: patch to full health and top off both weapons
+   *  instantly (cancels any reload). For buying survivability between waves while
+   *  still alive. No-op if dead (use revive first). */
+  resupply(): void {
+    if (!this.playerAlive) return;
+    this.playerHp = FPS_TUNING.PLAYER_HP;
+    this.reloading = false;
+    this.ammoBySlot = this.loadout.map((id) => getGun(id).magazine);
+  }
+
   /** Debug: drop every enemy now (probe hook for headless verification). */
   debugKillAll(): void {
     for (const e of this.enemies) {

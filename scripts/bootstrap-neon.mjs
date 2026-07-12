@@ -28,6 +28,7 @@ const FILES = [
   'apps/api/migrations/add_gdollar_ledger.sql',     // g_ledger, seasons
   'apps/api/migrations/add_first_clear_bounties.sql', // B0 bounties
   'apps/api/migrations/add_character_confirmed.sql',  // confirm-your-class flag
+  'apps/api/migrations/add_survival_rearms.sql',      // B1 survival re-arm sink
 ];
 
 if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }

@@ -617,3 +617,35 @@ describe('FpsSim rescue hostage', () => {
     expect([h.x, h.z]).toEqual([0, -8]);
   });
 });
+
+describe('FpsSim survival re-arm (B1)', () => {
+  it('revive brings the player back at full HP and clears the swarm', () => {
+    const sim = new FpsSim({ gunId: 'smg', enemies: [{ pos: [0, -6] }, { pos: [1, -6] }], rng: () => 0 });
+    sim.playerHp = 0; sim.playerAlive = false;
+    sim.revive();
+    expect(sim.playerAlive).toBe(true);
+    expect(sim.playerHp).toBe(FPS_TUNING.PLAYER_HP);
+    expect(sim.aliveCount()).toBe(0); // the swarm that downed you is cleared for a fair restart
+  });
+
+  it('revive is a no-op while the player is still alive', () => {
+    const sim = new FpsSim({ gunId: 'smg', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    sim.playerHp = 40;
+    sim.revive();
+    expect(sim.playerHp).toBe(40);           // health untouched
+    expect(sim.aliveCount()).toBe(1);        // enemy not cleared
+  });
+
+  it('resupply heals to full and refills ammo, and is a no-op if dead', () => {
+    const sim = new FpsSim({ gunId: 'smg', enemies: [], rng: () => 0 });
+    sim.playerHp = 30;
+    sim.ammo = 1;
+    sim.resupply();
+    expect(sim.playerHp).toBe(FPS_TUNING.PLAYER_HP);
+    expect(sim.ammo).toBe(sim.gun.magazine); // topped off
+    // dead → must revive first, resupply does nothing
+    sim.playerAlive = false; sim.playerHp = 0;
+    sim.resupply();
+    expect(sim.playerHp).toBe(0);
+  });
+});
