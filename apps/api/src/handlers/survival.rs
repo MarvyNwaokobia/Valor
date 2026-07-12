@@ -80,6 +80,12 @@ pub async fn arm_session(state: web::Data<AppState>, body: web::Json<ArmRequest>
         return HttpResponse::BadRequest()
             .json(json!({"error": format!("Arm cap must be between 1 and {} G$", MAX_ARM_CAP)}));
     }
+    // Reject an expired permit BEFORE touching the chain — otherwise the on-chain
+    // ERC20Permit reverts with "expired deadline" and we waste gas on a doomed tx.
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    if body.deadline <= now {
+        return HttpResponse::BadRequest().json(json!({"error": "Signature deadline expired — try again"}));
+    }
 
     let wallet = normalize_wallet(&body.wallet);
     let chain = match state.chain.as_ref() {
