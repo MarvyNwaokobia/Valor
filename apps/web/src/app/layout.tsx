@@ -23,6 +23,8 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   minimumScale: 1,
+  maximumScale: 1,       // lock zoom — VALOR is a fullscreen game, not a document
+  userScalable: false,   // a stray double-tap / pinch mid-fight must not zoom the HUD
   viewportFit: 'cover',
   themeColor: '#04030c',
 }
