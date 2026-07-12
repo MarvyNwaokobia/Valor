@@ -2281,11 +2281,29 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
   const [portrait, setPortrait] = useState(false);
   useEffect(() => {
     if (!isTouch) return;
-    const check = () => setPortrait(window.innerHeight > window.innerWidth);
+    // Prefer visualViewport — on iOS Safari window.inner* is stale mid-rotation and
+    // is what left the canvas at half size (needing a manual reload).
+    const dims = () => {
+      const vv = window.visualViewport;
+      return { w: vv?.width ?? window.innerWidth, h: vv?.height ?? window.innerHeight };
+    };
+    const check = () => { const { w, h } = dims(); setPortrait(h > w); };
+    // iOS reports the NEW viewport only a few hundred ms after the rotate event, so
+    // re-measure on a couple of delays AND nudge R3F's resize observer each time so
+    // the canvas re-fits the full screen without a reload.
+    const settle = () => {
+      check();
+      [120, 350, 700].forEach((d) => setTimeout(() => { check(); window.dispatchEvent(new Event('resize')); }, d));
+    };
     check();
     window.addEventListener('resize', check);
-    window.addEventListener('orientationchange', check);
-    return () => { window.removeEventListener('resize', check); window.removeEventListener('orientationchange', check); };
+    window.addEventListener('orientationchange', settle);
+    window.visualViewport?.addEventListener('resize', check);
+    return () => {
+      window.removeEventListener('resize', check);
+      window.removeEventListener('orientationchange', settle);
+      window.visualViewport?.removeEventListener('resize', check);
+    };
   }, [isTouch]);
   // Single source of truth for the pause flag: any full-screen overlay freezes play.
   useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null || paused; }, [portrait, selectOpen, debrief, paused]);
@@ -2383,7 +2401,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
 
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
   return (
-    <div ref={(r) => { hud.current.root = r; }} style={{ position: 'fixed', inset: 0, background: '#000', cursor: 'none', touchAction: 'none' }}>
+    <div ref={(r) => { hud.current.root = r; }} style={{ position: 'fixed', inset: 0, background: '#000', cursor: 'none', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}>
       {/* The RENDERER owns the filmic curve (R3F's ACES default). The composer
           must NOT tone-map again, or the image washes out. */}
       <Canvas
@@ -2418,8 +2436,10 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
         {/* hitmarker */}
         <div ref={(r) => { hud.current.hit = r; }} style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', fontSize: 26, fontWeight: 700, opacity: 0, transition: 'opacity .08s', textShadow: '0 0 3px #000' }}>✕</div>
 
-        {/* ammo + weapon + reload (lifted clear of the thumb cluster on touch) */}
-        <div style={{ position: 'absolute', right: 26, textAlign: 'right', ...(isTouch ? { top: 78 } : { bottom: 22 }) }}>
+        {/* ammo + weapon + reload — on touch it sits top-right and, crucially, is
+            offset LEFT of the right action-button column (≤64px from the edge) so the
+            two can never overlap regardless of screen height. */}
+        <div style={{ position: 'absolute', right: isTouch ? 84 : 26, textAlign: 'right', ...(isTouch ? { top: 10 } : { bottom: 22 }) }}>
           <div ref={(r) => { hud.current.weapon = r; }} style={{ fontSize: 13, letterSpacing: 2, fontWeight: 700, color: '#e9edf2', marginBottom: 1 }}>ASSAULT RIFLE</div>
           <div ref={(r) => { hud.current.loadout = r; }} style={{ fontSize: 10, letterSpacing: 2, color: '#6f7d8c', marginBottom: 3 }}>1 · 2</div>
           <div ref={(r) => { hud.current.fireMode = r; }} style={{ fontSize: 12, letterSpacing: 3, fontWeight: 700, color: '#8fb8d0', marginBottom: 2 }}>AUTO</div>
@@ -2436,13 +2456,14 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
         {/* attachment strip (toggleable kit) */}
         <div ref={(r) => { hud.current.attachments = r; }} style={{ position: 'absolute', right: 26, bottom: 150, display: isTouch ? 'none' : 'flex', gap: 6, justifyContent: 'flex-end' }} />
 
-        {/* kills */}
-        <div ref={(r) => { hud.current.kills = r; }} style={{ position: 'absolute', left: 26, bottom: 22, fontSize: 13, color: '#9fb4c8' }}>KILLS 0   ·   HS 0</div>
+        {/* kills — hidden on touch (the bottom-left is the movement thumb there) */}
+        <div ref={(r) => { hud.current.kills = r; }} style={{ position: 'absolute', left: 26, bottom: 22, fontSize: 13, color: '#9fb4c8', display: isTouch ? 'none' : 'block' }}>KILLS 0   ·   HS 0</div>
 
-        {/* rank + XP toward the next 1000 (the earn loop) */}
-        <div style={{ position: 'absolute', left: 26, bottom: 48, width: 210 }}>
+        {/* rank + XP toward the next 1000 (the earn loop). On touch it lives TOP-left,
+            clear of the movement thumb (it used to sit under the joystick). */}
+        <div style={{ position: 'absolute', left: isTouch ? 14 : 26, width: isTouch ? 150 : 210, ...(isTouch ? { top: 58 } : { bottom: 48 }) }}>
           <div ref={(r) => { hud.current.rankText = r; }} style={{ fontSize: 12, letterSpacing: 1.5, fontWeight: 700, color: '#cd7f32' }}>BRONZE · 0 / 1000 XP</div>
-          <div style={{ width: 210, height: 4, background: '#2b3138', marginTop: 4, borderRadius: 2 }}>
+          <div style={{ width: '100%', height: 4, background: '#2b3138', marginTop: 4, borderRadius: 2 }}>
             <div ref={(r) => { hud.current.xpBar = r; }} style={{ width: '0%', height: '100%', background: '#cd7f32', borderRadius: 2 }} />
           </div>
         </div>
@@ -2466,8 +2487,9 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
           <div ref={(r) => { hud.current.rankUpG = r; }} style={{ fontSize: 16, fontWeight: 700, color: '#5fe0a8' }}>+20 G$</div>
         </div>
 
-        {/* health bar */}
-        <div style={{ position: 'absolute', left: 26, bottom: 46, width: 220, height: 9, background: 'rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.15)' }}>
+        {/* health bar — the vital stat. On touch it takes the prime top-left slot
+            (it used to sit over the movement thumb); desktop keeps it bottom-left. */}
+        <div style={{ position: 'absolute', left: isTouch ? 14 : 26, width: isTouch ? 150 : 220, height: 9, background: 'rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.15)', ...(isTouch ? { top: 40 } : { bottom: 46 }) }}>
           <div ref={(r) => { hud.current.healthFill = r; }} style={{ width: '100%', height: '100%', background: '#5fd08a', transition: 'width .12s, background .2s' }} />
         </div>
 
@@ -2615,8 +2637,8 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
           <div {...tap('#8fb8d0', () => { controls.current.fireMode = true; })}
             style={{ ...touchBtn('#8fb8d0', 42), right: 24, bottom: 222 }}><Icon name="firemode" size={17} /></div>
 
-          {/* attachment toggles — a compact row, top-left under OPS */}
-          <div style={{ position: 'absolute', left: 24, top: 84, display: 'flex', gap: 7 }}>
+          {/* attachment toggles — compact top-left row, tucked under the rank bar */}
+          <div style={{ position: 'absolute', left: 14, top: 92, display: 'flex', gap: 7 }}>
             {ATTACH_CHIPS.map((c) => (
               <div key={c.id} onTouchStart={() => { controls.current.toggle = c.id; }}
                 style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`, boxShadow: `inset 0 1px 0 ${c.color}33`, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}>{c.label}</div>
