@@ -29,6 +29,7 @@ const FILES = [
   'apps/api/migrations/add_first_clear_bounties.sql', // B0 bounties
   'apps/api/migrations/add_character_confirmed.sql',  // confirm-your-class flag
   'apps/api/migrations/add_survival_rearms.sql',      // B1 survival re-arm sink
+  'apps/api/migrations/add_survival_runs.sql',        // B2 prestige gauntlet runs
 ];
 
 if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }

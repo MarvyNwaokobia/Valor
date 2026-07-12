@@ -46,11 +46,17 @@ export interface Mission {
   blackout?: boolean;  // the Rift with NVG jammed — you fight by muzzle-flash
   boss?: boolean;
   survival?: boolean; // endless-wave arena instead of a doorkicker (no objectives)
+  gauntlet?: boolean; // the PRESTIGE survival tier: steeper curve, ranked (B2)
 }
 
 /** Survival escalation: how many attackers and how tough, by 1-based wave. */
 export function survivalWaveCount(wave: number): number { return Math.min(3 + wave, 10); }
 export function survivalWaveHp(wave: number): number { return 1 + (wave - 1) * 0.09; }
+
+/** GAUNTLET escalation (B2 prestige tier): more attackers sooner and tougher than
+ *  practice Survival — the ranked curve whose runs feed the seasonal ladder. */
+export function gauntletWaveCount(wave: number): number { return Math.min(5 + wave, 12); }
+export function gauntletWaveHp(wave: number): number { return 1 + (wave - 1) * 0.15; }
 
 /** Per-zone look. Lighting is in physical units (single digits for point lights). */
 export interface ZoneTheme {
@@ -405,6 +411,21 @@ export const SURVIVAL_MISSION: Mission = {
   brief: 'hold the room · the waves do not stop · every kill still pays',
   gun: AR, secondary: SMG, survival: true,
   start: [0, 0], walls: SURV_WALLS, cover: SURV_COVER, enemies: SURV_ENEMIES, objectives: [],
+};
+
+// 12 spawn slots for the Gauntlet's heavier waves (practice uses 10).
+const GAUNTLET_ENEMIES: EnemySpec[] = Array.from({ length: 12 }, (_, i) => {
+  const a = (i / 12) * Math.PI * 2;
+  return { pos: [Math.round(Math.sin(a) * 9.4 * 10) / 10, Math.round(Math.cos(a) * 9.4 * 10) / 10] as [number, number], room: 1 };
+});
+
+// The PRESTIGE tier (B2). Same arena as the Kill-House but a steeper curve, and its
+// runs are server-validated onto the seasonal ladder. Unlocked at campaign completion.
+export const GAUNTLET_MISSION: Mission = {
+  id: 'gauntlet', zone: 'SURVIVAL', op: 'GAUNTLET', name: 'THE GAUNTLET',
+  brief: 'ranked · every wave harder · your best run climbs the season board',
+  gun: AR, secondary: SMG, survival: true, gauntlet: true,
+  start: [0, 0], walls: SURV_WALLS, cover: SURV_COVER, enemies: GAUNTLET_ENEMIES, objectives: [],
 };
 
 // ── A1 · the day→evening→night arc ──────────────────────────────────────────

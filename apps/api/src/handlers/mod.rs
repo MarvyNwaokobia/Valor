@@ -11,6 +11,7 @@ pub mod auth;
 pub mod ws;
 pub mod endless;
 pub mod survival;
+pub mod gauntlet;
 pub mod ledger;
 pub mod admin;
 
@@ -86,6 +87,12 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/survival")
                 .route("/arm", web::post().to(survival::arm_session))
                 .route("/rearm", web::post().to(survival::rearm)),
+        )
+        .service(
+            web::scope("/gauntlet")
+                .route("/start", web::post().to(gauntlet::start_run))
+                .route("/submit", web::post().to(gauntlet::submit_run))
+                .route("/leaderboard", web::get().to(gauntlet::leaderboard)),
         )
         .service(
             web::scope("/auth")

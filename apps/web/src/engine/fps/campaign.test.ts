@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CAMPAIGN, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, survivalWaveCount, survivalWaveHp } from './campaign';
+import { CAMPAIGN, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp } from './campaign';
 import type { CoverBox } from './index';
 
 // A spawned enemy / a standing objective marker must not overlap a wall or a
@@ -133,6 +133,34 @@ describe('survival mode', () => {
     for (const e of SURVIVAL_MISSION.enemies) {
       const hit = solids.find((b) => inside(e.pos[0], e.pos[1], b, CLEAR));
       expect(hit, `survival spawn [${e.pos}] overlaps a box`).toBeUndefined();
+    }
+  });
+});
+
+describe('gauntlet mode (B2 prestige)', () => {
+  it('is a strictly harder curve than practice Survival', () => {
+    for (const w of [1, 3, 6, 10]) {
+      expect(gauntletWaveCount(w)).toBeGreaterThan(survivalWaveCount(w));
+      expect(gauntletWaveHp(w)).toBeGreaterThanOrEqual(survivalWaveHp(w));
+    }
+    expect(gauntletWaveHp(10)).toBeGreaterThan(survivalWaveHp(10)); // steeper toughness
+    expect(gauntletWaveCount(100)).toBeLessThanOrEqual(12);          // capped at its pool
+  });
+
+  it('is a ranked survival arena with a full pool and no objectives', () => {
+    expect(GAUNTLET_MISSION.survival).toBe(true);
+    expect(GAUNTLET_MISSION.gauntlet).toBe(true);
+    expect(GAUNTLET_MISSION.enemies.length).toBe(12);
+    expect(GAUNTLET_MISSION.objectives).toEqual([]);
+    expect(ZONE_THEMES[GAUNTLET_MISSION.zone]).toBeDefined();
+  });
+
+  it('places no spawn or the player start inside a wall or cover', () => {
+    const solids = [...GAUNTLET_MISSION.walls, ...GAUNTLET_MISSION.cover];
+    expect(solids.find((b) => inside(GAUNTLET_MISSION.start[0], GAUNTLET_MISSION.start[1], b, CLEAR))).toBeUndefined();
+    for (const e of GAUNTLET_MISSION.enemies) {
+      const hit = solids.find((b) => inside(e.pos[0], e.pos[1], b, CLEAR));
+      expect(hit, `gauntlet spawn [${e.pos}] overlaps a box`).toBeUndefined();
     }
   });
 });
