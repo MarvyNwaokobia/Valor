@@ -52,11 +52,12 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: 'valor-player',
-      partialize: (state) => ({
-        isVerified: state.isVerified,
-        player:     state.player,
-        inventory:  state.inventory,
-      }),
+      // Do NOT persist the player/inventory: a cached blob was being shown (and
+      // used to route) before the server confirmed who this wallet actually is,
+      // so a returning/new wallet could land on a stale or reconstructed character
+      // and skip character-select. New-vs-old is now decided fresh from the server
+      // every load. Only the lightweight verified hint is cached.
+      partialize: (state) => ({ isVerified: state.isVerified }),
     },
   ),
 )
