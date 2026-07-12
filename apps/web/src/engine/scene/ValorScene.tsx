@@ -2266,6 +2266,27 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
       new URLSearchParams(window.location.search).has('touch')));
 
+  // Lock the PAGE to the game while the scene is mounted (restored on unmount so
+  // other pages still scroll). Without this, iOS Safari lets a stray double-tap /
+  // pinch mid-fight zoom the whole HUD — the "everything looks huge / half screen,
+  // reload to fix" bug. Also kill iOS pinch (gesture*) which ignores user-scalable.
+  useEffect(() => {
+    const html = document.documentElement, body = document.body;
+    const prev = { ho: html.style.overflow, bo: body.style.overflow, bp: body.style.position,
+      bw: body.style.width, bh: body.style.height, os: body.style.overscrollBehavior, ta: body.style.touchAction };
+    html.style.overflow = 'hidden';
+    Object.assign(body.style, { overflow: 'hidden', position: 'fixed', width: '100%', height: '100%', overscrollBehavior: 'none', touchAction: 'none' });
+    const noGesture = (e: Event) => e.preventDefault();
+    document.addEventListener('gesturestart', noGesture, { passive: false });
+    document.addEventListener('gesturechange', noGesture, { passive: false });
+    return () => {
+      html.style.overflow = prev.ho;
+      Object.assign(body.style, { overflow: prev.bo, position: prev.bp, width: prev.bw, height: prev.bh, overscrollBehavior: prev.os, touchAction: prev.ta });
+      document.removeEventListener('gesturestart', noGesture);
+      document.removeEventListener('gesturechange', noGesture);
+    };
+  }, []);
+
   // C3: an on-screen FPS / worst-frame meter for on-device perf checks. Enable with
   // ?perf=1 (mobile-friendly) or toggle with the P key (desktop).
   const [perfOn, setPerfOn] = useState(() =>
