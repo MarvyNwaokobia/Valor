@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { claimUBI, createReadOnlyClaimSDK, withTimeout } from '@/lib/gooddollar'
+import { claimUBI, createReadOnlyClaimSDK, checkWhitelistStatusReadOnly, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -68,10 +68,25 @@ export function useGoodDollarClaim(
         walletStatus = await withTimeout(sdk.getWalletClaimStatus(), 15000, 'GoodDollar claim status check timed out')
         break
       } catch (err) {
-        if (attempt === 1) { console.error('[Claim] status read failed after retry:', err); setStatus('error'); return }
+        if (attempt === 1) console.error('[Claim] status read failed after retry:', err)
       }
     }
-    if (!walletStatus) { setStatus('error'); return }
+
+    // The bundled status read can THROW for an unverified wallet (GoodDollar's
+    // whitelist lookup reverts for a wallet with no identity). Don't call that
+    // "couldn't load" — fall back to a plain whitelist check so an unverified user
+    // gets the actionable Verify prompt, and only a REAL read failure (both throw)
+    // shows "couldn't load".
+    if (!walletStatus) {
+      setEntitlement('0'); setNextClaimTime(null)
+      try {
+        const { isWhitelisted } = await checkWhitelistStatusReadOnly(walletAddress)
+        setStatus(isWhitelisted ? 'error' : 'not_whitelisted')
+      } catch {
+        setStatus('error')
+      }
+      return
+    }
 
     if (walletStatus.status === 'can_claim') {
       setStatus('can_claim')
