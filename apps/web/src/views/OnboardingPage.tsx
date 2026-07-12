@@ -37,8 +37,22 @@ export default function OnboardingPage() {
   const [createdPlayer,  setCreatedPlayer]  = useState<null | Parameters<typeof TutorialArena>[0]['player']>(null)
   const [selectedClass, setSelectedClass] = useState<CharacterClass>('Berserker')
   const [nameInput,     setNameInput]     = useState('')
+  const [username,      setUsername]      = useState('')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
+
+  // A player rebuilt from chain after the migration hasn't CONFIRMED their class
+  // yet (it may be wrong). They're already a recognized user, so skip verify and
+  // drop them straight onto the confirm screen, pre-filled with what we recovered.
+  const confirming = !!player && player.character_confirmed === false
+  useEffect(() => {
+    if (confirming && player) {
+      setSelectedClass((player.character_class as CharacterClass) || 'Berserker')
+      setNameInput(player.character_name || '')
+      setUsername(player.username || '')
+      setStep('confirm')
+    }
+  }, [confirming, player])
 
   // Auth session still resolving — wait; don't flash the sign-in screen.
   if (status === 'loading') return <LoadingScreen />
@@ -46,8 +60,9 @@ export default function OnboardingPage() {
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
 
-  // Returning user: player loaded from API — send home.
-  if (player) { router.replace('/'); return null }
+  // Returning CONFIRMED user → home. An unconfirmed (reconstructed) player STAYS
+  // here to run the confirm-your-class flow above.
+  if (player && !confirming) { router.replace('/'); return null }
 
   if (status === 'unauthenticated' || !address) {
     return (
@@ -105,13 +120,36 @@ export default function OnboardingPage() {
     async function handleCreate() {
       if (!address) return
       setPending(true); setError(null)
+      const API = process.env.NEXT_PUBLIC_API_URL
+      const uname = username.trim() ? username.trim() : null
+
+      // ── Reconstructed player confirming: PATCH class/name/username + mark done ──
+      if (confirming) {
+        const res = await fetch(`${API}/players/${address.toLowerCase()}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            character_class:     selectedClass,
+            character_name:      characterName,
+            username:            uname,
+            character_confirmed: true,
+          }),
+        })
+        if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
+        if (!res.ok) { setError('Could not save. Please try again.'); setPending(false); return }
+        setPlayer(await res.json())
+        router.replace('/')          // returning user → straight to their dashboard
+        return
+      }
+
+      // ── Brand-new player: create the row ──
       const now = new Date().toISOString()
       const newPlayer = {
         wallet_address:          address,
         play_style:              'Fighter' as const,
         avatar:                  '',
         character_name:          characterName,
-        username:                null,
+        username:                uname,
         display_name:            null,
         character_class:         selectedClass,
         character_customization: {},
@@ -127,11 +165,12 @@ export default function OnboardingPage() {
         wins:                    0,
         losses:                  0,
       }
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/players`, {
+      const res = await fetch(`${API}/players`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPlayer),
       })
+      if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
       if (!res.ok) {
         setError('Failed to create player. Please try again.'); setPending(false); return
       }
@@ -212,8 +251,21 @@ export default function OnboardingPage() {
             <p className="font-display font-bold uppercase mt-2" style={{
               fontSize: '8px', letterSpacing: '0.28em', color: 'rgba(255,255,255,0.18)',
             }}>
-              ⬡ Tap to edit · can be changed later
+              ⬡ Warrior name · tap to edit
             </p>
+
+            {/* Username — your unique @handle (optional; must be free) */}
+            <div className="mt-3 flex items-center gap-2">
+              <span className="font-display font-black text-lg" style={{ color: `${def.accentColor}99` }}>@</span>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20))}
+                placeholder="username (optional)"
+                className="flex-1 bg-transparent border-b font-display font-bold text-lg leading-none focus:outline-none placeholder:opacity-25 text-white"
+                style={{ borderColor: 'rgba(255,255,255,0.15)', caretColor: def.accentColor }}
+              />
+            </div>
           </motion.div>
 
           {/* Stats row */}
@@ -285,7 +337,9 @@ export default function OnboardingPage() {
               animate={{ x: ['-140%', '220%'] }}
               transition={{ duration: 2.4, repeat: Infinity, ease: 'linear', repeatDelay: 2.5 }}
             />
-            {pending ? 'Forging Your Legacy...' : 'Forge Your Legacy'}
+            {pending
+              ? (confirming ? 'Saving...' : 'Forging Your Legacy...')
+              : (confirming ? 'Confirm Character' : 'Forge Your Legacy')}
           </motion.button>
         </div>
       </div>

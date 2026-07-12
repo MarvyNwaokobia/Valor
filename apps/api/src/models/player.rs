@@ -85,6 +85,8 @@ pub struct Player {
     pub wins: i32,
     pub losses: i32,
     pub pve_level: i32, // highest PvE Campaign level cleared (0 = none)
+    #[serde(default)]
+    pub character_confirmed: bool, // false for chain-reconstructed players → prompt confirm-class
     pub created_at: DateTime<Utc>,
     pub character_claim_tx: Option<String>,
 }

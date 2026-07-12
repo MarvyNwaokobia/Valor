@@ -27,6 +27,7 @@ const FILES = [
   'apps/api/migrations/fix_decimal_columns.sql',    // g_earned_lifetime / price_g → NUMERIC
   'apps/api/migrations/add_gdollar_ledger.sql',     // g_ledger, seasons
   'apps/api/migrations/add_first_clear_bounties.sql', // B0 bounties
+  'apps/api/migrations/add_character_confirmed.sql',  // confirm-your-class flag
 ];
 
 if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }

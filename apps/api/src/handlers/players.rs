@@ -15,6 +15,10 @@ pub struct UpdatePlayerRequest {
     pub username:                Option<String>,
     pub display_name:            Option<String>,
     pub character_customization: Option<serde_json::Value>,
+    // Confirm-your-class: reconstructed players confirm/re-pick class + name here.
+    pub character_class:         Option<String>,
+    pub character_name:          Option<String>,
+    pub character_confirmed:     Option<bool>,
     // Decay management fields (set by client after shield/scroll use)
     pub decay_frozen_until:      Option<chrono::DateTime<Utc>>,
     pub decay_status:            Option<String>,
@@ -57,7 +61,10 @@ pub async fn update_player(
            decay_frozen_until      = COALESCE($4, decay_frozen_until),
            decay_status            = COALESCE($5, decay_status),
            rank                    = COALESCE($6, rank),
-           last_active             = COALESCE($7, last_active)
+           last_active             = COALESCE($7, last_active),
+           character_class         = COALESCE($9, character_class),
+           character_name          = COALESCE($10, character_name),
+           character_confirmed     = COALESCE($11, character_confirmed)
          WHERE wallet_address = $8
          RETURNING *",
     )
@@ -69,6 +76,9 @@ pub async fn update_player(
     .bind(&body.rank)
     .bind(body.last_active)
     .bind(&wallet)
+    .bind(&body.character_class)
+    .bind(&body.character_name)
+    .bind(body.character_confirmed)
     .fetch_optional(&state.db)
     .await;
 
@@ -279,8 +289,8 @@ pub async fn create_player(
             wallet_address, username, display_name, character_class,
             character_customization, play_style, avatar, character_name,
             rank, xp, attack_stat, defense_stat, speed_stat,
-            g_earned_lifetime, last_active, decay_status, wins, losses
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Bronze', 0, $9, $10, $11, 0, now(), 'none', 0, 0)
+            g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Bronze', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true)
          ON CONFLICT (wallet_address) DO UPDATE
            SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
                character_customization = CASE
@@ -288,7 +298,8 @@ pub async fn create_player(
                  ELSE EXCLUDED.character_customization
                END,
                username     = COALESCE(EXCLUDED.username, players.username),
-               display_name = COALESCE(EXCLUDED.display_name, players.display_name)
+               display_name = COALESCE(EXCLUDED.display_name, players.display_name),
+               character_confirmed = true
          RETURNING *",
     )
     .bind(&wallet)
