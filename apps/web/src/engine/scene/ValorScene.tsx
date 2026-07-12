@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { PerformanceMonitor, AdaptiveDpr } from '@react-three/drei';
 import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration, N8AO } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
@@ -265,6 +266,7 @@ interface Hud {
   objArrow: HTMLDivElement | null;
   briefing: HTMLDivElement | null;
   complete: HTMLDivElement | null;
+  perf: HTMLDivElement | null;
   rankText: HTMLDivElement | null;
   xpBar: HTMLDivElement | null;
   xpPops: Array<HTMLDivElement | null>;
@@ -293,6 +295,29 @@ interface Controls {
   toggle: Attachment | null; // mobile attachment chip → toggle this
 }
 
+/**
+ * C3 on-device perf meter. Lives inside the Canvas (needs useFrame) and writes a
+ * rolling FPS + worst-frame reading to the HUD overlay's `perf` element. The "worst"
+ * ms over each window is the tell for hitches (a spike a raw average hides).
+ */
+function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
+  const acc = useRef({ frames: 0, t: 0, worst: 0 });
+  useFrame((_, dt) => {
+    const a = acc.current;
+    a.frames += 1; a.t += dt; a.worst = Math.max(a.worst, dt);
+    if (a.t >= 0.5) {
+      const fps = Math.round(a.frames / a.t);
+      const worstMs = Math.round(a.worst * 1000);
+      if (hud.current.perf) {
+        hud.current.perf.textContent = `${fps} FPS · ${worstMs}ms worst`;
+        hud.current.perf.style.color = fps >= 50 ? '#5fe0a8' : fps >= 30 ? '#e0b737' : '#ff5a52';
+      }
+      a.frames = 0; a.t = 0; a.worst = 0;
+    }
+  });
+  return null;
+}
+
 function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
@@ -302,7 +327,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   // climbs live per-kill; the server reconciles on op-clear. Omitted at /dev/verb.
   accountRank?: Rank; accountXp?: number;
 }) {
-  const { camera, gl } = useThree();
+  const { camera, gl, scene } = useThree();
 
   // The one mission this mount runs. The scene remounts (key=missionIndex) to
   // switch, so treating these as constants is safe. Aliased to the old names so
@@ -584,6 +609,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     w.__valorSwitch = (n?: number) => (typeof n === 'number' ? sim.switchGun(n) : sim.nextWeapon());
     w.__valorFire = (on: boolean) => { controls.current.fire = !!on; }; // headless: hold the trigger (aim-assist test)
     w.__valorToggle = (a: Attachment) => sim.toggleAttachment(a);
+    // C3: WebGL resource + draw snapshot — the soak probe watches memory.geometries/
+    // textures/programs for growth (a disposal leak) over a long run.
+    w.__valorPerf = () => ({
+      geometries: gl.info.memory.geometries,
+      textures: gl.info.memory.textures,
+      programs: gl.info.programs?.length ?? 0,
+      calls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+      sceneChildren: scene.children.length,
+    });
     // ── Survival re-arm bridge (B1): applies a PAID re-arm's effect to the sim.
     //    The outer component charges the G$ first, then calls these on success. ──
     w.__valorRevive = () => {
@@ -607,7 +642,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
       delete w.__valorState; delete w.__valorKillAll; delete w.__valorAim; delete w.__valorAudio;
       delete w.__valorMission; delete w.__valorWarp; delete w.__valorSkipBriefing;
       delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorFire; delete w.__valorToggle;
-      delete w.__valorRevive; delete w.__valorResupply; delete w.__valorWaveSkip;
+      delete w.__valorRevive; delete w.__valorResupply; delete w.__valorWaveSkip; delete w.__valorPerf;
     };
   }, [sim, audio]);
 
@@ -1664,15 +1699,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         </mesh>
       ))}
 
-      {/* ── bodycam post: AO grounds the geometry, then grain, vignette, a
-          chromatic edge, filmic curve ── */}
-      <EffectComposer multisampling={0} enableNormalPass>
-        <N8AO aoRadius={1.4} intensity={lowSpec ? 1.6 : 2.6} distanceFalloff={1} halfRes={lowSpec} quality={lowSpec ? 'low' : 'medium'} color="#0a0a0e" />
-        <Bloom intensity={0.18} luminanceThreshold={0.9} luminanceSmoothing={0.2} mipmapBlur />
-        <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
-        <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={lowSpec ? 0.2 : 0.3} />
-        <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
-      </EffectComposer>
+      {/* ── bodycam post ── C3: mobile runs a LIGHT stack. N8AO adds a whole normal
+          re-render pass and Bloom a mipmap blur — the two priciest effects — so on
+          lowSpec we drop them (and enableNormalPass) and keep only the cheap
+          chromatic edge + vignette that sell the "lens". Desktop keeps the full look. */}
+      {lowSpec ? (
+        <EffectComposer multisampling={0}>
+          <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
+          <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
+        </EffectComposer>
+      ) : (
+        <EffectComposer multisampling={0} enableNormalPass>
+          <N8AO aoRadius={1.4} intensity={2.6} distanceFalloff={1} quality="medium" color="#0a0a0e" />
+          <Bloom intensity={0.18} luminanceThreshold={0.9} luminanceSmoothing={0.2} mipmapBlur />
+          <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
+          <Noise premultiply blendFunction={BlendFunction.SCREEN} opacity={0.3} />
+          <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
+        </EffectComposer>
+      )}
     </>
   );
 }
@@ -2065,7 +2109,7 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
-    objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null,
+    objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null, perf: null,
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
     bossWrap: null, bossName: null, bossFill: null,
@@ -2208,6 +2252,16 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
       new URLSearchParams(window.location.search).has('touch')));
 
+  // C3: an on-screen FPS / worst-frame meter for on-device perf checks. Enable with
+  // ?perf=1 (mobile-friendly) or toggle with the P key (desktop).
+  const [perfOn, setPerfOn] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('perf'));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'p' || e.key === 'P') setPerfOn((v) => !v); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // VALOR is a landscape game. On a phone held upright, block play with a rotate
   // prompt (and try a best-effort orientation lock once we're in landscape).
   const [portrait, setPortrait] = useState(false);
@@ -2313,13 +2367,23 @@ export function ValorScene({ onOpCleared, startMission, walletAddress, accountRa
           must NOT tone-map again, or the image washes out. */}
       <Canvas
         shadows
-        gl={{ antialias: false }}
+        gl={{ antialias: false, powerPreference: 'high-performance' }}
+        // C3: cap the render resolution. A retina phone is DPR 3 (9× the pixels of
+        // DPR 1) — the single biggest mobile cost. Phones cap at 1.5, desktop at 2;
+        // AdaptiveDpr drops toward the low end when PerformanceMonitor sees fps sag.
+        dpr={isTouch ? [1, 1.5] : [1, 2]}
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
+        <PerformanceMonitor />
+        <AdaptiveDpr />
+        {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
           <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} />
         </Suspense>
       </Canvas>
+
+      {/* C3 perf meter (?perf=1 or P) — top-left, out of the way of the HUD */}
+      <div ref={(r) => { hud.current.perf = r; }} style={{ position: 'absolute', left: 12, top: 8, zIndex: 60, display: perfOn ? 'block' : 'none', fontFamily: 'monospace', fontSize: 12, letterSpacing: 0.5, color: '#5fe0a8', background: 'rgba(0,0,0,.5)', padding: '3px 8px', borderRadius: 5, pointerEvents: 'none' }}>— FPS</div>
 
       {/* ── HUD overlay ── */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: UI_FONT, color: '#e9edf2', userSelect: 'none' }}>
