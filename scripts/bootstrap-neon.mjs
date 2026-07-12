@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+/**
+ * Bootstrap a fresh Postgres (Neon) with Valor's full current schema, in order.
+ * Run from the repo root:
+ *   DATABASE_URL=postgres://..  node scripts/bootstrap-neon.mjs
+ *
+ * Then reconstruct players from chain:
+ *   GAME_RECORD_CONTRACT=.. CELOSCAN_API_KEY=.. DATABASE_URL=..  node scripts/reconstruct-players.mjs
+ *
+ * The order matters: init creates the tables, later files ALTER them. Every file
+ * is idempotent (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS), so re-running is safe.
+ */
+import { Client } from 'pg';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const FILES = [
+  'apps/api/migrations/init.sql',              // core tables (players, battles, items, …)
+  'apps/api/migrations/add_chain_tx_columns.sql', // character_claim_tx, game_record_tx
+  'apps/api/migrations/fix_decimal_columns.sql',  // g_earned_lifetime / price_g → NUMERIC
+  'supabase/migrations/005_pve_level.sql',        // players.pve_level
+  'apps/api/migrations/add_gdollar_ledger.sql',   // g_ledger, seasons
+  'apps/api/migrations/add_first_clear_bounties.sql', // B0 bounties
+];
+
+if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }
+
+const c = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+await c.connect();
+for (const f of FILES) {
+  const sql = readFileSync(resolve(root, f), 'utf8');
+  process.stdout.write(`applying ${f} … `);
+  await c.query(sql);
+  console.log('ok');
+}
+const tables = await c.query(
+  "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
+);
+console.log('\nschema ready. tables:', tables.rows.map((r) => r.table_name).join(', '));
+await c.end();
