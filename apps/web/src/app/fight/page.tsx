@@ -1,7 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback, useState } from 'react';
+import { Suspense, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { usePlayerStore } from '@/stores/usePlayerStore';
@@ -35,20 +36,25 @@ const ValorScene = dynamic(
   },
 );
 
-export default function FightPage() {
+function FightInner() {
   const { submitResult } = useFightRewards();
   const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
   // C1: the real account rank + XP so the in-game HUD reflects true server standing.
   const accountRank = usePlayerStore((s) => s.player?.rank);
   const accountXp = usePlayerStore((s) => s.player?.xp);
+  // The server-authoritative campaign progress — used to RESUME at the right op when
+  // no specific op was chosen, even after a sign-out cleared local storage.
+  const pveLevel = usePlayerStore((s) => s.player?.pve_level);
 
   // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
-  // routes here as /fight?op=N — so we boot straight into that operation.
-  const [startMission] = useState(() => {
-    if (typeof window === 'undefined') return undefined;
-    const v = Number(new URLSearchParams(window.location.search).get('op'));
-    return Number.isFinite(v) && v >= 0 ? v : undefined;
-  });
+  // routes here as /fight?op=N. Read it via useSearchParams (NOT window.location,
+  // which reads stale on client-side navigation — that made a clicked op boot op 1).
+  const searchParams = useSearchParams();
+  const opParam = searchParams.get('op');
+  const startMission =
+    opParam !== null && opParam !== '' && Number.isFinite(Number(opParam)) && Number(opParam) >= 0
+      ? Number(opParam)
+      : undefined;
 
   // Each cleared operation is a server-authoritative "fight win": the backend
   // applies the real XP → rank → G$ and advances the PvE level. If the player
@@ -62,7 +68,23 @@ export default function FightPage() {
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
-      <ValorScene onOpCleared={onOpCleared} startMission={startMission} walletAddress={walletAddress} accountRank={accountRank} accountXp={accountXp} />
+      <ValorScene
+        onOpCleared={onOpCleared}
+        startMission={startMission}
+        resumeLevel={pveLevel}
+        walletAddress={walletAddress}
+        accountRank={accountRank}
+        accountXp={accountXp}
+      />
     </div>
+  );
+}
+
+export default function FightPage() {
+  // useSearchParams needs a Suspense boundary.
+  return (
+    <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+      <FightInner />
+    </Suspense>
   );
 }

@@ -59,6 +59,9 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   margin: 0;
+  /* App-wide: disable double-tap-to-zoom while keeping scroll + taps working. The
+     game route additionally locks this to `none` while a fight is mounted. */
+  touch-action: manipulation;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
