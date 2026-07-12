@@ -108,6 +108,7 @@ export interface Player {
   wins: number
   losses: number
   pve_level: number                            // highest PvE Campaign level cleared (0 = none)
+  character_confirmed?: boolean                // false for chain-reconstructed players → confirm-class
 
   // Decay
   last_active: string

@@ -39,7 +39,9 @@ export default function HomePage() {
     // redirecting a returning user whose cached data is about to load.
     if (status !== 'ready' || !address) return
     if (playerSynced && !player && !syncFailed) {
-      router.replace('/onboarding')
+      router.replace('/onboarding')                       // new user → onboarding
+    } else if (player && player.character_confirmed === false) {
+      router.replace('/onboarding')                       // reconstructed → confirm-your-class
     }
   }, [status, address, player, playerSynced, syncFailed, router])
 

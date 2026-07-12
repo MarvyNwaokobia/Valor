@@ -407,6 +407,7 @@ mod tests {
             wins:                    0,
             losses:                  0,
             pve_level:               0,
+            character_confirmed:     true,
             created_at:              Utc::now(),
             character_claim_tx:      None,
         }
