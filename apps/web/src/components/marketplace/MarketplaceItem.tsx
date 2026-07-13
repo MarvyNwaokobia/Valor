@@ -190,6 +190,14 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           if (item.category === 'cosmetic') {
             return <div className="text-[10px] text-slate-500 mt-1">Cosmetic only, no stat changes.</div>
           }
+          if (item.category === 'gear') {
+            return (
+              <div className="flex flex-col gap-1 mt-1">
+                <ModLine label="Loadout" value="Field kit" color="#a855f7" />
+                <span className="text-[10px] text-slate-500 leading-relaxed mt-0.5">Equip it in the Loadout before an op.</span>
+              </div>
+            )
+          }
           return null
         })()}
 
@@ -204,6 +212,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
             }
             if (item.category === 'ammo') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Ammo</span>
             if (item.category === 'attachment') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>{SLOT_LABEL[(item.weapon_stats as Record<string, string> | null)?.slot ?? ''] ?? 'Part'}</span>
+            if (item.category === 'gear') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Field Kit</span>
             if (item.category === 'shield') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Shield</span>
             if (item.category === 'booster') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Booster</span>
             if (item.category === 'cosmetic') return <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: rarityColor }}>Cosmetic</span>

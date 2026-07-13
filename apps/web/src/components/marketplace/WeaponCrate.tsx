@@ -18,6 +18,7 @@ export function crateLabel(item: Item): string {
   switch (item.category) {
     case 'ammo':       return `${item.rarity.toUpperCase()} · AMMO`
     case 'attachment': return `${(slot ?? 'MOD').toUpperCase()} · MOD`
+    case 'gear':       return `${item.rarity.toUpperCase()} · KIT`
     case 'shield':     return 'TAC · SHIELD'
     case 'booster':    return 'FIELD · BOOSTER'
     default:           return item.rarity.toUpperCase()

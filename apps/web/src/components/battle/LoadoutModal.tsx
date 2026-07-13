@@ -9,7 +9,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { gunIdFromItemId } from '@/components/marketplace/GunIcons'
 import {
   GUN_ITEM_ID, AMMO_ITEM_ID, ATTACHMENT_ITEM_ID,
-  equippedGunId, equippedAmmoId, equippedAttachments,
+  equippedGunId, equippedAmmoId, equippedAttachments, ownedFieldKit,
 } from '@/lib/guns'
 import { GUN_CATALOG, gunDps, type GunId } from '@/engine/combat/GunStats'
 import {
@@ -19,15 +19,14 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
-// Standard-issue field kit — tactical gear every operator can fit, toggled here
-// and carried into the op (see fight?kit=). Not a purchase; NVG lifts the dark,
-// the light is a flashlight cone, the laser tightens the hip.
+// Field kit — tactical gear you BUY in the Marketplace, then fit here and carry
+// into the op (see fight?kit=). kit_id maps to the engine's FpsSim attachment.
 type KitId = 'light' | 'laser' | 'nvg'
-const FIELD_KIT: { id: KitId; label: string; desc: string }[] = [
-  { id: 'light', label: 'Flashlight', desc: 'Forward light cone for dark ops' },
-  { id: 'nvg',   label: 'Night Vision', desc: 'Lifts the dark on night operations' },
-  { id: 'laser', label: 'Laser Sight', desc: 'Tighter hip-fire' },
-]
+const KIT_META: Record<KitId, { label: string; desc: string }> = {
+  light: { label: 'Tactical Flashlight', desc: 'Forward light cone for dark ops' },
+  nvg:   { label: 'Night Vision', desc: 'Lifts the dark on night operations' },
+  laser: { label: 'Laser Sight', desc: 'Tighter hip-fire' },
+}
 
 const SLOTS: { slot: AttachmentSlot; label: string }[] = [
   { slot: 'barrel', label: 'Barrel' },
@@ -87,6 +86,7 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
   const ownedGuns = owned.map((i) => gunIdFromItemId(i.id)).filter((g): g is GunId => !!g)
   const ownedAmmo = owned.filter((i) => i.category === 'ammo')
   const ownedAttach = owned.filter((i) => i.category === 'attachment')
+  const ownedKit = ownedFieldKit(inventory) // field-kit gear you've bought
 
   // Selection starts from what's currently equipped (engine ids).
   const [gun, setGun] = useState<GunId>(() => equippedGunId(inventory))
@@ -218,18 +218,22 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
             </section>
           )}
 
-          {/* Field kit */}
+          {/* Field kit — only what you own */}
           <section>
-            <p className="text-[11px] uppercase tracking-[0.2em] font-bold text-slate-500 mb-2">Field Kit <span className="text-slate-600 font-normal normal-case tracking-normal">· standard-issue</span></p>
-            <div className="flex flex-col gap-2">
-              {FIELD_KIT.map(({ id, label, desc }) => {
-                const on = kit.has(id)
-                return (
-                  <Row key={id} accent="#a855f7" selected={on} title={label} sub={desc}
-                    onClick={() => setKit((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })} />
-                )
-              })}
-            </div>
+            <p className="text-[11px] uppercase tracking-[0.2em] font-bold text-slate-500 mb-2">Field Kit</p>
+            {ownedKit.length === 0 ? (
+              <p className="text-[11px] text-slate-600">Buy field kit (flashlight, night vision, laser) in the Marketplace to bring it into an op.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {ownedKit.map((id) => {
+                  const on = kit.has(id)
+                  return (
+                    <Row key={id} accent="#a855f7" selected={on} title={KIT_META[id].label} sub={KIT_META[id].desc}
+                      onClick={() => setKit((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })} />
+                  )
+                })}
+              </div>
+            )}
           </section>
         </div>
 
