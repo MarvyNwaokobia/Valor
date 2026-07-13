@@ -1,11 +1,12 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { Suspense, useCallback } from 'react';
+import { Suspense, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { usePlayerStore } from '@/stores/usePlayerStore';
+import { equippedGunId } from '@/lib/guns';
 
 // The tactical HUD face (see /dev/verb) — exposed as a CSS var for the scene.
 const tactical = Rajdhani({
@@ -42,6 +43,12 @@ function FightInner() {
   // no specific op was chosen, even after a sign-out cleared local storage.
   const pveLevel = usePlayerStore((s) => s.player?.pve_level);
 
+  // A: the gun the player bought + equipped in the marketplace. The scene carries it
+  // as the op primary whenever it out-tiers the op's issued weapon, so buying a
+  // better gun actually shows up in the fight.
+  const inventory = usePlayerStore((s) => s.inventory);
+  const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
+
   // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
   // routes here as /fight?op=N. Read it via useSearchParams (NOT window.location,
   // which reads stale on client-side navigation — that made a clicked op boot op 1).
@@ -71,6 +78,7 @@ function FightInner() {
         walletAddress={walletAddress}
         accountRank={accountRank}
         accountXp={accountXp}
+        equippedGun={equippedGun}
       />
     </div>
   );
