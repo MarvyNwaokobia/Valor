@@ -1,6 +1,6 @@
 # Valor — Frontend
 
-Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 first-person tactical shooter on GoodDollar + Celo. The live game is the Valor first-person build (`/fight`, sandbox at `/dev/verb`); the legacy melee game is at `/fight-legacy`.
+Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 first-person tactical shooter on GoodDollar + Celo. The live game is the first-person build (`/fight`, sandbox at `/dev/verb`); the legacy melee game is at `/fight-legacy`.
 
 ## Stack
 

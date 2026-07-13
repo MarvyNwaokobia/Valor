@@ -71,7 +71,7 @@ Used for: marketplace `purchaseWithPermit`, player-to-player transfers (`permit`
 
 ---
 
-## The Game (Valor first-person build — live at `/fight`)
+## The Game (first-person build — live at `/fight`)
 
 ### Campaign
 
@@ -308,7 +308,7 @@ Valor/
 │   │       ├── app/              # App Router (fight/, dev/verb sandbox, auth/callback, admin, bank…)
 │   │       ├── engine/
 │   │       │   ├── fps/          # Headless FPS sim: FpsSim, campaign (15 ops + survival + gauntlet), xp
-│   │       │   ├── scene/        # ValorScene (the R3F game), operator rigs, set dressing
+│   │       │   ├── scene/        # the R3F game scene, operator rigs, set dressing
 │   │       │   ├── audio/        # FpsAudio director
 │   │       │   └── story/        # VO presence lines
 │   │       ├── components/       # battle/ (OperationsSelect…), marketplace/, player-card/, ui/, providers/
@@ -318,7 +318,7 @@ Valor/
 │       └── src/handlers/         # players, battles, survival, gauntlet, seasons, items, admin, decay, ledger…
 │       └── migrations/           # SQL migrations
 ├── contracts/                    # Foundry: ValorItems / Marketplace / RewardPool / GameRecord
-├── docs/                         # B0_ECONOMY_DEPLOY, C5_SHIP_GATE, the plan…
+├── docs/                         # B0_ECONOMY_DEPLOY, C5_SHIP_GATE, GAME_DESIGN…
 └── scripts/                      # bootstrap-neon.mjs, reconstruct-players.mjs, generate-vo.mjs…
 ```
 

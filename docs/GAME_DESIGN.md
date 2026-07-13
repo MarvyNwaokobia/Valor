@@ -1,11 +1,11 @@
 # VALOR — Game Design Document
 
 > ⚠️ **SUPERSEDED (July 2026).** This describes the earlier *1v1 stat-duel shooter*
-> direction. The live game pivoted to a **first-person tactical FPS** (solo campaign of
-> doorkicker operations + Survival + a ranked Gauntlet). See **`docs/the plan.md`** and
-> the **root `README.md`** for the current design. The stat-duel game below is preserved
-> and playable at `/fight-legacy`; this doc is kept for history + reusable ideas
-> (classes, ranks, economy principles, PvP netcode notes).
+> direction. The live game is now a **first-person tactical shooter** (solo campaign of
+> tactical operations + Survival + a ranked Gauntlet). See the **root `README.md`** for
+> the current design. The stat-duel game below is preserved and playable at
+> `/fight-legacy`; this doc is kept for history + reusable ideas (classes, ranks,
+> economy principles, PvP netcode notes).
 
 > **One sentence (legacy):** Valor is a real-time 1v1 stat-duel shooter, playable in the browser,
 > where verified humans stand at range, trade shots, dodge bullets, climb ranked seasons,
