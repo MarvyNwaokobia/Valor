@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
-import { mkdirSync, statSync } from 'fs';
+import { mkdirSync, statSync, renameSync } from 'fs';
+import sharp from 'sharp';
 
 const OUT = '/Users/marvy/Documents/HACK/Valor/apps/web/public/items';
 mkdirSync(OUT, { recursive: true });
@@ -32,4 +33,18 @@ for (const asset of ASSETS) {
 }
 
 await browser.close();
+
+// Trim the transparent margin off each bake so the asset fills its crate frame
+// (a thin gun centred in a square canvas otherwise reads tiny). Small pad back.
+const PAD_FRAC = 0.04;
+for (const asset of ASSETS) {
+  const src = `${OUT}/${asset}.png`;
+  try {
+    const t = await sharp(src).trim({ threshold: 10 }).toBuffer({ resolveWithObject: true });
+    const pad = Math.round(Math.max(t.info.width, t.info.height) * PAD_FRAC);
+    const tmp = `${OUT}/.tmp_${asset}.png`;
+    await sharp(t.data).extend({ top: pad, bottom: pad, left: pad, right: pad, background: { r: 0, g: 0, b: 0, alpha: 0 } }).toFile(tmp);
+    renameSync(tmp, src);
+  } catch (e) { console.log('trim skipped', asset, e.message); }
+}
 console.log('DONE');
