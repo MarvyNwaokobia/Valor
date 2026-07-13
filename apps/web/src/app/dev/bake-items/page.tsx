@@ -25,6 +25,7 @@ const GUN_IDS: GunId[] = ['sidearm', 'smg', 'assault_rifle', 'marksman', 'legend
 const GUN_GLB: Partial<Record<GunId, string>> = {
   assault_rifle: '/models/guns/rifle.glb',
   legendary: '/models/guns/blaster.glb',
+  marksman: '/models/guns/marksman.glb',
 };
 
 /** Centre a posed holder on its bbox and return the hero-shot camera distance. */
