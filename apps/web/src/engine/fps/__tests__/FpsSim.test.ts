@@ -649,3 +649,43 @@ describe('FpsSim survival re-arm (B1)', () => {
     expect(sim.playerHp).toBe(0);
   });
 });
+
+describe('FpsSim loadout mods (B: equipped ammo + attachments)', () => {
+  const TORSO: Vec3 = [0, -0.6, -6]; // a clean body shot on the enemy at (0,-6)
+
+  function shotDamage(sim: FpsSim): number {
+    const hit = sim.step(1 / 60, input({ dir: TORSO })).find((e) => e.kind === 'hit') as { damage: number } | undefined;
+    return hit?.damage ?? 0;
+  }
+
+  it('an extended magazine raises the carried gun capacity', () => {
+    const base = new FpsSim({ gunId: 'assault_rifle', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    const modded = new FpsSim({ gunId: 'assault_rifle', gunMods: { magazine: 'extended_mag' }, enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    expect(modded.gun.magazine).toBe(base.gun.magazine + 10);
+  });
+
+  it('hollow point ammo increases per-shot damage vs standard FMJ', () => {
+    const std = new FpsSim({ gunId: 'assault_rifle', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    const hp = new FpsSim({ gunId: 'assault_rifle', ammoId: 'hollow_point', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    expect(shotDamage(hp)).toBeGreaterThan(shotDamage(std));
+  });
+
+  it('incendiary rounds keep burning a target after you stop firing', () => {
+    const sim = new FpsSim({ gunId: 'sidearm', ammoId: 'incendiary', enemies: [{ pos: [0, -6], hp: 500 }], rng: () => 0, respawnEnabled: false });
+    shotDamage(sim); // one incendiary hit — enemy is tanky, survives the round
+    const enemy = sim.getEnemies()[0];
+    expect(enemy.alive).toBe(true);
+    const afterShot = enemy.hp;
+    for (let i = 0; i < 180; i++) sim.step(1 / 60, input({ firing: false })); // ~3s, no more shots
+    expect(enemy.hp).toBeLessThan(afterShot); // burn ate health on its own
+  });
+
+  it('standard ammo never applies a burn', () => {
+    const sim = new FpsSim({ gunId: 'sidearm', enemies: [{ pos: [0, -6], hp: 500 }], rng: () => 0, respawnEnabled: false });
+    shotDamage(sim);
+    const enemy = sim.getEnemies()[0];
+    const afterShot = enemy.hp;
+    for (let i = 0; i < 180; i++) sim.step(1 / 60, input({ firing: false }));
+    expect(enemy.hp).toBe(afterShot); // no DoT with FMJ
+  });
+});
