@@ -22,15 +22,11 @@ const ValorScene = dynamic(
   () => import('@/engine/scene/ValorScene').then((m) => m.ValorScene),
   {
     ssr: false,
+    // The game boots into a black scene anyway — keep the transition minimal
+    // (a subtle spinner), not a full branded loading page.
     loading: () => (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-2xl font-black text-white mb-2">LOADING OPERATION</div>
-          <div className="text-sm text-white/40">Gearing up...</div>
-          <div className="mt-4 w-48 h-1 bg-white/10 rounded-full overflow-hidden mx-auto">
-            <div className="h-full bg-cyan-400 rounded-full animate-pulse w-2/3" />
-          </div>
-        </div>
+        <div className="w-8 h-8 rounded-full border-2 border-white/15 border-t-cyan-400 animate-spin" />
       </div>
     ),
   },
