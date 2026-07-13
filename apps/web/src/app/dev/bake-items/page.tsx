@@ -9,6 +9,7 @@
 import { Suspense, useLayoutEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Canvas, useThree } from '@react-three/fiber';
+import { Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { makeGunMesh } from '@/engine/scene/GunMesh';
 import { makeItemMesh, type ItemMeshId, ITEM_MESH_IDS } from '@/engine/scene/ItemMesh';
@@ -79,18 +80,24 @@ function BakeInner() {
         camera={{ fov: 30, position: [0, 0.2, 1.2] }}
         onCreated={({ gl, scene, camera }) => {
           gl.setClearColor(0x000000, 0);
-          gl.toneMappingExposure = 1.5;
+          // Lower exposure so the HDRI's specular highlights survive instead of
+          // blowing out to flat white — that's what sells the metal.
+          gl.toneMappingExposure = 1.05;
           scene.background = null;
           camera.lookAt(0, 0, 0);
         }}
         style={{ width: 640, height: 640 }}
       >
-        {/* Studio product lighting: warm key, cool rim, bounce fill */}
-        <ambientLight intensity={1.0} color={'#d6dce8'} />
-        <hemisphereLight intensity={0.9} color={'#eef1f8'} groundColor={'#565c66'} />
-        <directionalLight position={[2.5, 3, 3.5]} intensity={3.4} color={'#fff2df'} />
-        <directionalLight position={[-3.5, 1.5, -2.5]} intensity={1.8} color={'#9fc3ff'} />
-        <directionalLight position={[0, -2, 2]} intensity={0.8} color={'#ffffff'} />
+        {/* HDRI reflections make the metal read as metal — the single biggest
+            "real, not toy" lever. background stays off for the transparent bake. */}
+        <Suspense fallback={null}>
+          <Environment files="/hdri/venice_sunset_1k.hdr" background={false} environmentIntensity={1.15} />
+        </Suspense>
+        {/* A soft key + cool rim ON TOP of the HDRI — kept low so reflections,
+            not raw diffuse, define the surface. */}
+        <ambientLight intensity={0.15} color={'#d6dce8'} />
+        <directionalLight position={[2.5, 3, 3.5]} intensity={1.4} color={'#fff2df'} />
+        <directionalLight position={[-3.5, 1.5, -2.5]} intensity={1.1} color={'#9fc3ff'} />
         <Subject name={asset} />
       </Canvas>
       {/* index for the bake script */}

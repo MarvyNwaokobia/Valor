@@ -17,10 +17,13 @@ import type { GunId } from '../combat/GunStats';
  */
 
 // ── Shared palette ────────────────────────────────────────────────────────────
-const METAL_DARK = 0x252a32; // receivers, slides
-const METAL = 0x39404a;      // secondary metal
-const POLYMER = 0x424750;    // furniture: grips, stocks, handguards
-const POLYMER_DARK = 0x2c313a;
+// Real gunmetal is near-black with a cold blue cast; the polymer furniture is a
+// desaturated graphite. The realism comes less from colour than from PBR values
+// + an environment map (set via scene.environment) that these surfaces reflect.
+const METAL_DARK = 0x2b313a; // receivers, slides — blued steel that catches light
+const METAL = 0x3c434e;      // secondary metal — parkerised grey
+const POLYMER = 0x363b43;    // furniture: grips, stocks, handguards
+const POLYMER_DARK = 0x21252b;
 
 interface GunKit {
   body: THREE.MeshStandardMaterial;
@@ -40,15 +43,25 @@ const ACCENTS: Record<GunId, { color: number; glow: number }> = {
   legendary:     { color: 0xb070ff, glow: 1.5 },
 };
 
+/** Molded-polymer furniture: matte with a faint clearcoat sheen, not shiny. */
+function polymer(color: number, roughness: number): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color, metalness: 0.0, roughness,
+    clearcoat: 0.35, clearcoatRoughness: 0.55, envMapIntensity: 0.8,
+  });
+}
+
 function makeKit(gunId: GunId): GunKit {
   const a = ACCENTS[gunId];
   return {
-    body: new THREE.MeshStandardMaterial({ color: METAL_DARK, metalness: 0.7, roughness: 0.38, flatShading: true }),
-    metal: new THREE.MeshStandardMaterial({ color: METAL, metalness: 0.65, roughness: 0.42, flatShading: true }),
-    furn: new THREE.MeshStandardMaterial({ color: POLYMER, metalness: 0.15, roughness: 0.7, flatShading: true }),
-    furnDark: new THREE.MeshStandardMaterial({ color: POLYMER_DARK, metalness: 0.2, roughness: 0.65, flatShading: true }),
-    accent: new THREE.MeshStandardMaterial({ color: a.color, metalness: 0.45, roughness: 0.4, emissive: a.color, emissiveIntensity: a.glow * 0.4, flatShading: true }),
-    glow: new THREE.MeshStandardMaterial({ color: a.color, emissive: a.color, emissiveIntensity: a.glow, metalness: 0.2, roughness: 0.35 }),
+    // Blued/parkerised steel: high metalness, mid-low roughness, and a strong
+    // envMapIntensity so it actually catches reflections and reads as metal.
+    body: new THREE.MeshStandardMaterial({ color: METAL_DARK, metalness: 0.95, roughness: 0.3, envMapIntensity: 1.8 }),
+    metal: new THREE.MeshStandardMaterial({ color: METAL, metalness: 0.9, roughness: 0.4, envMapIntensity: 1.5 }),
+    furn: polymer(POLYMER, 0.58),
+    furnDark: polymer(POLYMER_DARK, 0.62),
+    accent: new THREE.MeshStandardMaterial({ color: a.color, metalness: 0.55, roughness: 0.35, emissive: a.color, emissiveIntensity: a.glow * 0.4, envMapIntensity: 1.0 }),
+    glow: new THREE.MeshStandardMaterial({ color: a.color, emissive: a.color, emissiveIntensity: a.glow, metalness: 0.2, roughness: 0.3, envMapIntensity: 0.6 }),
     group: new THREE.Group(),
   };
 }
@@ -63,9 +76,10 @@ function box(k: GunKit, mat: THREE.Material, w: number, h: number, d: number,
   return m;
 }
 
-/** Cylinder whose axis runs along local +Z (the barrel direction). */
+/** Cylinder whose axis runs along local +Z (the barrel direction). Default sides
+ *  are high so barrels/suppressors read as round steel, not faceted toys. */
 function zCyl(k: GunKit, mat: THREE.Material, r0: number, r1: number, len: number,
-  x: number, y: number, z: number, sides = 10): THREE.Mesh {
+  x: number, y: number, z: number, sides = 24): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, sides), mat);
   m.rotation.x = Math.PI / 2;
   m.position.set(x, y, z);
@@ -141,8 +155,8 @@ function buildSmg(): THREE.Group {
   box(k, k.metal, 0.006, 0.006, 0.055, 0, -0.006, 0.026);
   box(k, k.metal, 0.006, 0.030, 0.006, 0, 0.008, 0.052);
   // collapsed wire stock: twin rods + butt plate
-  zCyl(k, k.metal, 0.006, 0.006, 0.130, 0.014, 0.052, -0.195, 6);
-  zCyl(k, k.metal, 0.006, 0.006, 0.130, -0.014, 0.052, -0.195, 6);
+  zCyl(k, k.metal, 0.006, 0.006, 0.130, 0.014, 0.052, -0.195, 16);
+  zCyl(k, k.metal, 0.006, 0.006, 0.130, -0.014, 0.052, -0.195, 16);
   box(k, k.furnDark, 0.052, 0.072, 0.016, 0, 0.044, -0.266);
   // ejection port
   box(k, k.accent, 0.002, 0.016, 0.040, 0.026, 0.058, -0.020);
@@ -181,7 +195,7 @@ function buildAssaultRifle(): THREE.Group {
   box(k, k.metal, 0.006, 0.006, 0.056, 0, -0.008, 0.030);
   box(k, k.metal, 0.006, 0.032, 0.006, 0, 0.008, 0.056);
   // buffer tube + fixed stock with cheek riser + butt pad
-  zCyl(k, k.metal, 0.015, 0.015, 0.100, 0, 0.070, -0.160, 8);
+  zCyl(k, k.metal, 0.015, 0.015, 0.100, 0, 0.070, -0.160, 16);
   box(k, k.furn, 0.040, 0.088, 0.140, 0, 0.036, -0.262);
   box(k, k.furn, 0.036, 0.026, 0.110, 0, 0.094, -0.256);
   box(k, k.furnDark, 0.046, 0.104, 0.016, 0, 0.032, -0.336);
@@ -219,7 +233,7 @@ function buildMarksman(): THREE.Group {
   );
   lens.position.set(0, 0.146, 0.1052);
   k.group.add(lens);
-  zCyl(k, k.metal, 0.010, 0.010, 0.016, 0, 0.178, -0.008, 8); // elevation turret
+  zCyl(k, k.metal, 0.010, 0.010, 0.016, 0, 0.178, -0.008, 16); // elevation turret
   box(k, k.metal, 0.030, 0.012, 0.014, 0.012, 0.146, -0.008); // windage turret
   // straight precision mag + accent base
   box(k, k.metal, 0.032, 0.100, 0.060, 0, -0.075, 0.060, 0.10);
@@ -235,8 +249,8 @@ function buildMarksman(): THREE.Group {
   box(k, k.furnDark, 0.046, 0.115, 0.018, 0, 0.024, -0.346);
   box(k, k.furn, 0.030, 0.050, 0.045, 0, -0.026, -0.290);
   // folded bipod legs under the handguard
-  zCyl(k, k.metal, 0.005, 0.005, 0.110, 0.016, 0.026, 0.320, 6);
-  zCyl(k, k.metal, 0.005, 0.005, 0.110, -0.016, 0.026, 0.320, 6);
+  zCyl(k, k.metal, 0.005, 0.005, 0.110, 0.016, 0.026, 0.320, 16);
+  zCyl(k, k.metal, 0.005, 0.005, 0.110, -0.016, 0.026, 0.320, 16);
 
   return finish(k, 'marksman', 0.058, 0.730);
 }
@@ -250,13 +264,13 @@ function buildLegendary(): THREE.Group {
   box(k, k.metal, 0.044, 0.020, 0.240, 0, 0.104, -0.010, 0.10);
   box(k, k.metal, 0.044, 0.020, 0.120, 0, 0.108, 0.110, -0.14);
   // exposed energy cell riding the spine
-  zCyl(k, k.glow, 0.019, 0.019, 0.095, 0, 0.096, -0.052, 8);
+  zCyl(k, k.glow, 0.019, 0.019, 0.095, 0, 0.096, -0.052, 16);
   box(k, k.body, 0.050, 0.016, 0.020, 0, 0.096, -0.108);
   box(k, k.body, 0.050, 0.016, 0.020, 0, 0.096, 0.004);
   // spine fin
   box(k, k.metal, 0.008, 0.040, 0.120, 0, 0.130, -0.160, -0.10);
   // emissive barrel rod inside a finned shroud
-  zCyl(k, k.glow, 0.0075, 0.0075, 0.360, 0, 0.056, 0.300, 8);
+  zCyl(k, k.glow, 0.0075, 0.0075, 0.360, 0, 0.056, 0.300, 16);
   for (const ang of [0.785, 2.356, 3.927, 5.498]) {
     const fin = box(k, k.body, 0.006, 0.034, 0.130, 0, 0.056, 0.170);
     fin.position.x = Math.cos(ang) * 0.020;
@@ -265,10 +279,10 @@ function buildLegendary(): THREE.Group {
   }
   // coil rings along the barrel
   for (let i = 0; i < 3; i++) {
-    zCyl(k, k.accent, 0.024, 0.024, 0.016, 0, 0.056, 0.240 + i * 0.085, 8);
+    zCyl(k, k.accent, 0.024, 0.024, 0.016, 0, 0.056, 0.240 + i * 0.085, 16);
   }
   // muzzle emitter ring
-  zCyl(k, k.glow, 0.019, 0.014, 0.035, 0, 0.056, 0.470, 8);
+  zCyl(k, k.glow, 0.019, 0.014, 0.035, 0, 0.056, 0.470, 16);
   // underslung capacitor with charge strip
   box(k, k.metal, 0.032, 0.052, 0.110, 0, -0.048, 0.100, 0.12);
   box(k, k.glow, 0.034, 0.010, 0.080, 0, -0.052, 0.096, 0.12);
