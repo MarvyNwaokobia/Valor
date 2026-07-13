@@ -9,13 +9,45 @@
 import { Suspense, useLayoutEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Canvas, useThree } from '@react-three/fiber';
-import { Environment } from '@react-three/drei';
+import { Environment, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { makeGunMesh } from '@/engine/scene/GunMesh';
 import { makeItemMesh, type ItemMeshId, ITEM_MESH_IDS } from '@/engine/scene/ItemMesh';
 import type { GunId } from '@/engine/combat/GunStats';
 
 const GUN_IDS: GunId[] = ['sidearm', 'smg', 'assault_rifle', 'marksman', 'legendary'];
+
+/**
+ * Guns that have a REAL modeled GLB instead of the procedural box mesh. These
+ * bake from the same assets the fight uses, so the shop shows the real weapon.
+ * (Only two base models exist today; the rest still fall back to makeGunMesh.)
+ */
+const GUN_GLB: Partial<Record<GunId, string>> = {
+  assault_rifle: '/models/guns/rifle.glb',
+  legendary: '/models/guns/blaster.glb',
+};
+
+/** Centre a posed holder on its bbox and return the hero-shot camera distance. */
+function frameHolder(holder: THREE.Group, obj: THREE.Object3D): number {
+  holder.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(holder);
+  obj.position.sub(box.getCenter(new THREE.Vector3()));
+  holder.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(holder).getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  return (maxDim / 2) / Math.tan((30 * Math.PI) / 360) * 1.18;
+}
+
+function useHeroCamera(dist: number) {
+  const { camera } = useThree();
+  useLayoutEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    cam.fov = 30;
+    cam.position.set(dist * 0.18, dist * 0.22, dist);
+    cam.lookAt(0, 0, 0);
+    cam.updateProjectionMatrix();
+  }, [camera, dist]);
+}
 
 function buildAsset(name: string): { obj: THREE.Group; isGun: boolean } {
   if (name.startsWith('gun_')) {
@@ -27,7 +59,8 @@ function buildAsset(name: string): { obj: THREE.Group; isGun: boolean } {
   return { obj: makeGunMesh('sidearm'), isGun: true };
 }
 
-function Subject({ name }: { name: string }) {
+/** Procedural mesh / item subject. */
+function MeshSubject({ name }: { name: string }) {
   const staged = useMemo(() => {
     const { obj, isGun } = buildAsset(name);
     // Hero pose: guns show a 3/4 side profile with the muzzle to the right;
@@ -35,26 +68,41 @@ function Subject({ name }: { name: string }) {
     obj.rotation.set(isGun ? 0.08 : 0.04, isGun ? Math.PI / 2 - 0.42 : -0.45, 0);
     const holder = new THREE.Group();
     holder.add(obj);
-    holder.updateMatrixWorld(true);
-    // Centre on the bounding box so every asset fills the frame the same way.
-    const box = new THREE.Box3().setFromObject(holder);
-    const c = box.getCenter(new THREE.Vector3());
-    obj.position.sub(c);
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    return { holder, dist: (maxDim / 2) / Math.tan((30 * Math.PI) / 360) * 1.18 };
+    return { holder, dist: frameHolder(holder, obj) };
   }, [name]);
-
-  const { camera } = useThree();
-  useLayoutEffect(() => {
-    const cam = camera as THREE.PerspectiveCamera;
-    cam.fov = 30;
-    cam.position.set(staged.dist * 0.18, staged.dist * 0.22, staged.dist);
-    cam.lookAt(0, 0, 0);
-    cam.updateProjectionMatrix();
-  }, [camera, staged]);
-
+  useHeroCamera(staged.dist);
   return <primitive object={staged.holder} />;
+}
+
+/** Real GLB weapon subject: normalise the model (longest axis = barrel → +Z,
+ *  unit length, centred), then pose it exactly like a mesh gun. */
+function GlbSubject({ url }: { url: string }) {
+  const { scene } = useGLTF(url);
+  const staged = useMemo(() => {
+    const obj = scene.clone(true);
+    obj.rotation.set(0, 0, 0); obj.position.set(0, 0, 0); obj.scale.set(1, 1, 1);
+    // Longest axis → +Z (the barrel), so the hero pose lands the same as the meshes.
+    const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+    if (size.x >= size.y && size.x >= size.z) obj.rotateY(-Math.PI / 2);
+    else if (size.y >= size.x && size.y >= size.z) obj.rotateX(Math.PI / 2);
+    obj.rotateY(Math.PI); // face muzzle the hero direction
+    obj.updateMatrixWorld(true);
+    obj.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.castShadow = true; });
+
+    const posed = new THREE.Group();
+    posed.add(obj);
+    posed.rotation.set(0.08, Math.PI / 2 - 0.42, 0); // same 3/4 hero angle as mesh guns
+    const holder = new THREE.Group();
+    holder.add(posed);
+    return { holder, dist: frameHolder(holder, posed) };
+  }, [scene]);
+  useHeroCamera(staged.dist);
+  return <primitive object={staged.holder} />;
+}
+
+function Subject({ name }: { name: string }) {
+  const glb = name.startsWith('gun_') ? GUN_GLB[name.slice(4) as GunId] : undefined;
+  return glb ? <GlbSubject url={glb} /> : <MeshSubject name={name} />;
 }
 
 export default function BakeItemsPage() {
@@ -101,7 +149,9 @@ function BakeInner() {
         <directionalLight position={[3, 3.5, 3]} intensity={2.6} color={'#ffe9cf'} />
         <directionalLight position={[-3.5, 2, -3]} intensity={2.0} color={'#8fb4ff'} />
         <directionalLight position={[0, -2.5, 1.5]} intensity={0.35} color={'#ffffff'} />
-        <Subject name={asset} />
+        <Suspense fallback={null}>
+          <Subject name={asset} />
+        </Suspense>
       </Canvas>
       {/* index for the bake script */}
       <div id="asset-list" style={{ display: 'none' }}>{all.join(',')}</div>
