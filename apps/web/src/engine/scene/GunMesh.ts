@@ -35,12 +35,16 @@ interface GunKit {
   group: THREE.Group;
 }
 
+// Restrained, tactical accents — desaturated tones, low glow. Candy-bright neon
+// on grey plastic is the #1 "kids' toy" tell; a real weapon shows its tier
+// through finish and a single disciplined accent, not a glowing stripe. Only the
+// exotic prototype keeps a real emissive (it's an energy weapon).
 const ACCENTS: Record<GunId, { color: number; glow: number }> = {
-  sidearm:       { color: 0x9aa0a6, glow: 0.15 },
-  smg:           { color: 0xffaa33, glow: 0.3 },
-  assault_rifle: { color: 0x33cc66, glow: 0.35 },
-  marksman:      { color: 0x55aaff, glow: 0.4 },
-  legendary:     { color: 0xb070ff, glow: 1.5 },
+  sidearm:       { color: 0x8b9096, glow: 0.0 },  // plain steel
+  smg:           { color: 0xa8763f, glow: 0.06 }, // muted amber
+  assault_rifle: { color: 0x5c7f63, glow: 0.06 }, // field green
+  marksman:      { color: 0x6d8aa8, glow: 0.08 }, // steel blue
+  legendary:     { color: 0x8f6fc4, glow: 0.75 }, // exotic violet — still glows
 };
 
 /** Molded-polymer furniture: matte with a faint clearcoat sheen, not shiny. */

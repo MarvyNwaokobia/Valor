@@ -91,13 +91,16 @@ function BakeInner() {
         {/* HDRI reflections make the metal read as metal — the single biggest
             "real, not toy" lever. background stays off for the transparent bake. */}
         <Suspense fallback={null}>
-          <Environment files="/hdri/venice_sunset_1k.hdr" background={false} environmentIntensity={1.15} />
+          <Environment files="/hdri/venice_sunset_1k.hdr" background={false} environmentIntensity={0.7} />
         </Suspense>
-        {/* A soft key + cool rim ON TOP of the HDRI — kept low so reflections,
-            not raw diffuse, define the surface. */}
-        <ambientLight intensity={0.15} color={'#d6dce8'} />
-        <directionalLight position={[2.5, 3, 3.5]} intensity={1.4} color={'#fff2df'} />
-        <directionalLight position={[-3.5, 1.5, -2.5]} intensity={1.1} color={'#9fc3ff'} />
+        {/* Cinematic 3-point: a hard warm key top-right for the hero highlight, a
+            hard cool rim from behind-left to carve the silhouette out of the dark
+            case, and only a whisper of fill. Drama, not even product lighting —
+            this is what reads "weapon", not "toy on a shelf". */}
+        <ambientLight intensity={0.06} color={'#c2cbda'} />
+        <directionalLight position={[3, 3.5, 3]} intensity={2.6} color={'#ffe9cf'} />
+        <directionalLight position={[-3.5, 2, -3]} intensity={2.0} color={'#8fb4ff'} />
+        <directionalLight position={[0, -2.5, 1.5]} intensity={0.35} color={'#ffffff'} />
         <Subject name={asset} />
       </Canvas>
       {/* index for the bake script */}
