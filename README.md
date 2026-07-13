@@ -1,13 +1,14 @@
 # Valor
 
-A Web3 real-time 1v1 stat-duel SHOOTER built on [GoodDollar](https://gooddollar.org) + [Celo](https://celo.org). One verified human. One warrior. Forever.
+A Web3 **first-person tactical shooter** built on [GoodDollar](https://gooddollar.org) + [Celo](https://celo.org). One verified human. One warrior. Forever.
 
-Players verify their identity via GoodDollar, choose a character class, and enter a 3D arena where two fighters stand at range and trade shots. The only player skill is dodge timing — better guns mean more power. Gun economy drives the marketplace. Earn XP and rank up, buy guns/ammo/attachments from the on-chain marketplace using G$ — with no gas fees required.
+Players verify their identity via GoodDollar, pick a class + callsign, and drop into a solo campaign of first-person doorkicker operations — breach, clear, defend, rescue — across three theatres with escalating bosses. Every kill earns XP toward your rank; clearing an operation for the first time pays a one-time G$ bounty. An endless **Kill-House** and a ranked, seasonal **Gauntlet** feed a competitive economy where scarce G$ is earned from competition and spent on gear and survival — with no gas fees required.
 
-**Live**: https://playvalor.app  
-**API**: https://valor-production.up.railway.app  
-**Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)  
-**Domain**: [playvalor.app](https://playvalor.app) (primary; playvalor.vercel.app still resolves)
+**Live**: https://playvalor.app
+**API**: https://valor-qqzx.onrender.com
+**Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)
+
+> The turn-based melee/stat-duel game Valor grew out of is preserved and fully playable at `/fight-legacy` — its engine code is untouched.
 
 ---
 
@@ -16,29 +17,32 @@ Players verify their identity via GoodDollar, choose a character class, and ente
 ```
 ┌─────────────────────┐     ┌──────────────────────────┐     ┌────────────────┐
 │   Next.js 15 App    │────▶│   Rust / Actix-web API   │────▶│  PostgreSQL    │
-│   (Vercel)          │     │   (Railway)               │     │  (Supabase)    │
+│   (Vercel)          │     │   (Render, Docker)        │     │  (Neon)        │
 └─────────────────────┘     └──────────────────────────┘     └────────────────┘
          │                              │
-         │ Privy auth                   │ Celo RPC (forno.celo.org)
-         │ wagmi v3                     │ GoodDollar SDK
+         │ Magic auth (deterministic    │ Celo RPC (forno.celo.org)
+         │  wallet) + viem              │ GoodDollar SDK + Foundry contracts
          ▼                              ▼
    ┌───────────┐                 ┌─────────────────┐
    │ GoodDollar│                 │  Celo Mainnet   │
    │ Identity  │                 │  Smart Contracts│
    └───────────┘                 └─────────────────┘
+
+   decay + reconcile crons → GitHub Actions (every 3h) → POST /decay/run, /battles/bounties/reconcile
 ```
 
 | Layer | Stack |
 |-------|-------|
-| Frontend | Next.js 15 App Router, Tailwind CSS v4, Framer Motion, Three.js / React Three Fiber |
-| Auth | [Privy](https://privy.io) (email + social + wallet), wagmi v3 |
+| Frontend | Next.js 15 App Router, Tailwind, Framer Motion, Three.js / React Three Fiber (the FPS scene) |
+| Auth | [Magic](https://magic.link) (email + Google → deterministic wallet), viem (no wagmi connector) |
 | Backend | Rust, Actix-web 4, SQLx, Tokio |
-| Database | PostgreSQL via Supabase (PgBouncer transaction-mode pooler) |
-| Hosting | Vercel (frontend) + Railway (API + cron) |
+| Database | PostgreSQL on [Neon](https://neon.tech) (permanent free tier). Local dev uses a separate Supabase sandbox. |
+| Hosting | Vercel (frontend) + Render (API, Docker) + GitHub Actions (decay/reconcile crons) |
 | Chain | Celo Mainnet (chainId 42220) |
 | Identity | GoodDollar Citizen SDK (ERC-725 whitelist) |
-| Rewards | GoodDollar Engagement Rewards SDK |
 | Contracts | Foundry (Forge), OpenZeppelin UUPS upgradeable, ERC1155 + ERC677 |
+
+> The stack migrated off Railway in July 2026 (trial expired). Money + identity are all on-chain and were safe; ~28 players' off-chain rows were reconstructed from on-chain `ValorGameRecord` events (`scripts/reconstruct-players.mjs`).
 
 ---
 
@@ -50,119 +54,66 @@ All contracts are UUPS upgradeable proxies, owned by the deployer EOA. Verified 
 |----------|--------------|---------|
 | `ValorItems` | `0x3ba09c51895Dacb90273A2A40C95369a5A1b4bFe` | ERC1155 NFT — one token type per item |
 | `ValorMarketplace` | `0x95D167f569cf05C967C0432e3123baeac5D8d78D` | G$ purchases via permit relay; mints item NFTs |
-| `ValorRewardPool` | `0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4` | Holds G$ for rank-up + daily claim rewards |
+| `ValorRewardPool` | `0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4` | Holds G$; pays first-clear bounties + season payouts via `distributeReward(player, amount, ref)` (idempotent per `ref`, capped at `MAX_REWARD` 500 G$) |
 | `ValorGameRecord` | `0xd4ec6dB553E206cdf741448F94bD3B02D81c8571` | Immutable on-chain log of battles, rank-ups, character claims |
+| G$ SuperToken | `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` | GoodDollar token (ERC20 + EIP-2612 permit) |
 
-### Gasless Purchase Flow
+### Gasless G$ flow (purchases, transfers, re-arm)
 
-Players never need CELO to buy items. The full flow:
+Players never need CELO. The pattern:
 
-1. **Frontend** reads the player's current G$ permit nonce on-chain
-2. **Player signs** an EIP-2612 permit off-chain (no gas, no popup beyond signing)
-3. **Frontend sends** `{ wallet, deadline, v, r, s }` to `POST /items/:id/purchase-relay`
-4. **Backend** calls `ValorMarketplace.purchaseWithPermit(buyer, itemId, deadline, v, r, s)` — paying CELO gas from the relayer wallet
-5. **Contract** pulls G$ from buyer via `permit` + `transferFrom`, then mints the ERC1155 item NFT to the buyer
-6. **Backend** records inventory in the database and returns `{ tx_hash }`
+1. Frontend reads the player's current G$ permit nonce on-chain
+2. Player **signs** an EIP-2612 permit off-chain (no gas)
+3. Frontend sends `{ wallet, deadline, v, r, s }` to the backend relay
+4. Backend submits the on-chain call, **paying CELO gas from the relayer wallet**, and records the result
+
+Used for: marketplace `purchaseWithPermit`, player-to-player transfers (`permit` + `transferFrom`), and the Survival re-arm **session allowance** (one permit per run authorizes many instant re-arms). All signer transactions are serialized behind a nonce lock so concurrent writes can't collide.
 
 ---
 
-## Game Mechanics
+## The Game (Valor first-person build — live at `/fight`)
 
-### Characters
+### Campaign
 
-Three classes with base stats plus ±3 wallet-seeded variance per player:
+A solo, first-person doorkicker campaign: **15 operations across 3 zones** with a day → evening → night arc.
 
-| Class | ATK | DEF | SPD | Special |
-|-------|-----|-----|-----|---------|
-| Berserker | 16 | 7 | 9 | Berserker Rage — 3× base damage |
-| Sentinel | 9 | 16 | 7 | Iron Fortress — absorbs next hit, reflects 50% |
-| Phantom | 12 | 7 | 15 | Shadow Strike — always first, bypasses defence |
+- **Ashfall** (warm day) → **Proving Ground** (golden evening) → **The Rift** (moonlit night, NVG earned)
+- **Bosses** on op 5 / 10 / 15 — Cinder, the Warden, Valor — each escalating through 3 phases
+- **Objective variety**, not 15 identical doorkickers: `reach` (breach/extract), `clear`, `defend` (hold a point while reinforcements trickle in), `rescue` (a hostage follows you out), plus a Rift **blackout** op (NVG jammed — fight by muzzle flash)
+- **Weapons + loadout**: a 2-weapon loadout with per-weapon feel (sidearm / SMG / assault / marksman / legendary), fire modes (semi/burst/auto), swap
+- **Attachments** (toggleable): NVG, laser, flashlight, optic
+- Per-weapon fire audio + per-zone ambience; full VO presence lines; N8AO + set-dressing environment art
 
-One character per wallet. Class is permanent. Username is editable at any time.
+### Survival & the Gauntlet
 
-### Combat — Stat-Duel Shooter
+- **Kill-House** (Survival) — an always-open practice arena of escalating waves. No stakes.
+- **Gauntlet** — the ranked, prestige tier, **unlocked at campaign completion** (`pve_level >= 15`). A steeper curve, and its runs are **server-validated** (a run token + elapsed-time check reject impossible scores) onto the **seasonal leaderboard** that pays out G$.
 
-Two fighters at range trade shots in a 3D arena. Dodge timing is the player skill.
+### Ranks & XP (the progression loop)
 
-- **6 animation states**: idle, fire, stagger, dodge, death, victory
-- **Projectile-based** (not hitscan) — travelling bullets that can be dodged
-- **CombatSim** resolves: fire cadence from gun `fireRate`, accuracy roll, dodge i-frames, crit chance
-- **Campaign**: 15 levels across 3 zones (Ashfall, Proving Ground, The Rift), bosses every 5th level
-- **Endless mode** after level 15 with weekly leaderboards
-- Bot fights: client runs CombatSim → server validates result
-- Player challenges: fully server-side with a random seed
-- Equipped guns determine fire rate, damage, accuracy; ammo/attachments modify stats; boosters 2× XP
+`Bronze → Silver → Gold → Platinum → Diamond` · 1,000 XP per rank.
 
-### Ranks & XP
+Every kill earns XP (headshots worth more); the in-game rank bar reflects your **real server account** (seeded from `pve_level`/rank, not a local counter). **XP is pure progression — ranking up mints no G$** (the old faucet is gone). Rank is recorded on-chain and enrolls you in the rank pool.
 
-`Bronze → Silver → Gold → Platinum → Diamond`
+### Character classes
 
-| Event | XP |
-|-------|----|
-| Win | +50 to +104 (scales per campaign level) |
-| Loss | +15 to +34 (scales per campaign level) |
-| Rank threshold | 1,000 XP (exactly 15 wins at max level) |
+Classes (**Berserker / Sentinel / Phantom**) are the player's chosen identity, set once at onboarding (permanent; callsign is editable). Their stat-duel special abilities live in the preserved legacy game at `/fight-legacy`.
 
-XP resets to the remainder on rank-up. Rank-up triggers a G$ reward from `ValorRewardPool`.
+---
 
-### Decay
+## The Economy (earn loop)
 
-| Threshold | Consequence |
-|-----------|-------------|
-| 48 h inactivity | Warning shown |
-| 72 h inactivity | Rank downgraded |
-| Reset by | Battle, mission collect, or daily check-in |
-| Freeze | Equip a Shield item — pauses decay for 7 days |
+**Principle: XP ≠ G$.** XP is infinite progression; G$ is scarce, earned from competition + spent in sinks.
 
-### Items
+| | Flow | Detail |
+|---|------|--------|
+| **In · first-clear bounty** (B0) | on-chain | Clearing a Campaign op the first time pays a one-time, capped G$ bounty (ordinary 2 G$; bosses op 5/10/15 pay 10/15/25). Idempotent in DB (`first_clear_bounties` PK) **and** on-chain (`ref` guard). A cron reconciles any failed payout. |
+| **In · daily UBI** | GoodDollar | The Daily Check-In claims GoodDollar UBI (5 G$/day) straight from the protocol. Untouched by the XP change. |
+| **In · season payout** (B3) | on-chain | At season close an admin computes the top Gauntlet runs in the window and distributes a top-heavy split of the prize pool via the RewardPool. |
+| **Out · marketplace** (B1) | on-chain | Buy guns / ammo / attachments / cosmetics with G$, gasless via permit relay. |
+| **Out · Survival re-arm** (B1) | on-chain | Mid-run **revive / resupply / wave-skip** for G$. One permit per run grants a spending cap (session allowance); re-arms are instant + non-custodial; spent G$ flows into the RewardPool (refilling the prize pool). *Disabled in the ranked Gauntlet — pure skill.* |
 
-#### Guns
-
-| Gun | Price | Notes |
-|-----|-------|-------|
-| Standard Sidearm | Free | Starter weapon |
-| Compact SMG | 150 G$ | Fast fire rate, low damage |
-| Assault Rifle | 400 G$ | Balanced |
-| Marksman Rifle | 900 G$ | High damage, slow fire rate |
-| Valor Prototype | 2,000 G$ | Best-in-class stats |
-
-#### Ammo Types
-
-| Ammo | Effect |
-|------|--------|
-| Hollow Point | +20% DMG |
-| Armor Piercing | +10% DMG, +5% crit |
-| Tracer | +8% ACC, +30 RPM |
-| Incendiary | 3 HP/s burn DOT |
-
-#### Attachments
-
-4 slots (barrel, optic, grip, magazine) x 2 options each = 8 attachments total.
-
-#### Other Items
-
-| Category | Effect |
-|----------|--------|
-| Booster | 2x XP from battles while equipped (XP Booster, Elite Booster) |
-| Shield | +DEF while equipped; can also freeze decay for 7 days |
-| Legacy weapons | Iron Sword, Steel Blade, Void Edge — still exist from the melee era |
-
-All 25 items are registered on-chain (`on_chain_id` 1-25). Purchased with G$ via the in-game marketplace. Items are ERC1155 NFTs on-chain, mirrored in the database for fast reads.
-
-### GoodDollar Integration
-
-- **Identity gate**: Players must be GoodDollar-verified humans to create a character (ERC-725 whitelist check via `@goodsdks/citizen-sdk`). A full-screen gate blocks all navigation until verification passes. The flow: wallet check → if already whitelisted, advance immediately; if not, an inline "Complete Verification" panel redirects to GoodDollar face verification in the same tab, with an "Already verified — continue" re-check button on return. A sign-out option is available throughout.
-- **Daily G$ claim**: The in-app Daily Check-In triggers GoodDollar's UBI `ClaimSDK.claim()` directly — G$ flows from the GoodDollar protocol to the player's wallet. Gas top-up (if needed) and the claim itself are handled in two wallet prompts, surfaced with live step feedback in the UI.
-- **Engagement Rewards**: Battle wins can earn additional G$ via the GoodDollar Engagement Rewards SDK (EIP-712 dual-signature: backend signs `AppClaim`, user signs `Claim`, frontend calls `nonContractAppClaim` on-chain). Requires portal approval — see *GoodDollar App Registration* below.
-- **Marketplace**: All purchases use G$ on Celo — gasless via EIP-2612 permit relay
-- **Rank rewards**: G$ distributed from `ValorRewardPool` on each rank-up
-
-### Navigation
-
-- **Home** (`/`) — character portrait + action cards
-- **Fight** (`/battle`) — mode select: Campaign, Challenge a Player, Live PvP
-- **Campaign** — CampaignSelect → `/fight?level=N` (3D combat arena)
-- **Post-fight** — Retry (same level), Next Level (on win), Return Home
+**Seasons** (`seasons` table + `prize_pool_g`): the Gauntlet leaderboard is the flagship metric; `GET /seasons/current` surfaces the live pool + each rank's estimated payout; the payout job settles winners on-chain at close.
 
 ---
 
@@ -173,8 +124,7 @@ All 25 items are registered on-chain (`on_chain_id` 1-25). Purchased with G$ via
 - Node.js 22+
 - Rust 1.80+ (`rustup update stable`)
 - Foundry (`curl -L https://foundry.paradigm.xyz | bash && foundryup`)
-- PostgreSQL 15+ (or a Supabase project)
-- `psql` CLI
+- PostgreSQL 15+ (or a Neon / Supabase project) + `psql`
 
 ### 1. Clone and install
 
@@ -188,39 +138,31 @@ npm install
 
 ```bash
 cd apps/api
-
-# Copy and fill in environment variables
-cp .env.example .env
-
-# Run database migrations
-psql $DATABASE_URL < migrations/init.sql
-psql $DATABASE_URL < migrations/add_chain_tx_columns.sql
-psql $DATABASE_URL < migrations/fix_decimal_columns.sql
-psql $DATABASE_URL < migrations/add_gdollar_ledger.sql
-
-# Build and run
-cargo run
+cp .env.example .env            # fill in DATABASE_URL, BACKEND_PRIVATE_KEY, contracts…
+psql "$DATABASE_URL" < migrations/init.sql   # then the rest, in order (see Deployment)
+cargo run                        # http://localhost:8080
 ```
-
-API starts on `http://localhost:8080`.
 
 ### 3. Set up the frontend
 
 ```bash
 cd apps/web
-cp .env.local.example .env.local   # fill in all NEXT_PUBLIC_* vars
-npm run dev
+cp .env.local.example .env.local   # fill in NEXT_PUBLIC_* (Magic key, API URL, contracts…)
+npm run dev                        # http://localhost:3000  (the FPS sandbox is /dev/verb)
 ```
-
-Frontend starts on `http://localhost:3000`.
 
 ### 4. Contracts (optional — mainnet contracts are already deployed)
 
 ```bash
 cd contracts
-forge build
-forge test
+forge build && forge test
 ```
+
+### Tests / verification
+
+- Web engine unit tests: `cd apps/web && npx vitest run src/engine`
+- Runtime probes (Playwright vs a dev server): `apps/web/probe-*.mjs`
+- API tests: `cd apps/api && cargo test`
 
 ---
 
@@ -230,221 +172,129 @@ forge test
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEXT_PUBLIC_PRIVY_APP_ID` | ✅ | Privy app ID from [dashboard.privy.io](https://dashboard.privy.io) |
-| `NEXT_PUBLIC_API_URL` | ✅ | Backend API base URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase anon key |
+| `NEXT_PUBLIC_MAGIC_API_KEY` | ✅ | Magic publishable key — email + Google login → deterministic wallet |
+| `NEXT_PUBLIC_API_URL` | ✅ | Backend API base URL (the Render URL in prod) |
 | `NEXT_PUBLIC_GOODDOLLAR_ENV` | ✅ | `production` or `staging` |
-| `NEXT_PUBLIC_VALOR_APP_ADDRESS` | ✅ | Wallet registered on GoodDollar Engagement Rewards |
 | `NEXT_PUBLIC_MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy address |
-| `NEXT_PUBLIC_ITEMS_CONTRACT` | ✅ | `ValorItems` proxy address |
-| `NEXT_PUBLIC_REWARD_POOL_CONTRACT` | ✅ | `ValorRewardPool` proxy address |
-| `NEXT_PUBLIC_GAME_RECORD_CONTRACT` | ✅ | `ValorGameRecord` proxy address |
-| `NEXT_PUBLIC_GD_REGISTRATION_TX` | — | TX hash of the GoodDollar app registration |
+| `NEXT_PUBLIC_VALOR_APP_ADDRESS` | ✅ | Backend relayer / signer public address |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | — | WalletConnect project id |
+| `NEXT_PUBLIC_RANK_POOL_{SILVER,GOLD,PLATINUM,DIAMOND}` | — | GoodCollective UBI pool addresses for rank enrollment |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | Local dev sandbox only |
 
-### `apps/api/.env`
+> Runtime URLs (share links, auth redirect, verify callback) are all built from `window.location.origin`, so they follow the custom domain automatically — no per-domain config in the frontend.
+
+### `apps/api/.env` (and Render env in prod)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | ✅ | PostgreSQL connection string |
-| `BACKEND_PRIVATE_KEY` | ✅ | Relayer wallet private key — pays CELO gas for purchases + signs GoodDollar EIP-712 claims |
-| `GAME_RECORD_CONTRACT` | ✅ | `ValorGameRecord` proxy address — enables on-chain battle/rank logging |
-| `MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy address — enables gasless purchase relay |
-| `CELO_RPC_URL` | ✅ | Celo RPC (default: `https://forno.celo.org`) |
+| `DATABASE_URL` | ✅ | Postgres connection string. In prod: Neon's **direct** (non-`-pooler`) URL for SQLx. |
+| `BACKEND_PRIVATE_KEY` | ✅ | Relayer wallet key — pays CELO gas + is the RewardPool `backendSigner` |
+| `GAME_RECORD_CONTRACT` | ✅ | `ValorGameRecord` proxy — on-chain battle/rank logging |
+| `MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy — gasless purchase relay |
+| `REWARD_POOL_CONTRACT` | ✅ | `ValorRewardPool` proxy — first-clear bounties + season payouts (**no code fallback: unset = silent failed payouts**) |
+| `CELO_RPC_URL` | ✅ | Celo RPC (default `https://forno.celo.org`) |
 | `VALOR_APP_ADDRESS` | ✅ | Public address of `BACKEND_PRIVATE_KEY` |
-| `DECAY_CRON_SECRET` | ✅ | Shared secret for the `POST /decay/run` cron endpoint |
-| `FRONTEND_ORIGIN` | — | Comma-separated allowed CORS origins |
-| `RUST_LOG` | — | Log level (default: `info`) |
-| `BIND_ADDR` | — | Bind address (default: `0.0.0.0:8080`) |
-| `RANK_POOL_SILVER` | — | GoodCollective UBI pool address for Silver rank rewards |
-| `RANK_POOL_GOLD` | — | GoodCollective UBI pool address for Gold rank rewards |
-| `RANK_POOL_PLATINUM` | — | GoodCollective UBI pool address for Platinum rank rewards |
-| `RANK_POOL_DIAMOND` | — | GoodCollective UBI pool address for Diamond rank rewards |
-| `G_TOKEN_CONTRACT` | — | G$ SuperToken address on Celo (defaults to the known mainnet address) — used to relay player-initiated transfer-outs |
-| `ADMIN_WALLETS` | — | Comma-separated wallet addresses allowed to sign into `/admin` |
-| `ADMIN_JWT_SECRET` | — | Signing secret for short-lived admin session tokens (separate from `SUPABASE_JWT_SECRET`) |
+| `DECAY_CRON_SECRET` | ✅ | Shared `x-cron-secret` for `/decay/run` + `/battles/bounties/reconcile` |
+| `FRONTEND_ORIGIN` | ✅ | Comma-separated CORS origins (`https://playvalor.app,https://playvalor.vercel.app`) |
+| `BIND_ADDR` | — | Bind address (Render sets `0.0.0.0:10000`; default `0.0.0.0:8080`) |
+| `RANK_POOL_{SILVER,GOLD,PLATINUM,DIAMOND}` | — | GoodCollective UBI pool addresses |
+| `G_TOKEN_CONTRACT` | — | G$ SuperToken (defaults to the known mainnet address) |
+| `ADMIN_WALLETS` | — | Comma-separated wallets allowed to sign into `/admin` |
+| `ADMIN_JWT_SECRET` | — | Signing secret for admin session tokens |
+| `RUST_LOG` | — | Log level (default `info`) |
 
 ### `contracts/.env`
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DEPLOYER_PRIVATE_KEY` | Deploy only | Wallet with CELO for gas (prefixed `0x`) |
-| `BACKEND_SIGNER_ADDRESS` | Deploy only | Address corresponding to `BACKEND_PRIVATE_KEY` |
-| `CELO_RPC_URL` | Deploy only | Celo RPC URL |
-| `CELOSCAN_API_KEY` | Deploy only | For Celoscan verification |
+| `BACKEND_SIGNER_ADDRESS` | Deploy only | Address of `BACKEND_PRIVATE_KEY` |
+| `REWARD_POOL_CONTRACT` | Upgrade | Proxy address for upgrade scripts |
+| `CELO_RPC_URL` / `CELOSCAN_API_KEY` | Deploy only | RPC + Celoscan verification |
 
 ---
 
 ## API Reference
 
-### Players
+### Players & Bank
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/players` | Create player |
-| `GET` | `/players` | List all players (leaderboard) |
-| `GET` | `/players/search?q=` | Search players by username |
-| `GET` | `/players/:wallet` | Get player profile |
-| `PATCH` | `/players/:wallet` | Update username / customization |
-| `GET` | `/players/:wallet/inventory` | Get inventory |
-| `PATCH` | `/players/:wallet/inventory/:itemId` | Toggle equip |
-| `GET` | `/players/:wallet/battles` | Battle history |
-| `GET` | `/players/:wallet/achievements` | Achievement list |
-| `POST` | `/players/:wallet/achievements/check` | Refresh achievement state |
-| `POST` | `/players/:wallet/daily-claim` | Daily check-in |
-| `GET` | `/players/:wallet/daily-claim-status` | Check if claimable today |
-| `POST` | `/players/:wallet/decay-check` | Run decay check for this player |
-| `POST` | `/players/:wallet/freeze-decay` | Consume a Shield to freeze decay 7 days |
-| `GET` | `/players/:wallet/username-available/:username` | Check username availability |
-| `GET` | `/players/:wallet/ledger-summary` | G$ earned (UBI/gameplay) + spent breakdown for the Bank page |
-| `POST` | `/players/:wallet/transfer` | Transfer G$ out to any wallet (player-signed permit, relayed) |
-| `GET` | `/relay-address` | Backend relay wallet's address (needed as the transfer permit's spender) |
+| `POST` | `/players` | Create player (username + class, auto-confirmed for new wallets) |
+| `GET` | `/players` · `/players/search?q=` · `/players/:wallet` | List / search / get |
+| `PATCH` | `/players/:wallet` | Update callsign / class / customization / confirm flag |
+| `GET`/`PATCH` | `/players/:wallet/inventory[/:itemId]` | Inventory + equip toggle |
+| `GET` | `/players/:wallet/battles` · `/achievements` · `/daily-claim-status` | Reads |
+| `POST` | `/players/:wallet/daily-claim` · `/decay-check` · `/freeze-decay` | Actions |
+| `GET` | `/players/:wallet/ledger-summary` | G$ earned/spent breakdown (Bank page) |
+| `POST` | `/players/:wallet/transfer` | Transfer G$ to any wallet (player-signed permit, relayed) |
+| `GET` | `/relay-address` | Backend relay wallet address (the permit `spender`) |
 
-### Battles
+### Battles & economy
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/battles/bot` | Fight a bot (server-authoritative) |
-| `POST` | `/battles/challenge` | Challenge another player |
-| `POST` | `/battles/fight/complete` | Real-time fight reward (campaign + quick fight) |
-| `POST` | `/battles/pvp/complete` | PvP reward (server-authoritative) |
+| `POST` | `/battles/fight/complete` | Finalize a fight/op — server XP → rank; first clear advances `pve_level` + pays the bounty |
+| `POST` | `/battles/pvp/complete` · `/battles/bot/*` · `/battles/challenge` | PvP / bot / async challenge |
+| `POST` | `/battles/bounties/reconcile` | Cron: re-attempt failed first-clear bounties (idempotent) |
+| `POST` | `/survival/arm` | Grant a per-run G$ spending allowance (one signed permit) |
+| `POST` | `/survival/rearm` | Spend a re-arm (revive / restock / waveskip) against the allowance |
+| `POST` | `/gauntlet/start` · `/gauntlet/submit` | Issue a run token / submit a validated run |
+| `GET` | `/gauntlet/leaderboard?scope=weekly` | Best-per-wallet Gauntlet board |
+| `GET` | `/seasons/current` | Live season: prize pool + windowed leaderboard + est payout per rank |
+| `GET`/`POST` | `/endless/leaderboard` · `/endless/score` | Casual endless board |
 
-### Endless Mode
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/endless/score` | Get player's endless mode score |
-| `POST` | `/endless/score` | Submit endless mode score |
-| `GET` | `/endless/leaderboard` | Weekly endless mode leaderboard |
-
-### Items
+### Items, identity, admin
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/items` | All marketplace items |
-| `POST` | `/items/:id/purchase` | Record an admin/internal inventory grant |
-| `POST` | `/items/:id/purchase-relay` | Gasless purchase — relays EIP-2612 permit on-chain |
-
-### Rewards & Identity
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/rewards/sign-claim` | Backend signs a GoodDollar AppClaim EIP-712 message |
-| `GET` | `/identity/verify/:wallet` | Check GoodDollar identity status |
-
-### Admin
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/decay/run` | Trigger decay sweep (requires `x-cron-secret` header) |
-| `GET` | `/health` | Health check |
-| `POST` | `/admin/login` | Wallet-signature login (checked against `ADMIN_WALLETS`) — issues a short-lived admin JWT |
-| `GET` | `/admin/stats?season_id=` | Season (or all-time) player/G$ volume stats — requires admin bearer token |
-| `GET` | `/admin/seasons` | List seasons — requires admin bearer token |
-| `POST` | `/admin/seasons` | Start a new season, closing any currently-open one — requires admin bearer token |
-| `POST` | `/admin/seasons/:id/end` | End a season — requires admin bearer token |
-
-### WebSocket
-
-| Path | Description |
-|------|-------------|
-| `WS /ws/battle` | Live PvP battle channel |
+| `GET` | `/items` | Marketplace items |
+| `POST` | `/items/:id/purchase-relay` | Gasless purchase (EIP-2612 permit relay) |
+| `POST` | `/rewards/sign-claim` · `GET /identity/verify/:wallet` | GoodDollar AppClaim signing / identity status |
+| `POST` | `/decay/run` | Decay sweep (cron, `x-cron-secret`) · `GET /health` |
+| `POST` | `/admin/login` | Wallet-signature login → short-lived admin JWT (`ADMIN_WALLETS`) |
+| `GET`/`POST` | `/admin/seasons[...]` | List / create / `:id/end` / `:id/fund {prize_pool_g}` / `:id/payout` (all admin-bearer) |
+| `WS` | `/ws/battle` | Live PvP battle channel |
 
 ---
 
 ## Deployment
 
+### Frontend (Vercel)
+
+Auto-deploys on push to `main`. Set all `NEXT_PUBLIC_*` in the Vercel dashboard. Custom domain **`playvalor.app`** is primary (`playvalor.vercel.app` 308-redirects to it). New domains must be added to **Render `FRONTEND_ORIGIN`** (CORS) and the **Magic allowlist** (origins + `/auth/callback`).
+
+### API (Render, Docker)
+
+A Render Web Service builds `apps/api/Dockerfile` and auto-deploys on push. Health check `/health`, `BIND_ADDR=0.0.0.0:10000`. Free tier spins down after ~15 min idle (≈50 s cold start). Env vars per the table above (ported from Railway; `FRONTEND_ORIGIN` + `DATABASE_URL` are the ones that change per environment).
+
+### Database (Neon) — bootstrap + migrations
+
+Apply migrations in order via `scripts/bootstrap-neon.mjs` (run from repo root after `npm i pg --no-save`, with `DATABASE_URL` set):
+
+```
+init.sql → 004_guns → 005_pve_level → 006_endless → 007_remove_melee_items →
+008_ammo_attachments → add_chain_tx_columns → fix_decimal_columns →
+add_gdollar_ledger → add_first_clear_bounties → add_character_confirmed →
+add_survival_rearms → add_survival_runs → add_season_payouts
+```
+
+`scripts/reconstruct-players.mjs` rebuilds `players` rows from on-chain `ValorGameRecord` events if off-chain data is ever lost.
+
+### Crons (GitHub Actions)
+
+`.github/workflows/decay-cron.yml` runs every 3h, hitting `POST /decay/run` and `POST /battles/bounties/reconcile` with `x-cron-secret`. Requires repo secrets `API_URL` + `DECAY_CRON_SECRET`.
+
 ### Contracts
 
 ```bash
-cd contracts
-
-# 1. Deploy all four contracts
-source .env
-forge script script/Deploy.s.sol \
-  --rpc-url $CELO_RPC_URL \
-  --broadcast \
-  --verify \
-  --etherscan-api-key $CELOSCAN_API_KEY
-
-# 2. Register items on-chain and list them in the marketplace
-ITEMS_CONTRACT=<address> MARKETPLACE_CONTRACT=<address> \
-  forge script script/Setup.s.sol --rpc-url $CELO_RPC_URL --broadcast
-
-# 2b. Register new items (guns, ammo, attachments) after initial setup
-ITEMS_CONTRACT=<address> MARKETPLACE_CONTRACT=<address> \
-  forge script script/RegisterNewItems.s.sol --rpc-url $CELO_RPC_URL --broadcast
-
-# 3. Copy proxy addresses into apps/web/.env.local and Railway env vars
+cd contracts && source .env
+forge script script/Deploy.s.sol --rpc-url $CELO_RPC_URL --broadcast --verify --etherscan-api-key $CELOSCAN_API_KEY
+forge script script/Setup.s.sol --rpc-url $CELO_RPC_URL --broadcast   # register + list items
+forge script script/UpgradeRewardPool.s.sol --rpc-url $CELO_RPC_URL --broadcast --verify   # adds distributeReward
 ```
 
-### API (Railway)
-
-The API deploys via the Railway GitHub integration using `apps/api/Dockerfile`. To force a rebuild from local source:
-
-```bash
-cd apps/api
-railway up --detach
-```
-
-Required Railway env vars: `DATABASE_URL`, `BACKEND_PRIVATE_KEY`, `GAME_RECORD_CONTRACT`, `MARKETPLACE_CONTRACT`, `CELO_RPC_URL`, `VALOR_APP_ADDRESS`, `DECAY_CRON_SECRET`.
-
-After deploying to a fresh database, run the migrations in order:
-
-```bash
-railway variables --service Postgres --json   # get DATABASE_PUBLIC_URL
-psql $DATABASE_PUBLIC_URL < migrations/init.sql               # 001 initial schema
-psql $DATABASE_PUBLIC_URL < migrations/add_chain_tx_columns.sql  # 002 RLS + chain tx columns
-psql $DATABASE_PUBLIC_URL < migrations/fix_decimal_columns.sql   # 003 fix decimal types
-psql $DATABASE_PUBLIC_URL < migrations/add_gdollar_ledger.sql    # 004 G$ ledger + seasons
-```
-
-Planned migrations (not yet in `migrations/` — apply when implemented):
-
-| # | Migration | Purpose |
-|---|-----------|---------|
-| 004 | guns | Gun items, fire rate, damage, accuracy columns |
-| 005 | pve_level | Campaign level tracking per player |
-| 006 | endless | Endless mode scores + weekly leaderboard |
-| 007 | remove_melee | Drop legacy melee-specific columns |
-| 008 | ammo_attachments | Ammo types + attachment slots |
-
-### Frontend (Vercel)
-
-Deploys automatically on push to `main`. Set all `NEXT_PUBLIC_*` env vars in the Vercel dashboard.
-
-### GoodDollar App Registration
-
-Valor is registered on the GoodDollar Engagement Rewards contract at `engagement-rewards.vercel.app`.
-
-| Field | Value |
-|-------|-------|
-| App / Signer Address | `0x43a5BA0da132b21bdACfBc4392b72EeBaF6f2D82` |
-| Reward Receiver | `0x12a3F1f4...` (ValorRewardPool) |
-| User+Inviter % | 100% (all rewards flow to players) |
-| User % | 70% (70% to battling player, 30% to their inviter) |
-| Status | Pending approval |
-
-Once approved, set `NEXT_PUBLIC_VALOR_APP_ADDRESS` (frontend) and `VALOR_BACKEND_SIGNER_KEY` (API) to the registered wallet. The `useValorEngagementRewards` hook and the `/rewards/sign-claim` backend endpoint are already wired — no code changes needed after approval.
-
----
-
-## Known Limitations / Pre-launch TODOs
-
-| Area | Status | Notes |
-|------|--------|-------|
-| Daily G$ UBI claim | Live | `ClaimSDK.claim()` wired in-app. Players claim GoodDollar UBI directly from the Daily Check-In button. |
-| Engagement Rewards | Pending approval | App submitted at `engagement-rewards.vercel.app`. Once approved, battle-win G$ distributions go live automatically. |
-| Identity gate | Live | Full-screen GoodDollar whitelist check. Already-whitelisted wallets pass instantly. Unverified wallets see an inline "Complete Verification" panel that redirects to GoodDollar face verification (same tab). Sign-out button available throughout. Nav is inaccessible until verified. |
-| Ammo/attachment equip | Not wired | `Loadout.ts` has `resolveGunStats` but CombatSim doesn't call it yet — ammo/attachment bonuses are defined but not applied in combat. |
-| Campaign level UX | Incomplete | No level context shown during fights — player doesn't see which level/zone they're in while fighting. |
-| Per-level arena | Not implemented | All fights use the same stylized arena regardless of campaign zone. |
-| GoodCollective rank pools | Not deployed | `RANK_POOL_*` env vars are placeholders. Deploy pools on `goodcollective.xyz` and grant `MANAGER_ROLE` to the backend signer to activate passive UBI drip for Silver+ ranks. |
-| On-chain character claim | Deferred | `character_claim_tx` column exists and `ChainBadge` renders it, but character minting is not yet triggered in the onboarding flow. |
-| Mission signature auth | Not implemented | `x-wallet` header is trusted without EIP-712 sign. Acceptable for MVP. |
-| Inventory IDOR | Not implemented | Inventory endpoints don't require wallet signature. Acceptable for MVP. |
-| RewardPool funding | Manual | Fund `ValorRewardPool` with G$ before rank-up rewards can be distributed. |
-| GLB model assignment | Intentional | Sentinel class uses `phantom.glb`; Phantom class uses `sentinel.glb` — swap filenames in `CHARACTER_GLB` if this changes. |
+New items must be registered on-chain (`ValorItems` + `ValorMarketplace`) before they appear in the UI. Fund `ValorRewardPool` with G$ so bounties + payouts can pay.
 
 ---
 
@@ -455,52 +305,21 @@ Valor/
 ├── apps/
 │   ├── web/                      # Next.js 15 frontend (Vercel)
 │   │   └── src/
-│   │       ├── app/              # App Router — layout, pages, providers
-│   │       ├── views/            # Page-level components (BattlePage, MarketplacePage, …)
-│   │       ├── components/       # Feature components (battle/, marketplace/, warrior/, ui/)
-│   │       │   └── marketplace/
-│   │       │       └── GunIcons.tsx   # Gun icon components for the marketplace
+│   │       ├── app/              # App Router (fight/, dev/verb sandbox, auth/callback, admin, bank…)
 │   │       ├── engine/
-│   │       │   ├── combat/
-│   │       │   │   ├── GunStats.ts    # Gun stat definitions + scaling
-│   │       │   │   └── Loadout.ts     # Loadout resolution (gun + ammo + attachments)
-│   │       │   ├── campaign/
-│   │       │   │   └── levels.ts      # 15-level campaign definition (zones, bosses, XP)
-│   │       │   └── sim/
-│   │       │       └── CombatSim.ts   # Core combat simulation (fire cadence, dodge, crit)
-│   │       ├── hooks/            # React hooks (useMarketplace, useBattle, useEngagementRewards, …)
-│   │       ├── stores/           # Zustand state (player, inventory)
-│   │       ├── lib/              # Constants, wagmi config, classes, GoodDollar SDK setup
-│   │       ├── types/            # TypeScript types (database.ts, index.ts)
-│   │       └── utils/            # Format helpers, decay utilities
-│   └── api/                      # Rust / Actix-web backend (Railway)
-│       ├── src/
-│       │   ├── handlers/         # HTTP route handlers
-│       │   ├── models/           # SQLx row types (Player, Item, Battle, …)
-│       │   ├── services/         # Battle simulation, chain relay, rewards, rate limiter
-│       │   └── utils.rs          # Wallet normalisation
-│       ├── migrations/           # SQL migration files
-│       └── Dockerfile
-├── contracts/                    # Foundry smart contracts
-│   ├── src/
-│   │   ├── ValorItems.sol        # ERC1155 item NFTs
-│   │   ├── ValorMarketplace.sol  # G$ permit relay purchase + mint
-│   │   ├── ValorRewardPool.sol   # G$ rank-up and daily rewards
-│   │   ├── ValorGameRecord.sol   # Immutable on-chain game event log
-│   │   └── interfaces/
-│   │       └── IGoodDollar.sol
-│   ├── script/
-│   │   ├── Deploy.s.sol          # Deploy all contracts
-│   │   ├── Setup.s.sol           # Register + list items
-│   │   ├── RegisterNewItems.s.sol # Register guns, ammo, attachments
-│   │   └── UpgradeMarketplace.s.sol
-│   └── test/
-│       ├── ValorItems.t.sol
-│       ├── ValorMarketplace.t.sol
-│       └── ValorRewardPool.t.sol
-├── packages/                     # Shared TypeScript types
-└── scripts/
-    └── register-gooddollar.mjs  # One-time GoodDollar app registration
+│   │       │   ├── fps/          # Headless FPS sim: FpsSim, campaign (15 ops + survival + gauntlet), xp
+│   │       │   ├── scene/        # ValorScene (the R3F game), operator rigs, set dressing
+│   │       │   ├── audio/        # FpsAudio director
+│   │       │   └── story/        # VO presence lines
+│   │       ├── components/       # battle/ (OperationsSelect…), marketplace/, player-card/, ui/, providers/
+│   │       ├── hooks/            # useSurvivalRearm, useGauntlet, useFightRewards, useMarketplace, useTransferOut…
+│   │       ├── stores/ lib/ types/
+│   └── api/                      # Rust / Actix-web backend (Render)
+│       └── src/handlers/         # players, battles, survival, gauntlet, seasons, items, admin, decay, ledger…
+│       └── migrations/           # SQL migrations
+├── contracts/                    # Foundry: ValorItems / Marketplace / RewardPool / GameRecord
+├── docs/                         # B0_ECONOMY_DEPLOY, C5_SHIP_GATE, the plan…
+└── scripts/                      # bootstrap-neon.mjs, reconstruct-players.mjs, generate-vo.mjs…
 ```
 
 ---

@@ -1,6 +1,6 @@
 # Valor — Frontend
 
-Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 fighting game on GoodDollar + Celo.
+Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 first-person tactical shooter on GoodDollar + Celo. The live game is the Valor first-person build (`/fight`, sandbox at `/dev/verb`); the legacy melee game is at `/fight-legacy`.
 
 ## Stack
 
@@ -9,9 +9,9 @@ Next.js 15 App Router frontend for [Valor](https://playvalor.app), a Web3 fighti
 | Framework | Next.js 15 (App Router) |
 | Styling | Tailwind CSS v4 |
 | Animation | Framer Motion |
-| 3D | Three.js via React Three Fiber + Drei |
-| Auth | Privy (email + social + embedded wallet) |
-| Wallet | wagmi v3 + viem |
+| 3D | Three.js via React Three Fiber + Drei (the FPS scene) |
+| Auth | [Magic](https://magic.link) (email + Google → deterministic wallet) |
+| Wallet | viem for signing (no wagmi connector); wagmi hooks for reads |
 | State | Zustand |
 | Server state | TanStack Query v5 |
 | Chain | Celo Mainnet (chainId 42220) |
@@ -33,16 +33,15 @@ npm run lint
 All runtime config is via `NEXT_PUBLIC_*` env vars. See the root [`README.md`](../../README.md#environment-variables) for the complete reference. The minimum set to run locally:
 
 ```
-NEXT_PUBLIC_PRIVY_APP_ID=
+NEXT_PUBLIC_MAGIC_API_KEY=
 NEXT_PUBLIC_API_URL=http://localhost:8080
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_GOODDOLLAR_ENV=production
 NEXT_PUBLIC_VALOR_APP_ADDRESS=
 NEXT_PUBLIC_MARKETPLACE_CONTRACT=0x95D167f569cf05C967C0432e3123baeac5D8d78D
-NEXT_PUBLIC_ITEMS_CONTRACT=0x3ba09c51895Dacb90273A2A40C95369a5A1b4bFe
-NEXT_PUBLIC_REWARD_POOL_CONTRACT=0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4
-NEXT_PUBLIC_GAME_RECORD_CONTRACT=0xd4ec6dB553E206cdf741448F94bD3B02D81c8571
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
+# local-dev sandbox DB only:
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ```
 
 ## Key directories
@@ -57,7 +56,7 @@ src/
 │   │   ├── profile/
 │   │   ├── market/
 │   │   └── ranks/
-│   ├── providers.tsx     # Privy + wagmi + react-query
+│   ├── providers.tsx     # Magic + viem/wagmi(reads) + react-query
 │   └── app-init.tsx      # Player bootstrap on login
 │
 ├── views/                # Page-level components
@@ -73,7 +72,7 @@ src/
 │   ├── player-card/      # PlayerCard, XpMeter, RankBadge
 │   ├── profile/          # ProfileCard, CustomizationModal
 │   ├── landing/          # LandingPage
-│   └── ui/               # RankAura, ErrorBoundary, PrivyConnectButton
+│   └── ui/               # SignInModal, RankAura, ErrorBoundary
 │
 ├── hooks/
 │   ├── useBattle.ts              # Battle state machine
@@ -92,7 +91,7 @@ src/
 │   ├── constants.ts              # Addresses, XP values, rank colours
 │   ├── gooddollar.ts             # GoodDollar SDK initialisation
 │   ├── ranks.ts                  # Rank aura + visual definitions
-│   └── wagmi.ts                  # wagmi config wired to Privy
+│   └── magic.ts                  # Magic client + viem/wagmi read config
 │
 └── types/
     ├── database.ts               # Player, Item, InventoryItem, Battle types
