@@ -23,9 +23,11 @@ const GUN_IDS: GunId[] = ['sidearm', 'smg', 'assault_rifle', 'marksman', 'legend
  * (Only two base models exist today; the rest still fall back to makeGunMesh.)
  */
 const GUN_GLB: Partial<Record<GunId, string>> = {
+  sidearm: '/models/guns/sidearm.glb',
+  smg: '/models/guns/smg.glb',
   assault_rifle: '/models/guns/rifle.glb',
-  legendary: '/models/guns/blaster.glb',
   marksman: '/models/guns/marksman.glb',
+  legendary: '/models/guns/blaster.glb',
 };
 
 /** Centre a posed holder on its bbox and return the hero-shot camera distance. */
