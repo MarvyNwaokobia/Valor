@@ -63,15 +63,30 @@ export default function HomePage() {
     )
   }
 
-  // Render the Home shell INSTANTLY — the action cards are usable right away, and
-  // the player panels show a skeleton until the server sync lands. No full-screen
-  // loader (player is no longer cached, so a returning user would otherwise stare
-  // at a spinner during the API cold start).
-  const charClass    = player?.character_class ?? 'Sentinel'
+  // Still loading the player (only ever hits a first-time / cache-cleared visit —
+  // a returning wallet is served instantly from the persisted cache). Show a calm,
+  // branded splash, not a stuck-looking skeleton or spinner.
+  if (!player) {
+    return (
+      <div className="flex items-center justify-center py-40" style={{ background: '#04030c' }}>
+        <motion.div
+          className="font-display font-black tracking-[0.35em] text-3xl"
+          style={{ color: '#eab308' }}
+          initial={{ opacity: 0.5 }}
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          VALOR
+        </motion.div>
+      </div>
+    )
+  }
+
+  const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
-  const heroImg      = (player?.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
-  const xpProgress   = player ? (player.xp / XP_PER_RANK) * 100 : 0
-  const nextReward   = player ? RANK_G_REWARD[player.rank] : 0
+  const heroImg      = (player.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
+  const xpProgress   = (player.xp / XP_PER_RANK) * 100
+  const nextReward   = RANK_G_REWARD[player.rank]
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-stretch min-h-[calc(100vh-7rem)]">
@@ -89,17 +104,13 @@ export default function HomePage() {
           background: `radial-gradient(ellipse 70% 80% at 50% 70%, ${def.accentColor}20 0%, transparent 70%)`,
         }}/>
 
-        {/* Character image fills the card (skeleton pulse until the player loads) */}
-        {player ? (
-          <img
-            src={heroImg}
-            alt={charClass}
-            className="absolute inset-0 w-full h-full object-cover object-top select-none"
-            style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
-          />
-        ) : (
-          <div className="absolute inset-0 animate-pulse" style={{ background: `linear-gradient(180deg, ${def.accentColor}14 0%, #06050f 70%)` }} />
-        )}
+        {/* Character image fills the card */}
+        <img
+          src={heroImg}
+          alt={charClass}
+          className="absolute inset-0 w-full h-full object-cover object-top select-none"
+          style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
+        />
 
         {/* Bottom fade into dark */}
         <div className="absolute inset-x-0 bottom-0 h-40 pointer-events-none" style={{
@@ -115,15 +126,7 @@ export default function HomePage() {
           backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)',
         }}/>
 
-        {/* Overlay: name + class + stats at bottom (skeleton until the player loads) */}
-        {!player && (
-          <div className="absolute inset-x-0 bottom-0 p-5 flex flex-col gap-2">
-            <div className="h-5 w-32 rounded bg-white/10 animate-pulse" />
-            <div className="h-3 w-16 rounded bg-white/5 animate-pulse" />
-            <div className="h-1.5 w-full rounded bg-white/5 animate-pulse mt-2" />
-          </div>
-        )}
-        {player && (
+        {/* Overlay: name + class + stats at bottom */}
         <div className="absolute inset-x-0 bottom-0 p-5 flex flex-col gap-2">
           <div className="flex items-end justify-between">
             <div>
@@ -178,7 +181,6 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-        )}
       </motion.div>
 
       {/* ── RIGHT PANEL ────────────────────────────────────────────── */}
@@ -199,16 +201,12 @@ export default function HomePage() {
           <p className="text-[10px] uppercase tracking-[0.25em] font-bold mb-0.5" style={{ color: def.accentColor }}>
             Arena Status
           </p>
-          {player ? (
-            <p className="text-white font-bold text-sm">
-              {player.wins}W <span className="text-slate-600 font-normal mx-1">/</span> {player.losses}L
-              <span className="text-slate-500 text-xs font-normal ml-3">
-                Next rank reward: <span className="text-amber-400 font-bold">{formatGDollarNumber(nextReward)}</span>
-              </span>
-            </p>
-          ) : (
-            <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
-          )}
+          <p className="text-white font-bold text-sm">
+            {player.wins}W <span className="text-slate-600 font-normal mx-1">/</span> {player.losses}L
+            <span className="text-slate-500 text-xs font-normal ml-3">
+              Next rank reward: <span className="text-amber-400 font-bold">{formatGDollarNumber(nextReward)}</span>
+            </span>
+          </p>
         </motion.div>
 
         {/* Action cards */}
