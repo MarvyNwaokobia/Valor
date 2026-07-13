@@ -20,8 +20,20 @@ async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
+// Friendly root — this is a backend API, not a website, so hitting `/` in a browser
+// used to 404 and look "down". Return a small alive message + where the real routes are.
+async fn root() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({
+        "service": "valor-api",
+        "status": "ok",
+        "message": "Valor API — OK. This is the backend for playvalor.app; there is no web page here.",
+        "health": "/health",
+    }))
+}
+
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
+        .route("/", web::get().to(root))
         .route("/health", web::get().to(health))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
         .route("/ws/battle", web::get().to(ws::battle_ws))
