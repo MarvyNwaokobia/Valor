@@ -18,7 +18,7 @@ import { getGun, type GunId } from '../combat/GunStats';
 import type { AmmoId, AttachmentId, AttachmentSlot } from '../combat/Loadout';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
-import { useRiflePrototype, cloneRifle } from './rifle';
+import { useGunPrototypes, GUN_IDS } from './gunModels';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import { dressingFor, type PropSpec } from './setDressing';
@@ -249,12 +249,15 @@ const ATTACH_CHIPS: { id: Attachment; label: string; key: string; color: string 
   { id: 'optic', label: 'OPTIC', key: 'O', color: '#8fb8d0' },
 ];
 
+// Each model is now normalised to its own real length (see gunModels.ts), so
+// `scale` is a small fudge for hand-fit, not a size proxy; z/y slide the weapon
+// in the hands (a long DMR sits pushed out, a pistol held in close).
 const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
-  sidearm: { scale: 0.52, z: 0.14, y: -0.03 }, // a compact pistol, held in close
-  smg: { scale: 0.8, z: 0.06, y: -0.01 },      // stubby, snappy
-  assault_rifle: { scale: 1.0, z: 0, y: 0 },   // the baseline
-  marksman: { scale: 1.3, z: -0.06, y: 0.006 },// long — pushed out front
-  legendary: { scale: 1.08, z: 0, y: 0 },      // the Valor Prototype
+  sidearm: { scale: 1.0, z: 0.12, y: -0.02 }, // a compact pistol, held in close
+  smg: { scale: 1.0, z: 0.05, y: -0.01 },     // stubby, snappy
+  assault_rifle: { scale: 1.0, z: 0, y: 0 },  // the baseline
+  marksman: { scale: 1.0, z: -0.05, y: 0.01 },// long — pushed out front
+  legendary: { scale: 1.0, z: 0, y: 0 },      // the Valor Prototype
 };
 
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
@@ -464,7 +467,6 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
 
   // ── Scene objects ──
   const vmRef = useRef<THREE.Group>(null);
-  const vmScaleCur = useRef(WEAPON_VIEW[LOADOUT[0]]?.scale ?? 1); // lerps between weapons
   const swapRaise = useRef(0);          // 1 → 0 dip when a weapon is raised
   const wantSlot = useRef<number | null>(null); // 1/2 keys pick a slot
   const wantSwap = useRef(false);       // the swap key cycles
@@ -523,18 +525,28 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const eFlashHead = useRef(0);
   const eLight = useRef<THREE.PointLight>(null);
 
-  // Build the viewmodel gun once and hang it in the scene (positioned to the
-  // camera each frame, so we don't depend on camera-child rendering).
-  // The same real rifle the enemies carry, so first- and third-person agree.
-  const rifleProto = useRiflePrototype();
-  const gunMesh = useMemo(() => {
-    const g = cloneRifle(rifleProto);
-    // The viewmodel inherits the CAMERA's orientation, and a camera looks down
-    // its own -Z. The rifle's barrel is +Z, so unturned it fires into your face.
-    g.rotateY(Math.PI);
-    return g;
-  }, [rifleProto]);
-  const muzzleLocal = useMemo(() => gunMesh.getObjectByName('muzzle') ?? gunMesh, [gunMesh]);
+  // Build ALL five viewmodel guns once and hang them off the camera; each frame
+  // only the active weapon is shown (see the transform block below), so buying a
+  // better gun changes what you actually hold. Positioned to the camera each
+  // frame so we don't depend on camera-child rendering.
+  const gunProtos = useGunPrototypes();
+  const gunMeshes = useMemo(() => {
+    const out = {} as Record<GunId, THREE.Group>;
+    for (const id of GUN_IDS) {
+      const g = gunProtos[id].clone(true);
+      // The viewmodel inherits the CAMERA's orientation, and a camera looks down
+      // its own -Z. The barrel is +Z, so unturned it fires into your face.
+      g.rotateY(Math.PI);
+      g.scale.setScalar(WEAPON_VIEW[id].scale);
+      out[id] = g;
+    }
+    return out;
+  }, [gunProtos]);
+  // The active weapon's muzzle (tracers / flash / laser spawn here); repointed on
+  // a weapon switch in the frame loop.
+  const muzzleRef = useRef<THREE.Object3D>(
+    gunMeshes[LOADOUT[0]].getObjectByName('muzzle') ?? gunMeshes[LOADOUT[0]],
+  );
 
   useEffect(() => {
     const p = camera as THREE.PerspectiveCamera;
@@ -863,9 +875,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     shoveZ.current = settle(shoveZ.current);
 
     // ── Viewmodel transform (locked to view + sway/bob/recoil + per-weapon framing) ──
-    const view = WEAPON_VIEW[sim.gun.id] ?? WEAPON_VIEW.assault_rifle;
-    vmScaleCur.current += (view.scale - vmScaleCur.current) * Math.min(1, dt * 12);
-    gunMesh.scale.setScalar(vmScaleCur.current);
+    const activeId = sim.gun.id;
+    const view = WEAPON_VIEW[activeId] ?? WEAPON_VIEW.assault_rifle;
+    // Show only the weapon you're holding; repoint the muzzle to it.
+    for (const id of GUN_IDS) gunMeshes[id].visible = id === activeId;
+    muzzleRef.current = gunMeshes[activeId].getObjectByName('muzzle') ?? gunMeshes[activeId];
     swapRaise.current = Math.max(0, swapRaise.current - dt * 2.4);
     const vm = vmRef.current;
     if (vm) {
@@ -898,7 +912,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     flashLight.target.updateMatrixWorld();
     // Laser: a red line from the barrel to the first thing the aim ray meets.
     if (sim.hasAttachment('laser')) {
-      const mp = muzzleLocal.getWorldPosition(tmp);
+      const mp = muzzleRef.current.getWorldPosition(tmp);
       const o: Vec3 = [mp.x, mp.y, mp.z], d: Vec3 = [fwd.x, fwd.y, fwd.z];
       let t = 50;
       for (const c of COLLIDERS) { const tc = rayAABB(o, d, aabbOfCover(c)); if (tc !== null && tc < t) t = tc; }
@@ -938,7 +952,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     for (const ev of sim.drain()) {
       if (ev.kind === 'fire') {
         // muzzle flash + light + recoil kick
-        muzzleLocal.getWorldPosition(tmp2);
+        muzzleRef.current.getWorldPosition(tmp2);
         if (muzzleLight.current) { muzzleLight.current.position.copy(tmp2); muzzleLight.current.intensity = feel.lightIntensity; }
         if (flashRef.current) { flashRef.current.position.copy(tmp2); flashRef.current.visible = true; flashRef.current.scale.setScalar(0.18 * feel.flashScale * (0.8 + Math.random() * 0.5)); }
         flashUntil.current = now + 0.045;
@@ -947,7 +961,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         recoilY.current += (Math.random() - 0.5) * kick * 0.5;
         audio.shot((GUN_FEEL[sim.gun.id] ?? feel).audio); // the ACTIVE weapon's voice, not just the primary's
       } else if (ev.kind === 'hit' || ev.kind === 'wall' || ev.kind === 'miss') {
-        muzzleLocal.getWorldPosition(tmp2);
+        muzzleRef.current.getWorldPosition(tmp2);
         spawnBeam(tmp2, ev.point, false);                       // your tracer line, restored
         spawnImpact(ev.point, ev.kind === 'hit');
         if (ev.kind === 'hit') {
@@ -1690,9 +1704,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         </group>
       ))}
 
-      {/* viewmodel */}
+      {/* viewmodel — all five guns mounted; the frame loop shows only the active one */}
       <group ref={vmRef}>
-        <primitive object={gunMesh} />
+        {GUN_IDS.map((id) => (
+          <primitive key={id} object={gunMeshes[id]} />
+        ))}
         {/* simple graybox hands so the first person reads */}
         <mesh position={[0.02, -0.03, -0.02]}>
           <boxGeometry args={[0.06, 0.06, 0.14]} />
