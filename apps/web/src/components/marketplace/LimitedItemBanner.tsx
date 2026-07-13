@@ -96,7 +96,7 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               </span>
               <span className="text-xs font-bold text-orange-400">
                 {isSoldOut
-                  ? 'SOLD OUT — GONE FOREVER'
+                  ? 'SOLD OUT'
                   : `${item.remaining_supply} / ${item.total_supply} remaining`}
               </span>
             </div>
@@ -147,7 +147,7 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
               </div>
             ) : isExpired || isSoldOut ? (
               <div className="px-6 py-2.5 text-sm font-bold text-slate-500 bg-valor-surface-2 rounded-xl border border-valor-border">
-                {isExpired ? 'Sale Ended' : 'Gone Forever'}
+                {isExpired ? 'Sale Ended' : 'Sold Out'}
               </div>
             ) : (
               <motion.button
