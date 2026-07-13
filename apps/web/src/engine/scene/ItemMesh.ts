@@ -26,11 +26,13 @@ const POLYMER_DARK = 0x2c313a;
 const BRASS = 0xc9a24a;
 const CRATE = 0x3a4034;
 
+// Smooth-shaded PBR (no flat-shading) with a strong envMapIntensity so steel and
+// brass catch the HDRI and read as real material, matching the weapon art.
 function mat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}) {
-  return new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.45, flatShading: true, ...opts });
+  return new THREE.MeshStandardMaterial({ color, metalness: 0.72, roughness: 0.4, envMapIntensity: 1.35, ...opts });
 }
 function glowMat(color: number, intensity = 1) {
-  return new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, metalness: 0.2, roughness: 0.35 });
+  return new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, metalness: 0.2, roughness: 0.3, envMapIntensity: 0.6 });
 }
 
 function box(g: THREE.Group, m: THREE.Material, w: number, h: number, d: number,

@@ -11,6 +11,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
 import { gunIdFromItemId } from './GunIcons'
 import { ItemArt } from './ItemArt'
+import { WeaponCrate, crateLabel } from './WeaponCrate'
 import { gunDps, GUN_CATALOG, type GunStats } from '@/engine/combat/GunStats'
 
 const SLOT_LABEL: Record<string, string> = {
@@ -125,16 +126,8 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
           )}
         </div>
 
-        {/* Item visual: the real in-game asset */}
-        <div
-          className="w-full rounded-xl flex items-center justify-center border py-3 px-2"
-          style={{
-            background: `radial-gradient(ellipse at 50% 40%, ${rarityColor}1c 0%, ${rarityColor}06 60%, transparent 100%)`,
-            borderColor: `${rarityColor}18`,
-          }}
-        >
-          <ItemArt item={item} color={rarityColor} />
-        </div>
+        {/* Item visual: the real in-game asset, framed as a tactical weapon crate */}
+        <WeaponCrate item={item} rarityColor={rarityColor} label={crateLabel(item)} />
 
         {/* Name + desc */}
         <div>
