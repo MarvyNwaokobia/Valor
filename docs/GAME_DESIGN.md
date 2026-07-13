@@ -1,11 +1,15 @@
 # VALOR — Game Design Document
 
-> **One sentence:** Valor is a real-time 1v1 stat-duel shooter, playable in the browser,
+> ⚠️ **SUPERSEDED (July 2026).** This describes the earlier *1v1 stat-duel shooter*
+> direction. The live game pivoted to a **first-person tactical FPS** (solo campaign of
+> doorkicker operations + Survival + a ranked Gauntlet). See **`docs/the plan.md`** and
+> the **root `README.md`** for the current design. The stat-duel game below is preserved
+> and playable at `/fight-legacy`; this doc is kept for history + reusable ideas
+> (classes, ranks, economy principles, PvP netcode notes).
+
+> **One sentence (legacy):** Valor is a real-time 1v1 stat-duel shooter, playable in the browser,
 > where verified humans stand at range, trade shots, dodge bullets, climb ranked seasons,
 > and earn real value (G$) on GoodDollar + Celo.
-
-This document describes the game we are actually building. It supersedes all earlier
-"melee fighter" and "turn-based" drafts — those directions are abandoned.
 
 ---
 
@@ -102,7 +106,7 @@ PvP netcode model is the key open decision (§8).
 
 ## 6. Web3 / Economy (GoodDollar + Celo)
 
-- **Identity:** wallet = permanent identity (Privy: social login → embedded wallet, or
+- **Identity:** wallet = permanent identity (Magic: email/Google → deterministic wallet, or
   connect existing). GoodDollar verification gates ranked + G$ (one human, one account;
   no bots/multi-accounting).
 - **Rewards:** G$ on Celo for wins, ranked placement, challenges. Server-authoritative
@@ -181,6 +185,6 @@ fluidly, Sentinel absorbs hits stoically.
   `camera/` (BattleCamera), `vfx/` (CombatFeel, KnockbackPhysics, TrailRenderer,
   ParticleSystem, ScreenEffects), `audio/` (CombatAudio), `world/` (ArenaManager,
   StageLighting, Crowd), `input/`, `scene/` (GameScene, FighterModel, ArenaStage).
-- **Privy** auth, **GoodDollar** SDK, **Supabase/Postgres**, **API** (`apps/api`),
+- **Magic** auth, **GoodDollar** SDK, **Neon/Postgres** (Render API), **API** (`apps/api`),
   **contracts/** (Foundry), **packages/shared**.
 - Entry point for the shooter: `/fight?level=N` → `GameScene` (via CampaignSelect).

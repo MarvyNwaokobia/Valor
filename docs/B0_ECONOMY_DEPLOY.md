@@ -37,28 +37,31 @@ forge script script/UpgradeRewardPool.s.sol --rpc-url $CELO_RPC_URL --broadcast 
 Verify: `cast call $REWARD_POOL_CONTRACT "MAX_REWARD()(uint256)" --rpc-url $CELO_RPC_URL`
 should return `500000000000000000000` (500e18).
 
-### 2. Run the migration (Railway prod Postgres)
+> **Status: DONE + VERIFIED (2026-07-12).** The proxy is upgraded, the migration is
+> applied to Neon, and a first-clear bounty was confirmed paying on-chain end-to-end.
+> The steps below are the runbook for a fresh environment.
+
+### 2. Run the migration (Neon prod Postgres)
 
 ```bash
-# get the external URL: railway variables --service Postgres --kv  →  DATABASE_PUBLIC_URL
-psql "$DATABASE_PUBLIC_URL" < apps/api/migrations/add_first_clear_bounties.sql
+# use Neon's DIRECT (non-`-pooler`) connection string as DATABASE_URL
+psql "$DATABASE_URL" < apps/api/migrations/add_first_clear_bounties.sql
 ```
 
-Also run it against the local Supabase sandbox if you test locally.
+It's also in `scripts/bootstrap-neon.mjs`, so a fresh bootstrap includes it. Run it
+against the local Supabase sandbox too if you test locally.
 
 ### 3. Fund the pool (if low)
 
 `distributeReward` pays from the pool's G$ balance. Check
 `cast call $REWARD_POOL_CONTRACT "poolBalance()(uint256)"`; top up if needed so
-bounties can actually pay out. `Ok(false)`/insufficient-balance is logged and the
-bounty row is marked `failed` (see reconcile note below), the player is not charged.
+bounties can actually pay out. On failure the bounty row is marked `failed` and the
+`/battles/bounties/reconcile` cron re-attempts it (idempotent via the on-chain ref).
 
-### 4. Redeploy the API (manual — Railway does NOT auto-deploy on push)
+### 4. Redeploy the API (Render — auto-deploys on push to `main`)
 
-```bash
-cd apps/api
-railway up --service valor --detach
-```
+Render rebuilds `apps/api/Dockerfile` automatically on push. `REWARD_POOL_CONTRACT`
+must be set in the Render env (no code fallback — unset means bounties silently fail).
 
 The backend signer wallet must be the pool's `backendSigner` (already the case for the
 existing rank-up/daily-claim payouts — same signer).
