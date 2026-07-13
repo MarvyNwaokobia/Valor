@@ -4,6 +4,11 @@ import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
 
 // Mock hooks that need network/wallet
+// useResolvedAuth reads MagicAuthProvider context, which isn't mounted in this
+// isolated render — mock it as the signed-in owner (address matches basePlayer).
+vi.mock('@/hooks/useResolvedAuth', () => ({
+  useResolvedAuth: () => ({ status: 'ready', address: '0xdeadbeef', source: 'magic' }),
+}))
 vi.mock('@/hooks/useGBalance', () => ({ useGBalance: () => ({ formatted: '12.50 G$' }) }))
 vi.mock('@/hooks/useAchievements', () => ({
   useAchievements: () => ({ achievements: [], loading: false }),
