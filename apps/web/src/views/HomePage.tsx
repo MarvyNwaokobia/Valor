@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
+import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -63,24 +64,9 @@ export default function HomePage() {
     )
   }
 
-  // Still loading the player (only ever hits a first-time / cache-cleared visit —
-  // a returning wallet is served instantly from the persisted cache). Show a calm,
-  // branded splash, not a stuck-looking skeleton or spinner.
-  if (!player) {
-    return (
-      <div className="flex items-center justify-center py-40" style={{ background: '#04030c' }}>
-        <motion.div
-          className="font-display font-black tracking-[0.35em] text-3xl"
-          style={{ color: '#eab308' }}
-          initial={{ opacity: 0.5 }}
-          animate={{ opacity: [0.5, 1, 0.5] }}
-          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-        >
-          VALOR
-        </motion.div>
-      </div>
-    )
-  }
+  // Still loading the player — only ever a first-time / cache-cleared visit, since a
+  // returning wallet is served instantly from the persisted cache.
+  if (!player) return <LoadingScreen />
 
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
