@@ -7,6 +7,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResale } from '@/hooks/useResale'
+import { ItemArt } from '@/components/marketplace/ItemArt'
 
 interface Props {
   inventory: InventoryItem[]
@@ -136,6 +137,14 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
                     EQ
                   </span>
                 )}
+              </div>
+              {/* Same baked in-game asset the shop shows, so owned items look
+                  exactly like what you bought. */}
+              <div
+                className="w-full rounded-lg flex items-center justify-center py-2"
+                style={{ background: `radial-gradient(ellipse at 50% 45%, ${color}18 0%, ${color}05 60%, transparent 100%)` }}
+              >
+                <ItemArt item={item} color={color} size="modal" />
               </div>
               <p className="text-sm font-bold text-white leading-tight">{item.name}</p>
               <p className="text-xs text-slate-500">
