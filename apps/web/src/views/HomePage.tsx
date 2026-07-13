@@ -9,7 +9,6 @@ import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
-import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
@@ -47,13 +46,10 @@ export default function HomePage() {
 
   // Unauthenticated
   if (status === 'unauthenticated') return <LandingPage />
-  // Cached player from localStorage → render immediately, sync runs in background
-  // No cached player + sync still running → brief wait only for genuinely new users
-  if (!player && !playerSynced) return <LoadingScreen />
   // Network failure with no cache — show retry
   if (syncFailed && !player) {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center gap-4" style={{ background: '#04030c' }}>
+      <div className="flex flex-col items-center justify-center gap-4 py-32" style={{ background: '#04030c' }}>
         <p className="text-white font-display font-black text-xl">Connection issue</p>
         <p className="text-slate-500 text-sm">Check your internet and try again.</p>
         <button
@@ -66,13 +62,16 @@ export default function HomePage() {
       </div>
     )
   }
-  if (!player) return null
 
-  const charClass    = player.character_class ?? 'Sentinel'
+  // Render the Home shell INSTANTLY — the action cards are usable right away, and
+  // the player panels show a skeleton until the server sync lands. No full-screen
+  // loader (player is no longer cached, so a returning user would otherwise stare
+  // at a spinner during the API cold start).
+  const charClass    = player?.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
-  const heroImg      = (player.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
-  const xpProgress   = (player.xp / XP_PER_RANK) * 100
-  const nextReward   = RANK_G_REWARD[player.rank]
+  const heroImg      = (player?.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
+  const xpProgress   = player ? (player.xp / XP_PER_RANK) * 100 : 0
+  const nextReward   = player ? RANK_G_REWARD[player.rank] : 0
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-stretch min-h-[calc(100vh-7rem)]">
@@ -90,13 +89,17 @@ export default function HomePage() {
           background: `radial-gradient(ellipse 70% 80% at 50% 70%, ${def.accentColor}20 0%, transparent 70%)`,
         }}/>
 
-        {/* Character image fills the card */}
-        <img
-          src={heroImg}
-          alt={charClass}
-          className="absolute inset-0 w-full h-full object-cover object-top select-none"
-          style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
-        />
+        {/* Character image fills the card (skeleton pulse until the player loads) */}
+        {player ? (
+          <img
+            src={heroImg}
+            alt={charClass}
+            className="absolute inset-0 w-full h-full object-cover object-top select-none"
+            style={{ filter: `saturate(1.05) contrast(1.05) drop-shadow(0 0 30px ${def.glowColor})` }}
+          />
+        ) : (
+          <div className="absolute inset-0 animate-pulse" style={{ background: `linear-gradient(180deg, ${def.accentColor}14 0%, #06050f 70%)` }} />
+        )}
 
         {/* Bottom fade into dark */}
         <div className="absolute inset-x-0 bottom-0 h-40 pointer-events-none" style={{
@@ -112,7 +115,15 @@ export default function HomePage() {
           backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)',
         }}/>
 
-        {/* Overlay: name + class + stats at bottom */}
+        {/* Overlay: name + class + stats at bottom (skeleton until the player loads) */}
+        {!player && (
+          <div className="absolute inset-x-0 bottom-0 p-5 flex flex-col gap-2">
+            <div className="h-5 w-32 rounded bg-white/10 animate-pulse" />
+            <div className="h-3 w-16 rounded bg-white/5 animate-pulse" />
+            <div className="h-1.5 w-full rounded bg-white/5 animate-pulse mt-2" />
+          </div>
+        )}
+        {player && (
         <div className="absolute inset-x-0 bottom-0 p-5 flex flex-col gap-2">
           <div className="flex items-end justify-between">
             <div>
@@ -167,6 +178,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+        )}
       </motion.div>
 
       {/* ── RIGHT PANEL ────────────────────────────────────────────── */}
@@ -187,12 +199,16 @@ export default function HomePage() {
           <p className="text-[10px] uppercase tracking-[0.25em] font-bold mb-0.5" style={{ color: def.accentColor }}>
             Arena Status
           </p>
-          <p className="text-white font-bold text-sm">
-            {player.wins}W <span className="text-slate-600 font-normal mx-1">/</span> {player.losses}L
-            <span className="text-slate-500 text-xs font-normal ml-3">
-              Next rank reward: <span className="text-amber-400 font-bold">{formatGDollarNumber(nextReward)}</span>
-            </span>
-          </p>
+          {player ? (
+            <p className="text-white font-bold text-sm">
+              {player.wins}W <span className="text-slate-600 font-normal mx-1">/</span> {player.losses}L
+              <span className="text-slate-500 text-xs font-normal ml-3">
+                Next rank reward: <span className="text-amber-400 font-bold">{formatGDollarNumber(nextReward)}</span>
+              </span>
+            </p>
+          ) : (
+            <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
+          )}
         </motion.div>
 
         {/* Action cards */}
@@ -266,7 +282,7 @@ export default function HomePage() {
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-widest font-bold mb-0.5" style={{ color: def.accentColor }}>
-                {player.character_class} Special
+                {charClass} Special
               </p>
               <p className="text-white font-bold text-sm">{def.special}</p>
               <p className="text-slate-500 text-xs mt-0.5">{def.specialDesc}</p>
