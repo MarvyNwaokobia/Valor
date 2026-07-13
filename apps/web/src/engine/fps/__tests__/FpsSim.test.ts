@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { FpsSim, FPS_TUNING, raySphere, rayAABB, jitter, type FpsInput, type Vec3 } from '../FpsSim';
+import { getGun } from '../../combat/GunStats';
 
 // A shooter at the origin, eye height 1.6, looking straight down -Z. rng=0 makes
 // jitter deterministic (a straight shot), so tests assert on geometry not luck.
@@ -687,5 +688,21 @@ describe('FpsSim loadout mods (B: equipped ammo + attachments)', () => {
     const afterShot = enemy.hp;
     for (let i = 0; i < 180; i++) sim.step(1 / 60, input({ firing: false }));
     expect(enemy.hp).toBe(afterShot); // no DoT with FMJ
+  });
+});
+
+describe('FpsSim crit (the marketplace CRIT stat is now real)', () => {
+  const TORSO: Vec3 = [0, -0.6, -6];
+
+  it('a crit multiplies damage by the gun critMult and flags the hit', () => {
+    // rng=0 → the crit roll (rng < critChance) always passes; rng=0.99 never does.
+    const critSim = new FpsSim({ gunId: 'assault_rifle', enemies: [{ pos: [0, -6], hp: 1000 }], rng: () => 0, respawnEnabled: false });
+    const cHit = critSim.step(1 / 60, input({ dir: TORSO })).find((e) => e.kind === 'hit') as { damage: number; crit: boolean };
+    const noSim = new FpsSim({ gunId: 'assault_rifle', enemies: [{ pos: [0, -6], hp: 1000 }], rng: () => 0.99, respawnEnabled: false });
+    const nHit = noSim.step(1 / 60, input({ dir: TORSO })).find((e) => e.kind === 'hit') as { damage: number; crit: boolean };
+
+    expect(cHit.crit).toBe(true);
+    expect(nHit.crit).toBe(false);
+    expect(cHit.damage).toBeCloseTo(nHit.damage * getGun('assault_rifle').critMult, 1);
   });
 });
