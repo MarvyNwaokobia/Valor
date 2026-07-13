@@ -1,11 +1,13 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, Lock, Skull, Check, ChevronRight } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN } from '@/engine/fps/campaign'
 import { tryFullscreen } from '@/lib/fullscreen'
+import LoadoutModal from './LoadoutModal'
 
 interface Props {
   player: Player
@@ -27,9 +29,14 @@ export default function OperationsSelect({ player, onBack }: Props) {
   const router = useRouter()
   const cleared = player.pve_level ?? 0 // number of ops cleared
 
-  const play = (i: number) => {
+  // Picking an op opens the Loadout first (choose weapon + gear from what you own),
+  // then Deploy boots the fight with that kit.
+  const [loadoutOp, setLoadoutOp] = useState<number | null>(null)
+
+  const deploy = (i: number, kit: string[]) => {
     tryFullscreen()               // best-effort; must never block the navigation below
-    router.push(`/fight?op=${i}`)
+    const kitParam = kit.length ? `&kit=${kit.join(',')}` : ''
+    router.push(`/fight?op=${i}${kitParam}`)
   }
 
   // group by zone in campaign order
@@ -69,7 +76,7 @@ export default function OperationsSelect({ player, onBack }: Props) {
                   return (
                     <motion.button
                       key={m.id}
-                      onClick={() => !locked && play(i)}
+                      onClick={() => !locked && setLoadoutOp(i)}
                       disabled={locked}
                       whileHover={locked ? undefined : { scale: 1.01 }}
                       whileTap={locked ? undefined : { scale: 0.99 }}
@@ -108,6 +115,18 @@ export default function OperationsSelect({ player, onBack }: Props) {
           )
         })}
       </div>
+
+      <AnimatePresence>
+        {loadoutOp !== null && (
+          <LoadoutModal
+            opIndex={loadoutOp}
+            opName={CAMPAIGN[loadoutOp].name}
+            walletAddress={player.wallet_address}
+            onClose={() => setLoadoutOp(null)}
+            onDeploy={(kit) => deploy(loadoutOp, kit)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

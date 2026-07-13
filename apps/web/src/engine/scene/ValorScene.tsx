@@ -352,7 +352,7 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods }: {
+function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
@@ -369,6 +369,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   // gun's stats, and (for incendiary) a burn DoT.
   equippedAmmo?: AmmoId;
   equippedMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
+  // Standard-issue field kit (flashlight / NVG / laser) chosen on the Loadout.
+  fieldKit?: Attachment[];
 }) {
   const { camera, gl, scene } = useThree();
 
@@ -394,7 +396,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const blackout = !!mission.blackout; // the Rift with NVG jammed — fight by muzzle-flash
 
   const sim = useMemo(() => {
-    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, ammoId: equippedAmmo, gunMods: equippedMods, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
+    // The op's issued kit (e.g. NVG in the Rift) plus the player's chosen field kit.
+    const attachments = [...new Set([...(mission.attachments ?? []), ...(fieldKit ?? [])])];
+    const s = new FpsSim({ loadout: LOADOUT, attachments, ammoId: equippedAmmo, gunMods: equippedMods, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
     s.setAllActive(false); // rooms start dormant; breaching each one wakes it
     return s;
   }, []);
@@ -2152,7 +2156,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods }: {
+export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2178,6 +2182,9 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
    *  and, for incendiary, a burn DoT. Omitted at `/dev/verb`. */
   equippedAmmo?: AmmoId;
   equippedMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
+  /** Standard-issue field kit chosen on the Loadout screen (flashlight / NVG /
+   *  laser), fitted on top of whatever the op issues. */
+  fieldKit?: Attachment[];
 } = {}) {
   // Server progress (ops cleared), clamped to a valid campaign index — the resume
   // target and the unlock floor.
@@ -2509,7 +2516,7 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
         </Suspense>
       </Canvas>
 

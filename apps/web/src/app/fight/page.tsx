@@ -63,6 +63,14 @@ function FightInner() {
       ? Number(opParam)
       : undefined;
 
+  // Field kit chosen on the Loadout screen (/fight?kit=light,nvg) — standard-issue
+  // tactical gear fitted on top of whatever the op issues.
+  const KIT = ['light', 'laser', 'nvg', 'optic'] as const;
+  const fieldKit = useMemo(
+    () => (searchParams.get('kit') ?? '').split(',').filter((k): k is (typeof KIT)[number] => (KIT as readonly string[]).includes(k)),
+    [searchParams],
+  );
+
   // Each cleared operation is a server-authoritative "fight win": the backend
   // applies the real XP → rank → G$ and advances the PvE level. If the player
   // isn't signed in, submitResult is a graceful no-op (the game still plays).
@@ -85,6 +93,7 @@ function FightInner() {
         equippedGun={equippedGun}
         equippedAmmo={equippedAmmo}
         equippedMods={equippedMods}
+        fieldKit={fieldKit}
       />
     </div>
   );
