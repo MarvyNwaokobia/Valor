@@ -14,7 +14,7 @@ import {
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
 import { GUN_FEEL } from '../combat/GunFeel';
-import type { GunId } from '../combat/GunStats';
+import { getGun, type GunId } from '../combat/GunStats';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
@@ -348,7 +348,7 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp }: {
+function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
@@ -356,6 +356,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   // SEEDED from it (so it shows your true rank/progress, not a local number) and
   // climbs live per-kill; the server reconciles on op-clear. Omitted at /dev/verb.
   accountRank?: Rank; accountXp?: number;
+  // The player's equipped gun from their marketplace inventory. It raises the
+  // FLOOR of the op's issued weapon: you always carry whichever of the two is the
+  // stronger tier, so buying a better gun visibly upgrades every fight while a new
+  // player (sidearm only) still gets the op's issued weapon.
+  equippedGun?: GunId;
 }) {
   const { camera, gl, scene } = useThree();
 
@@ -367,8 +372,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const LEVEL_COVER = mission.cover;
   const ENEMIES = mission.enemies;
   const OBJECTIVES = mission.objectives;
-  const GUN = mission.gun;
-  const LOADOUT = useMemo<GunId[]>(() => [mission.gun, mission.secondary ?? 'sidearm'], [mission]);
+  // Your equipped gun overrides the op's issued primary when it's the stronger
+  // tier (the mission gun is the floor). A boss finale still issues its scripted
+  // weapon unless you own something better.
+  const PRIMARY: GunId =
+    equippedGun && getGun(equippedGun).tier > getGun(mission.gun).tier ? equippedGun : mission.gun;
+  const GUN = PRIMARY;
+  const LOADOUT = useMemo<GunId[]>(() => [PRIMARY, mission.secondary ?? 'sidearm'], [PRIMARY, mission.secondary]);
   const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
   const theme = themeForMission(mission);
   const isFinale = mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
@@ -2119,7 +2129,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp }: {
+export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2138,6 +2148,9 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
    *  reflects your true server standing instead of a local number. */
   accountRank?: Rank;
   accountXp?: number;
+  /** The player's equipped marketplace gun (A). Raises the floor of each op's
+   *  issued weapon — you carry whichever tier is higher. Omitted at `/dev/verb`. */
+  equippedGun?: GunId;
 } = {}) {
   // Server progress (ops cleared), clamped to a valid campaign index — the resume
   // target and the unlock floor.
@@ -2469,7 +2482,7 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} />
         </Suspense>
       </Canvas>
 
