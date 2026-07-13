@@ -84,7 +84,7 @@ export interface FpsInput {
 export type FpsEvent =
   | { kind: 'fire'; ammo: number; spread: number }
   | { kind: 'empty' }
-  | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean }
+  | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean; crit: boolean }
   | { kind: 'kill'; enemyId: number }
   | { kind: 'wall'; point: Vec3 }
   | { kind: 'miss'; point: Vec3 }
@@ -624,7 +624,12 @@ export class FpsSim {
     const point: Vec3 = [origin[0] + ray[0] * bestT, origin[1] + ray[1] * bestT, origin[2] + ray[2] * bestT];
 
     if (hitEnemy) {
-      const dmg = this.damageFor(hitPart, bestT);
+      // Crit roll: the gun's critChance (already folded with the equipped ammo's
+      // critChanceMod by resolveGun — armor piercing bumps it) for a critMult
+      // burst of damage. This is what the marketplace's CRIT stat has always
+      // promised; now it lands.
+      const crit = this.rng() < this.gun.critChance;
+      const dmg = this.damageFor(hitPart, bestT) * (crit ? this.gun.critMult : 1);
       hitEnemy.hp -= dmg;
       this.hits++;
       if (hitPart === 'head') this.headshots++;
@@ -643,7 +648,7 @@ export class FpsSim {
           hitEnemy.burnDps = burn;
         }
       }
-      this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed });
+      this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed, crit });
       if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id });
     } else if (bestT < FPS_TUNING.MAX_RAY) {
       this.push(out, { kind: 'wall', point });

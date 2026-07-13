@@ -954,7 +954,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
           audio.impact('flesh', ev.point);
           audio.hitmarker(ev.killed);
           flashHit(ev.enemyId, ev.killed);
-          flashHitmarker(ev.killed);
+          flashHitmarker(ev.killed, ev.crit);
           if (ev.killed) addXp(xpForKill(ev.part)); // earn loop: XP per kill
         } else if (ev.kind === 'wall') {
           audio.impact('wall', ev.point);
@@ -1346,13 +1346,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
     }
   }
 
-  function flashHitmarker(killed: boolean) {
+  function flashHitmarker(killed: boolean, crit = false) {
     const el = hud.current.hit;
     if (!el) return;
     el.style.opacity = '1';
-    el.style.color = killed ? '#ff4d3d' : '#ffffff';
-    el.style.transform = `translate(-50%,-50%) scale(${killed ? 1.5 : 1})`;
-    window.setTimeout(() => { if (el) el.style.opacity = '0'; }, killed ? 220 : 130);
+    // A kill always reads red; a non-lethal crit pops gold + a touch bigger so the
+    // random burst of damage is legible in the moment.
+    el.style.color = killed ? '#ff4d3d' : crit ? '#ffc72a' : '#ffffff';
+    el.style.transform = `translate(-50%,-50%) scale(${killed ? 1.5 : crit ? 1.3 : 1})`;
+    window.setTimeout(() => { if (el) el.style.opacity = '0'; }, killed ? 220 : crit ? 180 : 130);
   }
 
   function updateHud(snap: ReturnType<FpsSim['snapshot']>) {
