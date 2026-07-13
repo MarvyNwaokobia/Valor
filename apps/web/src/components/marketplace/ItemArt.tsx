@@ -1,8 +1,9 @@
 'use client'
 
-import { Sparkles } from 'lucide-react'
+import { Sparkles, Flashlight, Moon, Crosshair } from 'lucide-react'
 import type { Item } from '@/types'
 import { gunIdFromItemId } from './GunIcons'
+import { fieldKitIdFromItemId } from '@/lib/guns'
 
 const ATTACHMENT_SLOTS = ['barrel', 'optic', 'grip', 'magazine']
 
@@ -32,7 +33,16 @@ export function itemArtSrc(item: Item): string | null {
   }
 }
 
+const KIT_ICON = { light: Flashlight, nvg: Moon, laser: Crosshair }
+
 export function ItemArt({ item, color, size = 'card' }: { item: Item; color: string; size?: 'card' | 'modal' | 'banner' }) {
+  // Field kit has no baked mesh — render a clean themed icon instead.
+  const kit = fieldKitIdFromItemId(item.id)
+  if (kit) {
+    const Icon = KIT_ICON[kit]
+    const s = size === 'card' ? 64 : size === 'banner' ? 56 : 32
+    return <Icon size={s} strokeWidth={1.3} style={{ color }} className={size === 'card' ? '' : 'shrink-0'} />
+  }
   const src = itemArtSrc(item)
   if (!src) {
     return size === 'card'

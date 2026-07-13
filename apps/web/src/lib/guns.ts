@@ -93,3 +93,29 @@ export function equippedAttachments(
   }
   return mods
 }
+
+/**
+ * Field-kit gear (tactical toggles), sold off-chain like ammo. The kit_id maps to
+ * the engine's FpsSim tactical attachment. Fixed UUIDs MUST match
+ * supabase/migrations/009_field_kit.sql.
+ */
+export type FieldKitId = 'light' | 'nvg' | 'laser'
+export const FIELD_KIT_ITEM_ID: Record<FieldKitId, string> = {
+  light: 'cccc0001-cccc-4ccc-8ccc-cccccccccc01',
+  nvg:   'cccc0002-cccc-4ccc-8ccc-cccccccccc02',
+  laser: 'cccc0003-cccc-4ccc-8ccc-cccccccccc03',
+}
+const ITEM_ID_TO_KIT: Record<string, FieldKitId> = Object.fromEntries(
+  Object.entries(FIELD_KIT_ITEM_ID).map(([kit, id]) => [id, kit as FieldKitId]),
+)
+
+/** True if a marketplace item is a field-kit gear item. */
+export function fieldKitIdFromItemId(itemId: string): FieldKitId | undefined {
+  return ITEM_ID_TO_KIT[itemId]
+}
+
+/** The field-kit gear a player OWNS (whether or not equipped) — the loadout only
+ *  offers what you've bought. */
+export function ownedFieldKit(inventory: InventoryItem[]): FieldKitId[] {
+  return inventory.map((i) => ITEM_ID_TO_KIT[i.item_id]).filter((k): k is FieldKitId => !!k)
+}
