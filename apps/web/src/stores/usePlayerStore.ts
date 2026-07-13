@@ -52,12 +52,19 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: 'valor-player',
-      // Do NOT persist the player/inventory: a cached blob was being shown (and
-      // used to route) before the server confirmed who this wallet actually is,
-      // so a returning/new wallet could land on a stale or reconstructed character
-      // and skip character-select. New-vs-old is now decided fresh from the server
-      // every load. Only the lightweight verified hint is cached.
-      partialize: (state) => ({ isVerified: state.isVerified }),
+      // Cache the player + inventory so a RETURNING user (same wallet) sees their
+      // real dashboard INSTANTLY instead of staring at a loader while the (cold-
+      // starting) API responds. It's safe to route from because usePlayerSync clears
+      // this cache the moment the signed-in wallet doesn't match it (a switched/new
+      // wallet), and a reconstructed player is still sent to confirm-your-class by
+      // its character_confirmed flag. The server sync always refreshes it in the
+      // background. `playerSynced`/`syncFailed` are intentionally NOT persisted so a
+      // fresh load always re-verifies with the server.
+      partialize: (state) => ({
+        isVerified: state.isVerified,
+        player: state.player,
+        inventory: state.inventory,
+      }),
     },
   ),
 )
