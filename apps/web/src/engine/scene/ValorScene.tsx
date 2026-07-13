@@ -15,6 +15,7 @@ import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
 import { GUN_FEEL } from '../combat/GunFeel';
 import { getGun, type GunId } from '../combat/GunStats';
+import type { AmmoId, AttachmentId, AttachmentSlot } from '../combat/Loadout';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useRiflePrototype, cloneRifle } from './rifle';
@@ -348,7 +349,7 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun }: {
+function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
@@ -361,6 +362,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   // stronger tier, so buying a better gun visibly upgrades every fight while a new
   // player (sidearm only) still gets the op's issued weapon.
   equippedGun?: GunId;
+  // The player's equipped ammo + stat attachments (B) — folded into every carried
+  // gun's stats, and (for incendiary) a burn DoT.
+  equippedAmmo?: AmmoId;
+  equippedMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
 }) {
   const { camera, gl, scene } = useThree();
 
@@ -386,7 +391,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
   const blackout = !!mission.blackout; // the Rift with NVG jammed — fight by muzzle-flash
 
   const sim = useMemo(() => {
-    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
+    const s = new FpsSim({ loadout: LOADOUT, attachments: mission.attachments, ammoId: equippedAmmo, gunMods: equippedMods, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
     s.setAllActive(false); // rooms start dormant; breaching each one wakes it
     return s;
   }, []);
@@ -2129,7 +2134,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun }: {
+export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods }: {
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2151,6 +2156,10 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
   /** The player's equipped marketplace gun (A). Raises the floor of each op's
    *  issued weapon — you carry whichever tier is higher. Omitted at `/dev/verb`. */
   equippedGun?: GunId;
+  /** The player's equipped ammo + stat attachments (B) — folded into gun stats
+   *  and, for incendiary, a burn DoT. Omitted at `/dev/verb`. */
+  equippedAmmo?: AmmoId;
+  equippedMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
 } = {}) {
   // Server progress (ops cleared), clamped to a valid campaign index — the resume
   // target and the unlock floor.
@@ -2482,7 +2491,7 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} />
         </Suspense>
       </Canvas>
 

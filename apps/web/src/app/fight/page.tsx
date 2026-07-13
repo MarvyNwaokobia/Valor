@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { usePlayerStore } from '@/stores/usePlayerStore';
-import { equippedGunId } from '@/lib/guns';
+import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 
 // The tactical HUD face (see /dev/verb) — exposed as a CSS var for the scene.
 const tactical = Rajdhani({
@@ -48,6 +48,10 @@ function FightInner() {
   // better gun actually shows up in the fight.
   const inventory = usePlayerStore((s) => s.inventory);
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
+  // B: equipped ammo + attachments modify the carried gun's stats (and drive the
+  // incendiary burn) inside the sim.
+  const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory]);
+  const equippedMods = useMemo(() => equippedAttachments(inventory), [inventory]);
 
   // The operation is chosen OUTSIDE the game (Campaign → Operations list), which
   // routes here as /fight?op=N. Read it via useSearchParams (NOT window.location,
@@ -79,6 +83,8 @@ function FightInner() {
         accountRank={accountRank}
         accountXp={accountXp}
         equippedGun={equippedGun}
+        equippedAmmo={equippedAmmo}
+        equippedMods={equippedMods}
       />
     </div>
   );

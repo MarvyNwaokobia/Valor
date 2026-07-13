@@ -18,6 +18,13 @@
  */
 
 import { getGun, type GunId, type GunStats } from '../combat/GunStats';
+import {
+  AMMO_CATALOG,
+  resolveGunStats,
+  type AmmoId,
+  type AttachmentId,
+  type AttachmentSlot,
+} from '../combat/Loadout';
 
 export type Vec3 = [number, number, number];
 
@@ -48,6 +55,9 @@ export interface FpsEnemy {
   active: boolean;   // AI only runs when the room has been entered
   boss: boolean;
   phase: number;     // 0 for a mook; 1..3 for a boss, rising as its health falls
+  // ── Incendiary DoT (B) ──
+  burnUntil: number; // sim-time the thermite burn stops (0 = not burning)
+  burnDps: number;   // HP/s the active burn ticks for
 }
 
 /** A wall or crate: an axis-aligned box that blocks movement and bullets. */
@@ -131,6 +141,12 @@ export interface FpsSimOptions {
   loadout?: GunId[];
   /** Attachments fitted at the start of the op (e.g. NVG in the Rift). */
   attachments?: Attachment[];
+  /** The player's equipped ammo (B). Modifies every carried gun's stats via
+   *  resolveGunStats; incendiary also applies a burn DoT on hit. Default FMJ. */
+  ammoId?: AmmoId;
+  /** The player's equipped stat attachments (B), one per slot — barrel/optic/
+   *  grip/magazine. Applied to every carried gun via resolveGunStats. */
+  gunMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
   enemies: EnemySpec[];
   cover?: CoverBox[];
   /** A rescue op's hostage/VIP start point — they wait here until you reach them,
@@ -240,6 +256,9 @@ export const FPS_TUNING = {
 
 const UP: Vec3 = [0, 1, 0];
 
+/** How long an incendiary hit keeps an enemy burning (B) — matches the shop copy. */
+const INCENDIARY_BURN_SECS = 2;
+
 export class FpsSim {
   // The active weapon. Reassigned on a weapon switch (loadout support).
   gun: GunStats;
@@ -250,6 +269,10 @@ export class FpsSim {
   private ammoBySlot: number[];
   /** Currently-fitted attachments (the operator's kit, toggled in-mission). */
   readonly attachments = new Set<Attachment>();
+  /** The player's equipped ammo (B) — resolves gun stats + drives incendiary burn. */
+  readonly ammoId: AmmoId;
+  /** The player's equipped stat attachments (B) — resolves gun stats per slot. */
+  private readonly gunMods: Partial<Record<AttachmentSlot, AttachmentId>>;
   private enemies: FpsEnemy[] = [];
   private spawns: [number, number][] = [];
   private cover: CoverBox[];
@@ -296,8 +319,12 @@ export class FpsSim {
     // A loadout of 1-2 guns; a bare `gunId` is treated as a single-weapon loadout.
     const loadout = (opts.loadout && opts.loadout.length ? opts.loadout : [opts.gunId ?? 'sidearm']).slice(0, 2);
     this.loadout = loadout;
-    this.ammoBySlot = loadout.map((id) => getGun(id).magazine);
-    this.gun = getGun(loadout[0]);
+    // The equipped ammo + attachments (B) must be set BEFORE any resolveGun call,
+    // since resolveGun folds them into every carried gun's stats.
+    this.ammoId = opts.ammoId ?? 'standard';
+    this.gunMods = opts.gunMods ?? {};
+    this.ammoBySlot = loadout.map((id) => this.resolveGun(id).magazine);
+    this.gun = this.resolveGun(loadout[0]);
     this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
     for (const a of opts.attachments ?? []) this.attachments.add(a);
     this.cover = opts.cover ?? [];
@@ -324,6 +351,7 @@ export class FpsSim {
       e.maxHp = Math.max(1, Math.round((e.boss ? e.maxHp : FPS_TUNING.DEFAULT_ENEMY_HP) * hpMult));
       e.hp = e.maxHp;
       e.alive = true; e.deadAt = 0; e.active = true; e.token = false;
+      e.burnUntil = 0; e.burnDps = 0;
       e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
       e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
       e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
@@ -355,6 +383,8 @@ export class FpsSim {
       active: true,
       boss: spec.boss ?? false,
       phase: spec.boss ? 1 : 0,
+      burnUntil: 0,
+      burnDps: 0,
     };
     this.enemies.push(e);
     this.spawns.push([spec.pos[0], spec.pos[1]]);
@@ -408,6 +438,13 @@ export class FpsSim {
   }
   hasAttachment(a: Attachment): boolean { return this.attachments.has(a); }
 
+  /** A carried gun's stats with the player's equipped ammo + attachments folded in
+   *  (B). Every place that used to read raw getGun() goes through here so the whole
+   *  sim — cadence, spread, damage, reload, magazine — reflects the loadout. */
+  private resolveGun(id: GunId): GunStats {
+    return resolveGunStats(getGun(id), this.ammoId, this.gunMods);
+  }
+
   /** Cycle to this weapon's next fire mode. Single-mode guns don't change. */
   cycleFireMode(): FireMode {
     const modes = GUN_FIRE_MODES[this.gun.id] ?? ['auto'];
@@ -422,7 +459,7 @@ export class FpsSim {
   switchGun(n: number): boolean {
     if (n < 0 || n >= this.loadout.length || n === this.activeSlot) return false;
     this.activeSlot = n;                 // the ammo getter now points at this slot
-    this.gun = getGun(this.loadout[n]);
+    this.gun = this.resolveGun(this.loadout[n]);
     this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
     this.reloading = false;
     this.burstLeft = 0;
@@ -465,9 +502,25 @@ export class FpsSim {
         e.hp = e.maxHp;
         e.phase = e.boss ? 1 : 0;
         e.token = false;
+        e.burnUntil = 0; e.burnDps = 0;
         e.ai = 'hidden';
         e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
         this.push(produced, { kind: 'spawn', enemyId: e.id });
+      }
+    }
+
+    // Incendiary burn (B): tick the thermite DoT on any burning enemy. It runs
+    // independently of the enemy AI so it lands even while they're ducked, and a
+    // burn can score the kill after you've moved on.
+    for (const e of this.enemies) {
+      if (!e.alive || e.burnDps <= 0 || this.time >= e.burnUntil) continue;
+      e.hp -= e.burnDps * dt;
+      if (e.hp <= 0) {
+        e.hp = 0;
+        e.alive = false;
+        e.deadAt = this.time;
+        this.kills++;
+        this.push(produced, { kind: 'kill', enemyId: e.id });
       }
     }
 
@@ -581,6 +634,14 @@ export class FpsSim {
         hitEnemy.hp = 0;
         hitEnemy.deadAt = this.time;
         this.kills++;
+      } else {
+        // Incendiary (B): each hit refreshes a thermite burn that keeps ticking
+        // after you stop firing, and can finish a wounded target on its own.
+        const burn = AMMO_CATALOG[this.ammoId].burnDps;
+        if (burn > 0) {
+          hitEnemy.burnUntil = this.time + INCENDIARY_BURN_SECS;
+          hitEnemy.burnDps = burn;
+        }
       }
       this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed });
       if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id });
@@ -802,8 +863,8 @@ export class FpsSim {
     this.mercyUntil = 0;
     // Back to the primary, both weapons topped up.
     this.activeSlot = 0;
-    this.ammoBySlot = this.loadout.map((id) => getGun(id).magazine);
-    this.gun = getGun(this.loadout[0]);
+    this.ammoBySlot = this.loadout.map((id) => this.resolveGun(id).magazine);
+    this.gun = this.resolveGun(this.loadout[0]);
     this.fireMode = (GUN_FIRE_MODES[this.gun.id] ?? ['auto'])[0];
     this.reloading = false;
     if (this.hostage) { this.hostage.x = this.hostage.spawn[0]; this.hostage.z = this.hostage.spawn[1]; this.hostage.rescued = false; }
@@ -814,6 +875,7 @@ export class FpsSim {
       e.alive = true; e.hp = e.maxHp;
       e.token = false; e.ai = 'hidden'; e.ducking = 1;
       e.phase = e.boss ? 1 : 0;
+      e.burnUntil = 0; e.burnDps = 0;
       e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
       e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
     }
@@ -841,6 +903,7 @@ export class FpsSim {
       e.maxHp = Math.max(1, Math.round(FPS_TUNING.DEFAULT_ENEMY_HP * hpMult));
       e.hp = e.maxHp;
       e.alive = true; e.deadAt = 0; e.active = true; e.token = false;
+      e.burnUntil = 0; e.burnDps = 0;
       e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
       e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
       e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
@@ -868,7 +931,7 @@ export class FpsSim {
     if (!this.playerAlive) return;
     this.playerHp = FPS_TUNING.PLAYER_HP;
     this.reloading = false;
-    this.ammoBySlot = this.loadout.map((id) => getGun(id).magazine);
+    this.ammoBySlot = this.loadout.map((id) => this.resolveGun(id).magazine);
   }
 
   /** Debug: drop every enemy now (probe hook for headless verification). */
