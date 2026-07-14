@@ -352,9 +352,11 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
-  audio: FpsAudio; lowSpec: boolean; mission: Mission; onComplete: () => void;
+  // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
+  // expensive postprocessing (touch OR a desktop that can't hold framerate).
+  audio: FpsAudio; lowSpec: boolean; lightFx: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
   // C1: the real server account standing. When present, the HUD's rank bar is
   // SEEDED from it (so it shows your true rank/progress, not a local number) and
@@ -1625,7 +1627,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
       <hemisphereLight args={theme.hemi} />
       <directionalLight
         position={[9, 16, 10]} intensity={theme.sun.intensity} color={theme.sun.color} castShadow
-        shadow-mapSize={[lowSpec ? 1024 : 2048, lowSpec ? 1024 : 2048]}
+        shadow-mapSize={[lightFx ? 1024 : 2048, lightFx ? 1024 : 2048]}
         shadow-camera-left={-22} shadow-camera-right={22}
         shadow-camera-top={22} shadow-camera-bottom={-22}
         shadow-camera-far={70} shadow-bias={-0.0008}
@@ -1766,11 +1768,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, mission, onComplete, pausedRe
         </mesh>
       ))}
 
-      {/* ── bodycam post ── C3: mobile runs a LIGHT stack. N8AO adds a whole normal
-          re-render pass and Bloom a mipmap blur — the two priciest effects — so on
-          lowSpec we drop them (and enableNormalPass) and keep only the cheap
-          chromatic edge + vignette that sell the "lens". Desktop keeps the full look. */}
-      {lowSpec ? (
+      {/* ── bodycam post ── C3: the LIGHT stack drops N8AO (a whole normal re-render
+          pass) and Bloom (a mipmap blur) — the two priciest effects — keeping only the
+          cheap chromatic edge + vignette that sell the "lens". Used on touch AND on any
+          desktop/laptop that can't hold framerate on the full stack (adaptive: see the
+          PerformanceMonitor → `degraded` in ValorScene). Capable machines keep the full look. */}
+      {lightFx ? (
         <EffectComposer multisampling={0}>
           <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
           <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
@@ -2343,6 +2346,11 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectOpen, paused, debrief]);
   const [isTouch] = useState(detectTouchDevice);
+  // C3 adaptive quality: once PerformanceMonitor gives up trying to hold framerate
+  // (it has already let AdaptiveDpr drop the resolution and STILL can't keep up), we
+  // permanently drop the expensive postprocessing for this session. This is the fix
+  // for weak laptops/desktops — "desktop" no longer means "assume a strong GPU".
+  const [degraded, setDegraded] = useState(false);
 
   // Lock the PAGE to the game while the scene is mounted (restored on unmount so
   // other pages still scroll). Without this, iOS Safari lets a stray double-tap /
@@ -2509,14 +2517,16 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
         // C3: cap the render resolution. A retina phone is DPR 3 (9× the pixels of
         // DPR 1) — the single biggest mobile cost. Phones cap at 1.5, desktop at 2;
         // AdaptiveDpr drops toward the low end when PerformanceMonitor sees fps sag.
-        dpr={isTouch ? [1, 1.5] : [1, 2]}
+        dpr={(isTouch || degraded) ? [1, 1.5] : [1, 2]}
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
-        <PerformanceMonitor />
+        {/* flipflops caps how many dpr up/down swings it tolerates before deciding the
+            machine genuinely can't cope → onFallback drops the heavy postprocessing. */}
+        <PerformanceMonitor flipflops={3} onFallback={() => setDegraded(true)} />
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={isTouch || degraded} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
         </Suspense>
       </Canvas>
 
