@@ -115,6 +115,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/admin")
                 .route("/login", web::post().to(admin::login))
                 .route("/stats", web::get().to(admin::get_stats))
+                .route("/onchain", web::get().to(admin::list_onchain))
                 .route("/seasons", web::get().to(admin::list_seasons))
                 .route("/seasons", web::post().to(admin::create_season))
                 .route("/seasons/{id}/end", web::post().to(admin::end_season))

@@ -195,6 +195,9 @@ async fn persist_battle(
     xp_opponent: i32,
     is_bot: bool,
     rounds_data: serde_json::Value,
+    // Whether to also record this result on-chain (ValorGameRecord). PvE losses
+    // skip the chain to save gas — the DB row still shows in battle history.
+    record_on_chain: bool,
 ) {
     let now = Utc::now();
     let _ = sqlx::query(
@@ -215,7 +218,7 @@ async fn persist_battle(
     .execute(&state.db)
     .await;
 
-    if let Some(chain) = state.chain.as_ref().cloned() {
+    if let Some(chain) = state.chain.as_ref().filter(|_| record_on_chain).cloned() {
         let loser_wallet = if winner_wallet == challenger { opponent } else { challenger };
         let winner_addr = winner_wallet.parse::<Address>().unwrap_or_else(|_| Address::zero());
         let loser_addr = loser_wallet.parse::<Address>().unwrap_or_else(|_| Address::zero());
@@ -242,11 +245,14 @@ async fn finalize_fight(
     base_xp: i32,
     xp_multiplier: i32,
     rounds_data: serde_json::Value,
+    // Record this result on-chain? PvE passes `won` (Option B: wins/completions
+    // on-chain, losses history-only); the bot fight passes true.
+    record_on_chain: bool,
 ) -> Result<FightOutcome, HttpResponse> {
     let award = award_player(state, wallet, won, base_xp, xp_multiplier).await?;
     let battle_id = Uuid::new_v4();
     let winner = if won { wallet } else { "bot" };
-    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data).await;
+    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain).await;
     Ok(FightOutcome {
         won,
         xp_earned: award.xp_earned,
@@ -410,6 +416,7 @@ pub async fn bot_fight_round(
         finalize.xp_awarded,
         finalize.xp_multiplier,
         rounds_json,
+        true, // bot fights record on-chain as before
     )
     .await
     {
@@ -522,7 +529,15 @@ pub async fn complete_live_fight(
         None => (fight_xp(body.won), false),              // non-Campaign fight
     };
 
-    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, json!([])).await {
+    // Carry the mission context so battle history can show "OP N · <mission> — WIN/LOSS".
+    // The frontend maps `level` → the mission name (it owns the campaign data).
+    let rounds = match body.level {
+        Some(level) => json!({ "kind": "mission", "level": level, "won": body.won }),
+        None => json!([]),
+    };
+    // Option B: record wins/completions on-chain; losses stay history-only (no gas).
+    let record_on_chain = body.won;
+    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain).await {
         Ok(o) => o,
         Err(resp) => return resp,
     };
@@ -749,7 +764,7 @@ pub async fn complete_pvp_match(
     };
 
     let battle_id = Uuid::new_v4();
-    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([])).await;
+    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([]), true).await;
 
     let side = |w: &str, a: &PlayerAward| json!({
         "wallet": w, "xp_awarded": a.xp_earned, "new_xp": a.new_xp,

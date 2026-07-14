@@ -2,11 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Swords, Bot, ExternalLink } from 'lucide-react'
+import { Swords, Bot, Crosshair, ExternalLink } from 'lucide-react'
 import { formatGDollarNumber } from '@/utils/format'
 import { RANK_G_REWARD } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import { ChainBadge } from '@/components/ui/ChainBadge'
+import { CAMPAIGN } from '@/engine/fps/campaign'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -20,6 +21,15 @@ interface BattleRow {
   is_bot: boolean
   created_at: string
   game_record_tx: string | null
+  rounds_data?: { kind?: string; level?: number; won?: boolean } | unknown
+}
+
+/** A campaign fight carries {kind:"mission", level}; resolve its display label. */
+function missionInfo(rounds: BattleRow['rounds_data']): { op: number; name: string } | null {
+  if (!rounds || Array.isArray(rounds) || typeof rounds !== 'object') return null
+  const r = rounds as { kind?: string; level?: number }
+  if (r.kind !== 'mission' || typeof r.level !== 'number') return null
+  return { op: r.level, name: CAMPAIGN[r.level - 1]?.name ?? 'OPERATION' }
 }
 
 interface Props {
@@ -101,6 +111,7 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
           const opponent     = isChallenger ? battle.opponent_wallet : battle.challenger_wallet
           const xpEarned     = isChallenger ? battle.xp_awarded_challenger : battle.xp_awarded_opponent
           const gEarned      = won ? gPerWin : 0
+          const mission      = missionInfo(battle.rounds_data)
 
           return (
             <motion.div
@@ -120,11 +131,14 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
                 style={{ background: won ? '#22c55e' : '#ef4444' }}
               />
 
-              {/* Opponent */}
+              {/* Opponent — a campaign op shows the mission, else the wallet/bot */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  {battle.is_bot && <Bot size={10} className="text-slate-500 shrink-0" />}
-                  <p className="text-xs font-bold text-white truncate">{shortAddr(opponent)}</p>
+                  {mission ? <Crosshair size={10} className="text-cyan-400 shrink-0" />
+                    : battle.is_bot && <Bot size={10} className="text-slate-500 shrink-0" />}
+                  {mission
+                    ? <p className="text-xs font-bold text-white truncate"><span className="text-slate-500">OP {mission.op} · </span>{mission.name}</p>
+                    : <p className="text-xs font-bold text-white truncate">{shortAddr(opponent)}</p>}
                   <span
                     className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm shrink-0"
                     style={{
@@ -132,7 +146,7 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
                       color:       won ? '#22c55e'             : '#ef4444',
                     }}
                   >
-                    {won ? 'WIN' : 'LOSS'}
+                    {mission ? (won ? 'CLEARED' : 'FAILED') : (won ? 'WIN' : 'LOSS')}
                   </span>
                 </div>
                 <p className="text-[9px] text-slate-600 mt-0.5">{timeAgo(battle.created_at)}</p>
