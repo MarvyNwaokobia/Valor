@@ -62,7 +62,13 @@ const RECOIL_RECOVER = 12;     // per second
 const BOB = 0.014;
 
 const HIP_POS = new THREE.Vector3(0.2, -0.2, -0.5);
-const ADS_POS = new THREE.Vector3(0, -0.088, -0.32);
+// ADS is a gentle RAISE of the hip pose, not a shove into the camera. The rifle is
+// ~0.88m long and centred on its origin (rear ~0.44m back), so pulling it to z=-0.32
+// AND centring it (x=0) put the chunky receiver end-on ~1cm from the eye = a giant
+// black blob. Instead keep it at hip depth (-0.5, whole gun in front), only slightly
+// toward centre (x 0.2->0.1 so you still see its side, not its rear), and lift it
+// (y -0.2->-0.1). The aim "zoom" comes from the FOV narrowing, not the gun position.
+const ADS_POS = new THREE.Vector3(0.1, -0.1, -0.5);
 
 // The tactical UI face (loaded in the route via next/font), mono for raw numbers.
 const UI_FONT = 'var(--font-tactical), ui-monospace, monospace';
