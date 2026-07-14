@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { PerformanceMonitor, AdaptiveDpr } from '@react-three/drei';
 import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration, N8AO } from '@react-three/postprocessing';
@@ -352,11 +352,12 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
-  // expensive postprocessing (touch OR a desktop that can't hold framerate).
-  audio: FpsAudio; lowSpec: boolean; lightFx: boolean; mission: Mission; onComplete: () => void;
+  // expensive postprocessing. minimal = the aggressive tier for a struggling
+  // desktop/laptop: also kills shadows + set-dressing (mobile never sets this).
+  audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
   // C1: the real server account standing. When present, the HUD's rank bar is
   // SEEDED from it (so it shows your true rank/progress, not a local number) and
@@ -1626,7 +1627,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, mission, onComplete,
           shape. Point-light intensity is in physical units: single digits, not tens. */}
       <hemisphereLight args={theme.hemi} />
       <directionalLight
-        position={[9, 16, 10]} intensity={theme.sun.intensity} color={theme.sun.color} castShadow
+        position={[9, 16, 10]} intensity={theme.sun.intensity} color={theme.sun.color} castShadow={!minimal}
         shadow-mapSize={[lightFx ? 1024 : 2048, lightFx ? 1024 : 2048]}
         shadow-camera-left={-22} shadow-camera-right={22}
         shadow-camera-top={22} shadow-camera-bottom={-22}
@@ -1669,8 +1670,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, mission, onComplete,
         </mesh>
       ))}
 
-      {/* set dressing: barrels, crates, sandbags, rubble hugging the walls */}
-      {!survival && <SetDressing mission={mission} />}
+      {/* set dressing: barrels, crates, sandbags, rubble hugging the walls.
+          Dropped on `minimal` (struggling desktop/laptop) to cut draw calls. */}
+      {!survival && !minimal && <SetDressing mission={mission} />}
 
       {/* waypoint beacon at the current objective */}
       <group ref={waypointRef}>
@@ -2346,11 +2348,31 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectOpen, paused, debrief]);
   const [isTouch] = useState(detectTouchDevice);
-  // C3 adaptive quality: once PerformanceMonitor gives up trying to hold framerate
-  // (it has already let AdaptiveDpr drop the resolution and STILL can't keep up), we
-  // permanently drop the expensive postprocessing for this session. This is the fix
-  // for weak laptops/desktops — "desktop" no longer means "assume a strong GPU".
+  // Graphics quality. 'auto' = detect (default), 'high' = force full effects,
+  // 'low' = force the minimal tier. Persisted so a weak machine stays fixed.
+  const [quality, setQuality] = useState<'auto' | 'high' | 'low'>(() => {
+    if (typeof window === 'undefined') return 'auto';
+    const q = window.localStorage.getItem('valor_quality');
+    return q === 'high' || q === 'low' ? q : 'auto';
+  });
+  const pickQuality = useCallback((q: 'auto' | 'high' | 'low') => {
+    setQuality(q);
+    setDegraded(false); // let 'auto' re-evaluate; 'high'/'low' are explicit
+    try { window.localStorage.setItem('valor_quality', q); } catch { /* private mode */ }
+  }, []);
+  // Auto-detect: PerformanceMonitor flags a machine that can't hold framerate even
+  // after AdaptiveDpr has dropped the resolution. Sticky for the session. A warmup
+  // window + a small counter avoid tripping on the one-time load hitch.
   const [degraded, setDegraded] = useState(false);
+  const degradeHits = useRef(0);
+  const sceneMountedAt = useRef(0);
+  useEffect(() => { sceneMountedAt.current = performance.now(); }, [missionIndex, mode, runNonce]);
+
+  // minimal = the aggressive tier (dpr 1, no shadows, no set-dressing). Desktop/laptop
+  // only — mobile keeps its current look untouched. lightFx = drop heavy postprocessing.
+  const autoMinimal = quality === 'low' || (quality === 'auto' && degraded);
+  const minimal = !isTouch && autoMinimal;
+  const lightFx = isTouch || autoMinimal;
 
   // Lock the PAGE to the game while the scene is mounted (restored on unmount so
   // other pages still scroll). Without this, iOS Safari lets a stray double-tap /
@@ -2517,16 +2539,28 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
         // C3: cap the render resolution. A retina phone is DPR 3 (9× the pixels of
         // DPR 1) — the single biggest mobile cost. Phones cap at 1.5, desktop at 2;
         // AdaptiveDpr drops toward the low end when PerformanceMonitor sees fps sag.
-        dpr={(isTouch || degraded) ? [1, 1.5] : [1, 2]}
+        // Retina desktops render at DPR 2 (4x the pixels of DPR 1) — the single
+        // biggest desktop cost. `minimal` locks a struggling machine to DPR 1; mobile
+        // keeps 1.5; capable desktops keep 2 (AdaptiveDpr still trims within bounds).
+        dpr={isTouch ? [1, 1.5] : (minimal ? [1, 1] : [1, 2])}
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
-        {/* flipflops caps how many dpr up/down swings it tolerates before deciding the
-            machine genuinely can't cope → onFallback drops the heavy postprocessing. */}
-        <PerformanceMonitor flipflops={3} onFallback={() => setDegraded(true)} />
+        {/* Auto-degrade: after a warmup, sustained declines (or the flipflop fallback)
+            flip `degraded` → the minimal tier. Only matters while quality==='auto'. */}
+        <PerformanceMonitor
+          flipflops={3}
+          onFallback={() => setDegraded(true)}
+          onDecline={() => {
+            if (performance.now() - sceneMountedAt.current < 2500) return; // ignore load hitch
+            degradeHits.current += 1;
+            if (degradeHits.current >= 2) setDegraded(true);
+          }}
+          onIncline={() => { degradeHits.current = 0; }}
+        />
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={isTouch || degraded} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
         </Suspense>
       </Canvas>
 
@@ -2673,7 +2707,20 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
               <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
               <button onClick={exitToOps} style={btnC4('#6f7d8c')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
             </div>
-            <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, marginTop: 22 }}>{isTouch ? 'tap RESUME to return to the fight' : 'ESC resumes · this pause is safe, nothing is lost'}</div>
+            {/* Manual graphics quality — instant relief on a laggy machine (LOW = drop
+                shadows, set-dressing, and render resolution). AUTO adapts on its own. */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 20, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, letterSpacing: 2, color: '#6f7d8c' }}>GRAPHICS</span>
+              {(['auto', 'high', 'low'] as const).map((q) => (
+                <button key={q} onClick={() => pickQuality(q)} style={{
+                  ...btnC4(quality === q ? '#37d0e0' : '#5a6773'),
+                  padding: '5px 12px', fontSize: 11, letterSpacing: 1,
+                  background: quality === q ? 'rgba(55,208,224,.14)' : 'transparent',
+                  opacity: quality === q ? 1 : 0.65,
+                }}>{q.toUpperCase()}</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, marginTop: 18 }}>{isTouch ? 'tap RESUME to return to the fight' : 'ESC resumes · this pause is safe, nothing is lost'}</div>
           </div>
         )}
         {debrief && !selectOpen && (
