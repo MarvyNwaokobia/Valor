@@ -496,12 +496,15 @@ pub async fn get_battles(
         is_bot:                bool,
         created_at:            chrono::DateTime<Utc>,
         game_record_tx:        Option<String>,
+        // Carries mission context ({kind:"mission", level, won}) so the UI can show
+        // "OP N · <mission> — WIN/LOSS" for campaign fights.
+        rounds_data:           serde_json::Value,
     }
 
     let result = sqlx::query_as::<_, BattleRow>(
         "SELECT id, challenger_wallet, opponent_wallet, winner_wallet,
                 xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at,
-                game_record_tx
+                game_record_tx, rounds_data
          FROM battles
          WHERE challenger_wallet = $1 OR opponent_wallet = $1
          ORDER BY created_at DESC

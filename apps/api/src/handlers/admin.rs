@@ -226,6 +226,48 @@ pub async fn get_stats(
     })
 }
 
+// ── GET /admin/onchain — recent on-chain activity (Celoscan-linkable) ─────────
+#[derive(Serialize, sqlx::FromRow)]
+pub struct OnchainRow {
+    pub kind: String,       // 'mission_record' | 'marketplace_purchase' | 'battle_reward' | 'transfer_out' | ...
+    pub wallet: String,
+    pub detail: Option<String>, // level for records, amount for ledger
+    pub tx_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Merges on-chain game records (battles.game_record_tx) with on-chain G$ moves
+/// (g_ledger.tx_hash), newest first — only genuine 0x tx hashes. The admin UI
+/// links each to Celoscan.
+pub async fn list_onchain(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+    let rows = sqlx::query_as::<_, OnchainRow>(
+        "SELECT 'mission_record' AS kind, winner_wallet AS wallet,
+                (rounds_data->>'level') AS detail, game_record_tx AS tx_hash, created_at
+           FROM battles
+          WHERE game_record_tx LIKE '0x%'
+        UNION ALL
+         SELECT category AS kind, wallet_address AS wallet,
+                amount::text AS detail, tx_hash, created_at
+           FROM g_ledger
+          WHERE tx_hash LIKE '0x%'
+         ORDER BY created_at DESC
+         LIMIT 100",
+    )
+    .fetch_all(&state.db)
+    .await;
+
+    match rows {
+        Ok(r) => HttpResponse::Ok().json(r),
+        Err(e) => {
+            tracing::error!("Failed to fetch on-chain activity: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
 // ── Seasons: GET/POST /admin/seasons, POST /admin/seasons/:id/end ─────────────
 #[derive(Serialize, sqlx::FromRow)]
 pub struct SeasonRow {

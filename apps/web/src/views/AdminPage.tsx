@@ -33,6 +33,22 @@ interface AdminStats {
   total_g_volume: number
 }
 
+interface OnchainRow {
+  kind: string
+  wallet: string
+  detail: string | null
+  tx_hash: string
+  created_at: string
+}
+
+const KIND_LABEL: Record<string, string> = {
+  mission_record:       'Mission cleared',
+  marketplace_purchase: 'Purchase',
+  battle_reward:        'Reward paid',
+  transfer_out:         'Transfer',
+  ubi_claim:            'UBI claim',
+}
+
 function loadSession(): AdminSession | null {
   if (typeof window === 'undefined') return null
   try {
@@ -66,6 +82,7 @@ export default function AdminPage() {
   const [seasons, setSeasons] = useState<Season[]>([])
   const [selectedSeason, setSelectedSeason] = useState<string | 'all'>('all')
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [onchain, setOnchain] = useState<OnchainRow[]>([])
   const [newSeasonName, setNewSeasonName] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -120,6 +137,11 @@ export default function AdminPage() {
     if (res.ok) setStats(await res.json())
   }, [authedFetch, selectedSeason])
 
+  const refreshOnchain = useCallback(async () => {
+    const res = await authedFetch('/admin/onchain')
+    if (res.ok) setOnchain(await res.json())
+  }, [authedFetch])
+
   useEffect(() => {
     if (!session) return
     refreshSeasons()
@@ -128,7 +150,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (!session) return
     refreshStats()
-  }, [session, refreshStats])
+    refreshOnchain()
+  }, [session, refreshStats, refreshOnchain])
 
   async function handleCreateSeason() {
     if (!newSeasonName.trim()) return
@@ -253,6 +276,38 @@ export default function AdminPage() {
           <StatTile label="G$ Volume Moved" value={`${formatGDollarNumber(stats.total_g_volume)} G$`} />
         </div>
       )}
+
+      {/* On-chain activity — mission records + G$ moves, each linked to Celoscan */}
+      <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display font-bold text-white text-sm">On-Chain Activity</h3>
+          <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Latest {onchain.length}</span>
+        </div>
+        {onchain.length === 0 ? (
+          <p className="text-slate-600 text-xs">No on-chain activity yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-96 overflow-y-auto">
+            {onchain.map((r) => (
+              <a
+                key={r.tx_hash}
+                href={`https://celoscan.io/tx/${r.tx_hash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg border border-valor-border hover:border-slate-500 transition-colors text-left"
+                style={{ background: 'rgba(8,10,16,0.6)' }}
+              >
+                <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-sm shrink-0"
+                  style={{ background: 'rgba(55,208,224,0.12)', color: '#37d0e0' }}>
+                  {KIND_LABEL[r.kind] ?? r.kind}
+                </span>
+                <span className="text-xs text-slate-300 font-mono truncate flex-1">{r.wallet.slice(0, 8)}…{r.wallet.slice(-4)}</span>
+                {r.detail && <span className="text-[11px] text-slate-500 shrink-0">{r.kind === 'mission_record' ? `OP ${r.detail}` : `${formatGDollarNumber(Number(r.detail))} G$`}</span>}
+                <span className="text-[10px] text-slate-600 font-mono shrink-0">{r.tx_hash.slice(0, 8)}…</span>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
