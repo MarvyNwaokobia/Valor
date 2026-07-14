@@ -2364,12 +2364,25 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
   const pickQuality = useCallback((q: 'auto' | 'high' | 'low') => {
     setQuality(q);
     setDegraded(false); // let 'auto' re-evaluate; 'high'/'low' are explicit
-    try { window.localStorage.setItem('valor_quality', q); } catch { /* private mode */ }
+    try {
+      window.localStorage.setItem('valor_quality', q);
+      // HIGH means "this machine is fine" → forget the auto-detect so it starts full.
+      if (q === 'high') window.localStorage.removeItem('valor_degraded');
+    } catch { /* private mode */ }
   }, []);
   // Auto-detect: PerformanceMonitor flags a machine that can't hold framerate even
-  // after AdaptiveDpr has dropped the resolution. Sticky for the session. A warmup
-  // window + a small counter avoid tripping on the one-time load hitch.
-  const [degraded, setDegraded] = useState(false);
+  // after AdaptiveDpr has dropped the resolution. A warmup window + a small counter
+  // avoid tripping on the one-time load hitch. PERSISTED: once a machine degrades we
+  // remember it, so the NEXT launch starts minimal immediately instead of re-suffering
+  // ~5s of full-quality slowdown before detection kicks in. (Only used in 'auto'.)
+  const [degraded, setDegraded] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('valor_degraded') === '1';
+  });
+  const markDegraded = useCallback(() => {
+    setDegraded(true);
+    try { window.localStorage.setItem('valor_degraded', '1'); } catch { /* private mode */ }
+  }, []);
   const degradeHits = useRef(0);
   const sceneMountedAt = useRef(0);
   useEffect(() => { sceneMountedAt.current = performance.now(); }, [missionIndex, mode, runNonce]);
@@ -2555,11 +2568,11 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
             flip `degraded` → the minimal tier. Only matters while quality==='auto'. */}
         <PerformanceMonitor
           flipflops={3}
-          onFallback={() => setDegraded(true)}
+          onFallback={markDegraded}
           onDecline={() => {
             if (performance.now() - sceneMountedAt.current < 2500) return; // ignore load hitch
             degradeHits.current += 1;
-            if (degradeHits.current >= 2) setDegraded(true);
+            if (degradeHits.current >= 2) markDegraded();
           }}
           onIncline={() => { degradeHits.current = 0; }}
         />
