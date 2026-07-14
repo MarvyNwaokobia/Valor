@@ -49,10 +49,11 @@ describe('earn loop: rank from XP', () => {
     expect(rankUpsBetween(900, 2100)).toEqual(['Silver', 'Gold']);
   });
 
-  it('pays the live game G$ amounts per rank', () => {
-    expect(gReward('Silver')).toBe(20);
-    expect(gReward('Diamond')).toBe(150);
-    expect(gReward('Diamond')).toBeGreaterThan(gReward('Bronze'));
+  it('pays a flat G$ reward for reaching any rank', () => {
+    // Reaching a new rank pays a flat 500 G$ (matches server RANK_UP_REWARD_G).
+    expect(gReward('Silver')).toBe(500);
+    expect(gReward('Diamond')).toBe(500);
+    expect(gReward('Bronze')).toBe(500);
   });
 });
 

@@ -22,7 +22,7 @@ contract ValorRewardPool is OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable
     // ── Generic one-time bounties (e.g. first-clear rewards). Appended storage,
     //    so this stays UUPS-upgrade-safe. `ref` makes each bounty idempotent
     //    on-chain: a given ref pays out at most once, ever. ──
-    uint256 public constant MAX_REWARD = 500e18; // hard cap on any single bounty
+    uint256 public constant MAX_REWARD = 10000e18; // hard cap on any single bounty
     mapping(bytes32 => bool) public rewardRefUsed;
 
     event RewardDistributed(address indexed player, string rank, uint256 amount);
