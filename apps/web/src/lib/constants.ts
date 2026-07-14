@@ -15,12 +15,14 @@ export const RANK_COLORS: Record<Rank, string> = {
   Diamond: '#b9f2ff',
 }
 
+// Flat G$ paid for reaching a new rank (crossing XP_PER_RANK). Matches the
+// server-authoritative RANK_UP_REWARD_G in apps/api battles.rs.
 export const RANK_G_REWARD: Record<Rank, number> = {
-  Bronze: 10,
-  Silver: 20,
-  Gold: 40,
-  Platinum: 80,
-  Diamond: 150,
+  Bronze: 500,
+  Silver: 500,
+  Gold: 500,
+  Platinum: 500,
+  Diamond: 500,
 }
 
 export const XP_PER_RANK = 1000

@@ -64,6 +64,9 @@ async fn apply_item_boosts(db: &sqlx::PgPool, mut player: Player) -> Player {
 }
 
 const XP_PER_RANK: i32 = 1000;
+/// Flat G$ reward for reaching a new rank (crossing XP_PER_RANK). Paid once per
+/// (wallet, rank), on-chain, idempotently — see award_player + settle_rank_up_reward.
+const RANK_UP_REWARD_G: u64 = 500;
 const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
 
 fn next_rank(rank: &str) -> Option<&'static str> {
@@ -76,16 +79,13 @@ fn next_rank(rank: &str) -> Option<&'static str> {
     }
 }
 
-/// One-time G$ bounty for the FIRST clear of a Campaign op (B0). Scarce and
-/// capped: ordinary ops pay a little, the zone bosses (op 5/10/15) pay more. A
-/// full campaign clear totals ~74 G$, paid once — not a repeatable grind faucet.
-fn first_clear_bounty(level: i32) -> u64 {
-    match level {
-        5  => 10, // Cinder
-        10 => 15, // the Warden
-        15 => 25, // Valor
-        _  => 2,
-    }
+/// One-time G$ bounty for the FIRST clear of a Campaign op. Every op pays a flat
+/// 1000 G$, once — a first-clear reward, not a repeatable grind faucet (a given
+/// (wallet, op) can only ever pay once; see complete_live_fight + the on-chain ref).
+const FIRST_CLEAR_BOUNTY_G: u64 = 1000;
+
+fn first_clear_bounty(_level: i32) -> u64 {
+    FIRST_CLEAR_BOUNTY_G
 }
 
 struct FightOutcome {
@@ -136,10 +136,10 @@ async fn award_player(
     let ranked_up  = raw_new_xp >= XP_PER_RANK;
     let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
     let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
-    // B0: XP is DECOUPLED from G$. Ranking up is pure progression/unlocks — it no
-    // longer mints G$ (that was the grind faucet). G$ now comes from one-time
-    // first-clear bounties (see complete_live_fight) and, later, competition.
-    let g_awarded  = 0i64;
+    // Reaching a new rank pays a flat, scarce reward (RANK_UP_REWARD_G). It is paid
+    // on-chain once per (wallet, rank), idempotently, like the first-clear bounty —
+    // set here only once the DB payout slot is actually claimed (see below).
+    let mut g_awarded = 0i64;
 
     let wins   = if won { player.wins + 1 } else { player.wins };
     let losses = if !won { player.losses + 1 } else { player.losses };
@@ -168,13 +168,36 @@ async fn award_player(
     }
 
     if let Some(rank) = new_rank {
+        let rank_str = rank.to_string();
+        // Claim the once-per-rank payout slot idempotently: only the first request to
+        // insert (wallet, rank) owns the payout. A retry or a concurrent duplicate
+        // fight-complete hits the PK conflict and pays nothing (the on-chain ref guard
+        // is the second line of defence).
+        let claimed = sqlx::query(
+            "INSERT INTO rank_up_rewards (wallet_address, rank, amount)
+             VALUES ($1, $2, $3) ON CONFLICT (wallet_address, rank) DO NOTHING",
+        )
+        .bind(wallet).bind(&rank_str).bind(RANK_UP_REWARD_G as i64)
+        .execute(&state.db).await
+        .map(|r| r.rows_affected() == 1)
+        .unwrap_or(false);
+
+        if claimed {
+            g_awarded = RANK_UP_REWARD_G as i64;
+        }
+
         if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
-            let rank_str = rank.to_string();
+            let db = state.db.clone();
+            let wallet_owned = wallet.to_string();
             tokio::spawn(async move {
-                // Rank progression is on-chain (records + leaderboard-pool enrollment),
-                // but B0 decoupled the G$ mint — no distribute_rank_up_reward here.
+                // Rank progression is on-chain (records + leaderboard-pool enrollment).
                 chain.record_rank_up(addr, rank_str.clone()).await;
                 chain.enroll_in_rank_pool(addr, &rank_str).await;
+                // The G$ reward payout — idempotent per (wallet, rank), shared with the
+                // reconcile sweep so a failed payout is re-attempted later.
+                if claimed {
+                    settle_rank_up_reward(&db, &chain, &wallet_owned, &rank_str, RANK_UP_REWARD_G).await;
+                }
             });
         }
     }
@@ -658,6 +681,59 @@ async fn settle_first_clear_bounty(
     }
 }
 
+/// Attempt (or re-attempt) the on-chain payout for one claimed rank-up reward row.
+/// Mirrors `settle_first_clear_bounty`: the on-chain `ref` (keyed per wallet+rank)
+/// makes it idempotent, a row whose payout landed but whose DB update was lost is
+/// reconciled without a doomed retry, and the ledger/lifetime are credited only on a
+/// successful settle of a `failed`/`pending` row so they can never double-count.
+/// Shared by the live rank-up path and the reconcile sweep.
+async fn settle_rank_up_reward(
+    db: &sqlx::PgPool,
+    chain: &crate::services::chain::ChainWriter,
+    wallet: &str,
+    rank: &str,
+    amount: u64,
+) -> &'static str {
+    let Ok(addr) = wallet.parse::<Address>() else {
+        tracing::error!("rank-up reward: bad wallet {}", wallet);
+        return "bad_wallet";
+    };
+    // Deterministic on-chain idempotency key per (wallet, rank).
+    let reference = ethers::utils::keccak256(format!("rank_up:{}:{}", wallet, rank).as_bytes());
+
+    let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
+    let result = if already_paid { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+
+    match result {
+        Ok(true) => {
+            let _ = sqlx::query("UPDATE rank_up_rewards SET status = 'paid' WHERE wallet_address = $1 AND rank = $2")
+                .bind(wallet).bind(rank).execute(db).await;
+            let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                .bind(amount as i64).bind(wallet).execute(db).await;
+            crate::handlers::ledger::insert_ledger_entry(
+                db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+            ).await;
+            tracing::info!(
+                "rank-up reward paid: {} {} +{} G${}",
+                wallet, rank, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
+            );
+            "paid"
+        }
+        Ok(false) => {
+            tracing::warn!("Reward pool not configured — rank-up reward for {} {} not paid", wallet, rank);
+            let _ = sqlx::query("UPDATE rank_up_rewards SET status = 'failed' WHERE wallet_address = $1 AND rank = $2")
+                .bind(wallet).bind(rank).execute(db).await;
+            "unconfigured"
+        }
+        Err(e) => {
+            tracing::error!("rank-up reward on-chain failed for {} {}: {}", wallet, rank, e);
+            let _ = sqlx::query("UPDATE rank_up_rewards SET status = 'failed' WHERE wallet_address = $1 AND rank = $2")
+                .bind(wallet).bind(rank).execute(db).await;
+            "failed"
+        }
+    }
+}
+
 /// Cron-triggered sweep that re-attempts every `status='failed'` first-clear bounty.
 /// A bounty lands in `failed` when its on-chain payout didn't confirm (RPC blip, a
 /// briefly-empty or unconfigured pool) — and, because pve_level already advanced,
@@ -704,12 +780,38 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         }
     }
 
-    tracing::info!("bounty reconcile: {}/{} failed bounties settled", reconciled, attempted);
+    // Same sweep for failed rank-up rewards (identical idempotent settle rail).
+    let rank_rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT wallet_address, rank, amount
+         FROM rank_up_rewards
+         WHERE status = 'failed'
+         ORDER BY created_at ASC
+         LIMIT 25",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let rank_attempted = rank_rows.len();
+    let mut rank_reconciled = 0u32;
+    for (wallet, rank, amount) in rank_rows {
+        if settle_rank_up_reward(&state.db, &chain, &wallet, &rank, amount.max(0) as u64).await == "paid" {
+            rank_reconciled += 1;
+        }
+    }
+
+    tracing::info!(
+        "reward reconcile: bounties {}/{}, rank-ups {}/{} settled",
+        reconciled, attempted, rank_reconciled, rank_attempted
+    );
     HttpResponse::Ok().json(json!({
-        "attempted":    attempted,
-        "reconciled":   reconciled,
-        "still_failed": attempted as u32 - reconciled,
-        "ran_at":       Utc::now().to_rfc3339(),
+        "attempted":         attempted,
+        "reconciled":        reconciled,
+        "still_failed":      attempted as u32 - reconciled,
+        "rank_attempted":    rank_attempted,
+        "rank_reconciled":   rank_reconciled,
+        "rank_still_failed": rank_attempted as u32 - rank_reconciled,
+        "ran_at":            Utc::now().to_rfc3339(),
     }))
 }
 
@@ -900,4 +1002,30 @@ pub async fn challenge_player(
         "xp_opponent":   xp_opponent,
         "rounds":        result.rounds,
     }))
+}
+
+#[cfg(test)]
+mod reward_amount_tests {
+    use super::*;
+
+    #[test]
+    fn every_op_pays_a_flat_first_clear_bounty() {
+        for level in [1, 4, 5, 7, 10, 12, 15] {
+            assert_eq!(first_clear_bounty(level), 1000, "op {} bounty", level);
+        }
+    }
+
+    #[test]
+    fn rank_up_reward_is_500() {
+        assert_eq!(RANK_UP_REWARD_G, 500);
+    }
+
+    #[test]
+    fn rewards_stay_under_the_contract_cap() {
+        // The on-chain ValorRewardPool.MAX_REWARD is 10_000 G$; both payouts must fit
+        // in a single distributeReward call or it reverts with BadAmount.
+        const MAX_REWARD_G: u64 = 10_000;
+        assert!(first_clear_bounty(15) <= MAX_REWARD_G);
+        assert!(RANK_UP_REWARD_G <= MAX_REWARD_G);
+    }
 }
