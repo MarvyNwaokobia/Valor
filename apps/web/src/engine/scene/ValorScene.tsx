@@ -2167,11 +2167,15 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+  /** Fires when a campaign op BEGINS (1-based level) — `/fight` uses it to open a
+   *  server-authoritative fight session (the anti-forgery token). Omitted at
+   *  `/dev/verb`. */
+  onOpStart?: (level: number) => void;
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
-  onOpCleared?: (level: number, durationSecs: number) => void;
+  onOpCleared?: (level: number) => void;
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
@@ -2247,7 +2251,15 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
   const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet'>('campaign');
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
   const missionStartWall = useRef(performance.now()); // for the op's clear time
-  useEffect(() => { missionStartWall.current = performance.now(); }, [missionIndex, runNonce, mode]);
+  // Latest onOpStart in a ref so firing it can't churn the op-start effect's deps.
+  const onOpStartRef = useRef(onOpStart);
+  onOpStartRef.current = onOpStart;
+  useEffect(() => {
+    missionStartWall.current = performance.now();
+    // Open a server-authoritative fight session as each campaign op begins. Other
+    // modes (survival/gauntlet) carry their own run tokens.
+    if (mode === 'campaign') onOpStartRef.current?.(missionIndex + 1);
+  }, [missionIndex, runNonce, mode]);
   const mission = mode === 'gauntlet' ? GAUNTLET_MISSION : mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
   // The Gauntlet is a prestige tier — earned by finishing the campaign.
   const gauntletUnlocked = progress >= CAMPAIGN.length;
@@ -2294,7 +2306,7 @@ export function ValorScene({ onOpCleared, startMission, resumeLevel, walletAddre
   const handleComplete = () => {
     unlock(missionIndex + 1); // the next op is unlocked the moment this one is cleared
     // Record the real reward (server-authoritative) for this op, by 1-based level.
-    onOpCleared?.(missionIndex + 1, Math.max(1, Math.round((performance.now() - missionStartWall.current) / 1000)));
+    onOpCleared?.(missionIndex + 1);
     const last = missionIndex >= CAMPAIGN.length - 1;
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');

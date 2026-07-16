@@ -66,6 +66,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/battles")
                 .route("/bot/start", web::post().to(battles::start_bot_fight))
                 .route("/bot/round", web::post().to(battles::bot_fight_round))
+                .route("/fight/start", web::post().to(battles::start_live_fight))
                 .route("/fight/complete", web::post().to(battles::complete_live_fight))
                 .route("/pvp/complete", web::post().to(battles::complete_pvp_match))
                 .route("/bounties/reconcile", web::post().to(battles::reconcile_first_clear_bounties))
