@@ -135,3 +135,25 @@ export function retryImport<T>(
     return retryImport(factory, retries - 1, backoffMs);
   });
 }
+
+// Warm a heavy scene chunk at most once per page load, on idle, ignoring errors.
+// Called from the pre-fight screens (on intent) so only players actually heading
+// into a fight pay the multi-MB download — not every visitor. Entering the fight
+// then hits a warm cache instead of a cold, blocking fetch.
+const warmed = new Set<string>();
+
+function warmChunk(key: string, load: () => Promise<unknown>): void {
+  if (typeof window === 'undefined' || warmed.has(key)) return;
+  warmed.add(key);
+  const run = () => { load().catch(() => {}); };
+  const ric = (window as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+  }).requestIdleCallback;
+  if (ric) ric(run, { timeout: 4000 });
+  else setTimeout(run, 800);
+}
+
+/** Preload the first-person /fight scene (ValorScene). */
+export function warmFightScene(): void {
+  warmChunk('valor-scene', () => import('@/engine/scene/ValorScene'));
+}
