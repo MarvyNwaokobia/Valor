@@ -9,6 +9,7 @@ import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
 import { getLevel, CAMPAIGN_LENGTH } from '@/engine/campaign/levels';
 import { getMission } from '@/engine/campaign/missions';
+import { retryImport } from '@/lib/retryImport';
 import { AIDifficulty } from '@/engine/combat';
 import type { StageId } from '@/engine/scene/ArenaStage';
 import { StoryPanel } from '@/engine/story/StoryPanel';
@@ -22,7 +23,7 @@ import {
 } from '@/engine/story/storyContent';
 
 const GameScene = dynamic(
-  () => import('@/engine/scene/GameScene').then((m) => m.GameScene),
+  () => retryImport(() => import('@/engine/scene/GameScene')).then((m) => m.GameScene),
   {
     ssr: false,
     loading: () => (
