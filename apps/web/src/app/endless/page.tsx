@@ -8,11 +8,12 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { equippedGunId } from '@/lib/guns';
 import { endlessLevel } from '@/engine/campaign/levels';
+import { retryImport } from '@/lib/retryImport';
 import { submitEndlessScore } from '@/hooks/useLeaderboard';
 import Leaderboard from '@/components/battle/Leaderboard';
 
 const GameScene = dynamic(
-  () => import('@/engine/scene/GameScene').then((m) => m.GameScene),
+  () => retryImport(() => import('@/engine/scene/GameScene')).then((m) => m.GameScene),
   {
     ssr: false,
     loading: () => (
