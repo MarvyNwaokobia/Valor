@@ -1,11 +1,13 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ChevronLeft, Lock, Skull, Check, Crosshair, Infinity as InfinityIcon } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN_LEVELS, ENDLESS_UNLOCK_LEVEL } from '@/engine/campaign/levels'
 import { tryFullscreen } from '@/lib/fullscreen'
+import { warmGameScene } from '@/lib/retryImport'
 import { GUN_CATALOG } from '@/engine/combat'
 
 interface Props {
@@ -26,6 +28,11 @@ export default function CampaignSelect({ player, onBack }: Props) {
   const router = useRouter()
   const cleared = player.pve_level ?? 0
   const nextLevel = cleared + 1
+
+  // Both this screen's destinations (/fight-legacy and /endless) mount GameScene.
+  // Warm it now (on idle, once) so launching a level hits a warm cache instead of
+  // a cold, blocking multi-MB fetch — same intent-based approach as the fight board.
+  useEffect(() => { warmGameScene() }, [])
 
   const play = (n: number) => {
     tryFullscreen()

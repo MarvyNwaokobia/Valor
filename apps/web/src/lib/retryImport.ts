@@ -157,3 +157,8 @@ function warmChunk(key: string, load: () => Promise<unknown>): void {
 export function warmFightScene(): void {
   warmChunk('valor-scene', () => import('@/engine/scene/ValorScene'));
 }
+
+/** Preload the legacy scene used by /endless and /fight-legacy (GameScene). */
+export function warmGameScene(): void {
+  warmChunk('game-scene', () => import('@/engine/scene/GameScene'));
+}
