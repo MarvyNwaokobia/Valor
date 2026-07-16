@@ -106,16 +106,32 @@ struct PlayerAward {
     g_awarded: i64,
 }
 
+/// Number of rank-ups needed to reach a rank — Silver is the 1st, Diamond the 4th.
+/// Used to size the refereed-XP a rank-up bonus requires (Nth rank ⇒ N × XP_PER_RANK).
+fn rank_ordinal(rank: &str) -> i32 {
+    match rank {
+        "Silver" => 1, "Gold" => 2, "Platinum" => 3, "Diamond" => 4,
+        _ => 0,
+    }
+}
+
 /// Award one player for a finished fight: re-read them, compute XP (× multiplier),
 /// handle rank-up + its G$ reward, persist the player row, and kick the per-player
 /// rank-up on-chain records. The caller decides win/loss; all amounts are computed
 /// here. Used for every mode (bot, live PvE, PvP) so awards never diverge.
+///
+/// `reward_eligible` marks a server-verified (refereed) fight — a session-backed
+/// Campaign fight, a bot fight, or PvP. Only these add to `ranked_xp_lifetime`, and a
+/// rank-up's G$ bonus is paid only when that tally justifies the rank. This blocks
+/// farming the bonus through the honor-system flat / Endless path (which passes
+/// `false`) without ever denying honest progression — rank still advances for all XP.
 async fn award_player(
     state: &AppState,
     wallet: &str,
     won: bool,
     base_xp: i32,
     xp_multiplier: i32,
+    reward_eligible: bool,
 ) -> Result<PlayerAward, HttpResponse> {
     // Re-fetch so xp/wins/losses/rank reflect any change since the fight began.
     let player = sqlx::query_as::<_, Player>("SELECT * FROM players WHERE wallet_address = $1")
@@ -144,6 +160,23 @@ async fn award_player(
     let wins   = if won { player.wins + 1 } else { player.wins };
     let losses = if !won { player.losses + 1 } else { player.losses };
 
+    // Refereed-XP tally (Way 2). A verified fight atomically adds its XP and returns
+    // the new total; an unverified one just reads the current total. Kept OUT of the
+    // main player UPDATE below so a lagging migration can never block the core save —
+    // if the column is missing this reads 0, which fails closed (withholds the bonus).
+    let honest_xp_after: i32 = if reward_eligible && xp_earned != 0 {
+        sqlx::query_scalar(
+            "UPDATE players SET ranked_xp_lifetime = ranked_xp_lifetime + $1
+             WHERE wallet_address = $2 RETURNING ranked_xp_lifetime",
+        )
+        .bind(xp_earned).bind(wallet)
+        .fetch_optional(&state.db).await.ok().flatten().unwrap_or(0)
+    } else {
+        sqlx::query_scalar("SELECT ranked_xp_lifetime FROM players WHERE wallet_address = $1")
+            .bind(wallet)
+            .fetch_optional(&state.db).await.ok().flatten().unwrap_or(0)
+    };
+
     if let Some(rank) = new_rank {
         // g_earned_lifetime is bumped separately below, only once the G$
         // transfer actually confirms on-chain — see the tokio::spawn block.
@@ -169,11 +202,17 @@ async fn award_player(
 
     if let Some(rank) = new_rank {
         let rank_str = rank.to_string();
+        // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
+        // earns the rank (Nth rank ⇒ N × XP_PER_RANK). The rank itself still advances
+        // above and on-chain below — only the money is gated — so honest progression is
+        // untouched while forged flat/Endless wins can never mint the bonus.
+        let earned_enough = honest_xp_after >= rank_ordinal(rank) * XP_PER_RANK;
+
         // Claim the once-per-rank payout slot idempotently: only the first request to
         // insert (wallet, rank) owns the payout. A retry or a concurrent duplicate
         // fight-complete hits the PK conflict and pays nothing (the on-chain ref guard
         // is the second line of defence).
-        let claimed = sqlx::query(
+        let claimed = earned_enough && sqlx::query(
             "INSERT INTO rank_up_rewards (wallet_address, rank, amount)
              VALUES ($1, $2, $3) ON CONFLICT (wallet_address, rank) DO NOTHING",
         )
@@ -184,6 +223,11 @@ async fn award_player(
 
         if claimed {
             g_awarded = RANK_UP_REWARD_G as i64;
+        } else if !earned_enough {
+            tracing::info!(
+                "rank-up bonus withheld for {} → {}: refereed XP {} < {}",
+                wallet, rank_str, honest_xp_after, rank_ordinal(rank) * XP_PER_RANK
+            );
         }
 
         if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
@@ -271,8 +315,11 @@ async fn finalize_fight(
     // Record this result on-chain? PvE passes `won` (Option B: wins/completions
     // on-chain, losses history-only); the bot fight passes true.
     record_on_chain: bool,
+    // Is this a server-verified (refereed) fight? Bot fights are; a live fight is
+    // only when it's session-backed (Campaign). Gates the rank-up G$ bonus.
+    reward_eligible: bool,
 ) -> Result<FightOutcome, HttpResponse> {
-    let award = award_player(state, wallet, won, base_xp, xp_multiplier).await?;
+    let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible).await?;
     let battle_id = Uuid::new_v4();
     let winner = if won { wallet } else { "bot" };
     persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain).await;
@@ -440,6 +487,7 @@ pub async fn bot_fight_round(
         finalize.xp_multiplier,
         rounds_json,
         true, // bot fights record on-chain as before
+        true, // bot fights are fully server-simulated — refereed, so bonus-eligible
     )
     .await
     {
@@ -644,7 +692,9 @@ pub async fn complete_live_fight(
     };
     // Option B: record wins/completions on-chain; losses stay history-only (no gas).
     let record_on_chain = body.won;
-    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain).await {
+    // Refereed (bonus-eligible) only when session-backed — the flat/Endless path is not.
+    let reward_eligible = body.session_id.is_some();
+    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain, reward_eligible).await {
         Ok(o) => o,
         Err(resp) => return resp,
     };
@@ -941,11 +991,13 @@ pub async fn complete_pvp_match(
     let win_mult  = equipped_xp_multiplier(&state.db, &winner).await;
     let lose_mult = equipped_xp_multiplier(&state.db, &loser).await;
 
-    let aw_w = match award_player(&state, &winner, true, fight_xp(true), win_mult).await {
+    // PvP is resolved by the trusted realtime host (secret-gated) — refereed, so both
+    // sides' rank-ups are bonus-eligible.
+    let aw_w = match award_player(&state, &winner, true, fight_xp(true), win_mult, true).await {
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let aw_l = match award_player(&state, &loser, false, fight_xp(false), lose_mult).await {
+    let aw_l = match award_player(&state, &loser, false, fight_xp(false), lose_mult, true).await {
         Ok(a) => a,
         Err(resp) => return resp,
     };
@@ -1112,5 +1164,17 @@ mod reward_amount_tests {
         const MAX_REWARD_G: u64 = 10_000;
         assert!(first_clear_bounty(15) <= MAX_REWARD_G);
         assert!(RANK_UP_REWARD_G <= MAX_REWARD_G);
+    }
+
+    #[test]
+    fn refereed_xp_needed_scales_with_rank() {
+        // Reaching the Nth rank needs N full ranks' worth of verified XP before its
+        // G$ bonus pays — so a pure honor-system (flat/Endless) grind never earns one.
+        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 1000);
+        assert_eq!(rank_ordinal("Gold")     * XP_PER_RANK, 2000);
+        assert_eq!(rank_ordinal("Platinum") * XP_PER_RANK, 3000);
+        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 4000);
+        // Bronze is the start (never reached via a rank-up) so it gates at zero.
+        assert_eq!(rank_ordinal("Bronze"), 0);
     }
 }
