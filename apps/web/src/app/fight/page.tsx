@@ -7,6 +7,7 @@ import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
+import { retryImport } from '@/lib/retryImport';
 
 // The tactical HUD face (see /dev/verb) — exposed as a CSS var for the scene.
 const tactical = Rajdhani({
@@ -20,7 +21,7 @@ const tactical = Rajdhani({
 // melee campaign is preserved, fully playable, at /fight-legacy (its engine code
 // is untouched) in case any of it is reused.
 const ValorScene = dynamic(
-  () => import('@/engine/scene/ValorScene').then((m) => m.ValorScene),
+  () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
   {
     ssr: false,
     // The game boots into a black scene anyway — keep the transition minimal

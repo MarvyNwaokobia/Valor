@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { Rajdhani } from 'next/font/google';
+import { retryImport } from '@/lib/retryImport';
 
 // A condensed, technical typeface for the tactical HUD — exposed as a CSS var so
 // the scene's overlays can opt into it (defaulting to mono for raw telemetry).
@@ -18,7 +19,7 @@ const tactical = Rajdhani({
 // the whole Valor build is done). The old melee GrayboxVerbScene is shelved in
 // git history, not mounted.
 const ValorScene = dynamic(
-  () => import('@/engine/scene/ValorScene').then((m) => m.ValorScene),
+  () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
   { ssr: false },
 );
 
