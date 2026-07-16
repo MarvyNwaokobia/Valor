@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import type { Player } from '@/types'
@@ -32,10 +32,46 @@ export function useFightRewards() {
   const [pending, setPending] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
 
+  // The server-issued fight token for the current run. Obtained at fight START via
+  // startFight() and consumed by submitResult(). Campaign rewards (XP / first-clear
+  // G$ / pve advance) are only granted when a valid token backs the completion, so
+  // the client can no longer forge an outcome or skip ops.
+  const sessionIdRef = useRef<string | null>(null)
+
+  // Open a server-authoritative fight session. Call this when a fight BEGINS. For a
+  // Campaign op pass its 1-based level; the server enforces sequential unlock and
+  // records the real start time. A failure here (offline) just leaves no token —
+  // submitResult then falls back to the flat, no-reward-money path.
+  const startFight = useCallback(
+    async (level?: number): Promise<void> => {
+      if (!player) return
+      sessionIdRef.current = null
+      try {
+        const res = await fetch(`${API}/battles/fight/start`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ wallet: player.wallet_address, level }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          sessionIdRef.current = data.session_id ?? null
+        }
+      } catch {
+        /* offline — no token; submitResult handles the absence gracefully */
+      }
+    },
+    [player]
+  )
+
   const submitResult = useCallback(
-    async (won: boolean, durationSecs: number, level?: number): Promise<FightReward | null> => {
+    async (won: boolean): Promise<FightReward | null> => {
       if (!player) return null
       const wallet = player.wallet_address
+
+      // Consume the token (single-use). Its presence marks this as a Campaign run;
+      // its absence a flat, non-Campaign fight (Endless) that can never earn G$.
+      const sessionId = sessionIdRef.current
+      sessionIdRef.current = null
 
       setPending(true)
       setError(null)
@@ -43,7 +79,7 @@ export function useFightRewards() {
         const res = await fetch(`${API}/battles/fight/complete`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ wallet, won, duration_secs: durationSecs, level }),
+          body:    JSON.stringify(sessionId ? { session_id: sessionId, won } : { won, wallet }),
         })
 
         if (!res.ok) {
@@ -67,10 +103,10 @@ export function useFightRewards() {
           storeUpdates.rank = data.new_rank
         }
         if (bountyAwarded > 0) {
-          storeUpdates.g_earned_lifetime = player.g_earned_lifetime + bountyAwarded
+          storeUpdates.g_earned_lifetime = (player.g_earned_lifetime ?? 0) + bountyAwarded
         }
-        if (data.first_clear && level) {
-          storeUpdates.pve_level = Math.max(player.pve_level, level)
+        if (data.first_clear && data.level) {
+          storeUpdates.pve_level = Math.max(player.pve_level ?? 0, data.level)
         }
         updatePlayer(storeUpdates)
 
@@ -102,5 +138,5 @@ export function useFightRewards() {
     [player, updatePlayer, checkAchievements, checkDecayRecovery]
   )
 
-  return { submitResult, reward, pending, error }
+  return { startFight, submitResult, reward, pending, error }
 }
