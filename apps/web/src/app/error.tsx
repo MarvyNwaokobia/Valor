@@ -1,12 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { isChunkLoadError, hardReloadForChunkError } from '@/lib/retryImport';
 
 /**
  * Page-level error boundary — catches runtime errors inside the route tree while
  * keeping the root layout mounted. Chunk-load failures self-heal with a single
  * hard reload; everything else offers a retry that re-renders the segment.
+ *
+ * If the auto-reload is suppressed (the once-per-window guard already fired, e.g.
+ * the device is offline or the deploy is genuinely broken) we must NOT sit on a
+ * "Reloading…" screen that never reloads — we show honest copy and a manual
+ * button so the user always has a way out.
  */
 export default function AppError({
   error,
@@ -16,9 +21,12 @@ export default function AppError({
   reset: () => void;
 }) {
   const chunk = isChunkLoadError(error);
+  // Assume a chunk error is about to reload; the effect corrects this to `false`
+  // if the guard suppressed the reload, revealing the manual button + real copy.
+  const [reloading, setReloading] = useState(chunk);
 
   useEffect(() => {
-    if (chunk) hardReloadForChunkError();
+    if (chunk && !hardReloadForChunkError()) setReloading(false);
   }, [chunk]);
 
   return (
@@ -49,13 +57,15 @@ export default function AppError({
           VALOR
         </div>
         <p style={{ marginTop: 18, fontSize: 15, lineHeight: 1.5, color: '#b7b4c0' }}>
-          {chunk
+          {reloading
             ? 'A new version just shipped. Reloading…'
-            : 'Something broke. Give it another go.'}
+            : chunk
+              ? "Couldn't load the latest version. Check your connection and try again."
+              : 'Something broke. Give it another go.'}
         </p>
-        {!chunk && (
+        {!reloading && (
           <button
-            onClick={() => reset()}
+            onClick={() => (chunk ? window.location.reload() : reset())}
             style={{
               marginTop: 22,
               padding: '12px 28px',
