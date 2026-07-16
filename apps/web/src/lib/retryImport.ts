@@ -31,6 +31,18 @@ export function isChunkLoadError(err: unknown): boolean {
   );
 }
 
+/**
+ * True for a chunk failure caused by the request stalling past the browser's
+ * chunk-load timeout (the "(timeout: ...)" case), as opposed to a fast 404.
+ * These are the ones we must NOT retry: a retry just waits out that same long
+ * timeout window again, turning a bad load into a multi-minute stall.
+ */
+export function isTimeoutChunkError(err: unknown): boolean {
+  if (!isChunkLoadError(err)) return false;
+  const message = (err as { message?: string }).message ?? '';
+  return /timeout/i.test(message);
+}
+
 const RELOAD_KEY = 'valor:chunk-reload-at';
 
 /**
@@ -57,18 +69,28 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /**
  * Retry a dynamic import on chunk-load failure. Webpack 5 clears the failed
  * chunk from its registry on rejection, so re-calling the factory genuinely
- * re-fetches. After the last retry, a chunk failure triggers a hard reload
- * (returns a never-resolving promise so the caller doesn't render an error
- * mid-navigation); any other error is re-thrown for the boundary to handle.
+ * re-fetches.
+ *
+ * The retry budget is deliberately small (ONE quick attempt). Each browser
+ * chunk-load attempt already waits out a long internal timeout before it
+ * rejects, so a bigger budget would multiply that wait into minutes — the exact
+ * slow-connection users we're helping would suffer most. So:
+ *   - a TIMEOUT failure (the request stalled) skips retries entirely and goes
+ *     straight to a hard reload — re-attempting would just stall again;
+ *   - any other chunk failure (typically a fast 404 from a stale deploy, or a
+ *     transient blip) gets one quick retry, then a hard reload.
+ * The reload returns a never-resolving promise so nothing renders mid-navigation.
+ * Non-chunk errors are re-thrown for the boundary to handle.
  */
 export function retryImport<T>(
   factory: () => Promise<T>,
-  retries = 3,
-  backoffMs = 700,
+  retries = 1,
+  backoffMs = 500,
 ): Promise<T> {
   return factory().catch(async (err) => {
     if (!isChunkLoadError(err)) throw err;
-    if (retries <= 0) {
+    // A stalled request or an exhausted budget: reload rather than re-wait.
+    if (isTimeoutChunkError(err) || retries <= 0) {
       if (hardReloadForChunkError()) {
         // The reload is taking over — hang so nothing renders in the meantime.
         return new Promise<T>(() => {});
@@ -76,6 +98,6 @@ export function retryImport<T>(
       throw err;
     }
     await sleep(backoffMs);
-    return retryImport(factory, retries - 1, backoffMs * 1.6);
+    return retryImport(factory, retries - 1, backoffMs);
   });
 }
