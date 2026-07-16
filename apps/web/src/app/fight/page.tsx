@@ -35,7 +35,7 @@ const ValorScene = dynamic(
 );
 
 function FightInner() {
-  const { submitResult } = useFightRewards();
+  const { startFight, submitResult } = useFightRewards();
   const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
   // C1: the real account rank + XP so the in-game HUD reflects true server standing.
   const accountRank = usePlayerStore((s) => s.player?.rank);
@@ -72,19 +72,23 @@ function FightInner() {
     [searchParams],
   );
 
-  // Each cleared operation is a server-authoritative "fight win": the backend
-  // applies the real XP → rank → G$ and advances the PvE level. If the player
-  // isn't signed in, submitResult is a graceful no-op (the game still plays).
+  // Each op opens a server-authoritative fight session as it BEGINS (the token that
+  // fixes wallet + level + start time server-side), then records the win on CLEAR.
+  // The backend applies the real XP → rank → G$ and advances the PvE level. If the
+  // player isn't signed in, both are graceful no-ops (the game still plays).
+  const onOpStart = useCallback(
+    (level: number) => { startFight(level).catch(() => { /* offline / signed out */ }); },
+    [startFight],
+  );
   const onOpCleared = useCallback(
-    (level: number, durationSecs: number) => {
-      submitResult(true, durationSecs, level).catch(() => { /* offline / signed out */ });
-    },
+    () => { submitResult(true).catch(() => { /* offline / signed out */ }); },
     [submitResult],
   );
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
       <ValorScene
+        onOpStart={onOpStart}
         onOpCleared={onOpCleared}
         startMission={startMission}
         resumeLevel={pveLevel}

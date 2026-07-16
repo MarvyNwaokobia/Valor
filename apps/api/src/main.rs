@@ -18,6 +18,7 @@ pub struct AppState {
     pub battle_limiter:    services::rate_limiter::RateLimiter,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
+    pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
 }
 
 #[tokio::main]
@@ -66,6 +67,9 @@ async fn main() -> anyhow::Result<()> {
     // session created by /start regardless of which worker handles them).
     let bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>> =
         std::sync::Arc::new(DashMap::new());
+    // In-progress live fights — server-issued tokens for the real-time earn loop.
+    let live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>> =
+        std::sync::Arc::new(DashMap::new());
 
     // FRONTEND_ORIGIN: comma-separated list of allowed origins.
     // Defaults to production URL so deploys work without manual env var setup.
@@ -103,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
+                live_fight_sessions: live_fight_sessions.clone(),
             }))
             .wrap(Logger::default())
             .wrap(cors)

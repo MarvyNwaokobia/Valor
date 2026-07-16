@@ -3,12 +3,12 @@ use chrono::Utc;
 use ethers::types::Address;
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::models::player::Player;
-use crate::services::battle::{BotFightSession, RoundData, fight_xp, simulate_async_fight};
+use crate::services::battle::{BotFightSession, LiveFightSession, RoundData, fight_xp, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
 
 fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
@@ -467,16 +467,80 @@ pub async fn bot_fight_round(
     }))
 }
 
+/// How long an issued live-fight token stays valid. Generous so pre-fight story /
+/// dialogue reading never expires a legit run; a genuine fight is far shorter.
+const LIVE_FIGHT_TTL_SECS: u64 = 1800;
+
+#[derive(Deserialize)]
+pub struct StartLiveFightRequest {
+    pub wallet: String,
+    /// PvE Campaign op being played (1-based). Absent for a non-Campaign fight.
+    #[serde(default)]
+    pub level:  Option<i32>,
+}
+
+/// Issues a single-use token for a real-time fight and records the server-side
+/// start time. For a Campaign fight it enforces the sequential unlock: you may
+/// only start the op already unlocked (a replay) or the very next one — never skip
+/// ahead. The client hands this token back to `/battles/fight/complete`, which is
+/// the ONLY way to earn Campaign XP / a first-clear G$ bounty / a pve advance.
+pub async fn start_live_fight(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<StartLiveFightRequest>,
+) -> HttpResponse {
+    let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+    if !state.battle_limiter.check(&ip) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many battles. Slow down, warrior."}));
+    }
+    if !is_valid_wallet(&body.wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    let wallet = normalize_wallet(&body.wallet);
+
+    // Sequential Campaign gate — the core of closing the "skip to op 15" exploit.
+    if let Some(level) = body.level {
+        let current: i32 = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
+            .bind(&wallet)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        if level < 1 || level > current + 1 {
+            return HttpResponse::Forbidden().json(json!({
+                "error": "Operation locked — clear the campaign in order",
+                "locked": true, "have_level": current, "requested": level,
+            }));
+        }
+    }
+
+    // Sweep expired tokens opportunistically — no background task needed.
+    state.live_fight_sessions.retain(|_, s| s.created_at.elapsed() < Duration::from_secs(LIVE_FIGHT_TTL_SECS));
+
+    let session_id = Uuid::new_v4();
+    state.live_fight_sessions.insert(session_id, LiveFightSession {
+        wallet,
+        level: body.level,
+        created_at: Instant::now(),
+    });
+
+    HttpResponse::Ok().json(json!({ "session_id": session_id }))
+}
+
 #[derive(Deserialize)]
 pub struct LiveFightRequest {
-    pub wallet:        String,
-    pub won:           bool,
+    pub won: bool,
+    /// Campaign fights MUST carry a server-issued session (from /battles/fight/start).
+    /// It fixes the wallet + level + server-measured start time so the client can no
+    /// longer assert them at completion.
     #[serde(default)]
-    pub duration_secs: f64,
-    /// PvE Campaign level played (1-based), if this was a Campaign fight. Sets the
-    /// XP award and, on a first clear, advances the player's unlock.
+    pub session_id: Option<Uuid>,
+    /// Only used on the sessionless flat path (non-Campaign, e.g. Endless): XP-only,
+    /// never a bounty or a pve advance. Ignored when session_id is present.
     #[serde(default)]
-    pub level:         Option<i32>,
+    pub wallet: Option<String>,
 }
 
 /// Win XP per Campaign level — all 15 sum to exactly 1,000 (= one rank-up).
@@ -524,19 +588,39 @@ pub async fn complete_live_fight(
             .json(json!({"error": "Too many battles. Slow down, warrior."}));
     }
 
-    if !is_valid_wallet(&body.wallet) {
-        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
-    }
+    // Campaign fights arrive with a server-issued token; the wallet + level + real
+    // duration are taken from the SERVER's record of the fight, not the client's
+    // word. A sessionless request is a non-Campaign flat fight (Endless).
+    let (wallet, level) = match body.session_id {
+        Some(sid) => {
+            let Some((_, session)) = state.live_fight_sessions.remove(&sid) else {
+                return HttpResponse::BadRequest().json(json!({"error": "No active fight session"}));
+            };
+            let elapsed = session.created_at.elapsed();
+            if elapsed >= Duration::from_secs(LIVE_FIGHT_TTL_SECS) {
+                return HttpResponse::BadRequest().json(json!({"error": "Fight session expired"}));
+            }
+            // Server-measured duration — the client can't fake an instant win.
+            if elapsed.as_secs_f64() < MIN_LIVE_FIGHT_SECS {
+                return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
+            }
+            (session.wallet, session.level)
+        }
+        None => {
+            // Flat path: XP only. Level is forced None so a sessionless request can
+            // never reach Campaign money (first-clear bounty) or a pve advance.
+            let w = body.wallet.as_deref().unwrap_or("");
+            if !is_valid_wallet(w) {
+                return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+            }
+            (normalize_wallet(w), None)
+        }
+    };
 
-    if body.duration_secs < MIN_LIVE_FIGHT_SECS {
-        return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
-    }
-
-    let wallet = normalize_wallet(&body.wallet);
     let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
 
     // A Campaign level (if any) sets the XP and unlock; otherwise it's a flat fight.
-    let (base_xp, first_clear) = match body.level {
+    let (base_xp, first_clear) = match level {
         Some(level) if body.won => {
             let current: i32 = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
                 .bind(&wallet)
@@ -554,7 +638,7 @@ pub async fn complete_live_fight(
 
     // Carry the mission context so battle history can show "OP N · <mission> — WIN/LOSS".
     // The frontend maps `level` → the mission name (it owns the campaign data).
-    let rounds = match body.level {
+    let rounds = match level {
         Some(level) => json!({ "kind": "mission", "level": level, "won": body.won }),
         None => json!([]),
     };
@@ -569,7 +653,7 @@ pub async fn complete_live_fight(
     // G$ bounty — the PvE G$ source now that ranking up no longer mints G$.
     let mut bounty_awarded: u64 = 0;
     if first_clear {
-        if let Some(level) = body.level {
+        if let Some(level) = level {
             let _ = sqlx::query("UPDATE players SET pve_level = $1 WHERE wallet_address = $2 AND pve_level < $1")
                 .bind(level)
                 .bind(&wallet)
@@ -608,6 +692,7 @@ pub async fn complete_live_fight(
         "bounty_awarded": bounty_awarded,
         "battle_id":      outcome.battle_id,
         "first_clear":    first_clear,
+        "level":          level,
     }))
 }
 

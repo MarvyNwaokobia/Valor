@@ -42,9 +42,9 @@ export default function EndlessPage() {
   const lvl = useMemo(() => endlessLevel(wave), [wave]);
 
   const onBattleEnd = useCallback(
-    (winner: 'player' | 'enemy', durationSecs: number) => {
+    (winner: 'player' | 'enemy') => {
       if (winner === 'player') {
-        submitResult(true, durationSecs); // flat XP per wave (no Campaign level)
+        submitResult(true); // flat XP per wave (no Campaign level, no G$)
         setWave((w) => w + 1);
       } else {
         const wavesCleared = wave - 1;

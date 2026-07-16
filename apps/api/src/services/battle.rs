@@ -225,6 +225,22 @@ pub fn resolve_round(
     }
 }
 
+/// Server-side state for an in-progress real-time (live) fight. Issued by
+/// `/battles/fight/start` and consumed once by `/battles/fight/complete`.
+///
+/// This is the anti-forgery anchor for the live earn loop: the wallet and the
+/// Campaign level are fixed HERE by the server (the client can no longer assert
+/// them at completion), the start time is server-measured (so a fight's real
+/// duration can be validated instead of trusting a client-reported number), and
+/// the `/start` handler enforces sequential Campaign unlock so an op can't be
+/// skipped. Lives in `AppState::live_fight_sessions`.
+pub struct LiveFightSession {
+    pub wallet:     String,
+    /// The Campaign op being played (1-based), or None for a non-Campaign fight.
+    pub level:      Option<i32>,
+    pub created_at: Instant,
+}
+
 /// Server-side state for an in-progress bot fight, resolved one round at a time.
 /// Lives in `AppState::bot_fight_sessions` for the lifetime of the fight.
 pub struct BotFightSession {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence } from 'framer-motion';
@@ -71,11 +71,18 @@ export default function FightPage() {
   const inventory = usePlayerStore((s) => s.inventory);
   const router    = useRouter();
   const searchParams = useSearchParams();
-  const { submitResult, reward, pending } = useFightRewards();
+  const { startFight, submitResult, reward, pending } = useFightRewards();
 
   // ?level=N → PvE Campaign fight; absent → quick random bot fight.
   const levelParam = searchParams.get('level');
   const level      = levelParam ? parseInt(levelParam, 10) : undefined;
+
+  // Open the server-authoritative fight session for a Campaign fight (the token that
+  // fixes wallet + level + start time server-side). Runs once the level is known;
+  // pre-fight dialogue time only makes the server-measured duration safely longer.
+  useEffect(() => {
+    if (level) startFight(level).catch(() => { /* offline / signed out */ });
+  }, [level, startFight]);
 
   // Player's class in lowercase ClassId form.
   const playerClass: ClassId =
@@ -145,9 +152,9 @@ export default function FightPage() {
   }, [playerClass, level]);
 
   const handleBattleEnd = useCallback(
-    (winner: 'player' | 'enemy', durationSecs: number) => {
+    (winner: 'player' | 'enemy') => {
       setFightWinner(winner);
-      submitResult(winner === 'player', durationSecs, level);
+      submitResult(winner === 'player');
 
       const hasPostLines = (levelStory?.after?.length ?? 0) > 0;
       if (winner === 'player' && firstClear && hasPostLines) {
