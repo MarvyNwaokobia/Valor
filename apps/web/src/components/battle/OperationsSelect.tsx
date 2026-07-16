@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, Lock, Skull, Check, ChevronRight } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN } from '@/engine/fps/campaign'
 import { tryFullscreen } from '@/lib/fullscreen'
+import { warmFightScene } from '@/lib/retryImport'
 import LoadoutModal from './LoadoutModal'
 
 interface Props {
@@ -28,6 +29,11 @@ const ZONE_ACCENT: Record<string, string> = {
 export default function OperationsSelect({ player, onBack }: Props) {
   const router = useRouter()
   const cleared = player.pve_level ?? 0 // number of ops cleared
+
+  // The player is on the Operations board — a fight is imminent. Warm the heavy
+  // scene chunk now (on idle) so Deploy hits a warm cache, while they still have
+  // an op + loadout to pick. Only players heading into a fight pay the download.
+  useEffect(() => { warmFightScene() }, [])
 
   // Picking an op opens the Loadout first (choose weapon + gear from what you own),
   // then Deploy boots the fight with that kit.
