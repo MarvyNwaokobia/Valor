@@ -45,21 +45,55 @@ export function isTimeoutChunkError(err: unknown): boolean {
 
 const RELOAD_KEY = 'valor:chunk-reload-at';
 
+// In-memory guard: stops a second auto-reload within the SAME page load (before
+// any reload has actually navigated away). It resets to false on a real reload,
+// so it can't by itself prevent a cross-reload loop — that's what the persisted
+// timestamp is for.
+let reloadedThisLoad = false;
+
+/** Last auto-reload time in ms, or null if storage is unavailable (can't tell). */
+function readLastReload(): number | null {
+  try {
+    return Number(window.sessionStorage.getItem(RELOAD_KEY) ?? '0');
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the auto-reload time; false if storage refused the write. */
+function writeLastReload(ts: number): boolean {
+  try {
+    window.sessionStorage.setItem(RELOAD_KEY, String(ts));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Force a one-time hard reload to recover from an unreachable chunk, but never
  * more than once per window — so a genuinely offline device shows the error
  * boundary instead of thrashing in a reload loop.
+ *
+ * The loop guard depends on remembering the reload across the reload itself,
+ * which needs sessionStorage. If storage is blocked (some private/locked-down
+ * browsers), we CANNOT safely auto-reload — an in-memory flag resets on reload,
+ * so we'd loop forever. In that case we bail and let the boundary show a manual
+ * button instead. Returns true only when a reload was actually triggered.
  */
 export function hardReloadForChunkError(): boolean {
   if (typeof window === 'undefined') return false;
-  try {
-    const last = Number(window.sessionStorage.getItem(RELOAD_KEY) ?? '0');
-    if (Number.isFinite(last) && Date.now() - last < 15_000) return false;
-    window.sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
-  } catch {
-    // sessionStorage can throw in private mode — fall through and reload anyway,
-    // the worst case is one extra reload.
-  }
+  if (reloadedThisLoad) return false;
+
+  const last = readLastReload();
+  // Storage unavailable: no reliable way to prevent a reload loop → don't reload.
+  if (last === null) return false;
+  // Already reloaded within the guard window → don't reload again.
+  if (Number.isFinite(last) && Date.now() - last < 15_000) return false;
+  // Can read but not write → still can't record this reload, so don't risk it.
+  if (!writeLastReload(Date.now())) return false;
+
+  reloadedThisLoad = true;
   window.location.reload();
   return true;
 }
