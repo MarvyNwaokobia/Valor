@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Cinzel } from 'next/font/google';
 import { isChunkLoadError, hardReloadForChunkError } from '@/lib/retryImport';
+
+// global-error replaces the whole document — including the layout's font <link> —
+// so the brand face must be self-contained. next/font self-hosts Cinzel (inlined
+// @font-face served from our own origin), so the wordmark renders correctly here
+// without a network round-trip to Google at the moment the app is already broken.
+const cinzel = Cinzel({ subsets: ['latin'], weight: ['900'], display: 'swap' });
 
 /**
  * Root error boundary — the last line of defence. It replaces the whole document
@@ -48,8 +55,8 @@ export default function GlobalError({
       >
         <div style={{ maxWidth: 380 }}>
           <div
+            className={cinzel.className}
             style={{
-              fontFamily: 'Cinzel, serif',
               fontWeight: 900,
               letterSpacing: '0.12em',
               fontSize: 22,
