@@ -178,7 +178,7 @@ forge build && forge test
 | `NEXT_PUBLIC_MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy address |
 | `NEXT_PUBLIC_VALOR_APP_ADDRESS` | ✅ | Backend relayer / signer public address |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | — | WalletConnect project id |
-| `NEXT_PUBLIC_RANK_POOL_{SILVER,GOLD,PLATINUM,DIAMOND}` | — | GoodCollective UBI pool addresses for rank enrollment |
+| `NEXT_PUBLIC_RANK_POOL_{SILVER,GOLD,PLATINUM,EMERALD,DIAMOND}` | — | GoodCollective UBI pool addresses for rank enrollment |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | Local dev sandbox only |
 
 > Runtime URLs (share links, auth redirect, verify callback) are all built from `window.location.origin`, so they follow the custom domain automatically — no per-domain config in the frontend.
@@ -197,7 +197,7 @@ forge build && forge test
 | `DECAY_CRON_SECRET` | ✅ | Shared `x-cron-secret` for `/decay/run` + `/battles/bounties/reconcile` |
 | `FRONTEND_ORIGIN` | ✅ | Comma-separated CORS origins (`https://playvalor.app,https://playvalor.vercel.app`) |
 | `BIND_ADDR` | — | Bind address (Render sets `0.0.0.0:10000`; default `0.0.0.0:8080`) |
-| `RANK_POOL_{SILVER,GOLD,PLATINUM,DIAMOND}` | — | GoodCollective UBI pool addresses |
+| `RANK_POOL_{SILVER,GOLD,PLATINUM,EMERALD,DIAMOND}` | — | GoodCollective UBI pool addresses |
 | `G_TOKEN_CONTRACT` | — | G$ SuperToken (defaults to the known mainnet address) |
 | `ADMIN_WALLETS` | — | Comma-separated wallets allowed to sign into `/admin` |
 | `ADMIN_JWT_SECRET` | — | Signing secret for admin session tokens |
