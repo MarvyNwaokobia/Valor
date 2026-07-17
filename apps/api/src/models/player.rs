@@ -6,41 +6,49 @@ use sqlx::FromRow;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "text", rename_all = "PascalCase")]
 pub enum Rank {
+    Iron,
     Bronze,
     Silver,
     Gold,
     Platinum,
+    Emerald,
     Diamond,
 }
 
 impl Rank {
     pub fn g_reward(&self) -> u64 {
         match self {
+            Rank::Iron => 5,
             Rank::Bronze => 10,
             Rank::Silver => 20,
             Rank::Gold => 40,
             Rank::Platinum => 80,
+            Rank::Emerald => 120,
             Rank::Diamond => 150,
         }
     }
 
     pub fn next(&self) -> Option<Rank> {
         match self {
+            Rank::Iron => Some(Rank::Bronze),
             Rank::Bronze => Some(Rank::Silver),
             Rank::Silver => Some(Rank::Gold),
             Rank::Gold => Some(Rank::Platinum),
-            Rank::Platinum => Some(Rank::Diamond),
+            Rank::Platinum => Some(Rank::Emerald),
+            Rank::Emerald => Some(Rank::Diamond),
             Rank::Diamond => None,
         }
     }
 
     pub fn prev(&self) -> Option<Rank> {
         match self {
-            Rank::Bronze => None,
+            Rank::Iron => None,
+            Rank::Bronze => Some(Rank::Iron),
             Rank::Silver => Some(Rank::Bronze),
             Rank::Gold => Some(Rank::Silver),
             Rank::Platinum => Some(Rank::Gold),
-            Rank::Diamond => Some(Rank::Platinum),
+            Rank::Emerald => Some(Rank::Platinum),
+            Rank::Diamond => Some(Rank::Emerald),
         }
     }
 }
@@ -85,6 +93,8 @@ pub struct Player {
     pub wins: i32,
     pub losses: i32,
     pub pve_level: i32, // highest PvE Campaign level cleared (0 = none)
+    #[serde(default)]
+    pub prestige_level: i32, // 0 until the player climbs past Diamond; then Diamond I, II, III…
     #[serde(default)]
     pub character_confirmed: bool, // false for chain-reconstructed players → prompt confirm-class
     pub created_at: DateTime<Utc>,
