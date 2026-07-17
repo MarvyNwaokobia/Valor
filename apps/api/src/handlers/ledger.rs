@@ -62,6 +62,13 @@ pub struct LedgerSummary {
     pub marketplace_spent: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
     pub transferred_out: Decimal,
+    /// G$ this player has earned but whose on-chain transfer hasn't settled yet.
+    /// The ledger above only counts money that actually landed, so without this a
+    /// player told "+500 G$" at rank-up sees nothing here until the payout confirms
+    /// (and up to a reconcile sweep later, if the first attempt failed) — which reads
+    /// as the game losing their money. Surfacing it as pending is the honest answer.
+    #[serde(with = "rust_decimal::serde::float")]
+    pub pending_payout: Decimal,
 }
 
 pub async fn get_ledger_summary(
@@ -86,11 +93,30 @@ pub async fn get_ledger_summary(
     let (ubi_earned, gameplay_earned, marketplace_spent, transferred_out) =
         row.unwrap_or((Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
 
+    // Claimed-but-unsettled payouts from both rails. Anything not yet 'paid' is money
+    // owed: 'pending' is in flight (or abandoned and awaiting the sweep), 'failed' is
+    // waiting on a retry. Both are re-attempted until they land, so both are pending
+    // from the player's point of view.
+    let pending_payout: Decimal = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount), 0)::numeric FROM (
+            SELECT amount FROM first_clear_bounties WHERE wallet_address = $1 AND status <> 'paid'
+            UNION ALL
+            SELECT amount FROM rank_up_rewards     WHERE wallet_address = $1 AND status <> 'paid'
+         ) AS unsettled",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(Decimal::ZERO);
+
     HttpResponse::Ok().json(LedgerSummary {
         ubi_earned,
         gameplay_earned,
         marketplace_spent,
         transferred_out,
+        pending_payout,
     })
 }
 
