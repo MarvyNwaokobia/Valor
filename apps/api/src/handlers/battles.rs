@@ -234,14 +234,19 @@ async fn award_player(
             let db = state.db.clone();
             let wallet_owned = wallet.to_string();
             tokio::spawn(async move {
-                // Rank progression is on-chain (records + leaderboard-pool enrollment).
-                chain.record_rank_up(addr, rank_str.clone()).await;
-                chain.enroll_in_rank_pool(addr, &rank_str).await;
-                // The G$ reward payout — idempotent per (wallet, rank), shared with the
-                // reconcile sweep so a failed payout is re-attempted later.
+                // MONEY FIRST. Each of these takes the global tx_lock and waits for its
+                // own confirmation, so whatever runs first delays everything after it —
+                // and if the process dies mid-sequence, only the unrun tail is lost.
+                // The player is waiting on the G$, not on the bookkeeping, so the payout
+                // goes out before the on-chain record + pool enrollment rather than
+                // queueing behind them. Idempotent per (wallet, rank) and shared with the
+                // reconcile sweep, so a failure here is re-attempted later.
                 if claimed {
                     settle_rank_up_reward(&db, &chain, &wallet_owned, &rank_str, RANK_UP_REWARD_G).await;
                 }
+                // Rank progression is on-chain (records + leaderboard-pool enrollment).
+                chain.record_rank_up(addr, rank_str.clone()).await;
+                chain.enroll_in_rank_pool(addr, &rank_str).await;
             });
         }
     }
