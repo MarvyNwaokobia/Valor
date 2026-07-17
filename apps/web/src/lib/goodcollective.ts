@@ -6,11 +6,13 @@ const CELO_CHAIN_ID = '42220' as const
 const CELO_RPC = 'https://forno.celo.org'
 
 // One UBI pool per rank tier — create these at goodcollective.xyz then set env vars.
-// Bronze has no pool (it's the starting rank). Silver+ earn streamable G$.
+// Iron + Bronze have no pool (Iron is the starting rank, Bronze the first step). Silver
+// and up earn streamable G$, Emerald included.
 export const RANK_POOL_ADDRESSES: Partial<Record<Rank, `0x${string}`>> = {
   Silver:   (process.env.NEXT_PUBLIC_RANK_POOL_SILVER   ?? '') as `0x${string}`,
   Gold:     (process.env.NEXT_PUBLIC_RANK_POOL_GOLD     ?? '') as `0x${string}`,
   Platinum: (process.env.NEXT_PUBLIC_RANK_POOL_PLATINUM ?? '') as `0x${string}`,
+  Emerald:  (process.env.NEXT_PUBLIC_RANK_POOL_EMERALD  ?? '') as `0x${string}`,
   Diamond:  (process.env.NEXT_PUBLIC_RANK_POOL_DIAMOND  ?? '') as `0x${string}`,
 }
 

@@ -102,9 +102,14 @@ impl ChainWriter {
         let client = Arc::new(SignerMiddleware::new(provider, wallet));
         let contract = Arc::new(ValorGameRecord::new(address, client.clone()));
 
-        // GoodCollective UBI pool addresses — optional
+        // GoodCollective UBI pool addresses — one per rank that earns a daily drip
+        // (Iron + Bronze intentionally have none). Emerald is a first-class pool rank
+        // like the rest: set RANK_POOL_EMERALD to its deployed GoodCollective pool
+        // address and enrollment works with no further code change. Until that env var
+        // points at a real on-chain pool, get("Emerald") is None and enrollment is a
+        // safe no-op — you cannot add a member to a pool that does not exist yet.
         let mut rank_pools = HashMap::new();
-        for rank in ["Silver", "Gold", "Platinum", "Diamond"] {
+        for rank in ["Silver", "Gold", "Platinum", "Emerald", "Diamond"] {
             let key = format!("RANK_POOL_{}", rank.to_uppercase());
             if let Ok(addr) = std::env::var(&key)
                 .and_then(|v| v.parse::<Address>().map_err(|_| std::env::VarError::NotPresent))
