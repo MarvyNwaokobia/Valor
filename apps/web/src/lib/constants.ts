@@ -4,24 +4,29 @@ export const CELO_ALFAJORES_CHAIN_ID = 44787
 export const G_TOKEN_ADDRESS = '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A' as const
 export const SUPERFLUID_CFA_FORWARDER = '0xcfA132E353cB4E398080B9700609bb008eceB125' as const
 
-export const RANKS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const
+export const RANKS = ['Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Emerald', 'Diamond'] as const
 export type Rank = (typeof RANKS)[number]
 
 export const RANK_COLORS: Record<Rank, string> = {
+  Iron: '#8a8f98',
   Bronze: '#cd7f32',
   Silver: '#c0c0c0',
   Gold: '#ffd700',
   Platinum: '#e5e4e2',
+  Emerald: '#34d399',
   Diamond: '#b9f2ff',
 }
 
-// Flat G$ paid for reaching a new rank (crossing XP_PER_RANK). Matches the
+// Flat G$ paid for reaching a new rank OR prestiging past Diamond (crossing
+// XP_PER_RANK). One uniform rule — 500 per 1000 XP, forever. Matches the
 // server-authoritative RANK_UP_REWARD_G in apps/api battles.rs.
 export const RANK_G_REWARD: Record<Rank, number> = {
+  Iron: 500,
   Bronze: 500,
   Silver: 500,
   Gold: 500,
   Platinum: 500,
+  Emerald: 500,
   Diamond: 500,
 }
 
