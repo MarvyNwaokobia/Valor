@@ -1,6 +1,9 @@
 # Design spec — never commit
 valor-design.html
 
+# Community copy (Telegram pins) — never commit
+docs/telegram/
+
 # Raw Mixamo FBX subdirectories (per-character source files)
 apps/web/public/characters/raw/berserker/
 apps/web/public/characters/raw/phantom/
