@@ -243,6 +243,16 @@ pub struct LiveFightSession {
     pub created_at: Instant,
 }
 
+/// Server-authoritative state for an in-progress Endless run. The server OWNS the wave
+/// count — the client only asks "I cleared the next wave"; it can never assert a number
+/// or skip ahead. Combined with a minimum time-per-wave, this is what makes it safe to
+/// pay real G$ per wave. Lives in `AppState::endless_sessions`.
+pub struct EndlessSession {
+    pub wallet:       String,
+    pub wave:         i32,      // highest wave the SERVER has credited (0 at start)
+    pub created_at:   Instant,  // run start — anchors the min-time-per-wave check
+}
+
 /// Server-side state for an in-progress bot fight, resolved one round at a time.
 /// Lives in `AppState::bot_fight_sessions` for the lifetime of the fight.
 pub struct BotFightSession {
