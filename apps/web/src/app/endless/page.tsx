@@ -1,15 +1,15 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { AnimatePresence, motion } from 'framer-motion';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useResolvedAuth } from '@/hooks/useResolvedAuth';
-import { useFightRewards } from '@/hooks/useFightRewards';
+import { useEndlessRun } from '@/hooks/useEndlessRun';
 import { equippedGunId } from '@/lib/guns';
 import { endlessLevel } from '@/engine/campaign/levels';
 import { retryImport } from '@/lib/retryImport';
-import { submitEndlessScore } from '@/hooks/useLeaderboard';
 import Leaderboard from '@/components/battle/Leaderboard';
 
 const GameScene = dynamic(
@@ -32,28 +32,45 @@ export default function EndlessPage() {
   const inventory = usePlayerStore((s) => s.inventory);
   const { address } = useResolvedAuth();
   const router = useRouter();
-  const { submitResult } = useFightRewards();
+  const { startRun, reportWave, endRun, banked } = useEndlessRun(address);
 
   const [wave, setWave] = useState(1);
   const [dead, setDead] = useState(false);
+  const [toast, setToast] = useState<{ key: number; g: number } | null>(null); // +G$ per wave
 
   const playerClass = CLASS_MAP[player?.character_class ?? 'Berserker'] ?? 'berserker';
   const playerGun = useMemo(() => equippedGunId(inventory), [inventory]);
   const lvl = useMemo(() => endlessLevel(wave), [wave]);
 
+  // Open a server-authoritative run when the page mounts.
+  useEffect(() => { startRun(); }, [startRun]);
+
+  // Auto-dismiss the +G$ toast a beat after it appears.
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 1400);
+    return () => clearTimeout(id);
+  }, [toast]);
+
   const onBattleEnd = useCallback(
-    (winner: 'player' | 'enemy') => {
+    async (winner: 'player' | 'enemy') => {
       if (winner === 'player') {
-        submitResult(true); // flat XP per wave (no Campaign level, no G$)
+        const result = await reportWave(); // server credits the wave + pays G$
+        if (result && result.gAwarded > 0) setToast({ key: Date.now(), g: result.gAwarded });
         setWave((w) => w + 1);
       } else {
-        const wavesCleared = wave - 1;
-        if (address) submitEndlessScore(address, wavesCleared);
+        await endRun(); // server writes the leaderboard score from its own count
         setDead(true);
       }
     },
-    [wave, address, submitResult]
+    [reportWave, endRun]
   );
+
+  const runAgain = useCallback(() => {
+    setWave(1);
+    setDead(false);
+    startRun();
+  }, [startRun]);
 
   if (!player) {
     router.replace('/');
@@ -68,7 +85,15 @@ export default function EndlessPage() {
         <h1 className="font-display font-black text-white" style={{ fontSize: 'clamp(3rem, 12vw, 5rem)' }}>
           {wavesCleared}
         </h1>
-        <p className="text-slate-400 text-sm mb-8">waves survived</p>
+        <p className="text-slate-400 text-sm mb-4">waves survived</p>
+
+        {banked > 0 && (
+          <div className="mb-8 px-5 py-2.5 rounded-xl border flex items-center gap-2"
+            style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.3)' }}>
+            <span className="font-display font-black text-amber-400 text-xl">+{banked.toLocaleString()} G$</span>
+            <span className="text-[10px] uppercase tracking-widest text-amber-500/70 font-bold">banked this run</span>
+          </div>
+        )}
 
         <div className="mb-8">
           <Leaderboard highlightWallet={address} />
@@ -76,7 +101,7 @@ export default function EndlessPage() {
 
         <div className="flex gap-3">
           <button
-            onClick={() => { setWave(1); setDead(false); }}
+            onClick={runAgain}
             className="px-6 py-3 rounded-xl font-display font-black text-black"
             style={{ background: '#eab308' }}
           >
@@ -101,9 +126,31 @@ export default function EndlessPage() {
       >
         Exit
       </button>
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 font-display font-black text-amber-400 text-lg pointer-events-none select-none">
-        WAVE {wave}
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-0.5 pointer-events-none select-none">
+        <span className="font-display font-black text-amber-400 text-lg">WAVE {wave}</span>
+        {banked > 0 && (
+          <span className="text-[11px] font-bold text-amber-500/80 tabular-nums">{banked.toLocaleString()} G$ banked</span>
+        )}
       </div>
+
+      {/* +G$ banked toast — fires once per paying wave, then auto-dismisses */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key={toast.key}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none select-none"
+            initial={{ opacity: 0, y: 10, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -16 }}
+            transition={{ duration: 0.35 }}
+          >
+            <span className="font-display font-black text-2xl px-4 py-1.5 rounded-full"
+              style={{ color: '#04030c', background: '#eab308', boxShadow: '0 0 24px rgba(234,179,8,0.5)' }}>
+              +{toast.g.toLocaleString()} G$
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <GameScene
         key={wave}

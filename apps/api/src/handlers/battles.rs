@@ -103,14 +103,14 @@ struct FightOutcome {
     battle_id: Uuid,
 }
 
-struct PlayerAward {
-    xp_earned: i32,
-    new_xp:    i32,
-    ranked_up: bool,
-    new_rank:  Option<&'static str>,
-    g_awarded: i64,
-    prestiged: bool,
-    prestige_level: i32,
+pub(crate) struct PlayerAward {
+    pub xp_earned: i32,
+    pub new_xp:    i32,
+    pub ranked_up: bool,
+    pub new_rank:  Option<&'static str>,
+    pub g_awarded: i64,
+    pub prestiged: bool,
+    pub prestige_level: i32,
 }
 
 /// Number of rank-ups needed to reach a rank, from the Iron floor — Bronze is the 1st,
@@ -131,17 +131,22 @@ fn rank_ordinal(rank: &str) -> i32 {
 /// here. Used for every mode (bot, live PvE, PvP) so awards never diverge.
 ///
 /// `reward_eligible` marks a server-verified (refereed) fight — a session-backed
-/// Campaign fight, a bot fight, or PvP. Only these add to `ranked_xp_lifetime`, and a
-/// rank-up's G$ bonus is paid only when that tally justifies the rank. This blocks
-/// farming the bonus through the honor-system flat / Endless path (which passes
-/// `false`) without ever denying honest progression — rank still advances for all XP.
-async fn award_player(
+/// Campaign fight, a bot fight, PvP, or a server-authoritative Endless wave. Only these
+/// add to `ranked_xp_lifetime`, and a rank-up's G$ bonus is paid only when that tally
+/// justifies the rank. This blocks farming the bonus through an honor-system path
+/// without ever denying honest progression — rank still advances for all XP.
+///
+/// `count_result` records the win/loss on the player's W/L tally. True for real fights;
+/// false for Endless waves, which award XP (and can rank up) but should not each count
+/// as a "win" on the profile.
+pub(crate) async fn award_player(
     state: &AppState,
     wallet: &str,
     won: bool,
     base_xp: i32,
     xp_multiplier: i32,
     reward_eligible: bool,
+    count_result: bool,
 ) -> Result<PlayerAward, HttpResponse> {
     // Re-fetch so xp/wins/losses/rank reflect any change since the fight began.
     let player = sqlx::query_as::<_, Player>("SELECT * FROM players WHERE wallet_address = $1")
@@ -192,8 +197,8 @@ async fn award_player(
     // Set here only once the DB payout slot is actually claimed (see below).
     let mut g_awarded = 0i64;
 
-    let wins   = if won { player.wins + 1 } else { player.wins };
-    let losses = if !won { player.losses + 1 } else { player.losses };
+    let wins   = if count_result && won  { player.wins + 1 }   else { player.wins };
+    let losses = if count_result && !won { player.losses + 1 } else { player.losses };
 
     // Refereed-XP tally (Way 2). A verified fight atomically adds its XP and returns
     // the new total; an unverified one just reads the current total. Kept OUT of the
@@ -355,7 +360,7 @@ async fn finalize_fight(
     // only when it's session-backed (Campaign). Gates the rank-up G$ bonus.
     reward_eligible: bool,
 ) -> Result<FightOutcome, HttpResponse> {
-    let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible).await?;
+    let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible, true).await?;
     let battle_id = Uuid::new_v4();
     let winner = if won { wallet } else { "bot" };
     persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain).await;
@@ -1012,9 +1017,13 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         }
     }
 
+    // Same idempotent rail for Endless per-wave payouts.
+    let (endless_attempted, endless_reconciled) =
+        crate::handlers::endless::sweep_endless_rewards(&state.db, &chain).await;
+
     tracing::info!(
-        "reward reconcile: bounties {}/{}, rank-ups {}/{} settled",
-        reconciled, attempted, rank_reconciled, rank_attempted
+        "reward reconcile: bounties {}/{}, rank-ups {}/{}, endless {}/{} settled",
+        reconciled, attempted, rank_reconciled, rank_attempted, endless_reconciled, endless_attempted
     );
     HttpResponse::Ok().json(json!({
         "attempted":         attempted,
@@ -1023,6 +1032,8 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         "rank_attempted":    rank_attempted,
         "rank_reconciled":   rank_reconciled,
         "rank_still_failed": rank_attempted as u32 - rank_reconciled,
+        "endless_attempted":  endless_attempted,
+        "endless_reconciled": endless_reconciled,
         "ran_at":            Utc::now().to_rfc3339(),
     }))
 }
@@ -1070,11 +1081,11 @@ pub async fn complete_pvp_match(
 
     // PvP is resolved by the trusted realtime host (secret-gated) — refereed, so both
     // sides' rank-ups are bonus-eligible.
-    let aw_w = match award_player(&state, &winner, true, fight_xp(true), win_mult, true).await {
+    let aw_w = match award_player(&state, &winner, true, fight_xp(true), win_mult, true, true).await {
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let aw_l = match award_player(&state, &loser, false, fight_xp(false), lose_mult, true).await {
+    let aw_l = match award_player(&state, &loser, false, fight_xp(false), lose_mult, true, true).await {
         Ok(a) => a,
         Err(resp) => return resp,
     };

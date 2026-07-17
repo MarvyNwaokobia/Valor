@@ -19,6 +19,7 @@ pub struct AppState {
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
+    pub endless_sessions: std::sync::Arc<DashMap<Uuid, services::battle::EndlessSession>>,
 }
 
 #[tokio::main]
@@ -70,6 +71,8 @@ async fn main() -> anyhow::Result<()> {
     // In-progress live fights — server-issued tokens for the real-time earn loop.
     let live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>> =
         std::sync::Arc::new(DashMap::new());
+    let endless_sessions: std::sync::Arc<DashMap<Uuid, services::battle::EndlessSession>> =
+        std::sync::Arc::new(DashMap::new());
 
     // FRONTEND_ORIGIN: comma-separated list of allowed origins.
     // Defaults to production URL so deploys work without manual env var setup.
@@ -108,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
                 live_fight_sessions: live_fight_sessions.clone(),
+                endless_sessions: endless_sessions.clone(),
             }))
             .wrap(Logger::default())
             .wrap(cors)
