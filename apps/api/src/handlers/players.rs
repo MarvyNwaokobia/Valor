@@ -10,6 +10,22 @@ use crate::utils::normalize_wallet;
 use crate::AppState;
 
 // ── PATCH /players/:wallet ────────────────────────────────────────────────────
+/// COSMETIC / IDENTITY FIELDS ONLY.
+///
+/// This endpoint is unauthenticated — anyone can PATCH any wallet — so it must never
+/// accept a field that decides progression or money. It previously took `rank`,
+/// `last_active`, `decay_status` and `decay_frozen_until`, which meant an
+/// unauthenticated caller could hand themselves Diamond (4 rank-ups' worth of G$),
+/// demote another player, or dodge decay forever:
+///
+///     PATCH /players/0x<anyone> {"rank":"Diamond","last_active":"<now>"}
+///
+/// No client ever sent any of them (the only PATCH bodies are username,
+/// character_customization, character_class/name/confirmed, and inventory `equipped`),
+/// so they were pure attack surface. Rank is owned by award_player, last_active by the
+/// fight paths, and decay by the decay sweep + POST /freeze-decay, which checks that
+/// the player actually owns a shield. Keep it that way: do not re-add a progression
+/// field here without putting real auth on the route first.
 #[derive(Deserialize)]
 pub struct UpdatePlayerRequest {
     pub username:                Option<String>,
@@ -19,11 +35,6 @@ pub struct UpdatePlayerRequest {
     pub character_class:         Option<String>,
     pub character_name:          Option<String>,
     pub character_confirmed:     Option<bool>,
-    // Decay management fields (set by client after shield/scroll use)
-    pub decay_frozen_until:      Option<chrono::DateTime<Utc>>,
-    pub decay_status:            Option<String>,
-    pub rank:                    Option<String>,
-    pub last_active:             Option<chrono::DateTime<Utc>>,
 }
 
 pub async fn update_player(
@@ -58,23 +69,15 @@ pub async fn update_player(
            username                = COALESCE($1, username),
            display_name            = COALESCE($2, display_name),
            character_customization = COALESCE($3, character_customization),
-           decay_frozen_until      = COALESCE($4, decay_frozen_until),
-           decay_status            = COALESCE($5, decay_status),
-           rank                    = COALESCE($6, rank),
-           last_active             = COALESCE($7, last_active),
-           character_class         = COALESCE($9, character_class),
-           character_name          = COALESCE($10, character_name),
-           character_confirmed     = COALESCE($11, character_confirmed)
-         WHERE wallet_address = $8
+           character_class         = COALESCE($5, character_class),
+           character_name          = COALESCE($6, character_name),
+           character_confirmed     = COALESCE($7, character_confirmed)
+         WHERE wallet_address = $4
          RETURNING *",
     )
     .bind(&body.username)
     .bind(&body.display_name)
     .bind(body.character_customization.as_ref().map(|v| sqlx::types::Json(v.clone())))
-    .bind(body.decay_frozen_until)
-    .bind(&body.decay_status)
-    .bind(&body.rank)
-    .bind(body.last_active)
     .bind(&wallet)
     .bind(&body.character_class)
     .bind(&body.character_name)
