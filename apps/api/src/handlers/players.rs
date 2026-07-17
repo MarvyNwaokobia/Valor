@@ -293,7 +293,7 @@ pub async fn create_player(
             character_customization, play_style, avatar, character_name,
             rank, xp, attack_stat, defense_stat, speed_stat,
             g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Bronze', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true)
          ON CONFLICT (wallet_address) DO UPDATE
            SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
                character_customization = CASE

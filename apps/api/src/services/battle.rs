@@ -78,10 +78,12 @@ impl CharacterClass {
 
 fn bot_stats_for_rank(rank: &str) -> (i32, i32) {
     match rank {
+        "Iron" => (8, 8),
         "Bronze" => (10, 10),
         "Silver" => (15, 15),
         "Gold" => (20, 20),
         "Platinum" => (25, 25),
+        "Emerald" => (28, 28),
         "Diamond" => (30, 30),
         _ => (10, 10),
     }
@@ -423,6 +425,7 @@ mod tests {
             wins:                    0,
             losses:                  0,
             pve_level:               0,
+            prestige_level:          0,
             character_confirmed:     true,
             created_at:              Utc::now(),
             character_claim_tx:      None,
@@ -642,15 +645,21 @@ mod tests {
 
     #[test]
     fn rank_next_progression() {
-        assert_eq!(crate::models::player::Rank::Bronze.next(),   Some(crate::models::player::Rank::Silver));
-        assert_eq!(crate::models::player::Rank::Silver.next(),   Some(crate::models::player::Rank::Gold));
-        assert_eq!(crate::models::player::Rank::Diamond.next(),  None);
+        use crate::models::player::Rank;
+        assert_eq!(Rank::Iron.next(),     Some(Rank::Bronze));
+        assert_eq!(Rank::Bronze.next(),   Some(Rank::Silver));
+        assert_eq!(Rank::Silver.next(),   Some(Rank::Gold));
+        assert_eq!(Rank::Platinum.next(), Some(Rank::Emerald));
+        assert_eq!(Rank::Emerald.next(),  Some(Rank::Diamond));
+        assert_eq!(Rank::Diamond.next(),  None); // top rank → prestige instead
     }
 
     #[test]
     fn rank_prev_regression() {
-        assert_eq!(crate::models::player::Rank::Diamond.prev(),  Some(crate::models::player::Rank::Platinum));
-        assert_eq!(crate::models::player::Rank::Bronze.prev(),   None);
+        use crate::models::player::Rank;
+        assert_eq!(Rank::Diamond.prev(), Some(Rank::Emerald));
+        assert_eq!(Rank::Bronze.prev(),  Some(Rank::Iron));
+        assert_eq!(Rank::Iron.prev(),    None); // Iron is the floor
     }
 
     #[test]
