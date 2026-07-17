@@ -7,6 +7,8 @@ export interface LedgerSummary {
   gameplay_earned: number
   marketplace_spent: number
   transferred_out: number
+  /** Earned G$ whose on-chain transfer hasn't landed yet. Settles by itself. */
+  pending_payout: number
 }
 
 export function useLedgerSummary(walletAddress: string | undefined) {
@@ -19,5 +21,9 @@ export function useLedgerSummary(walletAddress: string | undefined) {
     },
     enabled: !!walletAddress,
     staleTime: 30_000,
+    // A pending payout resolves on its own (the settle task, or the reconcile sweep
+    // behind it). Poll while the Bank is open so it flips to a real balance without
+    // the player having to reload and wonder.
+    refetchInterval: (query) => (query.state.data?.pending_payout ? 15_000 : false),
   })
 }
