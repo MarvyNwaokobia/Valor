@@ -122,6 +122,33 @@ export default function BankPage() {
         </div>
       </div>
 
+      {/* Pending payout — earned G$ whose on-chain transfer hasn't landed yet. Only
+          shown when there is one; it settles by itself (the reconcile sweep retries
+          anything the live attempt missed), so this exists to stop the gap between
+          "+500 G$" and the balance updating reading as lost money. */}
+      {!!ledger?.pending_payout && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 px-4 py-3 rounded-xl border"
+          style={{ background: 'rgba(234,179,8,0.06)', borderColor: 'rgba(234,179,8,0.22)' }}
+        >
+          <motion.span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{ background: '#eab308' }}
+            animate={{ opacity: [1, 0.25, 1] }}
+            transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-amber-400">
+              {formatGDollarNumber(ledger.pending_payout)} G$ on the way
+            </p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Earned and confirmed. It lands in your balance once the transfer settles.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Earned / spent breakdown */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatTile label="Earned · UBI" value={`${formatGDollarNumber(ledger?.ubi_earned ?? 0)} G$`} />
