@@ -788,17 +788,31 @@ async fn settle_first_clear_bounty(
 
     match result {
         Ok(true) => {
-            let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'paid' WHERE wallet_address = $1 AND level = $2")
-                .bind(wallet).bind(level).execute(db).await;
-            let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
-                .bind(amount as i64).bind(wallet).execute(db).await;
-            crate::handlers::ledger::insert_ledger_entry(
-                db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
-            ).await;
-            tracing::info!(
-                "first-clear bounty paid: {} op{} +{} G${}",
-                wallet, level, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
-            );
+            // Flip to 'paid' and let ONLY the row that actually made that transition
+            // credit the ledger + lifetime. The sweep now re-attempts 'pending' rows,
+            // which can run while the live task is still in flight, so two settles may
+            // race on one bounty; both would see Ok(true) (the on-chain ref guard makes
+            // the second a no-op read). Gating the credit on rows_affected means the
+            // loser credits nothing and the player is never double-counted.
+            let credited = sqlx::query(
+                "UPDATE first_clear_bounties SET status = 'paid'
+                 WHERE wallet_address = $1 AND level = $2 AND status <> 'paid'",
+            )
+            .bind(wallet).bind(level).execute(db).await
+            .map(|r| r.rows_affected() == 1)
+            .unwrap_or(false);
+
+            if credited {
+                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                    .bind(amount as i64).bind(wallet).execute(db).await;
+                crate::handlers::ledger::insert_ledger_entry(
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                ).await;
+                tracing::info!(
+                    "first-clear bounty paid: {} op{} +{} G${}",
+                    wallet, level, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
+                );
+            }
             "paid"
         }
         Ok(false) => {
@@ -841,17 +855,28 @@ async fn settle_rank_up_reward(
 
     match result {
         Ok(true) => {
-            let _ = sqlx::query("UPDATE rank_up_rewards SET status = 'paid' WHERE wallet_address = $1 AND rank = $2")
-                .bind(wallet).bind(rank).execute(db).await;
-            let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
-                .bind(amount as i64).bind(wallet).execute(db).await;
-            crate::handlers::ledger::insert_ledger_entry(
-                db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
-            ).await;
-            tracing::info!(
-                "rank-up reward paid: {} {} +{} G${}",
-                wallet, rank, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
-            );
+            // Only the settle that actually flips 'pending'/'failed' → 'paid' credits the
+            // ledger + lifetime; see settle_first_clear_bounty for why (the sweep can now
+            // race the live task on a 'pending' row).
+            let credited = sqlx::query(
+                "UPDATE rank_up_rewards SET status = 'paid'
+                 WHERE wallet_address = $1 AND rank = $2 AND status <> 'paid'",
+            )
+            .bind(wallet).bind(rank).execute(db).await
+            .map(|r| r.rows_affected() == 1)
+            .unwrap_or(false);
+
+            if credited {
+                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                    .bind(amount as i64).bind(wallet).execute(db).await;
+                crate::handlers::ledger::insert_ledger_entry(
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                ).await;
+                tracing::info!(
+                    "rank-up reward paid: {} {} +{} G${}",
+                    wallet, rank, amount, if already_paid { " (reconciled — was already on-chain)" } else { "" }
+                );
+            }
             "paid"
         }
         Ok(false) => {
@@ -896,10 +921,18 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
     };
 
     // Oldest-first, capped so a backlog can't make one sweep run unbounded.
+    //
+    // 'pending' rows are swept too, not just 'failed'. A payout row is created 'pending'
+    // and only becomes 'paid'/'failed' once the spawned settle task finishes — so if the
+    // process dies mid-flight (a free-tier instance spinning down kills in-flight tasks),
+    // the row stays 'pending' forever and nothing ever retries it. That is real money
+    // silently never delivered. The age guard keeps this sweep off rows whose live
+    // attempt is plausibly still running; anything older has been abandoned.
     let rows: Vec<(String, i32, i64)> = sqlx::query_as(
         "SELECT wallet_address, level, amount
          FROM first_clear_bounties
          WHERE status = 'failed'
+            OR (status = 'pending' AND created_at < now() - interval '5 minutes')
          ORDER BY created_at ASC
          LIMIT 25",
     )
@@ -915,11 +948,13 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         }
     }
 
-    // Same sweep for failed rank-up rewards (identical idempotent settle rail).
+    // Same sweep for rank-up rewards (identical idempotent settle rail), including the
+    // abandoned-'pending' case above.
     let rank_rows: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT wallet_address, rank, amount
          FROM rank_up_rewards
          WHERE status = 'failed'
+            OR (status = 'pending' AND created_at < now() - interval '5 minutes')
          ORDER BY created_at ASC
          LIMIT 25",
     )
