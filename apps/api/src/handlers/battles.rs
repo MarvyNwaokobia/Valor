@@ -71,10 +71,13 @@ const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
 
 fn next_rank(rank: &str) -> Option<&'static str> {
     match rank {
+        "Iron"     => Some("Bronze"),
         "Bronze"   => Some("Silver"),
         "Silver"   => Some("Gold"),
         "Gold"     => Some("Platinum"),
-        "Platinum" => Some("Diamond"),
+        "Platinum" => Some("Emerald"),
+        "Emerald"  => Some("Diamond"),
+        // Diamond has no next rank — a full bar past it PRESTIGES instead (see award_player).
         _          => None,
     }
 }
@@ -95,6 +98,8 @@ struct FightOutcome {
     ranked_up: bool,
     new_rank:  Option<&'static str>,
     g_awarded: i64,
+    prestiged: bool, // true when this fight prestiged the player (past Diamond)
+    prestige_level: i32, // the player's prestige level after this fight
     battle_id: Uuid,
 }
 
@@ -104,13 +109,18 @@ struct PlayerAward {
     ranked_up: bool,
     new_rank:  Option<&'static str>,
     g_awarded: i64,
+    prestiged: bool,
+    prestige_level: i32,
 }
 
-/// Number of rank-ups needed to reach a rank — Silver is the 1st, Diamond the 4th.
-/// Used to size the refereed-XP a rank-up bonus requires (Nth rank ⇒ N × XP_PER_RANK).
+/// Number of rank-ups needed to reach a rank, from the Iron floor — Bronze is the 1st,
+/// Diamond the 6th. Used to size the refereed-XP a rank-up bonus requires
+/// (Nth rank ⇒ N × XP_PER_RANK). Prestige levels extend past Diamond: prestige P is the
+/// (6 + P)th rank-up, computed inline in award_player rather than here.
 fn rank_ordinal(rank: &str) -> i32 {
     match rank {
-        "Silver" => 1, "Gold" => 2, "Platinum" => 3, "Diamond" => 4,
+        "Iron" => 0, "Bronze" => 1, "Silver" => 2, "Gold" => 3,
+        "Platinum" => 4, "Emerald" => 5, "Diamond" => 6,
         _ => 0,
     }
 }
@@ -149,12 +159,37 @@ async fn award_player(
 
     let xp_earned  = base_xp * xp_multiplier;
     let raw_new_xp = player.xp + xp_earned;
-    let ranked_up  = raw_new_xp >= XP_PER_RANK;
-    let new_xp     = if ranked_up { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
-    let new_rank   = if ranked_up { next_rank(&player.rank) } else { None };
-    // Reaching a new rank pays a flat, scarce reward (RANK_UP_REWARD_G). It is paid
-    // on-chain once per (wallet, rank), idempotently, like the first-clear bounty —
-    // set here only once the DB payout slot is actually claimed (see below).
+
+    // A full 1000-XP bar does one of two things:
+    //   • PROMOTE — advance to the next rank (Iron→…→Diamond), or
+    //   • PRESTIGE — at Diamond (no next rank), bump prestige_level instead. XP is never
+    //     deleted; the bar keeps counting and keeps paying, forever. This is the fix for
+    //     the old Diamond bug where a full bar subtracted 1000 XP and paid nothing.
+    let ranked_up   = raw_new_xp >= XP_PER_RANK;
+    let promote_to  = if ranked_up { next_rank(&player.rank) } else { None };
+    let prestige_up = ranked_up && promote_to.is_none() && player.rank == "Diamond";
+    let new_prestige = if prestige_up { player.prestige_level + 1 } else { player.prestige_level };
+
+    // Consume the bar ONLY when a reward event actually fires. For every real rank this
+    // equals `ranked_up`; the guard just guarantees no XP is ever silently lost if an
+    // unknown rank ever reached here without a next rank or a prestige.
+    let rank_event = promote_to.is_some() || prestige_up;
+    let new_xp     = if rank_event { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
+    let new_rank   = promote_to;
+
+    // A promotion or prestige pays a flat 500 G$ (RANK_UP_REWARD_G), keyed by a UNIQUE
+    // string so it pays exactly once: the rank name for a promotion, "Diamond+N" for the
+    // Nth prestige (rank stays "Diamond", so the plain name can't key it). The reward
+    // ordinal sizes the Way-2 gate — Nth rank-up ⇒ N × XP_PER_RANK of refereed XP —
+    // and prestige P is simply the (6 + P)th rank-up.
+    let (reward_key, reward_ordinal): (Option<String>, i32) = if let Some(nr) = promote_to {
+        (Some(nr.to_string()), rank_ordinal(nr))
+    } else if prestige_up {
+        (Some(format!("Diamond+{}", new_prestige)), rank_ordinal("Diamond") + new_prestige)
+    } else {
+        (None, 0)
+    };
+    // Set here only once the DB payout slot is actually claimed (see below).
     let mut g_awarded = 0i64;
 
     let wins   = if won { player.wins + 1 } else { player.wins };
@@ -177,46 +212,38 @@ async fn award_player(
             .fetch_optional(&state.db).await.ok().flatten().unwrap_or(0)
     };
 
-    if let Some(rank) = new_rank {
-        // g_earned_lifetime is bumped separately below, only once the G$
-        // transfer actually confirms on-chain — see the tokio::spawn block.
-        let _ = sqlx::query(
-            "UPDATE players
-             SET xp = $1, wins = $2, losses = $3, rank = $4,
-                 last_active = $5, decay_status = 'none'
-             WHERE wallet_address = $6",
-        )
-        .bind(new_xp).bind(wins).bind(losses).bind(rank)
-        .bind(now).bind(wallet)
-        .execute(&state.db).await;
-    } else {
-        let _ = sqlx::query(
-            "UPDATE players
-             SET xp = $1, wins = $2, losses = $3,
-                 last_active = $4, decay_status = 'none'
-             WHERE wallet_address = $5",
-        )
-        .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
-        .execute(&state.db).await;
-    }
+    // One UPDATE for every case. rank advances on a promotion (or stays put), and
+    // prestige_level advances on a prestige (or stays put); when neither fires both bind
+    // to their current value, a harmless no-op. g_earned_lifetime is bumped separately,
+    // only once the G$ transfer confirms on-chain — see the tokio::spawn block.
+    let new_rank_str: &str = promote_to.unwrap_or(&player.rank);
+    let _ = sqlx::query(
+        "UPDATE players
+         SET xp = $1, wins = $2, losses = $3, rank = $4, prestige_level = $5,
+             last_active = $6, decay_status = 'none'
+         WHERE wallet_address = $7",
+    )
+    .bind(new_xp).bind(wins).bind(losses).bind(new_rank_str).bind(new_prestige)
+    .bind(now).bind(wallet)
+    .execute(&state.db).await;
 
-    if let Some(rank) = new_rank {
-        let rank_str = rank.to_string();
+    if let Some(reward_key) = reward_key {
         // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
-        // earns the rank (Nth rank ⇒ N × XP_PER_RANK). The rank itself still advances
-        // above and on-chain below — only the money is gated — so honest progression is
-        // untouched while forged flat/Endless wins can never mint the bonus.
-        let earned_enough = honest_xp_after >= rank_ordinal(rank) * XP_PER_RANK;
+        // earns the level (Nth rank-up ⇒ N × XP_PER_RANK). The rank/prestige itself still
+        // advances above and on-chain below — only the money is gated — so honest
+        // progression is untouched while forged flat/Endless wins can never mint the bonus.
+        let earned_enough = honest_xp_after >= reward_ordinal * XP_PER_RANK;
 
-        // Claim the once-per-rank payout slot idempotently: only the first request to
-        // insert (wallet, rank) owns the payout. A retry or a concurrent duplicate
+        // Claim the once-per-key payout slot idempotently: only the first request to
+        // insert (wallet, reward_key) owns the payout. A retry or a concurrent duplicate
         // fight-complete hits the PK conflict and pays nothing (the on-chain ref guard
-        // is the second line of defence).
+        // is the second line of defence). The key is unique per rank AND per prestige
+        // level, so every prestige past Diamond is its own one-time payout.
         let claimed = earned_enough && sqlx::query(
             "INSERT INTO rank_up_rewards (wallet_address, rank, amount)
              VALUES ($1, $2, $3) ON CONFLICT (wallet_address, rank) DO NOTHING",
         )
-        .bind(wallet).bind(&rank_str).bind(RANK_UP_REWARD_G as i64)
+        .bind(wallet).bind(&reward_key).bind(RANK_UP_REWARD_G as i64)
         .execute(&state.db).await
         .map(|r| r.rows_affected() == 1)
         .unwrap_or(false);
@@ -226,32 +253,36 @@ async fn award_player(
         } else if !earned_enough {
             tracing::info!(
                 "rank-up bonus withheld for {} → {}: refereed XP {} < {}",
-                wallet, rank_str, honest_xp_after, rank_ordinal(rank) * XP_PER_RANK
+                wallet, reward_key, honest_xp_after, reward_ordinal * XP_PER_RANK
             );
         }
 
         if let (Some(chain), Ok(addr)) = (state.chain.as_ref().cloned(), wallet.parse::<Address>()) {
             let db = state.db.clone();
             let wallet_owned = wallet.to_string();
+            // A promotion enrolls the player in the new tier's on-chain pool; a prestige
+            // does not (rank is unchanged, they're already in Diamond's pool).
+            let promoted_rank: Option<String> = promote_to.map(|r| r.to_string());
             tokio::spawn(async move {
                 // MONEY FIRST. Each of these takes the global tx_lock and waits for its
                 // own confirmation, so whatever runs first delays everything after it —
                 // and if the process dies mid-sequence, only the unrun tail is lost.
                 // The player is waiting on the G$, not on the bookkeeping, so the payout
                 // goes out before the on-chain record + pool enrollment rather than
-                // queueing behind them. Idempotent per (wallet, rank) and shared with the
+                // queueing behind them. Idempotent per (wallet, key) and shared with the
                 // reconcile sweep, so a failure here is re-attempted later.
                 if claimed {
-                    settle_rank_up_reward(&db, &chain, &wallet_owned, &rank_str, RANK_UP_REWARD_G).await;
+                    settle_rank_up_reward(&db, &chain, &wallet_owned, &reward_key, RANK_UP_REWARD_G).await;
                 }
-                // Rank progression is on-chain (records + leaderboard-pool enrollment).
-                chain.record_rank_up(addr, rank_str.clone()).await;
-                chain.enroll_in_rank_pool(addr, &rank_str).await;
+                if let Some(rank) = promoted_rank {
+                    chain.record_rank_up(addr, rank.clone()).await;
+                    chain.enroll_in_rank_pool(addr, &rank).await;
+                }
             });
         }
     }
 
-    Ok(PlayerAward { xp_earned, new_xp, ranked_up, new_rank, g_awarded })
+    Ok(PlayerAward { xp_earned, new_xp, ranked_up: rank_event, new_rank, g_awarded, prestiged: prestige_up, prestige_level: new_prestige })
 }
 
 /// Persist exactly one battle row and kick the on-chain `record_battle`. The loser
@@ -335,6 +366,8 @@ async fn finalize_fight(
         ranked_up: award.ranked_up,
         new_rank:  award.new_rank,
         g_awarded: award.g_awarded,
+        prestiged: award.prestiged,
+        prestige_level: award.prestige_level,
         battle_id,
     })
 }
@@ -515,6 +548,8 @@ pub async fn bot_fight_round(
         "new_xp":       outcome.new_xp,
         "ranked_up":    outcome.ranked_up,
         "new_rank":     outcome.new_rank,
+        "prestiged":    outcome.prestiged,
+        "prestige_level": outcome.prestige_level,
         "g_awarded":    outcome.g_awarded,
         "battle_id":    outcome.battle_id,
     }))
@@ -743,6 +778,8 @@ pub async fn complete_live_fight(
         "new_xp":         outcome.new_xp,
         "ranked_up":      outcome.ranked_up,
         "new_rank":       outcome.new_rank,
+        "prestiged":      outcome.prestiged,
+        "prestige_level": outcome.prestige_level,
         "g_awarded":      outcome.g_awarded,
         "bounty_awarded": bounty_awarded,
         "battle_id":      outcome.battle_id,
@@ -1048,6 +1085,7 @@ pub async fn complete_pvp_match(
     let side = |w: &str, a: &PlayerAward| json!({
         "wallet": w, "xp_awarded": a.xp_earned, "new_xp": a.new_xp,
         "ranked_up": a.ranked_up, "new_rank": a.new_rank, "g_awarded": a.g_awarded,
+        "prestiged": a.prestiged, "prestige_level": a.prestige_level,
     });
     HttpResponse::Ok().json(json!({
         "battle_id": battle_id,
@@ -1210,11 +1248,22 @@ mod reward_amount_tests {
     fn refereed_xp_needed_scales_with_rank() {
         // Reaching the Nth rank needs N full ranks' worth of verified XP before its
         // G$ bonus pays — so a pure honor-system (flat/Endless) grind never earns one.
-        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 1000);
-        assert_eq!(rank_ordinal("Gold")     * XP_PER_RANK, 2000);
-        assert_eq!(rank_ordinal("Platinum") * XP_PER_RANK, 3000);
-        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 4000);
-        // Bronze is the start (never reached via a rank-up) so it gates at zero.
-        assert_eq!(rank_ordinal("Bronze"), 0);
+        // Ladder v2: Iron floor, Bronze the 1st rank-up, Diamond the 6th.
+        assert_eq!(rank_ordinal("Bronze")   * XP_PER_RANK, 1000);
+        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 2000);
+        assert_eq!(rank_ordinal("Gold")     * XP_PER_RANK, 3000);
+        assert_eq!(rank_ordinal("Platinum") * XP_PER_RANK, 4000);
+        assert_eq!(rank_ordinal("Emerald")  * XP_PER_RANK, 5000);
+        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 6000);
+        // Iron is the start (never reached via a rank-up) so it gates at zero.
+        assert_eq!(rank_ordinal("Iron"), 0);
+    }
+
+    #[test]
+    fn prestige_reward_ordinal_extends_past_diamond() {
+        // Prestige P is the (6 + P)th rank-up, so the Way-2 gate keeps scaling and a
+        // grinder can't mint prestige bonuses without the refereed XP to back them.
+        assert_eq!(rank_ordinal("Diamond") + 1, 7);   // Diamond I  needs 7000 refereed XP
+        assert_eq!(rank_ordinal("Diamond") + 3, 9);   // Diamond III needs 9000
     }
 }

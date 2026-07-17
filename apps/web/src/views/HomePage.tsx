@@ -12,6 +12,7 @@ import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
+import { rankLabel } from '@/lib/ranks'
 import { formatGDollarNumber } from '@/utils/format'
 
 const CLASS_SOLO: Record<string, string> = {
@@ -128,7 +129,7 @@ export default function HomePage() {
             </div>
             <div className="text-right">
               <p className="text-[10px] text-slate-500 uppercase tracking-wider">Rank</p>
-              <p className="font-display font-black text-lg" style={{ color: def.accentColor }}>{player.rank}</p>
+              <p className="font-display font-black text-lg" style={{ color: def.accentColor }}>{rankLabel(player.rank, player.prestige_level ?? 0)}</p>
             </div>
           </div>
 
