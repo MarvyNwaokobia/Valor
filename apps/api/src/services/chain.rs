@@ -230,13 +230,19 @@ impl ChainWriter {
             Some(p) => p,
             None => return Ok(false),
         };
-        let _tx = self.tx_lock.lock().await;
-        pool.distribute_rank_up_reward(player, rank.clone())
-            .send()
+        // Submit under the lock, confirm outside it under a timeout — see distribute_reward.
+        let call = pool.distribute_rank_up_reward(player, rank.clone());
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send()
+                .await
+                .map_err(|e| format!("distributeRankUpReward failed: {}", e))?
+        };
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
             .await
-            .map_err(|e| format!("distributeRankUpReward failed: {}", e))?
-            .await
-            .map_err(|e| format!("distributeRankUpReward tx failed: {}", e))?;
+            .map_err(|_| "distributeRankUpReward tx timed out".to_string())?
+            .map_err(|e| format!("distributeRankUpReward tx failed: {}", e))?
+            .ok_or_else(|| "distributeRankUpReward tx was dropped from mempool".to_string())?;
         tracing::info!("distributeRankUpReward: {} → {}", player, rank);
         Ok(true)
     }
@@ -252,13 +258,21 @@ impl ChainWriter {
         };
         // G$ has 18 decimals; amount_g is whole tokens.
         let amount = U256::from(amount_g) * U256::exp10(18);
-        let _tx = self.tx_lock.lock().await;
-        pool.distribute_reward(player, amount, reference)
-            .send()
+        // Hold tx_lock only to submit (it serialises nonce assignment); wait for the
+        // receipt OUTSIDE it, under a timeout. Holding a global lock across an unbounded
+        // confirmation wait meant one hung RPC call stalled every payout in the process.
+        let call = pool.distribute_reward(player, amount, reference);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send()
+                .await
+                .map_err(|e| format!("distributeReward failed: {}", e))?
+        };
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
             .await
-            .map_err(|e| format!("distributeReward failed: {}", e))?
-            .await
-            .map_err(|e| format!("distributeReward tx failed: {}", e))?;
+            .map_err(|_| "distributeReward tx timed out".to_string())?
+            .map_err(|e| format!("distributeReward tx failed: {}", e))?
+            .ok_or_else(|| "distributeReward tx was dropped from mempool".to_string())?;
         tracing::info!("distributeReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
         Ok(true)
     }
@@ -286,13 +300,19 @@ impl ChainWriter {
             Some(p) => p,
             None => return Ok(false),
         };
-        let _tx = self.tx_lock.lock().await;
-        pool.distribute_daily_claim(player)
-            .send()
+        // Submit under the lock, confirm outside it under a timeout — see distribute_reward.
+        let call = pool.distribute_daily_claim(player);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send()
+                .await
+                .map_err(|e| format!("distributeDailyClaim failed: {}", e))?
+        };
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
             .await
-            .map_err(|e| format!("distributeDailyClaim failed: {}", e))?
-            .await
-            .map_err(|e| format!("distributeDailyClaim tx failed: {}", e))?;
+            .map_err(|_| "distributeDailyClaim tx timed out".to_string())?
+            .map_err(|e| format!("distributeDailyClaim tx failed: {}", e))?
+            .ok_or_else(|| "distributeDailyClaim tx was dropped from mempool".to_string())?;
         tracing::info!("distributeDailyClaim: {}", player);
         Ok(true)
     }
