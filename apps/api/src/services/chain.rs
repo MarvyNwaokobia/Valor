@@ -64,6 +64,7 @@ pub struct ChainWriter {
     rank_pools:   HashMap<String, Address>,
     marketplace:  Option<Arc<ValorMarketplace<ChainClient>>>,
     reward_pool:  Option<Arc<ValorRewardPool<ChainClient>>>,
+    endless_pool: Option<Arc<ValorRewardPool<ChainClient>>>,
     g_token:      Arc<GDollarToken<ChainClient>>,
     // Serializes every state-changing tx from the signer. A fight-complete fires
     // several writes concurrently (recordBattle + a bounty/reward payout), and a
@@ -128,12 +129,25 @@ impl ChainWriter {
                 Arc::new(ValorMarketplace::new(addr, client.clone()))
             });
 
-        // Reward pool — optional (distributions skipped if unset)
+        // Reward pool — optional (distributions skipped if unset). This funds rank-ups,
+        // prestige, first-clear bounties, and daily claims.
         let reward_pool = std::env::var("REWARD_POOL_CONTRACT")
             .ok()
             .and_then(|v| v.parse::<Address>().ok())
             .map(|addr| {
                 tracing::info!("Reward pool enabled → {:?}", addr);
+                Arc::new(ValorRewardPool::new(addr, client.clone()))
+            });
+
+        // Endless gets its OWN pool so a survival grinder can't starve rank-up/bounty
+        // payouts. Optional: if ENDLESS_REWARD_POOL_CONTRACT is unset, Endless falls
+        // back to the shared reward_pool (current behaviour), so this is safe to ship
+        // before the separate pool is deployed and funded.
+        let endless_pool = std::env::var("ENDLESS_REWARD_POOL_CONTRACT")
+            .ok()
+            .and_then(|v| v.parse::<Address>().ok())
+            .map(|addr| {
+                tracing::info!("Endless reward pool enabled → {:?}", addr);
                 Arc::new(ValorRewardPool::new(addr, client.clone()))
             });
 
@@ -145,7 +159,7 @@ impl ChainWriter {
         let g_token = Arc::new(GDollarToken::new(g_token_addr, client.clone()));
 
         tracing::info!("ChainWriter ready — game_record={}", contract_addr);
-        Some(Self { contract, client, rank_pools, marketplace, reward_pool, g_token, tx_lock: Arc::new(tokio::sync::Mutex::new(())) })
+        Some(Self { contract, client, rank_pools, marketplace, reward_pool, endless_pool, g_token, tx_lock: Arc::new(tokio::sync::Mutex::new(())) })
     }
 
     pub async fn claim_character(
@@ -280,6 +294,55 @@ impl ChainWriter {
             .ok_or_else(|| "distributeReward tx was dropped from mempool".to_string())?;
         tracing::info!("distributeReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
         Ok(true)
+    }
+
+    /// The pool Endless pays from: its dedicated pool if configured, else the shared one.
+    /// The fallback keeps Endless working before the separate pool is deployed.
+    fn endless_or_main(&self) -> Option<&Arc<ValorRewardPool<ChainClient>>> {
+        self.endless_pool.as_ref().or(self.reward_pool.as_ref())
+    }
+
+    /// Like `distribute_reward`, but from the Endless pool (see `endless_or_main`). A
+    /// separate pool means a survival grinder drains its own budget, not the rank-up /
+    /// bounty budget.
+    pub async fn distribute_endless_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<bool, String> {
+        let pool = match self.endless_or_main() {
+            Some(p) => p.clone(),
+            None => return Ok(false),
+        };
+        let amount = U256::from(amount_g) * U256::exp10(18);
+        let call = pool.distribute_reward(player, amount, reference);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send()
+                .await
+                .map_err(|e| format!("distributeEndlessReward failed: {}", e))?
+        };
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+            .await
+            .map_err(|_| "distributeEndlessReward tx timed out".to_string())?
+            .map_err(|e| format!("distributeEndlessReward tx failed: {}", e))?
+            .ok_or_else(|| "distributeEndlessReward tx was dropped from mempool".to_string())?;
+        tracing::info!("distributeEndlessReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
+        Ok(true)
+    }
+
+    /// `rewardRefUsed` against the Endless pool — the idempotency check for endless refs.
+    pub async fn endless_ref_used(&self, reference: [u8; 32]) -> Result<bool, String> {
+        let pool = match self.endless_or_main() {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        pool.reward_ref_used(reference)
+            .call()
+            .await
+            .map_err(|e| format!("endless rewardRefUsed read failed: {}", e))
+    }
+
+    /// The Endless pool address (dedicated if set, else the shared pool) — for the
+    /// low-balance monitor.
+    pub fn endless_pool_address(&self) -> Option<Address> {
+        self.endless_pool.as_ref().or(self.reward_pool.as_ref()).map(|p| p.address())
     }
 
     /// Reads the on-chain idempotency flag for a bounty `ref`. `true` means that ref

@@ -324,8 +324,8 @@ pub async fn settle_endless_reward(
     let reference = ethers::utils::keccak256(
         format!("endless:{}:{}:{}", wallet, session_id, wave).as_bytes(),
     );
-    let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
-    let result = if already_paid { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+    let already_paid = chain.endless_ref_used(reference).await.unwrap_or(false);
+    let result = if already_paid { Ok(true) } else { chain.distribute_endless_reward(addr, amount, reference).await };
 
     match result {
         Ok(true) => {
@@ -367,7 +367,7 @@ pub async fn settle_endless_reward(
 /// The no-cap safety net: log a WARN once the reward pool drops below the threshold, so
 /// it gets topped up before payouts start failing on an empty pool.
 async fn warn_if_pool_low(chain: &crate::services::chain::ChainWriter) {
-    let Some(pool) = chain.reward_pool_address() else { return };
+    let Some(pool) = chain.endless_pool_address() else { return };
     if let Ok(bal) = chain.g_balance(pool).await {
         let whole = (bal / ethers::types::U256::exp10(18)).as_u128() as u64;
         let warn = pool_warn_g();

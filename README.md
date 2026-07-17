@@ -192,6 +192,10 @@ forge build && forge test
 | `GAME_RECORD_CONTRACT` | ✅ | `ValorGameRecord` proxy — on-chain battle/rank logging |
 | `MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy — gasless purchase relay |
 | `REWARD_POOL_CONTRACT` | ✅ | `ValorRewardPool` proxy — first-clear bounties + season payouts (**no code fallback: unset = silent failed payouts**) |
+| `ENDLESS_REWARD_POOL_CONTRACT` | — | Separate `ValorRewardPool` for Endless per-wave payouts, so survival grinding can't starve rank-up/bounty G$. Unset = Endless falls back to `REWARD_POOL_CONTRACT` |
+| `ENDLESS_MIN_SECS_PER_WAVE` | — | Min real seconds per Endless wave (default 6) — the anti-script timing floor |
+| `ENDLESS_WEEKLY_CAP_G` | — | Per-player weekly Endless G$ cap (default 0 = no cap) |
+| `ENDLESS_POOL_WARN_G` | — | Log a low-balance warning when the Endless pool drops below this (default 10000) |
 | `CELO_RPC_URL` | ✅ | Celo RPC (default `https://forno.celo.org`) |
 | `VALOR_APP_ADDRESS` | ✅ | Public address of `BACKEND_PRIVATE_KEY` |
 | `DECAY_CRON_SECRET` | ✅ | Shared `x-cron-secret` for `/decay/run` + `/battles/bounties/reconcile` |
