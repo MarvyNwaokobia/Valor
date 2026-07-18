@@ -27,7 +27,7 @@ function deterministicName(wallet: string) {
 }
 
 export default function OnboardingPage() {
-  const { status, address } = useResolvedAuth()
+  const { status, address, magicEmail, magicIssuer } = useResolvedAuth()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -164,6 +164,8 @@ export default function OnboardingPage() {
         decay_frozen_until:      null,
         wins:                    0,
         losses:                  0,
+        magic_email:             magicEmail ?? null,
+        magic_issuer:            magicIssuer ?? null,
       }
       const res = await fetch(`${API}/players`, {
         method: 'POST',

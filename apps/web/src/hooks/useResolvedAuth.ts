@@ -16,13 +16,14 @@ export function useResolvedAuth() {
   const { address: walletAddress, isConnected } = useAccount()
 
   if (magic.status === 'ready' && magic.address) {
-    return { status: 'ready' as const, address: magic.address, source: 'magic' as AuthSource }
+    // magicEmail/magicIssuer let us store the login identity per wallet (multi-account detection).
+    return { status: 'ready' as const, address: magic.address, source: 'magic' as AuthSource, magicEmail: magic.email, magicIssuer: magic.issuer }
   }
   if (isConnected && walletAddress) {
-    return { status: 'ready' as const, address: walletAddress, source: 'wallet' as AuthSource }
+    return { status: 'ready' as const, address: walletAddress, source: 'wallet' as AuthSource, magicEmail: undefined, magicIssuer: undefined }
   }
   if (magic.status === 'loading') {
-    return { status: 'loading' as const, address: undefined, source: undefined }
+    return { status: 'loading' as const, address: undefined, source: undefined, magicEmail: undefined, magicIssuer: undefined }
   }
-  return { status: 'unauthenticated' as const, address: undefined, source: undefined }
+  return { status: 'unauthenticated' as const, address: undefined, source: undefined, magicEmail: undefined, magicIssuer: undefined }
 }

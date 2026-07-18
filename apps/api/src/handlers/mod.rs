@@ -51,6 +51,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/daily-claim-status", web::get().to(players::daily_claim_status))
                 .route("/{wallet}/decay-check", web::post().to(players::decay_check))
                 .route("/{wallet}", web::patch().to(players::update_player))
+                .route("/{wallet}/identity", web::post().to(players::set_magic_identity))
                 .route("/{wallet}/inventory", web::get().to(players::get_inventory))
                 .route("/{wallet}/inventory", web::post().to(players::add_inventory_item))
                 .route("/{wallet}/username-available/{username}", web::get().to(players::check_username))

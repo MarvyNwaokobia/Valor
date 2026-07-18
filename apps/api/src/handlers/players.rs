@@ -263,6 +263,33 @@ pub async fn decay_check(
     HttpResponse::Ok().json(json!({"decay_status": new_status, "hours_inactive": hours_inactive}))
 }
 
+// ── POST /players/:wallet/identity ────────────────────────────────────────────
+// Backfills the Magic login identity for an EXISTING player on sign-in, so returning
+// users (who never re-run onboarding) also get captured. UPDATE-only — never creates a
+// row. Best-effort; unauthenticated like the rest, which is fine: worst case a bad actor
+// mislabels a wallet's email, which only muddies our multi-account detection, not money.
+#[derive(Deserialize)]
+pub struct MagicIdentityBody {
+    pub email:  Option<String>,
+    pub issuer: Option<String>,
+}
+
+pub async fn set_magic_identity(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<MagicIdentityBody>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    let _ = sqlx::query(
+        "UPDATE players SET magic_email = COALESCE($1, magic_email),
+                            magic_issuer = COALESCE($2, magic_issuer)
+         WHERE wallet_address = $3",
+    )
+    .bind(&body.email).bind(&body.issuer).bind(&wallet)
+    .execute(&state.db).await;
+    HttpResponse::Ok().json(json!({"ok": true}))
+}
+
 // ── POST /players ─────────────────────────────────────────────────────────────
 #[derive(Deserialize)]
 pub struct CreatePlayerRequest {
@@ -277,6 +304,11 @@ pub struct CreatePlayerRequest {
     pub attack_stat:             Option<i32>,
     pub defense_stat:            Option<i32>,
     pub speed_stat:              Option<i32>,
+    // Magic login identity — lets us see when one PERSON has multiple wallets
+    // (email vs Google login, Safari-ITP re-issues). Same email across wallets = same
+    // person. Optional; captured from magic.user.getInfo() at sign-in.
+    pub magic_email:             Option<String>,
+    pub magic_issuer:            Option<String>,
 }
 
 pub async fn create_player(
@@ -292,8 +324,9 @@ pub async fn create_player(
             wallet_address, username, display_name, character_class,
             character_customization, play_style, avatar, character_name,
             rank, xp, attack_stat, defense_stat, speed_stat,
-            g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true)
+            g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed,
+            magic_email, magic_issuer
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true, $12, $13)
          ON CONFLICT (wallet_address) DO UPDATE
            SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
                character_customization = CASE
@@ -302,6 +335,8 @@ pub async fn create_player(
                END,
                username     = COALESCE(EXCLUDED.username, players.username),
                display_name = COALESCE(EXCLUDED.display_name, players.display_name),
+               magic_email  = COALESCE(EXCLUDED.magic_email, players.magic_email),
+               magic_issuer = COALESCE(EXCLUDED.magic_issuer, players.magic_issuer),
                character_confirmed = true
          RETURNING *",
     )
@@ -316,6 +351,8 @@ pub async fn create_player(
     .bind(body.attack_stat.unwrap_or(10))
     .bind(body.defense_stat.unwrap_or(10))
     .bind(body.speed_stat.unwrap_or(10))
+    .bind(&body.magic_email)
+    .bind(&body.magic_issuer)
     .fetch_one(&state.db)
     .await;
 
