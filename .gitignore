@@ -4,6 +4,9 @@ valor-design.html
 # Community copy (Telegram pins) — never commit
 docs/telegram/
 
+# GoodDollar support message (copy-paste, keep local) — never commit
+docs/gooddollar-whitelist-support.*
+
 # Raw Mixamo FBX subdirectories (per-character source files)
 apps/web/public/characters/raw/berserker/
 apps/web/public/characters/raw/phantom/
