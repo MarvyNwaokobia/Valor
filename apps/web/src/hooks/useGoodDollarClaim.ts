@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { claimUBI, createReadOnlyClaimSDK, getIdentityExpiryReadOnly, withTimeout } from '@/lib/gooddollar'
+import { claimUBI, createReadOnlyClaimSDK, checkWhitelistStatusReadOnly, withTimeout } from '@/lib/gooddollar'
 
 export type GDClaimStatus =
   | 'loading'
@@ -79,12 +79,12 @@ export function useGoodDollarClaim(
     // shows "couldn't load".
     if (!walletStatus) {
       setEntitlement('0'); setNextClaimTime(null)
-      // The bundled read failed. Only prompt re-verify if GoodDollar's OWN expiry says
-      // the identity has lapsed — which also correctly flags a never-verified wallet
-      // (its last-auth is 0 → expired). A verified wallet whose read merely hiccuped is
-      // NOT expired, so it shows a benign "couldn't load", never a re-verify nag.
-      const expiry = await getIdentityExpiryReadOnly(walletAddress).catch(() => null)
-      setStatus(expiry?.isExpired ? 'not_whitelisted' : 'error')
+      try {
+        const { isWhitelisted } = await checkWhitelistStatusReadOnly(walletAddress)
+        setStatus(isWhitelisted ? 'error' : 'not_whitelisted')
+      } catch {
+        setStatus('error')
+      }
       return
     }
 
@@ -97,23 +97,14 @@ export function useGoodDollarClaim(
       setEntitlement('0')
       setNextClaimTime(walletStatus.nextClaimTime ?? null)
     } else {
-      // GoodDollar returned a status that isn't can_claim/already_claimed. This does
-      // NOT prove the wallet is unverified — GoodDollar auth lasts 180 days, and a
-      // verified wallet can be in a transient non-claim state. Per the HARD RULE
-      // (feedback-identity-reverify), the ONLY thing allowed to trigger a re-verify
-      // prompt is GoodDollar's OWN expiry saying the identity has lapsed. So confirm
-      // against the real on-chain expiry; if it's NOT expired, fail OPEN — never nag a
-      // verified user. (A genuinely unverified claim just fails harmlessly on-chain.)
+      // A CLEAN read that reports not-whitelisted means the wallet genuinely isn't
+      // verified on GoodDollar (never verified or lapsed) — show an ACTIONABLE
+      // "verify" prompt. This is not nagging a verified user: a verified wallet
+      // returns can_claim/already_claimed. Read FAILURES fall to 'error' above,
+      // never here. (feedback-identity-reverify)
+      setStatus('not_whitelisted')
       setEntitlement('0')
-      const expiry = await getIdentityExpiryReadOnly(walletAddress).catch(() => null)
-      if (expiry?.isExpired) {
-        setStatus('not_whitelisted')  // GoodDollar itself says lapsed → real re-verify
-        setNextClaimTime(null)
-      } else {
-        // Verified, just not claimable right now — treat as "come back later", not a nag.
-        setStatus('already_claimed')
-        setNextClaimTime(walletStatus.nextClaimTime ?? null)
-      }
+      setNextClaimTime(null)
     }
   }, [walletAddress])
 
