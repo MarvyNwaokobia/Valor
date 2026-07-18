@@ -3,11 +3,17 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { getMagic, AUTH_CALLBACK_PATH } from '@/lib/magic'
 
+const API = process.env.NEXT_PUBLIC_API_URL ?? ''
+
 export type ResolvedAuthStatus = 'loading' | 'unauthenticated' | 'ready'
 
 interface MagicAuthState {
   status: ResolvedAuthStatus
   address: `0x${string}` | undefined
+  // Login identity — same person can hold >1 wallet (email vs Google, Safari-ITP),
+  // so we surface these to store per-wallet and detect multi-account cases.
+  email: string | undefined
+  issuer: string | undefined
 }
 
 interface MagicAuthContextValue extends MagicAuthState {
@@ -25,25 +31,44 @@ export function useMagicAuthContext() {
   return ctx
 }
 
-async function resolveAddress(): Promise<`0x${string}` | undefined> {
+interface ResolvedIdentity {
+  address: `0x${string}` | undefined
+  email: string | undefined
+  issuer: string | undefined
+}
+
+async function resolveIdentity(): Promise<ResolvedIdentity> {
   const magic = getMagic()
-  if (!magic) return undefined
+  if (!magic) return { address: undefined, email: undefined, issuer: undefined }
   const loggedIn = await magic.user.isLoggedIn()
-  if (!loggedIn) return undefined
+  if (!loggedIn) return { address: undefined, email: undefined, issuer: undefined }
   const info = await magic.user.getInfo()
   const address = info.wallets?.ethereum?.publicAddress
-  return address ? (address as `0x${string}`) : undefined
+  return {
+    address: address ? (address as `0x${string}`) : undefined,
+    email: info.email ?? undefined,
+    issuer: info.issuer ?? undefined,
+  }
 }
 
 export function MagicAuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<MagicAuthState>({ status: 'loading', address: undefined })
+  const [state, setState] = useState<MagicAuthState>({ status: 'loading', address: undefined, email: undefined, issuer: undefined })
 
   const refresh = useCallback(async () => {
     try {
-      const address = await resolveAddress()
-      setState({ status: address ? 'ready' : 'unauthenticated', address })
+      const { address, email, issuer } = await resolveIdentity()
+      setState({ status: address ? 'ready' : 'unauthenticated', address, email, issuer })
+      // Best-effort backfill so returning users' login identity is captured too. The
+      // endpoint only UPDATEs an existing row, so it's a no-op until onboarding creates one.
+      if (address && (email || issuer)) {
+        void fetch(`${API}/players/${address.toLowerCase()}/identity`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, issuer }),
+        }).catch(() => {})
+      }
     } catch {
-      setState({ status: 'unauthenticated', address: undefined })
+      setState({ status: 'unauthenticated', address: undefined, email: undefined, issuer: undefined })
     }
   }, [])
 
@@ -72,7 +97,7 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
     const magic = getMagic()
     if (!magic) return
     await magic.user.logout()
-    setState({ status: 'unauthenticated', address: undefined })
+    setState({ status: 'unauthenticated', address: undefined, email: undefined, issuer: undefined })
   }, [])
 
   return (
