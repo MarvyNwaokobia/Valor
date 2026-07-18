@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Crosshair, Wind, type LucideIcon } from 'lucide-react';
+import { Crosshair, Wind, ChevronUp, type LucideIcon } from 'lucide-react';
 import { Action, getInputSystem } from './InputSystem';
+
+const GOLD = '#eab308';
 
 interface TouchButtonProps {
   action: Action;
@@ -46,6 +48,12 @@ function TouchButton({ action, label, icon: Icon, className = '' }: TouchButtonP
 export function TouchControls() {
   const stickRef = useRef<HTMLDivElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
+  // The four directional arrows — lit in proportion to how far you're pushing that way,
+  // so the pad reads as "go up / left / right / back" while staying fully analog.
+  const arrowUp = useRef<HTMLDivElement>(null);
+  const arrowDown = useRef<HTMLDivElement>(null);
+  const arrowLeft = useRef<HTMLDivElement>(null);
+  const arrowRight = useRef<HTMLDivElement>(null);
   const input = getInputSystem();
   const touchIdRef = useRef<number | null>(null);
 
@@ -53,7 +61,15 @@ export function TouchControls() {
     const stick = stickRef.current;
     if (!stick) return;
 
-    const radius = 50;
+    const radius = 56;
+
+    // Light an arrow from a dim resting glow up to full as the stick pushes its way.
+    const paintArrow = (el: HTMLDivElement | null, amount: number) => {
+      if (!el) return;
+      const a = Math.max(0, Math.min(1, amount));
+      el.style.opacity = String(0.28 + a * 0.72);
+      el.style.filter = a > 0.05 ? `drop-shadow(0 0 ${4 + a * 8}px ${GOLD})` : 'none';
+    };
 
     const handleMove = (clientX: number, clientY: number) => {
       const rect = stick.getBoundingClientRect();
@@ -66,16 +82,26 @@ export function TouchControls() {
         dx = (dx / dist) * radius;
         dy = (dy / dist) * radius;
       }
-      input.setStick(dx / radius, dy / radius);
+      const nx = dx / radius;
+      const ny = dy / radius;
+      input.setStick(nx, ny);
       if (knobRef.current) {
         knobRef.current.style.transform = `translate(${dx}px, ${-dy}px)`;
       }
+      paintArrow(arrowUp.current, ny);
+      paintArrow(arrowDown.current, -ny);
+      paintArrow(arrowRight.current, nx);
+      paintArrow(arrowLeft.current, -nx);
     };
 
     const reset = () => {
       input.setStick(0, 0);
       touchIdRef.current = null;
       if (knobRef.current) knobRef.current.style.transform = 'translate(0,0)';
+      paintArrow(arrowUp.current, 0);
+      paintArrow(arrowDown.current, 0);
+      paintArrow(arrowLeft.current, 0);
+      paintArrow(arrowRight.current, 0);
     };
 
     const onTouchStart = (e: TouchEvent) => {
@@ -118,18 +144,34 @@ export function TouchControls() {
 
   return (
     <div className="fixed inset-0 pointer-events-none z-50 md:hidden">
-      {/* Virtual Joystick — bottom left */}
+      {/* Movement pad — bottom left. Four directional arrows around an analog hub:
+          reads as "go this way", but drag distance still sets speed + diagonals. */}
       <div
         ref={stickRef}
-        className="pointer-events-auto absolute bottom-20 left-6 w-28 h-28 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center"
+        className="pointer-events-auto absolute bottom-20 left-6 w-32 h-32 rounded-full flex items-center justify-center touch-none select-none"
+        style={{
+          background: 'radial-gradient(circle at 50% 45%, rgba(234,179,8,0.06), rgba(8,8,14,0.55))',
+          border: '1px solid rgba(234,179,8,0.22)',
+          boxShadow: 'inset 0 0 24px rgba(0,0,0,0.5), 0 4px 20px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(2px)',
+        }}
       >
+        {/* Directional arrows (chevrons), lit toward the drag */}
+        <div ref={arrowUp}    className="absolute top-1.5 left-1/2 -translate-x-1/2"                style={{ color: GOLD, opacity: 0.28 }}><ChevronUp size={20} strokeWidth={3} /></div>
+        <div ref={arrowDown}  className="absolute bottom-1.5 left-1/2 -translate-x-1/2 rotate-180" style={{ color: GOLD, opacity: 0.28 }}><ChevronUp size={20} strokeWidth={3} /></div>
+        <div ref={arrowLeft}  className="absolute left-1.5 top-1/2 -translate-y-1/2 -rotate-90"    style={{ color: GOLD, opacity: 0.28 }}><ChevronUp size={20} strokeWidth={3} /></div>
+        <div ref={arrowRight} className="absolute right-1.5 top-1/2 -translate-y-1/2 rotate-90"    style={{ color: GOLD, opacity: 0.28 }}><ChevronUp size={20} strokeWidth={3} /></div>
+
+        {/* Analog knob */}
         <div
           ref={knobRef}
-          className="w-12 h-12 rounded-full bg-white/30 border-2 border-white/50 transition-none"
+          className="w-11 h-11 rounded-full transition-none"
+          style={{
+            background: 'radial-gradient(circle at 40% 35%, rgba(234,179,8,0.9), rgba(180,120,8,0.7))',
+            border: '1px solid rgba(255,255,255,0.35)',
+            boxShadow: '0 0 12px rgba(234,179,8,0.5), inset 0 1px 2px rgba(255,255,255,0.4)',
+          }}
         />
-      </div>
-      <div className="absolute bottom-8 left-10 text-[10px] text-white/30 uppercase tracking-wider">
-        Move
       </div>
 
       {/* Shooter controls — bottom right: hold FIRE (auto-fires on the gun's

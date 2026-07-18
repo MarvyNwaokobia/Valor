@@ -307,6 +307,7 @@ interface Hud {
   briefing: HTMLDivElement | null;
   complete: HTMLDivElement | null;
   perf: HTMLDivElement | null;
+  lockReticle: HTMLDivElement | null; // bracket drawn over the locked-on enemy
   rankText: HTMLDivElement | null;
   xpBar: HTMLDivElement | null;
   xpPops: Array<HTMLDivElement | null>;
@@ -333,6 +334,10 @@ interface Controls {
   fireMode: boolean;
   swap: boolean;
   toggle: Attachment | null; // mobile attachment chip → toggle this
+  // ── Assisted targeting (mobile) ──
+  lockCycle: boolean;          // Target button tapped → acquire nearest / cycle to next
+  tapAimX: number | null;      // a TAP on the aim surface (screen px) → lock the enemy there
+  tapAimY: number | null;
 }
 
 /**
@@ -476,6 +481,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const lookAccum = useRef({ x: 0, y: 0 }); // touch-drag buffer, eased out for smooth aim
   const wantReload = useRef(false);
   const cycleFireMode = useRef(false);
+  const lockTarget = useRef<number | null>(null); // id of the locked-on enemy, or null
   const locked = useRef(false);
 
   // ── Scene objects ──
@@ -736,9 +742,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const fwd = useMemo(() => new THREE.Vector3(), []);
   const arrowWp = useMemo(() => new THREE.Vector3(), []);
   const arrowCs = useMemo(() => new THREE.Vector3(), []);
+  const lockVec = useMemo(() => new THREE.Vector3(), []); // scratch for world→screen projection
   const feel = GUN_FEEL[GUN];
 
-  useFrame((_, rawDt) => {
+  useFrame((frame, rawDt) => {
     // Paused for the Operations board: freeze the sim + drop any held input so
     // movement doesn't carry through the menu.
     if (pausedRef.current) { keys.current.clear(); mouseBtn.current.clear(); return; }
@@ -764,6 +771,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const ease = Math.min(1, dt * 19);
     const tx = lookAccum.current.x * ease, ty = lookAccum.current.y * ease;
     lookAccum.current.x -= tx; lookAccum.current.y -= ty;
+    // A real manual look this frame (drag or mouse) drops any lock-on so you aim freely.
+    const manualLook = Math.abs(mouseDX.current) > 0.5 || Math.abs(mouseDY.current) > 0.5
+      || Math.abs(tx) > 1.5 || Math.abs(ty) > 1.5;
     yaw.current -= (mouseDX.current * LOOK_SENS + tx * TOUCH_LOOK_SENS) * adsMult;
     pitch.current -= (mouseDY.current * LOOK_SENS + ty * TOUCH_LOOK_SENS) * adsMult;
     mouseDX.current = 0; mouseDY.current = 0;
@@ -773,12 +783,88 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     if (held('ArrowUp')) pitch.current += keyStep;
     if (held('ArrowDown')) pitch.current -= keyStep;
 
+    // ── Assisted targeting: hard lock-on + tap-to-target ──
+    // Point-and-tap for people who can't flick-aim. A Target button locks the nearest
+    // enemy (tap again to cycle); tapping an enemy locks that one. While locked we steer
+    // firmly onto them and draw a reticle. Manual look always drops the lock (above).
+    {
+      const cam = frame.camera;
+      const vw = frame.size.width, vh = frame.size.height;
+      const eyeY = THREE.MathUtils.lerp(EYE_STAND, EYE_CROUCH, crouchCur.current);
+      const px = pos.current.x, pz = pos.current.z;
+
+      const project = (ex: number, ez: number): { x: number; y: number } | null => {
+        lockVec.set(ex, 1.15, ez).project(cam);
+        if (lockVec.z > 1) return null; // behind the camera
+        return { x: (lockVec.x * 0.5 + 0.5) * vw, y: (-lockVec.y * 0.5 + 0.5) * vh };
+      };
+
+      // Living, on-screen, in-range enemies you're allowed to lock.
+      const lockable = () => {
+        const out: { id: number; sx: number; sy: number; d: number }[] = [];
+        for (const e of sim.getEnemies()) {
+          if (!e.alive || !e.active) continue;
+          const dh = Math.hypot(e.x - px, e.z - pz);
+          if (dh < 1.2 || dh > 45) continue;
+          const sp = project(e.x, e.z);
+          if (!sp || sp.x < 0 || sp.x > vw || sp.y < 0 || sp.y > vh) continue;
+          out.push({ id: e.id, sx: sp.x, sy: sp.y, d: dh });
+        }
+        return out;
+      };
+
+      if (manualLook) lockTarget.current = null;
+
+      // Tap-to-target: lock the enemy nearest the tapped point (generous radius).
+      if (ct.tapAimX != null && ct.tapAimY != null) {
+        let best: number | null = null, bestD2 = 90 * 90; // ~90px acquisition radius
+        for (const c of lockable()) {
+          const d2 = (c.sx - ct.tapAimX) ** 2 + (c.sy - ct.tapAimY) ** 2;
+          if (d2 < bestD2) { bestD2 = d2; best = c.id; }
+        }
+        if (best != null) lockTarget.current = best;
+        ct.tapAimX = null; ct.tapAimY = null;
+      }
+
+      // Target button: acquire nearest, or cycle to the next-nearest if already locked.
+      if (ct.lockCycle) {
+        ct.lockCycle = false;
+        const cands = lockable().sort((a, b) => a.d - b.d);
+        if (cands.length) {
+          const i = lockTarget.current == null ? -1 : cands.findIndex((c) => c.id === lockTarget.current);
+          lockTarget.current = cands[(i + 1) % cands.length].id;
+        }
+      }
+
+      // Steer firmly onto the locked enemy; drop the lock if it died or vanished.
+      let reticleShown = false;
+      if (lockTarget.current != null) {
+        const e = sim.getEnemies().find((en) => en.id === lockTarget.current);
+        if (!e || !e.alive) {
+          lockTarget.current = null;
+        } else {
+          const dx = e.x - px, dz = e.z - pz, dyC = 1.15 - eyeY, dh = Math.hypot(dx, dz);
+          const kk = Math.min(1, dt * 14); // firm, near-instant, but eased (no teleport snap)
+          yaw.current += angleDiff(Math.atan2(-dx, -dz), yaw.current) * kk;
+          pitch.current += (Math.atan2(dyC, dh) - pitch.current) * kk;
+          const sp = project(e.x, e.z);
+          if (sp && hud.current.lockReticle) {
+            hud.current.lockReticle.style.transform = `translate(${sp.x}px, ${sp.y}px) translate(-50%, -50%)`;
+            hud.current.lockReticle.style.opacity = '1';
+            reticleShown = true;
+          }
+        }
+      }
+      if (!reticleShown && hud.current.lockReticle) hud.current.lockReticle.style.opacity = '0';
+    }
+
     // ── Mobile aim assist ──
     // On a phone you can't flick-aim, so while engaging (firing or aiming) we
     // gently magnetise the crosshair to the nearest ON-SCREEN, UNOCCLUDED enemy.
     // You still choose who by pointing roughly at them; the assist does the fine
-    // targeting. Desktop keeps raw mouse aim (skill decides the hit).
-    if (lowSpec && (ct.fire || adsCur.current > 0.35)) {
+    // targeting. Desktop keeps raw mouse aim (skill decides the hit). Skipped while a
+    // hard lock is active — the lock already owns the aim.
+    if (lowSpec && lockTarget.current == null && (ct.fire || adsCur.current > 0.35)) {
       const eyeApprox = THREE.MathUtils.lerp(EYE_STAND, EYE_CROUCH, crouchCur.current);
       const px = pos.current.x, pz = pos.current.z;
       let bestDiff = 0.3; // ~17° acquisition cone
@@ -2210,6 +2296,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
     objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null, perf: null,
+    lockReticle: null,
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
     bossWrap: null, bossName: null, bossFill: null,
@@ -2217,7 +2304,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
 
   // Mobile is a first-class target (Marvy's note): a left move-stick, a right
   // look-pad, and fire/ADS/reload buttons write into this, read by FpsWorld.
-  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null });
+  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null, lockCycle: false, tapAimX: null, tapAimY: null });
   const audio = useMemo(() => new FpsAudio(), []);
   useEffect(() => () => audio.dispose(), [audio]);
 
@@ -2479,16 +2566,36 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   const joyId = useRef<number | null>(null);
   const joyCenter = useRef({ x: 0, y: 0 });
   const joyKnob = useRef<HTMLDivElement>(null);
+  // Directional arrows around the stick, lit toward the push (analog underneath).
+  const joyU = useRef<HTMLDivElement>(null);
+  const joyD = useRef<HTMLDivElement>(null);
+  const joyL = useRef<HTMLDivElement>(null);
+  const joyR = useRef<HTMLDivElement>(null);
+  const paintJoyArrow = (el: HTMLDivElement | null, amt: number) => {
+    if (!el) return;
+    const a = Math.max(0, Math.min(1, amt));
+    el.style.opacity = String(0.3 + a * 0.7);
+    el.style.filter = a > 0.05 ? `drop-shadow(0 0 ${3 + a * 7}px #eab308)` : 'none';
+  };
   const lookId = useRef<number | null>(null);
   const lookLast = useRef({ x: 0, y: 0 });
+  // Tap-vs-drag on the aim surface: a short, still touch is a "tap an enemy to lock it";
+  // anything that moves is a look-drag.
+  const lookStartPos = useRef({ x: 0, y: 0, t: 0 });
+  const lookMoved = useRef(false);
 
   const updateJoy = (x: number, y: number) => {
     let dx = x - joyCenter.current.x, dy = y - joyCenter.current.y;
     const len = Math.hypot(dx, dy) || 1;
     if (len > JOY_R) { dx = (dx / len) * JOY_R; dy = (dy / len) * JOY_R; }
-    controls.current.moveX = dx / JOY_R;
-    controls.current.moveY = -dy / JOY_R; // screen-down = backward
+    const nx = dx / JOY_R, ny = -dy / JOY_R; // screen-down = backward
+    controls.current.moveX = nx;
+    controls.current.moveY = ny;
     if (joyKnob.current) joyKnob.current.style.transform = `translate(${dx}px, ${dy}px)`;
+    paintJoyArrow(joyU.current, ny);
+    paintJoyArrow(joyD.current, -ny);
+    paintJoyArrow(joyR.current, nx);
+    paintJoyArrow(joyL.current, -nx);
   };
   const joyStart = (e: React.TouchEvent) => {
     audio.unlock();
@@ -2506,6 +2613,8 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
       joyId.current = null;
       controls.current.moveX = 0; controls.current.moveY = 0;
       if (joyKnob.current) joyKnob.current.style.transform = 'translate(0,0)';
+      paintJoyArrow(joyU.current, 0); paintJoyArrow(joyD.current, 0);
+      paintJoyArrow(joyL.current, 0); paintJoyArrow(joyR.current, 0);
     }
   };
   const lookStart = (e: React.TouchEvent) => {
@@ -2513,16 +2622,28 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     const t = e.changedTouches[0];
     lookId.current = t.identifier;
     lookLast.current = { x: t.clientX, y: t.clientY };
+    lookStartPos.current = { x: t.clientX, y: t.clientY, t: performance.now() };
+    lookMoved.current = false;
   };
   const lookMove = (e: React.TouchEvent) => {
     for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
       controls.current.lookX += t.clientX - lookLast.current.x;
       controls.current.lookY += t.clientY - lookLast.current.y;
       lookLast.current = { x: t.clientX, y: t.clientY };
+      if (Math.hypot(t.clientX - lookStartPos.current.x, t.clientY - lookStartPos.current.y) > 10) {
+        lookMoved.current = true;
+      }
     }
   };
   const lookEnd = (e: React.TouchEvent) => {
-    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) lookId.current = null;
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
+      lookId.current = null;
+      // A clean tap (barely moved, brief) = "lock the enemy I tapped".
+      if (!lookMoved.current && performance.now() - lookStartPos.current.t < 300) {
+        controls.current.tapAimX = t.clientX;
+        controls.current.tapAimY = t.clientY;
+      }
+    }
   };
 
   // The fire button doubles as an aim pad: press to shoot, and SLIDE your thumb to
@@ -2597,6 +2718,15 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
 
       {/* C3 perf meter (?perf=1 or P) — top-left, out of the way of the HUD */}
       <div ref={(r) => { hud.current.perf = r; }} style={{ position: 'absolute', left: 12, top: 8, zIndex: 60, display: perfOn ? 'block' : 'none', fontFamily: 'monospace', fontSize: 12, letterSpacing: 0.5, color: '#5fe0a8', background: 'rgba(0,0,0,.5)', padding: '3px 8px', borderRadius: 5, pointerEvents: 'none' }}>— FPS</div>
+
+      {/* Lock-on reticle — a gold bracket the frame loop parks over the locked enemy */}
+      <div ref={(r) => { hud.current.lockReticle = r; }}
+        style={{ position: 'absolute', left: 0, top: 0, width: 54, height: 54, zIndex: 55, opacity: 0, pointerEvents: 'none', transition: 'opacity .12s', willChange: 'transform' }}>
+        <svg width="54" height="54" viewBox="0 0 54 54" fill="none" stroke="#eab308" strokeWidth="2.5" style={{ filter: 'drop-shadow(0 0 4px rgba(234,179,8,.7))' }}>
+          <path d="M4 16V4h12M50 16V4H38M4 38v12h12M50 38v12H38" strokeLinecap="round" />
+          <circle cx="27" cy="27" r="2" fill="#eab308" stroke="none" />
+        </svg>
+      </div>
 
       {/* ── HUD overlay ── */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: UI_FONT, color: '#e9edf2', userSelect: 'none' }}>
@@ -2802,15 +2932,26 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
           <div onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
             style={{ position: 'absolute', left: 0, right: 0, top: 104, bottom: 0, touchAction: 'none' }} />
 
-          {/* left thumb: movement stick */}
+          {/* left thumb: movement stick — arrows around an analog hub. Reads as
+              "go this way" while drag distance still sets speed + diagonals. */}
           <div onTouchStart={joyStart} onTouchMove={joyMove} onTouchEnd={joyEnd} onTouchCancel={joyEnd}
-            style={{ ...touchBtn('#cfe0ea', 108), left: 24, bottom: 24, background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,.10), rgba(6,10,16,.4))', border: '1.5px solid rgba(255,255,255,.22)' }}>
-            <div ref={joyKnob} style={{ position: 'absolute', left: '50%', top: '50%', width: 46, height: 46, marginLeft: -23, marginTop: -23, borderRadius: '50%', background: 'radial-gradient(circle at 50% 35%, rgba(255,255,255,.5), rgba(255,255,255,.16))', boxShadow: '0 3px 8px rgba(0,0,0,.5)' }} />
+            style={{ ...touchBtn('#eab308', 116), left: 24, bottom: 24, background: 'radial-gradient(circle at 50% 45%, rgba(234,179,8,.07), rgba(6,10,16,.45))', border: '1px solid rgba(234,179,8,.28)' }}>
+            {/* chevrons N/S/E/W */}
+            <div ref={joyU} style={{ position: 'absolute', left: '50%', top: 6, marginLeft: -8, opacity: 0.3, color: '#eab308' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 15l6-6 6 6" /></svg></div>
+            <div ref={joyD} style={{ position: 'absolute', left: '50%', bottom: 6, marginLeft: -8, opacity: 0.3, color: '#eab308' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg></div>
+            <div ref={joyL} style={{ position: 'absolute', left: 6, top: '50%', marginTop: -8, opacity: 0.3, color: '#eab308' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M15 6l-6 6 6 6" /></svg></div>
+            <div ref={joyR} style={{ position: 'absolute', right: 6, top: '50%', marginTop: -8, opacity: 0.3, color: '#eab308' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M9 6l6 6-6 6" /></svg></div>
+            <div ref={joyKnob} style={{ position: 'absolute', left: '50%', top: '50%', width: 44, height: 44, marginLeft: -22, marginTop: -22, borderRadius: '50%', background: 'radial-gradient(circle at 40% 35%, rgba(234,179,8,.9), rgba(180,120,8,.7))', border: '1px solid rgba(255,255,255,.35)', boxShadow: '0 0 12px rgba(234,179,8,.45), 0 3px 8px rgba(0,0,0,.5)' }} />
           </div>
 
           {/* fire (primary) — also an aim pad: press to shoot, slide to steer */}
           <div onTouchStart={fireStart} onTouchMove={fireMove} onTouchEnd={fireEnd} onTouchCancel={fireEnd}
             style={{ ...touchBtn('#ff6a4d', 78, true), right: 20, bottom: 24 }}><Icon name="crosshair" size={32} /></div>
+          {/* TARGET — tap to lock the nearest enemy, tap again to cycle. Above fire. */}
+          <div {...tap('#eab308', () => { controls.current.lockCycle = true; })}
+            style={{ ...touchBtn('#eab308', 60), right: 108, bottom: 92, background: 'radial-gradient(circle at 50% 40%, rgba(234,179,8,.16), rgba(6,10,16,.5))', border: '1.5px solid rgba(234,179,8,.5)' }}>
+            <Icon name="lock" size={22} />
+          </div>
           {/* ADS (hold) — left of fire */}
           <div onTouchStart={(e) => { pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
             onTouchEnd={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
