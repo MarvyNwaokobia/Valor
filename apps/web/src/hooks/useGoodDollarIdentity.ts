@@ -56,9 +56,14 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
         if (cached && Date.now() - cached < 7 * 24 * 3600 * 1000) {
           setStatus('whitelisted')
           void checkWhitelistStatusReadOnly(address)
-            .then(({ isWhitelisted }) => {
-              if (isWhitelisted) localStorage.setItem(key, String(Date.now()))
-              else { localStorage.removeItem(key); setStatus('not_whitelisted') } // GoodDollar says it lapsed
+            .then(async ({ isWhitelisted }) => {
+              if (isWhitelisted) { localStorage.setItem(key, String(Date.now())); return }
+              // isWhitelisted=false can be a flaky/mobile-Safari false negative, and
+              // GoodDollar auth lasts 180 days — so DON'T downgrade a recognised user on
+              // that alone. Only clear the cache + prompt re-verify if GoodDollar's OWN
+              // expiry confirms the identity has actually lapsed. (feedback-identity-reverify)
+              const expiry = await getIdentityExpiryReadOnly(address).catch(() => null)
+              if (expiry?.isExpired) { localStorage.removeItem(key); setStatus('not_whitelisted') }
             })
             .catch(() => { /* keep trusting the cache on a flaky read */ })
           return true
