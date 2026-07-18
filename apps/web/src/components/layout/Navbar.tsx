@@ -8,7 +8,7 @@ import { ConnectButton } from '@/components/ui/ConnectButton'
 import { useGBalance } from '@/hooks/useGBalance'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { useAudio } from '@/hooks/useAudio'
-import { Volume2, VolumeX, LifeBuoy } from 'lucide-react'
+import { Volume2, VolumeX, HelpCircle } from 'lucide-react'
 
 function AudioToggle() {
   const { muted, toggleMute } = useAudio()
@@ -145,7 +145,7 @@ export default function Navbar() {
             className="flex items-center justify-center w-8 h-8 rounded transition-opacity opacity-50 hover:opacity-100"
             style={{ color: pathname?.startsWith('/help') ? '#eab308' : undefined }}
           >
-            <LifeBuoy size={16} />
+            <HelpCircle size={17} />
           </Link>
           <AudioToggle />
           <ConnectButton />
