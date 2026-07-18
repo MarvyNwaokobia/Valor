@@ -86,8 +86,22 @@ export function useGoodDollarIdentity(): UseGoodDollarIdentityReturn {
             getIdentityExpiryReadOnly(address).then(setIdentityExpiry).catch(() => {})
             return true
           }
-          setStatus('not_whitelisted')
-          return false
+          // isWhitelisted=false — but this is the path that runs once the 7-day cache
+          // lapses (i.e. "after about a week"), and a flaky/mobile-Safari read can
+          // false-negative here. GoodDollar auth lasts 180 days, so DON'T declare a
+          // recognised user unverified on that alone: confirm against GoodDollar's OWN
+          // expiry. isExpired is true for a never-verified wallet too (last-auth 0), so
+          // genuinely-new users still get the verify prompt; a real 180-day-valid wallet
+          // reads not-expired and is recognised. (feedback-identity-reverify)
+          const expiry = await getIdentityExpiryReadOnly(address).catch(() => null)
+          if (expiry?.isExpired) { setStatus('not_whitelisted'); return false }
+          // Recognise them for THIS session (never nag a verified user on a flaky read),
+          // but deliberately do NOT persist the cache on this ambiguous false-read path —
+          // so it re-checks next time and a genuinely unverified wallet gets caught on the
+          // next read rather than being trusted for 7 days.
+          setIdentityExpiry(expiry)
+          setStatus('whitelisted')
+          return true
         } catch (err) {
           lastErr = err
         }
