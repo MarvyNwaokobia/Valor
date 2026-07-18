@@ -2,21 +2,21 @@
 
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, ChevronDown, LifeBuoy, Send, BookOpen } from 'lucide-react'
+import { Search, ChevronDown, HelpCircle, Send, BookOpen } from 'lucide-react'
 
 const TELEGRAM = 'https://t.me/playvalor'
 
 interface QA { q: string; a: string }
 interface Category { title: string; items: QA[] }
 
-// FAQ — grouped, searchable. Kept faithful to how the app actually works (esp. anything
+// FAQ, grouped and searchable. Kept faithful to how the app actually works (esp. anything
 // GoodDollar/verification: we only ever reflect what GoodDollar says, never promise).
 const FAQ: Category[] = [
   {
     title: 'Getting started',
     items: [
-      { q: 'What is Valor?', a: 'A first-person tactical shooter where the fighting actually pays. Breach compounds, clear rooms, extract. Every kill earns XP, every rank earns G$ — and that G$ is real money in your wallet you can spend or send anywhere.' },
-      { q: 'How do I sign in?', a: 'Tap ENTER VALOR. Three ways in: Continue with Google (easiest — one tap, we make the wallet for you), Continue with Email (we send a code), or Connect a wallet (MetaMask or similar). Not sure? Use Google.' },
+      { q: 'What is Valor?', a: 'A first-person tactical shooter where the fighting actually pays. Breach compounds, clear rooms, extract. Every kill earns XP, every rank earns G$, and that G$ is real money in your wallet you can spend or send anywhere.' },
+      { q: 'How do I sign in?', a: 'Tap ENTER VALOR. Three ways in: Continue with Google (easiest: one tap and we make the wallet for you), Continue with Email (we send a code), or Connect a wallet (MetaMask or similar). Not sure? Use Google.' },
       { q: 'Do I need to know crypto?', a: 'No. Sign in with Google and never think about it. A wallet is created for you behind the scenes. Crypto only comes up if you choose to send your G$ out to another wallet.' },
       { q: 'What is G$?', a: 'G$ (GoodDollar) is real money on the Celo network. You earn it by playing, claim it free every day, spend it in the Armoury, or send it out to any wallet.' },
     ],
@@ -24,64 +24,64 @@ const FAQ: Category[] = [
   {
     title: 'Verification',
     items: [
-      { q: 'Why do I have to verify?', a: 'Valor pays real money, so every player has to be a real, unique person — otherwise bots and farmed accounts would drain the rewards meant for real players. That integrity is what the whole game stands on. One human, one warrior.' },
-      { q: 'What is the verification?', a: 'A quick GoodDollar identity check — under 60 seconds, free. Your data stays with GoodDollar, not with us. Verifying also unlocks your daily free G$ claim.' },
-      { q: 'Why am I being asked to verify again?', a: "Verification is run by GoodDollar, not Valor — we only ever show you what GoodDollar reports. If you're prompted to verify again, it's because GoodDollar's system currently shows your wallet needs it. If this keeps happening, message us on Telegram with your wallet and we'll look into it." },
-      { q: 'I already verified — the app still says verify.', a: "Try the Verify button once more; an already-verified wallet passes straight through. If it persists, it's coming from GoodDollar's side — reach out on Telegram and we'll investigate your specific wallet." },
+      { q: 'Why do I have to verify?', a: 'Valor pays real money, so every player has to be a real, unique person, otherwise bots and farmed accounts would drain the rewards meant for real players. That integrity is what the whole game stands on. One human, one warrior.' },
+      { q: 'What is the verification?', a: 'A quick GoodDollar identity check. Under 60 seconds, free. Your data stays with GoodDollar, not with us. Verifying also unlocks your daily free G$ claim.' },
+      { q: 'Why am I being asked to verify again?', a: "Verification is run by GoodDollar, not Valor. We only ever show you what GoodDollar reports. If you're prompted to verify again, it's because GoodDollar's system currently shows your wallet needs it. If this keeps happening, message us on Telegram with your wallet and we'll look into it." },
+      { q: 'I already verified, but the app still says verify.', a: "Try the Verify button once more; an already-verified wallet passes straight through. If it persists, it's coming from GoodDollar's side. Reach out on Telegram and we'll investigate your specific wallet." },
     ],
   },
   {
     title: 'Daily G$ (free UBI)',
     items: [
-      { q: 'What is the daily G$?', a: "GoodDollar UBI — free G$ you can claim every day, just for being verified. It's separate from what you earn playing." },
+      { q: 'What is the daily G$?', a: "GoodDollar UBI: free G$ you can claim every day, just for being verified. It's separate from what you earn playing." },
       { q: 'Where do I claim it?', a: 'Profile → Bank → Daily G$. Tap it once a day.' },
-      { q: 'When can I claim again?', a: "Once per day. After you claim, the Bank shows the next time you can claim — that time comes straight from GoodDollar, we don't guess it." },
+      { q: 'When can I claim again?', a: "Once per day. After you claim, the Bank shows the next time you can claim, and that time comes straight from GoodDollar, we don't guess it." },
     ],
   },
   {
     title: 'Earning & ranks',
     items: [
       { q: 'How do I earn G$ by playing?', a: 'Three ways: clearing a campaign operation the first time pays a one-time G$ bounty; every rank-up pays 500 G$; and Endless survival pays G$ per wave. Daily UBI is on top of all that.' },
-      { q: 'How do ranks work?', a: '1,000 XP = a rank up. The ladder is Iron → Bronze → Silver → Gold → Platinum → Emerald → Diamond, and each rank-up pays 500 G$. Past Diamond you prestige (Diamond II, III, and up) — your XP never stops counting or paying.' },
+      { q: 'How do ranks work?', a: '1,000 XP = a rank up. The ladder is Iron → Bronze → Silver → Gold → Platinum → Emerald → Diamond, and each rank-up pays 500 G$. Past Diamond you prestige (Diamond II, III, and up). Your XP never stops counting or paying.' },
       { q: 'How much XP do fights give?', a: 'Non-campaign fights: Win = +100 XP, Loss = +30 XP. Campaign operations have their own XP per op. You never walk away with nothing.' },
-      { q: 'Why did replaying an operation pay no G$?', a: 'The first-clear bounty pays once per operation — the first time you clear it. Replays still give XP, but not the bounty again. To earn more op bounties, clear the next operation.' },
+      { q: 'Why did replaying an operation pay no G$?', a: 'The first-clear bounty pays once per operation, the first time you clear it. Replays still give XP, but not the bounty again. To earn more op bounties, clear the next operation.' },
     ],
   },
   {
     title: 'Armoury (marketplace)',
     items: [
-      { q: 'What can I buy?', a: 'Guns, ammo, attachments, field kit, shields and boosters — with your G$. Every item is on-chain, so you genuinely own it.' },
-      { q: 'Can I buy and sell with other players?', a: "Yes. Scroll past the shop to Player Listings — buy another player's gear, or list your own and make G$ off it." },
-      { q: 'Does gear matter?', a: 'Yes. Before you deploy on an operation you pick your loadout from what you own, so what you buy changes how you fight. Buy a better gun before the Rift — you will want it.' },
+      { q: 'What can I buy?', a: 'Guns, ammo, attachments, field kit, shields and boosters, all with your G$. Every item is on-chain, so you genuinely own it.' },
+      { q: 'Can I buy and sell with other players?', a: "Yes. Scroll past the shop to Player Listings: buy another player's gear, or list your own and make G$ off it." },
+      { q: 'Does gear matter?', a: 'Yes. Before you deploy on an operation you pick your loadout from what you own, so what you buy changes how you fight. Buy a better gun before the Rift. You will want it.' },
     ],
   },
   {
     title: 'Bank & cashing out',
     items: [
       { q: 'Where is my money?', a: 'Profile → Bank. Your G$ balance, a full ledger (earned from UBI, earned from gameplay, spent in the market, sent out), the daily claim, and Transfer G$ Out.' },
-      { q: 'How do I send my G$ out?', a: 'Bank → Transfer G$ Out. Your G$ is real crypto on Celo, so it travels between wallet addresses (a long string starting with 0x). Copy and paste the destination address — never type it by hand. Send a small amount the first time. If you send to a wrong address, it is gone and nobody can reverse it.' },
-      { q: 'Can I send G$ straight to Bybit / an exchange?', a: 'No. G$ is not listed on Bybit, Binance or other exchanges — sending it to an exchange deposit address will lose it. To reach an exchange you must first send G$ to your own wallet (e.g. MetaMask on the Celo network), swap it there, then send that.' },
+      { q: 'How do I send my G$ out?', a: 'Bank → Transfer G$ Out. Your G$ is real crypto on Celo, so it travels between wallet addresses (a long string starting with 0x). Copy and paste the destination address. Never type it by hand. Send a small amount the first time. If you send to a wrong address, it is gone and nobody can reverse it.' },
+      { q: 'Can I send G$ straight to Bybit / an exchange?', a: 'No. G$ is not listed on Bybit, Binance or other exchanges, and sending it to an exchange deposit address will lose it. To reach an exchange you must first send G$ to your own wallet (e.g. MetaMask on the Celo network), swap it there, then send that.' },
     ],
   },
   {
     title: 'Troubleshooting',
     items: [
-      { q: 'My balance looks off.', a: "The Bank ledger tracks what happened inside Valor. Your on-chain wallet balance reflects everything — including G$ you received or claimed outside the app — so the two can differ. Nothing is lost." },
+      { q: 'My balance looks off.', a: "The Bank ledger tracks what happened inside Valor. Your on-chain wallet balance reflects everything, including G$ you received or claimed outside the app, so the two can differ. Nothing is lost." },
       { q: 'The game or a claim is stuck.', a: 'Reload the page first. If a payout is on the way, the Bank shows it as pending and it settles on its own. If something still looks wrong, message us on Telegram.' },
-      { q: 'I have a question that is not here.', a: 'Ask the community and the team directly on Telegram — link below.' },
+      { q: 'I have a question that is not here.', a: 'Ask the community and the team directly on Telegram (link below).' },
     ],
   },
 ]
 
-// The full walkthrough, mirrored from the community pin — the step-by-step from sign-in
+// The full walkthrough, mirrored from the community pin: the step-by-step from sign-in
 // to your first payout.
 const WALKTHROUGH: { step: string; title: string; body: string }[] = [
   { step: '1', title: 'Getting in', body: 'Hit ENTER VALOR. Continue with Google (easiest), Email, or connect a wallet. All three land in the same place.' },
-  { step: '2', title: 'Verify', body: "A quick verification, under 60 seconds, free. It confirms you're a real, unique person — that's the integrity the game stands on. It also unlocks your daily free G$." },
-  { step: '3', title: 'Forge your warrior', body: 'Pick a class — Berserker (raw power), Sentinel (defense + counters), or Phantom (speed, strikes first) — then name your warrior and grab an @username.' },
+  { step: '2', title: 'Verify', body: "A quick verification, under 60 seconds, free. It confirms you're a real, unique person, and that's the integrity the game stands on. It also unlocks your daily free G$." },
+  { step: '3', title: 'Forge your warrior', body: 'Pick a class: Berserker (raw power), Sentinel (defense + counters), or Phantom (speed, strikes first). Then name your warrior and grab an @username.' },
   { step: '4', title: 'Fight', body: 'On the FIGHT tab: Campaign (15 first-person operations across Ashfall, the Proving Ground and the Rift), Challenge a Player, Live PvP, and Endless survival. Win = +100 XP, Loss = +30 XP.' },
   { step: '5', title: 'XP & ranks', body: '1,000 XP = a rank up, and every rank-up pays 500 G$. Iron → Bronze → Silver → Gold → Platinum → Emerald → Diamond, then prestige past Diamond. Rank up and you join that tier’s reward pool.' },
-  { step: '6', title: 'Armoury', body: 'Spend G$ on guns, ammo, attachments, field kit, shields and boosters. Every item is on-chain — you own it. Player Listings let you trade gear with other players.' },
+  { step: '6', title: 'Armoury', body: 'Spend G$ on guns, ammo, attachments, field kit, shields and boosters. Every item is on-chain, so you own it. Player Listings let you trade gear with other players.' },
   { step: '7', title: 'Bank', body: 'Profile → Bank is where the money lives: your balance and ledger, the daily G$ claim, your rank reward pool, and Transfer G$ Out to cash out to any wallet.' },
 ]
 
@@ -130,7 +130,7 @@ export default function HelpCenter() {
       <div className="flex items-center gap-4">
         <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.25)' }}>
-          <LifeBuoy size={22} className="text-amber-400" strokeWidth={1.8} />
+          <HelpCircle size={22} className="text-amber-400" strokeWidth={1.8} />
         </div>
         <div>
           <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-amber-500/60 mb-0.5">Valor</p>
@@ -179,7 +179,7 @@ export default function HelpCenter() {
             style={{ background: 'rgba(234,179,8,0.05)', borderColor: 'rgba(234,179,8,0.22)' }}
           >
             <span className="flex items-center gap-2.5 font-bold text-white text-sm">
-              <BookOpen size={16} className="text-amber-400" /> Full walkthrough — sign-in to your first payout
+              <BookOpen size={16} className="text-amber-400" /> Full walkthrough: sign-in to your first payout
             </span>
             <ChevronDown size={16} className="shrink-0 text-amber-500/70 transition-transform" style={{ transform: showWalkthrough ? 'rotate(180deg)' : 'none' }} />
           </button>
@@ -208,7 +208,7 @@ export default function HelpCenter() {
         </section>
       )}
 
-      {/* Telegram CTA — always at the bottom */}
+      {/* Telegram CTA, always at the bottom */}
       <div className="rounded-2xl border p-5 flex flex-col sm:flex-row items-center justify-between gap-4"
         style={{ background: 'linear-gradient(135deg, rgba(234,179,8,0.08), rgba(4,3,12,0.9))', borderColor: 'rgba(234,179,8,0.25)' }}>
         <div className="text-center sm:text-left">

@@ -20,7 +20,7 @@ import type { Rank } from '@/lib/constants'
 import type { Item } from '@/types'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import Link from 'next/link'
-import { Wallet } from 'lucide-react'
+import { Wallet, HelpCircle } from 'lucide-react'
 
 export default function ProfilePage() {
   const { status, address } = useResolvedAuth()
@@ -198,6 +198,19 @@ export default function ProfilePage() {
             <span className="font-bold text-white text-sm">Go to Bank</span>
           </div>
           <span className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ · Claim · Transfer</span>
+        </Link>
+
+        {/* Help Center: FAQ, walkthrough, Telegram */}
+        <Link
+          href="/help"
+          className="flex items-center justify-between px-4 py-3 rounded-xl border transition-colors hover:border-amber-500/40"
+          style={{ background: 'rgba(8,8,14,0.6)', borderColor: 'rgba(42,42,58,0.8)' }}
+        >
+          <div className="flex items-center gap-2">
+            <HelpCircle size={16} className="text-slate-300" />
+            <span className="font-bold text-white text-sm">Help Center</span>
+          </div>
+          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">FAQ · Guide · Support</span>
         </Link>
 
         {/* Decay panel */}
