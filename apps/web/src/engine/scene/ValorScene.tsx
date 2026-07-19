@@ -2433,6 +2433,11 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   const [gate, setGate] = useState<'ok' | 'connecting' | 'error'>('ok');
   const gateRef = useRef(false);             // read by the frame loop to freeze the sim
   const gateConnectRef = useRef<(() => void) | null>(null); // Retry re-runs this
+  // The PREVIOUS op's completion request. Starting the next op must wait for it: clearing
+  // op N advances pve_level SERVER-side, and op N+1's session-start is unlock-gated
+  // (level ≤ pve_level+1). Deploying before the clear records would 403 the next op and
+  // strand the player on the gate — this ordering closes that race.
+  const pendingClear = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
     missionStartWall.current = performance.now();
     // Only campaign ops carry a server session; survival/gauntlet aren't gated here, and
@@ -2442,11 +2447,18 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     let cancelled = false;
     const connect = () => {
       setGate('connecting'); gateRef.current = true;
-      Promise.resolve(onOpStartRef.current?.(level)).then((ok) => {
+      (async () => {
+        // Let the prior op's clear finish recording first (bounded, so a slow/hung one
+        // can't strand us — the unlock check + Retry cover the rest).
+        if (pendingClear.current) {
+          await Promise.race([pendingClear.current.catch(() => {}), new Promise((r) => setTimeout(r, 12000))]);
+        }
+        if (cancelled) return;
+        const ok = await Promise.resolve(onOpStartRef.current?.(level));
         if (cancelled) return;
         if (ok === false) { setGate('error'); gateRef.current = true; }      // frozen, offer Retry
         else { setGate('ok'); gateRef.current = false; missionStartWall.current = performance.now(); }
-      });
+      })();
     };
     gateConnectRef.current = connect;
     connect();
@@ -2507,7 +2519,9 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     // surface the REAL reward on the debrief. Clear any prior reward first so a stale
     // one never flashes while this one is recording.
     setLastReward(null);
-    Promise.resolve(onOpCleared?.(missionIndex + 1, stats)).then((r) => { if (r) setLastReward(r); });
+    // Hold the completion promise so the NEXT op's session-start waits for it (the clear
+    // advances pve_level server-side, which the next op's unlock gate checks).
+    pendingClear.current = Promise.resolve(onOpCleared?.(missionIndex + 1, stats)).then((r) => { if (r) setLastReward(r); return r; });
   };
   const deployNext = () => {
     const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);
