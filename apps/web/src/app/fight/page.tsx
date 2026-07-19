@@ -76,8 +76,11 @@ function FightInner() {
   // fixes wallet + level + start time server-side), then records the win on CLEAR.
   // The backend applies the real XP → rank → G$ and advances the PvE level. If the
   // player isn't signed in, both are graceful no-ops (the game still plays).
+  // Returns a promise that resolves TRUE once a server session is confirmed for this op
+  // (or the player is signed out). The scene gates the fight on it — a FALSE shows a
+  // Retry screen instead of dropping you into a run the server won't count.
   const onOpStart = useCallback(
-    (level: number) => { startFight(level).catch(() => { /* offline / signed out */ }); },
+    (level: number) => startFight(level).catch(() => false),
     [startFight],
   );
   const onOpCleared = useCallback(
