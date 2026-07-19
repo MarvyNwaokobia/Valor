@@ -373,7 +373,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
   // desktop/laptop: also kills shadows + set-dressing (mobile never sets this).
-  audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: () => void;
+  audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: (stats: { kills: number; headshots: number }) => void;
   pausedRef: React.MutableRefObject<boolean>;
   // While the server-readiness gate is up (connecting / retry), freeze the sim so the
   // briefing + countdown don't run out behind the overlay and drop you into a live fight.
@@ -1385,7 +1385,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // DOWN or COMPLETE → restart the operation after a beat
     if (!snap.playerAlive && now - downAt.current > 2.2) restartMission();
     // MISSION COMPLETE holds for a beat, then hands off to the debrief interstitial.
-    if (completeAt.current > 0 && performance.now() - completeWallAt.current > 2200 && !advanced.current) { advanced.current = true; onComplete(); }
+    if (completeAt.current > 0 && performance.now() - completeWallAt.current > 2200 && !advanced.current) {
+      advanced.current = true;
+      const st = sim.snapshot().stats;
+      onComplete({ kills: st.kills, headshots: st.headshots }); // per-run performance → capped skill bonus
+    }
 
     updateHud(snap);
   });
@@ -2073,6 +2077,8 @@ export interface OpReward {
   gAwarded: number;      // rank-up G$ actually credited (0 unless a real rank-up landed)
   bountyAwarded: number; // first-clear G$ actually credited
   firstClear: boolean;
+  speedBonus: number;    // XP from the fast-clear bonus (part of xpAwarded)
+  killBonus: number;     // XP from the capped kill/headshot bonus (part of xpAwarded)
 }
 
 /**
@@ -2097,6 +2103,13 @@ function MissionDebrief({ mode, cleared, next, reward, onDeploy, onRetry, onExit
         {reward && (
           <div style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 14, letterSpacing: 3, color: '#5fe0a8', fontWeight: 700 }}>+{reward.xpAwarded} XP</div>
+            {(reward.speedBonus > 0 || reward.killBonus > 0) && (
+              <div style={{ fontSize: 11, letterSpacing: 1.5, color: '#7f8c99', marginTop: 5 }}>
+                {reward.killBonus > 0 && <span>+{reward.killBonus} skill</span>}
+                {reward.killBonus > 0 && reward.speedBonus > 0 && <span> · </span>}
+                {reward.speedBonus > 0 && <span>+{reward.speedBonus} speed</span>}
+              </div>
+            )}
             {reward.firstClear && reward.bountyAwarded > 0 && (
               <div style={{ fontSize: 12, letterSpacing: 2, color: '#ffcf5f', marginTop: 7 }}>FIRST CLEAR BONUS · +{reward.bountyAwarded} G$</div>
             )}
@@ -2338,7 +2351,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
-  onOpCleared?: (level: number) => Promise<OpReward | null> | void;
+  onOpCleared?: (level: number, stats?: { kills: number; headshots: number }) => Promise<OpReward | null> | void;
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
@@ -2491,17 +2504,18 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
 
   // ── Between-mission debrief: clear an op → story of the next → deploy/retry/exit ──
   const clearComplete = () => { if (hud.current.complete) hud.current.complete.style.opacity = '0'; };
-  const handleComplete = () => {
+  const handleComplete = (stats: { kills: number; headshots: number }) => {
     unlock(missionIndex + 1); // the next op is unlocked the moment this one is cleared
     const last = missionIndex >= CAMPAIGN.length - 1;
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');
     menuOpenRef.current = true;                 // freeze the scene behind the debrief
     try { document.exitPointerLock?.(); } catch { /* ignore */ }
-    // Record the op with the server and surface the REAL reward on the debrief. Clear
-    // any prior reward first so a stale one never flashes while this one is recording.
+    // Record the op with the server (kills/headshots feed the capped skill bonus) and
+    // surface the REAL reward on the debrief. Clear any prior reward first so a stale
+    // one never flashes while this one is recording.
     setLastReward(null);
-    Promise.resolve(onOpCleared?.(missionIndex + 1)).then((r) => { if (r) setLastReward(r); });
+    Promise.resolve(onOpCleared?.(missionIndex + 1, stats)).then((r) => { if (r) setLastReward(r); });
   };
   const deployNext = () => {
     const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);

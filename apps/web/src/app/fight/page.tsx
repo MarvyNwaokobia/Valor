@@ -84,9 +84,10 @@ function FightInner() {
     [startFight],
   );
   // Returns the SERVER-authoritative reward (real XP / rank-up / G$) so the scene can
-  // show the truth on the debrief instead of a local, invented number.
+  // show the truth on the debrief. The per-run kills/headshots feed the capped skill
+  // bonus (the server bounds them, so an inflated count can't mint XP).
   const onOpCleared = useCallback(
-    () => submitResult(true).catch(() => null),
+    (_level: number, stats?: { kills: number; headshots: number }) => submitResult(true, stats).catch(() => null),
     [submitResult],
   );
 
