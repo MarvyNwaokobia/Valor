@@ -270,6 +270,10 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
 const FLOOR_W = 22, FLOOR_D = 38;
 const REACH_RADIUS = 3.5;
+// A defend hold banks time within a WIDER ring than a reach touch, so you can pull
+// back to adjacent cover to recover and still be "holding the point" — the hold no
+// longer punishes the one tool the game teaches (using cover).
+const HOLD_RADIUS = 6.5;
 
 // Earn loop (slice 5). Career XP persists locally in the sandbox; when this is
 // attached to /fight it banks through the real rank/RewardPool path instead.
@@ -308,6 +312,7 @@ interface Hud {
   complete: HTMLDivElement | null;
   perf: HTMLDivElement | null;
   lockReticle: HTMLDivElement | null; // bracket drawn over the locked-on enemy
+  attachChips: Record<string, HTMLDivElement | null>; // mobile kit chips, lit while active
   rankText: HTMLDivElement | null;
   xpBar: HTMLDivElement | null;
   xpPops: Array<HTMLDivElement | null>;
@@ -482,6 +487,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const wantReload = useRef(false);
   const cycleFireMode = useRef(false);
   const lockTarget = useRef<number | null>(null); // id of the locked-on enemy, or null
+  const lockPulse = useRef(0); // brief pop on the reticle the frame a lock is acquired
   const locked = useRef(false);
 
   // ── Scene objects ──
@@ -602,6 +608,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       if (e.code === 'KeyF') wantToggle.current = 'light'; // flashlight
       if (e.code === 'KeyL') wantToggle.current = 'laser'; // laser sight
       if (e.code === 'KeyO') wantToggle.current = 'optic'; // optic / scope
+      if (e.code === 'KeyT') controls.current.lockCycle = true; // snap-lock the nearest enemy (cycle)
       audio.unlock();
       // Capture the mouse on the first keypress so MOVING the mouse aims (up/down
       // included) without needing a click. Guarded, so headless never throws.
@@ -827,14 +834,21 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
 
       // Target button: acquire nearest, or cycle to the next-nearest if already locked.
+      // Always answer the press: a ping + reticle pop when a target is found, a dry
+      // click when nothing's lockable — so the button never feels dead.
       if (ct.lockCycle) {
         ct.lockCycle = false;
         const cands = lockable().sort((a, b) => a.d - b.d);
         if (cands.length) {
           const i = lockTarget.current == null ? -1 : cands.findIndex((c) => c.id === lockTarget.current);
           lockTarget.current = cands[(i + 1) % cands.length].id;
+          lockPulse.current = 1;
+          audio.hitmarker(false); // acquisition ping
+        } else {
+          audio.empty();          // nothing to lock — a dry click
         }
       }
+      if (lockPulse.current > 0) lockPulse.current = Math.max(0, lockPulse.current - dt * 4);
 
       // Steer firmly onto the locked enemy; drop the lock if it died or vanished.
       let reticleShown = false;
@@ -849,7 +863,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           pitch.current += (Math.atan2(dyC, dh) - pitch.current) * kk;
           const sp = project(e.x, e.z);
           if (sp && hud.current.lockReticle) {
-            hud.current.lockReticle.style.transform = `translate(${sp.x}px, ${sp.y}px) translate(-50%, -50%)`;
+            const pop = 1 + lockPulse.current * 0.7; // brief pop on acquire
+            hud.current.lockReticle.style.transform = `translate(${sp.x}px, ${sp.y}px) translate(-50%, -50%) scale(${pop.toFixed(3)})`;
             hud.current.lockReticle.style.opacity = '1';
             reticleShown = true;
           }
@@ -1282,8 +1297,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       } else if (obj.kind === 'clear') {
         done = sim.roomAlive(obj.room ?? 0) === 0;
       } else if (obj.kind === 'defend') {
-        // Hold the point: bank time only while you're standing on it and alive.
-        if (nearObj) holdProgress.current += dt;
+        // Hold the point: bank time while you're near it (in cover counts) and alive,
+        // so retreating a step to recover doesn't stall the hold or feed more spawns.
+        const holding = Math.hypot(pos.current.x - obj.pos[0], pos.current.z - obj.pos[1]) < HOLD_RADIUS;
+        if (holding) holdProgress.current += dt;
         const hold = obj.holdSecs ?? 20;
         // Keep the pressure up — trickle reinforcements in until the clock runs out.
         if (holdProgress.current < hold && sim.time - lastReinforceAt.current > 3.5) {
@@ -1508,6 +1525,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         return `<span style="font-size:10px;letter-spacing:1px;padding:3px 7px;border-radius:4px;border:1px solid ${active ? c.color : '#2a3440'};background:${active ? c.color + '22' : 'transparent'};color:${active ? c.color : '#4a5763'}">${c.label}<span style="opacity:.55"> ${c.key}</span></span>`;
       }).join('');
     }
+    // Mobile kit chips carry no on/off state in their static style, so light them
+    // here from the sim — a tapped optic/laser/nvg/light now visibly turns on.
+    if (h.attachChips) {
+      const onSet = new Set(snap.attachments);
+      for (const c of ATTACH_CHIPS) {
+        const el = h.attachChips[c.id];
+        if (!el) continue;
+        const active = onSet.has(c.id);
+        el.style.borderColor = active ? c.color : `${c.color}77`;
+        el.style.background = active
+          ? `linear-gradient(180deg, ${c.color}66, ${c.color}22)`
+          : `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`;
+        el.style.boxShadow = active
+          ? `0 0 10px ${c.color}66, inset 0 1px 0 ${c.color}55`
+          : `inset 0 1px 0 ${c.color}33`;
+        el.style.color = active ? '#fff' : c.color;
+      }
+    }
     if (h.lock) h.lock.style.opacity = locked.current ? '0' : '1';
     // crosshair gap grows with spread + recoil
     const spread = sim.spreadFor(adsCur.current, false, crouchCur.current > 0.5);
@@ -1548,7 +1583,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         if (objN.kind === 'defend') {
           // a hold objective counts down the seconds you still owe on the point
           const left = Math.max(0, Math.ceil((objN.holdSecs ?? 20) - holdProgress.current));
-          const onPoint = Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]) < REACH_RADIUS;
+          // Match the banking ring (HOLD_RADIUS), not the tighter reach ring, so holding
+          // from adjacent cover reads as "HOLD" and never a misleading "GET TO THE POINT".
+          const onPoint = Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]) < HOLD_RADIUS;
           h.objText.textContent = `OBJECTIVE  ·  ${objN.text}  ·  ${onPoint ? `HOLD ${left}s` : 'GET TO THE POINT'}`;
         } else {
           const d = Math.round(Math.hypot(pos.current.x - objN.pos[0], pos.current.z - objN.pos[1]));
@@ -2297,6 +2334,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
     objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null, perf: null,
     lockReticle: null,
+    attachChips: {},
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
     bossWrap: null, bossName: null, bossFill: null,
@@ -2674,10 +2712,13 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     }
   };
   // Quick press reaction for the momentary action buttons.
+  // Pointer events, not touch — one code path fires for finger, mouse and pen, so
+  // every HUD button responds to a tap AND a desktop click.
   const tap = (color: string, run: () => void) => ({
-    onTouchStart: (e: React.TouchEvent) => { pressFx(e.currentTarget as HTMLElement, true, color); run(); },
-    onTouchEnd: (e: React.TouchEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
-    onTouchCancel: (e: React.TouchEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onPointerDown: (e: React.PointerEvent) => { e.preventDefault(); pressFx(e.currentTarget as HTMLElement, true, color); run(); },
+    onPointerUp: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onPointerLeave: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onPointerCancel: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
   });
 
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
@@ -2905,7 +2946,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
-            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops · ESC pause
+            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · T target · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops · ESC pause
           </div>
         )}
 
@@ -2952,10 +2993,11 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
             style={{ ...touchBtn('#eab308', 60), right: 108, bottom: 92, background: 'radial-gradient(circle at 50% 40%, rgba(234,179,8,.16), rgba(6,10,16,.5))', border: '1.5px solid rgba(234,179,8,.5)' }}>
             <Icon name="lock" size={22} />
           </div>
-          {/* ADS (hold) — left of fire */}
-          <div onTouchStart={(e) => { pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
-            onTouchEnd={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
-            onTouchCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
+          {/* ADS (hold) — left of fire. Pointer-captured so the release still fires
+              if the finger/cursor slides off the button while aiming. */}
+          <div onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
+            onPointerUp={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
+            onPointerCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
             style={{ ...touchBtn('#cfe0ea', 52), right: 108, bottom: 30, fontSize: 11 }}>ADS</div>
           {/* secondary actions — a slim column hugging the right edge, up off the gun */}
           <div {...tap('#ffb454', () => { controls.current.reload = true; })}
@@ -2968,8 +3010,12 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
           {/* attachment toggles — compact top-left row, tucked under the rank bar */}
           <div style={{ position: 'absolute', left: 14, top: 92, display: 'flex', gap: 7 }}>
             {ATTACH_CHIPS.map((c) => (
-              <div key={c.id} onTouchStart={() => { controls.current.toggle = c.id; }}
-                style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`, boxShadow: `inset 0 1px 0 ${c.color}33`, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}>{c.label}</div>
+              <div key={c.id} ref={(r) => { hud.current.attachChips[c.id] = r; }}
+                onPointerDown={(e) => { e.preventDefault(); pressFx(e.currentTarget as HTMLElement, true, c.color); controls.current.toggle = c.id; }}
+                onPointerUp={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
+                onPointerLeave={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
+                onPointerCancel={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
+                style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`, boxShadow: `inset 0 1px 0 ${c.color}33`, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent', transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s, background .12s, border-color .12s' }}>{c.label}</div>
             ))}
           </div>
         </>

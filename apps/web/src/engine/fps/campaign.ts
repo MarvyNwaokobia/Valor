@@ -243,7 +243,7 @@ export const CAMPAIGN: Mission[] = [
     objectives: [
       { text: 'BREACH THE WELL-HOUSE', kind: 'reach', pos: [4, 8], activateRoom: 1 },
       { text: 'CLEAR A FOOTHOLD', kind: 'clear', room: 1, pos: [4, 4], activateRoom: 2 },
-      { text: 'HOLD THE WELL', kind: 'defend', pos: [0, -2], holdSecs: 24, reinforceRoom: 2 },
+      { text: 'HOLD THE WELL', kind: 'defend', pos: [0, -2], holdSecs: 16, reinforceRoom: 2 },
       { text: 'FALL BACK TO EXTRACT', kind: 'reach', pos: [4, -13] },
     ],
   },
