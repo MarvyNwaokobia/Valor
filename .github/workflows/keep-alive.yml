@@ -1,0 +1,23 @@
+name: keep-alive
+
+# Free-tier Render sleeps after ~15 min idle, and a cold boot can take 30-60s — long
+# enough that a fight-complete call times out and the run silently doesn't count. This
+# pings /health on a schedule so the API stays awake. It's a best-effort net: GitHub
+# cron can drift and is disabled after 60 days of repo inactivity, so the in-app
+# readiness gate is the real backstop. For zero-drift uptime, an external pinger
+# (UptimeRobot / cron-job.org, 5-min interval) is more reliable than this.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *' # every ~10 minutes
+  workflow_dispatch: {}      # allow a manual "wake it now" run
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API health
+        # --max-time 90 tolerates a cold boot; `|| true` so a boot-time 502 never fails the job.
+        run: |
+          echo "Pinging health endpoint..."
+          curl -fsS --max-time 90 https://valor-qqzx.onrender.com/health || true

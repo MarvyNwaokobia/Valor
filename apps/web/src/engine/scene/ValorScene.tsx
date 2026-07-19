@@ -368,13 +368,16 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, pausedRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
   // desktop/laptop: also kills shadows + set-dressing (mobile never sets this).
   audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: () => void;
   pausedRef: React.MutableRefObject<boolean>;
+  // While the server-readiness gate is up (connecting / retry), freeze the sim so the
+  // briefing + countdown don't run out behind the overlay and drop you into a live fight.
+  gateRef: React.MutableRefObject<boolean>;
   // C1: the real server account standing. When present, the HUD's rank bar is
   // SEEDED from it (so it shows your true rank/progress, not a local number) and
   // climbs live per-kill; the server reconciles on op-clear. Omitted at /dev/verb.
@@ -758,9 +761,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const feel = GUN_FEEL[GUN];
 
   useFrame((frame, rawDt) => {
-    // Paused for the Operations board: freeze the sim + drop any held input so
-    // movement doesn't carry through the menu.
-    if (pausedRef.current) { keys.current.clear(); mouseBtn.current.clear(); return; }
+    // Paused for the Operations board, or frozen behind the server-readiness gate:
+    // freeze the sim + drop any held input so nothing carries through the menu/overlay.
+    if (pausedRef.current || gateRef.current) { keys.current.clear(); mouseBtn.current.clear(); return; }
     const dt = Math.min(rawDt, 1 / 20);
     const k = keys.current;
     const held = (c: string) => k.has(c);
@@ -2297,9 +2300,11 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
 
 export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   /** Fires when a campaign op BEGINS (1-based level) — `/fight` uses it to open a
-   *  server-authoritative fight session (the anti-forgery token). Omitted at
-   *  `/dev/verb`. */
-  onOpStart?: (level: number) => void;
+   *  server-authoritative fight session (the anti-forgery token). Resolves TRUE once a
+   *  session is confirmed (or the player is signed out); FALSE if the server can't be
+   *  reached, which puts the scene on a Retry gate instead of into an uncounted run.
+   *  Omitted at `/dev/verb`. */
+  onOpStart?: (level: number) => Promise<boolean> | void;
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
@@ -2384,12 +2389,34 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   // Latest onOpStart in a ref so firing it can't churn the op-start effect's deps.
   const onOpStartRef = useRef(onOpStart);
   onOpStartRef.current = onOpStart;
+  // ── Server-readiness gate ──
+  // A campaign op must open a server session (the token that makes it count) BEFORE the
+  // fight begins. We freeze the sim and show a "connecting / retry" screen until that
+  // token is confirmed, so a cold or asleep server can never let you play a run that
+  // silently won't count. 'ok' = clear to fight; 'connecting' / 'error' = frozen.
+  const [gate, setGate] = useState<'ok' | 'connecting' | 'error'>('ok');
+  const gateRef = useRef(false);             // read by the frame loop to freeze the sim
+  const gateConnectRef = useRef<(() => void) | null>(null); // Retry re-runs this
   useEffect(() => {
     missionStartWall.current = performance.now();
-    // Open a server-authoritative fight session as each campaign op begins. Other
-    // modes (survival/gauntlet) carry their own run tokens.
-    if (mode === 'campaign') onOpStartRef.current?.(missionIndex + 1);
+    // Only campaign ops carry a server session; survival/gauntlet aren't gated here, and
+    // /dev/verb (no onOpStart) plays ungated too.
+    if (mode !== 'campaign' || !onOpStartRef.current) { setGate('ok'); gateRef.current = false; return; }
+    const level = missionIndex + 1;
+    let cancelled = false;
+    const connect = () => {
+      setGate('connecting'); gateRef.current = true;
+      Promise.resolve(onOpStartRef.current?.(level)).then((ok) => {
+        if (cancelled) return;
+        if (ok === false) { setGate('error'); gateRef.current = true; }      // frozen, offer Retry
+        else { setGate('ok'); gateRef.current = false; missionStartWall.current = performance.now(); }
+      });
+    };
+    gateConnectRef.current = connect;
+    connect();
+    return () => { cancelled = true; };
   }, [missionIndex, runNonce, mode]);
+  const retryConnect = () => gateConnectRef.current?.();
   const mission = mode === 'gauntlet' ? GAUNTLET_MISSION : mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
   // The Gauntlet is a prestige tier — earned by finishing the campaign.
   const gauntletUnlocked = progress >= CAMPAIGN.length;
@@ -2758,7 +2785,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
         </Suspense>
       </Canvas>
 
@@ -3032,6 +3059,31 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
           <div style={{ color: '#37d0e0', animation: 'none' }}><Icon name="rotate" size={64} /></div>
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 5, marginTop: 22 }}>ROTATE YOUR DEVICE</div>
           <div style={{ fontSize: 13, color: '#7f8c99', letterSpacing: 3, marginTop: 10 }}>VALOR IS PLAYED IN LANDSCAPE</div>
+        </div>
+      )}
+
+      {/* ── Server-readiness gate: no session token, no fight ── */}
+      {/* Blocks the op until the server confirms a session, so a cold/asleep server can
+          never let you play a run that silently won't count (XP / rank / G$). */}
+      {gate !== 'ok' && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 70, background: 'radial-gradient(circle at 50% 40%, #0b1018, #05070b)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#cfe0ea', textAlign: 'center', fontFamily: UI_FONT, pointerEvents: 'auto', padding: 24 }}>
+          {gate === 'connecting' ? (
+            <>
+              <div className="animate-spin" style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(255,255,255,.15)', borderTopColor: '#37d0e0' }} />
+              <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 3, marginTop: 20 }}>CONNECTING TO SERVER</div>
+              <div style={{ fontSize: 12, color: '#7f8c99', letterSpacing: 1.5, marginTop: 8, maxWidth: 320, lineHeight: 1.5 }}>Securing your session so this run counts. The first connect can take up to a minute.</div>
+            </>
+          ) : (
+            <>
+              <div style={{ color: '#f59e0b' }}><Icon name="alert" size={44} /></div>
+              <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 3, marginTop: 16 }}>CAN&apos;T REACH THE SERVER</div>
+              <div style={{ fontSize: 12, color: '#7f8c99', letterSpacing: 1.5, marginTop: 8, maxWidth: 340, lineHeight: 1.5 }}>Your run won&apos;t count until you&apos;re connected. Tap Retry to wake the server and try again.</div>
+              <button onClick={retryConnect}
+                style={{ marginTop: 22, padding: '11px 30px', borderRadius: 10, border: '1.5px solid rgba(55,208,224,.6)', background: 'rgba(55,208,224,.12)', color: '#8fe6f2', fontWeight: 800, letterSpacing: 3, fontSize: 14, cursor: 'pointer', pointerEvents: 'auto' }}>
+                RETRY
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
