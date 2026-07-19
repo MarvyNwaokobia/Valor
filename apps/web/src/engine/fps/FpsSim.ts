@@ -415,6 +415,17 @@ export class FpsSim {
   setAllActive(active: boolean): void {
     for (const e of this.enemies) e.active = active;
   }
+  /** The attack breaks: the living attackers from a room fall back and clear off the
+   *  field. Used when a defend hold is survived so the extract is a walk-out, not a
+   *  second gunfight against everything that piled up during the hold. */
+  breakAttack(room: number): void {
+    for (const e of this.enemies) {
+      if (e.room === room && e.alive) {
+        e.alive = false; e.hp = 0; e.deadAt = -999; e.active = false;
+        e.token = false; e.ai = 'hidden';
+      }
+    }
+  }
 
   /** Current effective spread half-angle (radians) for the given input. */
   spreadFor(adsFactor: number, moving: boolean, crouched: boolean): number {

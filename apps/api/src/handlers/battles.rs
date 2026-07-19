@@ -63,10 +63,20 @@ async fn apply_item_boosts(db: &sqlx::PgPool, mut player: Player) -> Player {
     player
 }
 
-const XP_PER_RANK: i32 = 1000;
-/// Flat G$ reward for reaching a new rank (crossing XP_PER_RANK). Paid once per
-/// (wallet, rank), on-chain, idempotently — see award_player + settle_rank_up_reward.
-const RANK_UP_REWARD_G: u64 = 500;
+const XP_PER_RANK: i32 = 5000;
+/// Rank-up G$ GROWS with each rank: the Nth rank-up pays STEP × N (500, 1000, 1500,
+/// 2000, …). Higher ranks are rarer AND richer. Paid once per (wallet, rank) on-chain,
+/// idempotently — see award_player + settle_rank_up_reward. Capped at MAX_REWARD_G so a
+/// single on-chain distributeReward never exceeds the pool's per-call limit.
+const RANK_UP_REWARD_STEP_G: u64 = 500;
+const MAX_REWARD_G: u64 = 10_000; // ValorRewardPool.MAX_REWARD — a bigger payout reverts
+
+/// G$ for the reward_ordinal-th rank-up (Bronze = 1 → 500, Silver = 2 → 1000, … Diamond
+/// = 6 → 3000; prestige P is the (6+P)th). Clamped to the on-chain per-call cap.
+fn rank_up_reward_g(reward_ordinal: i32) -> u64 {
+    let n = reward_ordinal.max(0) as u64;
+    (RANK_UP_REWARD_STEP_G * n).min(MAX_REWARD_G)
+}
 const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
 
 fn next_rank(rank: &str) -> Option<&'static str> {
@@ -233,6 +243,8 @@ pub(crate) async fn award_player(
     .execute(&state.db).await;
 
     if let Some(reward_key) = reward_key {
+        // This rank-up's payout grows with the rank (STEP × ordinal), capped on-chain.
+        let reward_g = rank_up_reward_g(reward_ordinal);
         // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
         // earns the level (Nth rank-up ⇒ N × XP_PER_RANK). The rank/prestige itself still
         // advances above and on-chain below — only the money is gated — so honest
@@ -248,13 +260,13 @@ pub(crate) async fn award_player(
             "INSERT INTO rank_up_rewards (wallet_address, rank, amount)
              VALUES ($1, $2, $3) ON CONFLICT (wallet_address, rank) DO NOTHING",
         )
-        .bind(wallet).bind(&reward_key).bind(RANK_UP_REWARD_G as i64)
+        .bind(wallet).bind(&reward_key).bind(reward_g as i64)
         .execute(&state.db).await
         .map(|r| r.rows_affected() == 1)
         .unwrap_or(false);
 
         if claimed {
-            g_awarded = RANK_UP_REWARD_G as i64;
+            g_awarded = reward_g as i64;
         } else if !earned_enough {
             tracing::info!(
                 "rank-up bonus withheld for {} → {}: refereed XP {} < {}",
@@ -277,7 +289,7 @@ pub(crate) async fn award_player(
                 // queueing behind them. Idempotent per (wallet, key) and shared with the
                 // reconcile sweep, so a failure here is re-attempted later.
                 if claimed {
-                    settle_rank_up_reward(&db, &chain, &wallet_owned, &reward_key, RANK_UP_REWARD_G).await;
+                    settle_rank_up_reward(&db, &chain, &wallet_owned, &reward_key, reward_g).await;
                 }
                 if let Some(rank) = promoted_rank {
                     chain.record_rank_up(addr, rank.clone()).await;
@@ -643,45 +655,19 @@ pub struct LiveFightRequest {
     pub headshots: i32,
 }
 
-/// Win XP per Campaign level — all 15 sum to exactly 1,000 (= one rank-up).
-/// Mirrors CAMPAIGN_LEVELS.xpReward in apps/web/src/engine/campaign/levels.ts.
-fn campaign_base_xp(level: i32) -> i32 {
-    match level {
-        1 => 50,  2 => 52,  3 => 54,  4 => 56,  5 => 68,
-        6 => 58,  7 => 60,  8 => 62,  9 => 65,  10 => 75,
-        11 => 68, 12 => 72, 13 => 76, 14 => 80, 15 => 104,
-        n if n > 15 => 50 + (n - 15) * 5, // Endless
-        _ => 50,
-    }
-}
-
-/// Loss XP per Campaign level — scaled per level so harder levels still reward
-/// the attempt. Mirrors CAMPAIGN_LEVELS.lossXp in levels.ts.
-fn campaign_loss_xp(level: i32) -> i32 {
-    match level {
-        1 => 15,  2 => 16,  3 => 17,  4 => 18,  5 => 22,
-        6 => 19,  7 => 20,  8 => 20,  9 => 21,  10 => 25,
-        11 => 22, 12 => 24, 13 => 25, 14 => 27, 15 => 34,
-        n if n > 15 => 15 + (n - 15) * 2, // Endless
-        _ => 15,
-    }
-}
-
-// ── Skill rewards on top of campaign_base_xp (conservative, tunable) ──────────────
-// The server owns the one input it can trust (the clock) and HARD-CAPS the one it
-// can't (client-reported kills), so "fight well" pays without opening a faucet. All
-// values are XP; a great run adds ~+75 on top of ~50 base (≈2.5× today). Turn these
-// up/down here — nothing else needs to change.
-const SPEED_BONUS_MAX_FRAC: f64 = 0.5;      // up to +50% of base XP for a par-or-better clear
-const SPEED_PAR_BASE_SECS: f64 = 35.0;      // par time = base + per-kill × the op's kill cap
-const SPEED_PAR_PER_KILL_SECS: f64 = 4.0;
-const KILL_XP: i32 = 3;                      // bonus XP per rewardable kill
-const HEADSHOT_BONUS_XP: i32 = 2;            // extra for a headshot kill (headshot kill = 5 total)
+// ── XP is kill-driven (what you see = what you get) ───────────────────────────────
+// Every enemy pays XP; the client shows the same number live as you kill. The server
+// re-adds it up at op-end, CAPPED by how many enemies the op actually holds, so a
+// forged count can't mint XP. Tune the feel here — nothing else needs to change.
+const KILL_XP: i32 = 10;             // per rewardable kill
+const HEADSHOT_BONUS_XP: i32 = 5;    // extra for a headshot kill (headshot kill = 15)
+const CLEAR_BONUS_XP: i32 = 50;      // flat, for finishing the op
+const BOSS_BONUS_XP: i32 = 100;      // the op finales (Cinder / Warden / Valor)
 
 /// Most kills an op can legitimately pay for — mirrors the campaign enemy counts in
 /// apps/web/src/engine/fps/campaign.ts. Op 3 (THE WELL) recycles reinforcements during
-/// its hold, so its cap deliberately exceeds the static enemy array. This is what keeps
-/// the Phase-3 telemetry bonus from being a faucet: a forged kill count clamps here.
+/// its hold, so its cap deliberately exceeds the static enemy array. This is the anti-
+/// faucet clamp: a client claiming more kills than the op contains gets nothing extra.
 fn max_rewardable_kills(level: i32) -> i32 {
     match level {
         1 => 9,  2 => 12, 3 => 20, 4 => 11, 5 => 8,
@@ -691,25 +677,21 @@ fn max_rewardable_kills(level: i32) -> i32 {
     }
 }
 
-fn par_time_secs(level: i32) -> f64 {
-    SPEED_PAR_BASE_SECS + SPEED_PAR_PER_KILL_SECS * max_rewardable_kills(level) as f64
+/// Boss ops — clearing one means the boss is dead, so a WIN on it earns the bonus (no
+/// client boss-count needed; you can't finish a boss op without killing the boss).
+fn boss_bonus_xp(level: i32) -> i32 {
+    match level { 5 | 10 | 15 => BOSS_BONUS_XP, _ => 0 }
 }
 
-/// Server-measured (uncheatable) speed bonus: full at/under par, fading to 0 by 2×par.
-fn speed_bonus_xp(level: i32, base_xp: i32, elapsed_secs: f64) -> i32 {
-    let par = par_time_secs(level);
-    if par <= 0.0 { return 0; }
-    let frac = ((2.0 * par - elapsed_secs) / par).clamp(0.0, 1.0);
-    (base_xp as f64 * SPEED_BONUS_MAX_FRAC * frac).round() as i32
-}
-
-/// Bounded kill/headshot bonus. Kills clamp to the op's cap and headshots to kills, so
-/// a client can never claim more than the op physically contains.
-fn kill_bonus_xp(level: i32, kills: i32, headshots: i32) -> i32 {
+/// XP for a finished campaign op. Capped kills (+ headshots ≤ kills) drive it; a WIN
+/// adds the clear bonus and, on a boss op, the boss bonus. A LOSS still pays for the
+/// kills you made (bounded by the same cap), so effort is never wasted.
+fn campaign_xp(level: i32, won: bool, kills: i32, headshots: i32) -> i32 {
     let cap = max_rewardable_kills(level);
     let k = kills.clamp(0, cap);
     let hs = headshots.clamp(0, k);
-    k * KILL_XP + hs * HEADSHOT_BONUS_XP
+    let kill_xp = k * KILL_XP + hs * HEADSHOT_BONUS_XP;
+    if won { CLEAR_BONUS_XP + kill_xp + boss_bonus_xp(level) } else { kill_xp }
 }
 
 /// Shortest real-time fight (seconds) that still earns rewards — blocks scripted
@@ -736,7 +718,7 @@ pub async fn complete_live_fight(
     // Campaign fights arrive with a server-issued token; the wallet + level + real
     // duration are taken from the SERVER's record of the fight, not the client's
     // word. A sessionless request is a non-Campaign flat fight (Endless).
-    let (wallet, level, elapsed_secs): (String, Option<i32>, Option<f64>) = match body.session_id {
+    let (wallet, level) = match body.session_id {
         Some(sid) => {
             let Some((_, session)) = state.live_fight_sessions.remove(&sid) else {
                 return HttpResponse::BadRequest().json(json!({"error": "No active fight session"}));
@@ -745,12 +727,11 @@ pub async fn complete_live_fight(
             if elapsed >= Duration::from_secs(LIVE_FIGHT_TTL_SECS) {
                 return HttpResponse::BadRequest().json(json!({"error": "Fight session expired"}));
             }
-            // Server-measured duration — the client can't fake an instant win, and it's
-            // the trustworthy input the speed bonus reads.
+            // Server-measured duration — the client can't fake an instant win.
             if elapsed.as_secs_f64() < MIN_LIVE_FIGHT_SECS {
                 return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
             }
-            (session.wallet, session.level, Some(elapsed.as_secs_f64()))
+            (session.wallet, session.level)
         }
         None => {
             // Flat path: XP only. Level is forced None so a sessionless request can
@@ -759,16 +740,15 @@ pub async fn complete_live_fight(
             if !is_valid_wallet(w) {
                 return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
             }
-            (normalize_wallet(w), None, None)
+            (normalize_wallet(w), None)
         }
     };
 
     let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
 
-    // A Campaign level (if any) sets the XP and unlock; otherwise it's a flat fight.
-    // A campaign WIN also earns the two skill bonuses: a server-measured speed bonus
-    // (trustworthy) and a per-op-capped kill/headshot bonus (client-reported, bounded).
-    let (base_xp, first_clear, speed_awarded, kill_awarded) = match level {
+    // A Campaign op's XP is kill-driven (campaign_xp: capped kills + clear/boss bonus);
+    // a non-Campaign flat fight uses the old win/loss rate.
+    let (base_xp, first_clear) = match level {
         Some(level) if body.won => {
             let current: i32 = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
                 .bind(&wallet)
@@ -778,13 +758,10 @@ pub async fn complete_live_fight(
                 .flatten()
                 .unwrap_or(0);
             let first = level > current;
-            let base = campaign_base_xp(level);
-            let speed = elapsed_secs.map(|e| speed_bonus_xp(level, base, e)).unwrap_or(0);
-            let skill = kill_bonus_xp(level, body.kills, body.headshots);
-            (base + speed + skill, first, speed, skill)
+            (campaign_xp(level, true, body.kills, body.headshots), first)
         }
-        Some(level) => (campaign_loss_xp(level), false, 0, 0), // lost — scaled XP per level
-        None => (fight_xp(body.won), false, 0, 0),             // non-Campaign fight
+        Some(level) => (campaign_xp(level, false, body.kills, body.headshots), false), // lost — kill XP only
+        None => (fight_xp(body.won), false),                                            // non-Campaign fight
     };
 
     // Carry the mission context so battle history can show "OP N · <mission> — WIN/LOSS".
@@ -845,9 +822,6 @@ pub async fn complete_live_fight(
         "prestige_level": outcome.prestige_level,
         "g_awarded":      outcome.g_awarded,
         "bounty_awarded": bounty_awarded,
-        // Pre-multiplier skill breakdown, so the debrief can show what "fighting well" paid.
-        "speed_bonus":    speed_awarded,
-        "kill_bonus":     kill_awarded,
         "battle_id":      outcome.battle_id,
         "first_clear":    first_clear,
         "level":          level,
@@ -1303,30 +1277,21 @@ mod reward_amount_tests {
     }
 
     #[test]
-    fn rank_up_reward_is_500() {
-        assert_eq!(RANK_UP_REWARD_G, 500);
-    }
-
-    #[test]
     fn rewards_stay_under_the_contract_cap() {
-        // The on-chain ValorRewardPool.MAX_REWARD is 10_000 G$; both payouts must fit
-        // in a single distributeReward call or it reverts with BadAmount.
-        const MAX_REWARD_G: u64 = 10_000;
+        // The on-chain ValorRewardPool.MAX_REWARD is 10_000 G$; every payout must fit in
+        // a single distributeReward call or it reverts with BadAmount.
         assert!(first_clear_bounty(15) <= MAX_REWARD_G);
-        assert!(RANK_UP_REWARD_G <= MAX_REWARD_G);
+        assert!(rank_up_reward_g(999) <= MAX_REWARD_G);
     }
 
     #[test]
     fn refereed_xp_needed_scales_with_rank() {
         // Reaching the Nth rank needs N full ranks' worth of verified XP before its
         // G$ bonus pays — so a pure honor-system (flat/Endless) grind never earns one.
-        // Ladder v2: Iron floor, Bronze the 1st rank-up, Diamond the 6th.
-        assert_eq!(rank_ordinal("Bronze")   * XP_PER_RANK, 1000);
-        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 2000);
-        assert_eq!(rank_ordinal("Gold")     * XP_PER_RANK, 3000);
-        assert_eq!(rank_ordinal("Platinum") * XP_PER_RANK, 4000);
-        assert_eq!(rank_ordinal("Emerald")  * XP_PER_RANK, 5000);
-        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 6000);
+        // Ladder v2: Iron floor, Bronze the 1st rank-up, Diamond the 6th. XP_PER_RANK = 5000.
+        assert_eq!(rank_ordinal("Bronze")   * XP_PER_RANK, 5000);
+        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 10000);
+        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 30000);
         // Iron is the start (never reached via a rank-up) so it gates at zero.
         assert_eq!(rank_ordinal("Iron"), 0);
     }
@@ -1340,27 +1305,29 @@ mod reward_amount_tests {
     }
 
     #[test]
-    fn speed_bonus_full_at_par_zero_by_double() {
-        let base = campaign_base_xp(1); // 50
-        let par = par_time_secs(1);
-        // At/under par → the full +50%. Past 2×par → nothing. Never negative.
-        assert_eq!(speed_bonus_xp(1, base, 0.0), 25);
-        assert_eq!(speed_bonus_xp(1, base, par), 25);
-        assert_eq!(speed_bonus_xp(1, base, par * 1.5), 13); // halfway into the fade
-        assert_eq!(speed_bonus_xp(1, base, par * 2.0), 0);
-        assert_eq!(speed_bonus_xp(1, base, par * 5.0), 0);
+    fn campaign_xp_is_kill_driven_and_capped() {
+        // Op 1 (cap 9): a win = 50 clear + 9 kills×10 + 9 headshots×5 = 185.
+        assert_eq!(campaign_xp(1, true, 9, 9), 50 + 9 * 10 + 9 * 5);
+        // Body-shot win = 50 + 90 = 140.
+        assert_eq!(campaign_xp(1, true, 9, 0), 140);
+        // A forged count clamps to the op's cap — no faucet.
+        assert_eq!(campaign_xp(1, true, 9_999, 9_999), campaign_xp(1, true, 9, 9));
+        // Headshots can't exceed kills; negatives floor to zero.
+        assert_eq!(campaign_xp(1, true, 3, 50), 50 + 3 * 10 + 3 * 5);
+        assert_eq!(campaign_xp(1, true, -5, -5), 50); // just the clear bonus
+        // A LOSS still pays the kills (no clear/boss bonus).
+        assert_eq!(campaign_xp(1, false, 5, 2), 5 * 10 + 2 * 5);
     }
 
     #[test]
-    fn kill_bonus_is_capped_per_op_and_by_kills() {
-        // Honest run: every kill + all headshots pay.
-        assert_eq!(kill_bonus_xp(1, 9, 9), 9 * KILL_XP + 9 * HEADSHOT_BONUS_XP); // 45
-        // Forged counts clamp to the op's cap (op 1 = 9), so they can't mint XP.
-        assert_eq!(kill_bonus_xp(1, 9_999, 9_999), 9 * KILL_XP + 9 * HEADSHOT_BONUS_XP);
-        // Headshots can never exceed kills.
-        assert_eq!(kill_bonus_xp(1, 3, 50), 3 * KILL_XP + 3 * HEADSHOT_BONUS_XP);
-        // Negatives are floored to zero.
-        assert_eq!(kill_bonus_xp(1, -5, -5), 0);
+    fn boss_ops_pay_the_boss_bonus_on_a_win_only() {
+        assert_eq!(boss_bonus_xp(5), 100);
+        assert_eq!(boss_bonus_xp(10), 100);
+        assert_eq!(boss_bonus_xp(15), 100);
+        assert_eq!(boss_bonus_xp(1), 0);
+        // Op 5 (cap 8) win: 50 + 8×10 + 100 boss = 230; a loss gets no boss bonus.
+        assert_eq!(campaign_xp(5, true, 8, 0), 50 + 80 + 100);
+        assert_eq!(campaign_xp(5, false, 8, 0), 80);
     }
 
     #[test]
@@ -1371,14 +1338,17 @@ mod reward_amount_tests {
     }
 
     #[test]
-    fn a_great_run_stays_conservative() {
-        // Base + full speed + a fully-capped kill/headshot run on op 1 should land around
-        // ~2.5× the flat base (the "conservative" target), not a firehose.
-        let level = 1;
-        let base = campaign_base_xp(level);
-        let cap = max_rewardable_kills(level);
-        let total = base + speed_bonus_xp(level, base, 0.0) + kill_bonus_xp(level, cap, cap);
-        assert_eq!(total, 50 + 25 + 45); // 120
-        assert!(total <= base * 3, "great run should stay well under 3× base");
+    fn rank_up_reward_grows_500_per_rank_and_caps() {
+        // Iron→Bronze 500, Bronze→Silver 1000, … Emerald→Diamond 3000.
+        assert_eq!(rank_up_reward_g(rank_ordinal("Bronze")), 500);
+        assert_eq!(rank_up_reward_g(rank_ordinal("Silver")), 1000);
+        assert_eq!(rank_up_reward_g(rank_ordinal("Gold")), 1500);
+        assert_eq!(rank_up_reward_g(rank_ordinal("Platinum")), 2000);
+        assert_eq!(rank_up_reward_g(rank_ordinal("Emerald")), 2500);
+        assert_eq!(rank_up_reward_g(rank_ordinal("Diamond")), 3000);
+        // Deep prestige clamps to the on-chain per-call cap and never reverts a payout.
+        assert_eq!(rank_up_reward_g(20), MAX_REWARD_G as u64);
+        assert!(rank_up_reward_g(999) <= MAX_REWARD_G);
+        assert_eq!(rank_up_reward_g(0), 0);
     }
 }

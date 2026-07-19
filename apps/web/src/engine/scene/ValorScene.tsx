@@ -1325,6 +1325,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
       if (done) {
         holdProgress.current = 0; lastReinforceAt.current = 0;
+        // Survive a hold → the counter-attack BREAKS: the enemies that piled up during
+        // the hold fall back, so the extract is a walk-out, not a second gunfight.
+        if (obj.kind === 'defend') sim.breakAttack(obj.reinforceRoom ?? obj.room ?? 0);
         if (obj.activateRoom) sim.setRoomActive(obj.activateRoom, true); // breach wakes the room
         // story beats keyed to the objective just completed. The "troops cleared"
         // and push-in lines are doorkicker beats — only fire them after a real room
@@ -1668,17 +1671,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   }
 
   function addXp(amount: number) {
-    popXp(amount); // floating "+N" per-kill feedback (juice) — kept for both modes
-    // With a REAL account the server owns your rank + G$. The bar reflects your true
-    // server standing and only advances when the server credits the op (the debrief
-    // shows the real reward). We never cross a rank or flash a G$ payout locally —
-    // that local per-kill climb is exactly what made the HUD "lie" (rank ran to Gold
-    // while the server stayed Bronze, with fake "+500 G$" popups that never paid).
-    if (accountRank) return;
-    // Sandbox / signed-out: the local career total is the only source of truth.
+    popXp(amount); // floating "+N" — the REAL value you'll be credited (see = get)
     const before = careerXp.current;
     const after = before + amount;
-    careerXp.current = after;
+    careerXp.current = after; // the bar climbs LIVE as you kill — a running preview
+    // Signed in: the SERVER owns rank + G$. The live bar previews what you're earning
+    // (kills are real XP now, so it reconciles truthfully at op-end); the actual rank-up
+    // and its payout are confirmed on the debrief, never guessed locally mid-fight.
+    if (accountRank) return;
+    // Sandbox / signed-out: the local total is the only source of truth — celebrate here.
     try { window.localStorage.setItem(XP_KEY, String(after)); } catch { /* private mode */ }
     for (const r of rankUpsBetween(before, after)) showRankUp(r);
   }
@@ -2077,8 +2078,6 @@ export interface OpReward {
   gAwarded: number;      // rank-up G$ actually credited (0 unless a real rank-up landed)
   bountyAwarded: number; // first-clear G$ actually credited
   firstClear: boolean;
-  speedBonus: number;    // XP from the fast-clear bonus (part of xpAwarded)
-  killBonus: number;     // XP from the capped kill/headshot bonus (part of xpAwarded)
 }
 
 /**
@@ -2103,13 +2102,6 @@ function MissionDebrief({ mode, cleared, next, reward, onDeploy, onRetry, onExit
         {reward && (
           <div style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 14, letterSpacing: 3, color: '#5fe0a8', fontWeight: 700 }}>+{reward.xpAwarded} XP</div>
-            {(reward.speedBonus > 0 || reward.killBonus > 0) && (
-              <div style={{ fontSize: 11, letterSpacing: 1.5, color: '#7f8c99', marginTop: 5 }}>
-                {reward.killBonus > 0 && <span>+{reward.killBonus} skill</span>}
-                {reward.killBonus > 0 && reward.speedBonus > 0 && <span> · </span>}
-                {reward.speedBonus > 0 && <span>+{reward.speedBonus} speed</span>}
-              </div>
-            )}
             {reward.firstClear && reward.bountyAwarded > 0 && (
               <div style={{ fontSize: 12, letterSpacing: 2, color: '#ffcf5f', marginTop: 7 }}>FIRST CLEAR BONUS · +{reward.bountyAwarded} G$</div>
             )}

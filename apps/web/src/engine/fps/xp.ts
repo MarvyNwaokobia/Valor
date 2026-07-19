@@ -18,10 +18,12 @@ import { RANKS, XP_PER_RANK, RANK_G_REWARD, type Rank } from '../../lib/constant
 import type { HitPart } from './FpsSim';
 
 /** Feel levers for the earn rate. ~9 kills/mission + bonus ≈ 3 missions per rank. */
+// These MUST match the server (apps/api/src/handlers/battles.rs): what you see pop up
+// per kill is exactly what the server credits (capped per op). Kills drive your XP.
 export const XP_REWARD = {
-  KILL: 25,
-  HEADSHOT_BONUS: 12, // a headshot kill is worth 37
-  MISSION_COMPLETE: 100,
+  KILL: 10,
+  HEADSHOT_BONUS: 5,  // a headshot kill is worth 15
+  MISSION_COMPLETE: 50,
 } as const;
 
 /** XP for a kill, by the body part the killing blow landed on. */

@@ -16,8 +16,6 @@ export interface FightReward {
   firstClear:    boolean
   prestiged:     boolean // true when this fight prestiged past Diamond
   prestigeLevel: number  // prestige level after this fight
-  speedBonus:    number  // XP from the server-measured fast-clear bonus (Phase 2)
-  killBonus:     number  // XP from the capped kill/headshot bonus (Phase 3)
 }
 
 /** Per-run performance the client reports for the skill bonus. The server caps it
@@ -161,8 +159,6 @@ export function useFightRewards() {
           firstClear:    data.first_clear ?? false,
           prestiged:     data.prestiged ?? false,
           prestigeLevel: data.prestige_level ?? 0,
-          speedBonus:    data.speed_bonus ?? 0,
-          killBonus:     data.kill_bonus ?? 0,
         }
         setReward(result)
         return result
