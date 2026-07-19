@@ -17,20 +17,22 @@ export const RANK_COLORS: Record<Rank, string> = {
   Diamond: '#b9f2ff',
 }
 
-// Flat G$ paid for reaching a new rank OR prestiging past Diamond (crossing
-// XP_PER_RANK). One uniform rule — 500 per 1000 XP, forever. Matches the
-// server-authoritative RANK_UP_REWARD_G in apps/api battles.rs.
+// G$ for REACHING a rank — it GROWS with the rank (500 more each step): the higher you
+// climb, the bigger the payout. Mirrors the server's rank_up_reward_g (STEP × ordinal)
+// in apps/api battles.rs. Iron is the start (never reached via a rank-up).
 export const RANK_G_REWARD: Record<Rank, number> = {
-  Iron: 500,
-  Bronze: 500,
-  Silver: 500,
-  Gold: 500,
-  Platinum: 500,
-  Emerald: 500,
-  Diamond: 500,
+  Iron: 500,       // unused (you start here)
+  Bronze: 500,     // 1st rank-up
+  Silver: 1000,    // 2nd
+  Gold: 1500,      // 3rd
+  Platinum: 2000,  // 4th
+  Emerald: 2500,   // 5th
+  Diamond: 3000,   // 6th
 }
 
-export const XP_PER_RANK = 1000
+// XP to rank up (fill the bar). Kills drive it, so a bigger bar = a longer climb.
+// MUST match XP_PER_RANK in apps/api battles.rs.
+export const XP_PER_RANK = 5000
 export const XP_WIN = 100
 export const XP_LOSS = 30
 export const XP_IDLE_COLLECT = 50
