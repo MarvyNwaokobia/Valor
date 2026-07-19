@@ -83,8 +83,10 @@ function FightInner() {
     (level: number) => startFight(level).catch(() => false),
     [startFight],
   );
+  // Returns the SERVER-authoritative reward (real XP / rank-up / G$) so the scene can
+  // show the truth on the debrief instead of a local, invented number.
   const onOpCleared = useCallback(
-    () => { submitResult(true).catch(() => { /* offline / signed out */ }); },
+    () => submitResult(true).catch(() => null),
     [submitResult],
   );
 

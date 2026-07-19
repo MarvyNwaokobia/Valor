@@ -1664,13 +1664,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   }
 
   function addXp(amount: number) {
+    popXp(amount); // floating "+N" per-kill feedback (juice) — kept for both modes
+    // With a REAL account the server owns your rank + G$. The bar reflects your true
+    // server standing and only advances when the server credits the op (the debrief
+    // shows the real reward). We never cross a rank or flash a G$ payout locally —
+    // that local per-kill climb is exactly what made the HUD "lie" (rank ran to Gold
+    // while the server stayed Bronze, with fake "+500 G$" popups that never paid).
+    if (accountRank) return;
+    // Sandbox / signed-out: the local career total is the only source of truth.
     const before = careerXp.current;
     const after = before + amount;
     careerXp.current = after;
-    // Only the sandbox persists a local career total; with a real account the
-    // server is the source of truth and the bar re-seeds from it each mission.
-    if (!accountRank) { try { window.localStorage.setItem(XP_KEY, String(after)); } catch { /* private mode */ } }
-    popXp(amount);
+    try { window.localStorage.setItem(XP_KEY, String(after)); } catch { /* private mode */ }
     for (const r of rankUpsBetween(before, after)) showRankUp(r);
   }
 
@@ -2058,14 +2063,26 @@ function MissionSelect({ current, progress, onPick, onSurvival, onGauntlet, gaun
   );
 }
 
+/** Server-authoritative reward for a cleared op (a structural subset of the app's
+ *  FightReward). The debrief shows THIS — the real XP / rank-up / G$ — never a local
+ *  guess, so a rank-up and its G$ only ever appear when the server actually paid them. */
+export interface OpReward {
+  xpAwarded: number;
+  rankedUp: boolean;
+  newRank: string | null;
+  gAwarded: number;      // rank-up G$ actually credited (0 unless a real rank-up landed)
+  bountyAwarded: number; // first-clear G$ actually credited
+  firstClear: boolean;
+}
+
 /**
  * The between-mission debrief. After an op is cleared this takes over: it shows
  * the story lead-in for what's next and lets the player DEPLOY into it, RETRY the
  * op they just finished, or EXIT to the Operations board. On the last op it
  * becomes the campaign's ending instead.
  */
-function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
-  mode: 'next' | 'finale'; cleared: Mission; next: Mission | null;
+function MissionDebrief({ mode, cleared, next, reward, onDeploy, onRetry, onExit }: {
+  mode: 'next' | 'finale'; cleared: Mission; next: Mission | null; reward: OpReward | null;
   onDeploy: () => void; onRetry: () => void; onExit: () => void;
 }) {
   const btn = (color: string): React.CSSProperties => ({
@@ -2075,6 +2092,19 @@ function MissionDebrief({ mode, cleared, next, onDeploy, onRetry, onExit }: {
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(3,6,10,.97)', color: '#e9edf2', fontFamily: UI_FONT, cursor: 'auto', pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '30px 24px' }}>
       <div style={{ maxWidth: 620, textAlign: 'center' }}>
+        {/* The REAL, server-confirmed reward for the op just cleared. A rank-up / G$
+            line only appears when the server actually credited it. */}
+        {reward && (
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ fontSize: 14, letterSpacing: 3, color: '#5fe0a8', fontWeight: 700 }}>+{reward.xpAwarded} XP</div>
+            {reward.firstClear && reward.bountyAwarded > 0 && (
+              <div style={{ fontSize: 12, letterSpacing: 2, color: '#ffcf5f', marginTop: 7 }}>FIRST CLEAR BONUS · +{reward.bountyAwarded} G$</div>
+            )}
+            {reward.rankedUp && reward.newRank && (
+              <div style={{ fontSize: 16, letterSpacing: 3, color: '#37d0e0', fontWeight: 800, marginTop: 7 }}>RANK UP → {reward.newRank.toUpperCase()} · +{reward.gAwarded} G$</div>
+            )}
+          </div>
+        )}
         {mode === 'finale' ? (
           <>
             <div style={{ fontSize: 13, letterSpacing: 8, color: '#9fb4c8' }}>THE FIRE IS OUT</div>
@@ -2308,7 +2338,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   /** Fires when a campaign op is cleared — `/fight` uses it to record the real,
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
-  onOpCleared?: (level: number) => void;
+  onOpCleared?: (level: number) => Promise<OpReward | null> | void;
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
@@ -2385,6 +2415,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   };
   const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet'>('campaign');
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
+  const [lastReward, setLastReward] = useState<OpReward | null>(null); // real server reward for the debrief
   const missionStartWall = useRef(performance.now()); // for the op's clear time
   // Latest onOpStart in a ref so firing it can't churn the op-start effect's deps.
   const onOpStartRef = useRef(onOpStart);
@@ -2462,13 +2493,15 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
   const clearComplete = () => { if (hud.current.complete) hud.current.complete.style.opacity = '0'; };
   const handleComplete = () => {
     unlock(missionIndex + 1); // the next op is unlocked the moment this one is cleared
-    // Record the real reward (server-authoritative) for this op, by 1-based level.
-    onOpCleared?.(missionIndex + 1);
     const last = missionIndex >= CAMPAIGN.length - 1;
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');
     menuOpenRef.current = true;                 // freeze the scene behind the debrief
     try { document.exitPointerLock?.(); } catch { /* ignore */ }
+    // Record the op with the server and surface the REAL reward on the debrief. Clear
+    // any prior reward first so a stale one never flashes while this one is recording.
+    setLastReward(null);
+    Promise.resolve(onOpCleared?.(missionIndex + 1)).then((r) => { if (r) setLastReward(r); });
   };
   const deployNext = () => {
     const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);
@@ -2962,6 +2995,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
             mode={debrief}
             cleared={CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)]}
             next={debrief === 'next' ? CAMPAIGN[missionIndex + 1] : null}
+            reward={lastReward}
             onDeploy={deployNext}
             onRetry={retryMission}
             onExit={exitHome}
