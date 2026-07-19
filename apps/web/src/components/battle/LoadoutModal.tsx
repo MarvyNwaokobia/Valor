@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { X, Check } from 'lucide-react'
+import { X, Check, AlertTriangle } from 'lucide-react'
 import type { Item } from '@/types'
+import { CAMPAIGN } from '@/engine/fps/campaign'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { gunIdFromItemId } from '@/components/marketplace/GunIcons'
 import {
@@ -132,6 +133,14 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
   }
 
   const chosenGun = GUN_CATALOG[gun]
+  // The weapon this op hands you if you bring nothing better. Your equipped gun is now
+  // ALWAYS the one you deploy with (a bought gun is never silently overridden) — so if
+  // it's a lower tier than what the op would issue, say so plainly here. That's the fix
+  // for "I bought a gun and nothing changed": now it changes, and you're told when the
+  // op's issued weapon would have been the stronger pick. The starter sidearm is the one
+  // exception — picking it deploys the issued weapon (the floor), so no warning there.
+  const issuedGun = CAMPAIGN[opIndex]?.gun ? GUN_CATALOG[CAMPAIGN[opIndex].gun] : null
+  const underGunned = gun !== 'sidearm' && issuedGun != null && chosenGun.tier < issuedGun.tier
 
   return (
     <motion.div
@@ -169,6 +178,14 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
               ))}
             </div>
             {ownedGuns.length === 0 && <p className="text-[11px] text-slate-600 mt-2">Buy a gun in the Marketplace to bring it here.</p>}
+            {underGunned && issuedGun && (
+              <div className="mt-2 flex items-start gap-2 rounded-lg px-3 py-2 border" style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.45)' }}>
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: '#f59e0b' }} />
+                <p className="text-[11px] leading-snug" style={{ color: '#f8d38a' }}>
+                  This op issues the <span className="font-bold">{issuedGun.name}</span> (Tier {issuedGun.tier}) — stronger than your <span className="font-bold">{chosenGun.name}</span> (Tier {chosenGun.tier}). You&apos;ll still deploy with your {chosenGun.name}.
+                </p>
+              </div>
+            )}
           </section>
 
           {/* Ammo */}

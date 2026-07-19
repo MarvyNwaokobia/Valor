@@ -14,7 +14,7 @@ import {
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
 import { GUN_FEEL } from '../combat/GunFeel';
-import { getGun, type GunId } from '../combat/GunStats';
+import { STARTER_GUN_ID, type GunId } from '../combat/GunStats';
 import type { AmmoId, AttachmentId, AttachmentSlot } from '../combat/Loadout';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
@@ -404,8 +404,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // Your equipped gun overrides the op's issued primary when it's the stronger
   // tier (the mission gun is the floor). A boss finale still issues its scripted
   // weapon unless you own something better.
-  const PRIMARY: GunId =
-    equippedGun && getGun(equippedGun).tier > getGun(mission.gun).tier ? equippedGun : mission.gun;
+  // Your equipped gun is what you fight with — a gun you bought + equipped is ALWAYS
+  // carried, even if it's a lower tier than the op issues (the Loadout warns you rather
+  // than silently overriding your pick). The starter sidearm is the exception: it's the
+  // default when nothing is equipped, so it falls back to the op's issued weapon rather
+  // than handicapping a new player who hasn't bought anything yet.
+  const hasChosenGun = !!equippedGun && equippedGun !== STARTER_GUN_ID;
+  const PRIMARY: GunId = hasChosenGun ? equippedGun! : mission.gun;
   const GUN = PRIMARY;
   const LOADOUT = useMemo<GunId[]>(() => [PRIMARY, mission.secondary ?? 'sidearm'], [PRIMARY, mission.secondary]);
   const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
