@@ -16,6 +16,15 @@ export interface FightReward {
   firstClear:    boolean
   prestiged:     boolean // true when this fight prestiged past Diamond
   prestigeLevel: number  // prestige level after this fight
+  speedBonus:    number  // XP from the server-measured fast-clear bonus (Phase 2)
+  killBonus:     number  // XP from the capped kill/headshot bonus (Phase 3)
+}
+
+/** Per-run performance the client reports for the skill bonus. The server caps it
+ *  (max_rewardable_kills), so an inflated count can never mint XP. */
+export interface FightTelemetry {
+  kills:     number
+  headshots: number
 }
 
 /**
@@ -80,7 +89,7 @@ export function useFightRewards() {
   )
 
   const submitResult = useCallback(
-    async (won: boolean): Promise<FightReward | null> => {
+    async (won: boolean, telemetry?: FightTelemetry): Promise<FightReward | null> => {
       if (!player) return null
       const wallet = player.wallet_address
 
@@ -89,13 +98,17 @@ export function useFightRewards() {
       const sessionId = sessionIdRef.current
       sessionIdRef.current = null
 
+      // Per-run performance for the skill bonus (server-capped). Non-negative ints only.
+      const kills     = Math.max(0, Math.round(telemetry?.kills ?? 0))
+      const headshots = Math.max(0, Math.round(telemetry?.headshots ?? 0))
+
       setPending(true)
       setError(null)
       try {
         const res = await fetch(`${API}/battles/fight/complete`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(sessionId ? { session_id: sessionId, won } : { won, wallet }),
+          body:    JSON.stringify(sessionId ? { session_id: sessionId, won, kills, headshots } : { won, wallet, kills, headshots }),
         })
 
         if (!res.ok) {
@@ -148,6 +161,8 @@ export function useFightRewards() {
           firstClear:    data.first_clear ?? false,
           prestiged:     data.prestiged ?? false,
           prestigeLevel: data.prestige_level ?? 0,
+          speedBonus:    data.speed_bonus ?? 0,
+          killBonus:     data.kill_bonus ?? 0,
         }
         setReward(result)
         return result

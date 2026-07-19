@@ -634,6 +634,13 @@ pub struct LiveFightRequest {
     /// never a bounty or a pve advance. Ignored when session_id is present.
     #[serde(default)]
     pub wallet: Option<String>,
+    /// Client-reported performance for the skill bonus (Phase 3). Server-capped per op
+    /// via max_rewardable_kills so a forged count can't mint XP; only applied to a
+    /// session-backed campaign win.
+    #[serde(default)]
+    pub kills: i32,
+    #[serde(default)]
+    pub headshots: i32,
 }
 
 /// Win XP per Campaign level — all 15 sum to exactly 1,000 (= one rank-up).
@@ -660,6 +667,51 @@ fn campaign_loss_xp(level: i32) -> i32 {
     }
 }
 
+// ── Skill rewards on top of campaign_base_xp (conservative, tunable) ──────────────
+// The server owns the one input it can trust (the clock) and HARD-CAPS the one it
+// can't (client-reported kills), so "fight well" pays without opening a faucet. All
+// values are XP; a great run adds ~+75 on top of ~50 base (≈2.5× today). Turn these
+// up/down here — nothing else needs to change.
+const SPEED_BONUS_MAX_FRAC: f64 = 0.5;      // up to +50% of base XP for a par-or-better clear
+const SPEED_PAR_BASE_SECS: f64 = 35.0;      // par time = base + per-kill × the op's kill cap
+const SPEED_PAR_PER_KILL_SECS: f64 = 4.0;
+const KILL_XP: i32 = 3;                      // bonus XP per rewardable kill
+const HEADSHOT_BONUS_XP: i32 = 2;            // extra for a headshot kill (headshot kill = 5 total)
+
+/// Most kills an op can legitimately pay for — mirrors the campaign enemy counts in
+/// apps/web/src/engine/fps/campaign.ts. Op 3 (THE WELL) recycles reinforcements during
+/// its hold, so its cap deliberately exceeds the static enemy array. This is what keeps
+/// the Phase-3 telemetry bonus from being a faucet: a forged kill count clamps here.
+fn max_rewardable_kills(level: i32) -> i32 {
+    match level {
+        1 => 9,  2 => 12, 3 => 20, 4 => 11, 5 => 8,
+        6 => 9,  7 => 11, 8 => 8,  9 => 11, 10 => 11,
+        11 => 9, 12 => 10, 13 => 8, 14 => 11, 15 => 8,
+        _ => 10,
+    }
+}
+
+fn par_time_secs(level: i32) -> f64 {
+    SPEED_PAR_BASE_SECS + SPEED_PAR_PER_KILL_SECS * max_rewardable_kills(level) as f64
+}
+
+/// Server-measured (uncheatable) speed bonus: full at/under par, fading to 0 by 2×par.
+fn speed_bonus_xp(level: i32, base_xp: i32, elapsed_secs: f64) -> i32 {
+    let par = par_time_secs(level);
+    if par <= 0.0 { return 0; }
+    let frac = ((2.0 * par - elapsed_secs) / par).clamp(0.0, 1.0);
+    (base_xp as f64 * SPEED_BONUS_MAX_FRAC * frac).round() as i32
+}
+
+/// Bounded kill/headshot bonus. Kills clamp to the op's cap and headshots to kills, so
+/// a client can never claim more than the op physically contains.
+fn kill_bonus_xp(level: i32, kills: i32, headshots: i32) -> i32 {
+    let cap = max_rewardable_kills(level);
+    let k = kills.clamp(0, cap);
+    let hs = headshots.clamp(0, k);
+    k * KILL_XP + hs * HEADSHOT_BONUS_XP
+}
+
 /// Shortest real-time fight (seconds) that still earns rewards — blocks scripted
 /// instant-win spam. A genuine fight runs well past this; it only filters abuse.
 const MIN_LIVE_FIGHT_SECS: f64 = 3.0;
@@ -684,7 +736,7 @@ pub async fn complete_live_fight(
     // Campaign fights arrive with a server-issued token; the wallet + level + real
     // duration are taken from the SERVER's record of the fight, not the client's
     // word. A sessionless request is a non-Campaign flat fight (Endless).
-    let (wallet, level) = match body.session_id {
+    let (wallet, level, elapsed_secs): (String, Option<i32>, Option<f64>) = match body.session_id {
         Some(sid) => {
             let Some((_, session)) = state.live_fight_sessions.remove(&sid) else {
                 return HttpResponse::BadRequest().json(json!({"error": "No active fight session"}));
@@ -693,11 +745,12 @@ pub async fn complete_live_fight(
             if elapsed >= Duration::from_secs(LIVE_FIGHT_TTL_SECS) {
                 return HttpResponse::BadRequest().json(json!({"error": "Fight session expired"}));
             }
-            // Server-measured duration — the client can't fake an instant win.
+            // Server-measured duration — the client can't fake an instant win, and it's
+            // the trustworthy input the speed bonus reads.
             if elapsed.as_secs_f64() < MIN_LIVE_FIGHT_SECS {
                 return HttpResponse::BadRequest().json(json!({"error": "Fight too short to count"}));
             }
-            (session.wallet, session.level)
+            (session.wallet, session.level, Some(elapsed.as_secs_f64()))
         }
         None => {
             // Flat path: XP only. Level is forced None so a sessionless request can
@@ -706,14 +759,16 @@ pub async fn complete_live_fight(
             if !is_valid_wallet(w) {
                 return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
             }
-            (normalize_wallet(w), None)
+            (normalize_wallet(w), None, None)
         }
     };
 
     let xp_multiplier = equipped_xp_multiplier(&state.db, &wallet).await;
 
     // A Campaign level (if any) sets the XP and unlock; otherwise it's a flat fight.
-    let (base_xp, first_clear) = match level {
+    // A campaign WIN also earns the two skill bonuses: a server-measured speed bonus
+    // (trustworthy) and a per-op-capped kill/headshot bonus (client-reported, bounded).
+    let (base_xp, first_clear, speed_awarded, kill_awarded) = match level {
         Some(level) if body.won => {
             let current: i32 = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
                 .bind(&wallet)
@@ -723,10 +778,13 @@ pub async fn complete_live_fight(
                 .flatten()
                 .unwrap_or(0);
             let first = level > current;
-            (campaign_base_xp(level), first)
+            let base = campaign_base_xp(level);
+            let speed = elapsed_secs.map(|e| speed_bonus_xp(level, base, e)).unwrap_or(0);
+            let skill = kill_bonus_xp(level, body.kills, body.headshots);
+            (base + speed + skill, first, speed, skill)
         }
-        Some(level) => (campaign_loss_xp(level), false), // lost — scaled XP per level
-        None => (fight_xp(body.won), false),              // non-Campaign fight
+        Some(level) => (campaign_loss_xp(level), false, 0, 0), // lost — scaled XP per level
+        None => (fight_xp(body.won), false, 0, 0),             // non-Campaign fight
     };
 
     // Carry the mission context so battle history can show "OP N · <mission> — WIN/LOSS".
@@ -787,6 +845,9 @@ pub async fn complete_live_fight(
         "prestige_level": outcome.prestige_level,
         "g_awarded":      outcome.g_awarded,
         "bounty_awarded": bounty_awarded,
+        // Pre-multiplier skill breakdown, so the debrief can show what "fighting well" paid.
+        "speed_bonus":    speed_awarded,
+        "kill_bonus":     kill_awarded,
         "battle_id":      outcome.battle_id,
         "first_clear":    first_clear,
         "level":          level,
@@ -1276,5 +1337,48 @@ mod reward_amount_tests {
         // grinder can't mint prestige bonuses without the refereed XP to back them.
         assert_eq!(rank_ordinal("Diamond") + 1, 7);   // Diamond I  needs 7000 refereed XP
         assert_eq!(rank_ordinal("Diamond") + 3, 9);   // Diamond III needs 9000
+    }
+
+    #[test]
+    fn speed_bonus_full_at_par_zero_by_double() {
+        let base = campaign_base_xp(1); // 50
+        let par = par_time_secs(1);
+        // At/under par → the full +50%. Past 2×par → nothing. Never negative.
+        assert_eq!(speed_bonus_xp(1, base, 0.0), 25);
+        assert_eq!(speed_bonus_xp(1, base, par), 25);
+        assert_eq!(speed_bonus_xp(1, base, par * 1.5), 13); // halfway into the fade
+        assert_eq!(speed_bonus_xp(1, base, par * 2.0), 0);
+        assert_eq!(speed_bonus_xp(1, base, par * 5.0), 0);
+    }
+
+    #[test]
+    fn kill_bonus_is_capped_per_op_and_by_kills() {
+        // Honest run: every kill + all headshots pay.
+        assert_eq!(kill_bonus_xp(1, 9, 9), 9 * KILL_XP + 9 * HEADSHOT_BONUS_XP); // 45
+        // Forged counts clamp to the op's cap (op 1 = 9), so they can't mint XP.
+        assert_eq!(kill_bonus_xp(1, 9_999, 9_999), 9 * KILL_XP + 9 * HEADSHOT_BONUS_XP);
+        // Headshots can never exceed kills.
+        assert_eq!(kill_bonus_xp(1, 3, 50), 3 * KILL_XP + 3 * HEADSHOT_BONUS_XP);
+        // Negatives are floored to zero.
+        assert_eq!(kill_bonus_xp(1, -5, -5), 0);
+    }
+
+    #[test]
+    fn op3_kill_cap_allows_for_reinforcements() {
+        // THE WELL recycles spawns during its hold, so its cap must exceed the static
+        // enemy array (9) — otherwise a legit defend run gets under-paid.
+        assert!(max_rewardable_kills(3) > 9);
+    }
+
+    #[test]
+    fn a_great_run_stays_conservative() {
+        // Base + full speed + a fully-capped kill/headshot run on op 1 should land around
+        // ~2.5× the flat base (the "conservative" target), not a firehose.
+        let level = 1;
+        let base = campaign_base_xp(level);
+        let cap = max_rewardable_kills(level);
+        let total = base + speed_bonus_xp(level, base, 0.0) + kill_bonus_xp(level, cap, cap);
+        assert_eq!(total, 50 + 25 + 45); // 120
+        assert!(total <= base * 3, "great run should stay well under 3× base");
     }
 }
