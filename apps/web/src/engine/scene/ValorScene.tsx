@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import {
   FpsSim,
-  xpForKill, rankForXp, xpIntoRank, rankUpsBetween, gReward, careerXpFor, XP_REWARD, XP_PER_RANK, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
+  xpForKill, rankForXp, xpIntoRank, xpBarSize, rankUpsBetween, gReward, careerXpFor, XP_REWARD, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
 } from '../fps';
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
@@ -1628,15 +1628,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
     }
 
-    // earn loop: rank + progress toward the next 1000 XP
+    // earn loop: rank + progress toward the next rank. The bar SIZE varies now that
+    // the ladder is progressive, so it is read per-rank rather than being a constant.
     const rank = rankForXp(careerXp.current);
     const into = xpIntoRank(careerXp.current);
+    const bar  = xpBarSize(careerXp.current);
     if (h.rankText) {
-      h.rankText.textContent = `${rank.toUpperCase()}  ·  ${into} / ${XP_PER_RANK} XP`;
+      h.rankText.textContent = `${rank.toUpperCase()}  ·  ${into} / ${bar} XP`;
       h.rankText.style.color = RANK_COLORS[rank];
     }
     if (h.xpBar) {
-      h.xpBar.style.width = `${Math.round((into / XP_PER_RANK) * 100)}%`;
+      h.xpBar.style.width = `${Math.round((into / bar) * 100)}%`;
       h.xpBar.style.background = RANK_COLORS[rank];
     }
   }

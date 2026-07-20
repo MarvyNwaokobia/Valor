@@ -30,9 +30,36 @@ export const RANK_G_REWARD: Record<Rank, number> = {
   Diamond: 3000,   // 6th
 }
 
-// XP to rank up (fill the bar). Kills drive it, so a bigger bar = a longer climb.
-// MUST match XP_PER_RANK in apps/api battles.rs.
-export const XP_PER_RANK = 5000
+// XP to REACH each rank: the size of the bar you fill while sitting at the rank below.
+// PROGRESSIVE, so the first rank stays cheap (it carries retention) while the top stays
+// rare (it carries prestige). A flat cost was the old design error: at 5000 flat, the
+// entire 15-op campaign played perfectly (~2610 XP) could not buy even one rank.
+// Calibrated so Bronze lands in the first session and one full campaign clear lands Gold.
+// MUST match RANK_STEP_XP in apps/api battles.rs.
+export const RANK_STEP_XP: Record<Rank, number> = {
+  Iron: 0,          // the floor — never reached via a rank-up
+  Bronze: 400,      // 1st rank-up, ~op 3 of the first run
+  Silver: 900,      // 2nd, mid-campaign
+  Gold: 1300,       // 3rd, one full campaign clear
+  Platinum: 2500,   // 4th
+  Emerald: 4500,    // 5th
+  Diamond: 8000,    // 6th
+}
+
+// Past Diamond every prestige costs this, forever (uncapped).
+export const PRESTIGE_STEP_XP = 8000
+
+/** Size of the XP bar for a player currently AT `rank` — what they must fill to advance. */
+export function xpForNextRank(rank: Rank): number {
+  const next = RANKS[RANKS.indexOf(rank) + 1]
+  return next ? RANK_STEP_XP[next] : PRESTIGE_STEP_XP
+}
+
+/** Total career XP needed to legitimately hold `rank` (cumulative down the curve). */
+export function cumulativeXpForRank(rank: Rank): number {
+  const i = RANKS.indexOf(rank)
+  return RANKS.slice(0, i + 1).reduce((sum, r) => sum + RANK_STEP_XP[r], 0)
+}
 export const XP_WIN = 100
 export const XP_LOSS = 30
 export const XP_IDLE_COLLECT = 50

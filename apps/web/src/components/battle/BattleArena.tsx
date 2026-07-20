@@ -23,7 +23,7 @@ import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import RankAura from '@/components/ui/RankAura'
-import { XP_PER_RANK } from '@/lib/constants'
+import { xpForNextRank } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 
 interface Props { player: Player; walletAddress: string; challengeTarget?: string }
@@ -465,7 +465,7 @@ export default function BattleArena({ player, walletAddress, challengeTarget }: 
           {/* XP progress */}
           <motion.div className="w-full max-w-xs"
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
-            <XpMeter xp={result.newXp} max={XP_PER_RANK} rank={result.newRank ?? player.rank} />
+            <XpMeter xp={result.newXp} max={xpForNextRank(result.newRank ?? player.rank)} rank={result.newRank ?? player.rank} />
           </motion.div>
 
           {/* Rank up banner */}

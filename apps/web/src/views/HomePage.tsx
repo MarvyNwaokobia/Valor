@@ -11,7 +11,7 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
-import { XP_PER_RANK, RANK_G_REWARD } from '@/lib/constants'
+import { xpForNextRank, RANK_G_REWARD } from '@/lib/constants'
 import { rankLabel } from '@/lib/ranks'
 import { formatGDollarNumber } from '@/utils/format'
 
@@ -72,7 +72,8 @@ export default function HomePage() {
   const charClass    = player.character_class ?? 'Sentinel'
   const def          = CLASS_DEFINITIONS[charClass]
   const heroImg      = (player.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
-  const xpProgress   = (player.xp / XP_PER_RANK) * 100
+  const xpBar        = xpForNextRank(player.rank)
+  const xpProgress   = (player.xp / xpBar) * 100
   const nextReward   = RANK_G_REWARD[player.rank]
 
   return (
@@ -137,7 +138,7 @@ export default function HomePage() {
           <div className="flex flex-col gap-1">
             <div className="flex justify-between text-[9px] text-slate-600 uppercase tracking-wider">
               <span>{player.xp.toLocaleString()} XP</span>
-              <span>{XP_PER_RANK.toLocaleString()} XP</span>
+              <span>{xpBar.toLocaleString()} XP</span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.8)' }}>
               <motion.div

@@ -15,7 +15,7 @@ import { ChainBadge } from '@/components/ui/ChainBadge'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
-import { XP_PER_RANK } from '@/lib/constants'
+import { xpForNextRank } from '@/lib/constants'
 import type { Rank } from '@/lib/constants'
 import type { Item } from '@/types'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -38,7 +38,8 @@ export default function ProfilePage() {
 
   const charClass  = (player.character_class ?? 'Berserker') as CharacterClass
   const def        = CLASS_DEFINITIONS[charClass] ?? CLASS_DEFINITIONS['Berserker']
-  const xpProgress = (player.xp / XP_PER_RANK) * 100
+  const xpBar      = xpForNextRank(player.rank)
+  const xpProgress = (player.xp / xpBar) * 100
   const [showUsernameModal, setShowUsernameModal] = useState(false)
 
   const itemIds = inventory.map(i => i.item_id)
@@ -138,7 +139,7 @@ export default function ProfilePage() {
             <div className="flex flex-col gap-1">
               <div className="flex justify-between text-[9px] text-slate-600 uppercase tracking-wider">
                 <span>{player.xp.toLocaleString()} XP</span>
-                <span>{XP_PER_RANK.toLocaleString()} next</span>
+                <span>{xpBar.toLocaleString()} next</span>
               </div>
               <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.8)' }}>
                 <motion.div className="h-full rounded-full"
