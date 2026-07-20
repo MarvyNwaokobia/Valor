@@ -4,8 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Swords, Bot, Crosshair, ExternalLink } from 'lucide-react'
 import { formatGDollarNumber } from '@/utils/format'
-import { RANK_G_REWARD } from '@/lib/constants'
-import type { Rank } from '@/lib/constants'
 import { ChainBadge } from '@/components/ui/ChainBadge'
 import { CAMPAIGN } from '@/engine/fps/campaign'
 
@@ -22,6 +20,8 @@ interface BattleRow {
   created_at: string
   game_record_tx: string | null
   rounds_data?: { kind?: string; level?: number; won?: boolean } | unknown
+  /** REAL G$ this fight paid (the one-time first-clear bounty). 0 for a replay. */
+  g_awarded?: number
 }
 
 /** A campaign fight carries {kind:"mission", level}; resolve its display label. */
@@ -34,7 +34,6 @@ function missionInfo(rounds: BattleRow['rounds_data']): { op: number; name: stri
 
 interface Props {
   walletAddress: string
-  playerRank: Rank
 }
 
 function shortAddr(addr: string) {
@@ -52,7 +51,7 @@ function timeAgo(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-export default function BattleHistory({ walletAddress, playerRank }: Props) {
+export default function BattleHistory({ walletAddress }: Props) {
   const { data: battles = [], isLoading, isError } = useQuery<BattleRow[]>({
     queryKey: ['battles', walletAddress],
     queryFn: async () => {
@@ -63,8 +62,6 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
     staleTime: 60_000,
     retry: 1,
   })
-
-  const gPerWin = RANK_G_REWARD[playerRank] ?? 10
 
   if (isLoading) {
     return (
@@ -110,7 +107,9 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
           const won          = battle.winner_wallet.toLowerCase() === walletAddress.toLowerCase()
           const opponent     = isChallenger ? battle.opponent_wallet : battle.challenger_wallet
           const xpEarned     = isChallenger ? battle.xp_awarded_challenger : battle.xp_awarded_opponent
-          const gEarned      = won ? gPerWin : 0
+          // The server's real number. This used to be the player's CURRENT rank
+          // bonus painted onto every won row, which invented money nobody was paid.
+          const gEarned      = battle.g_awarded ?? 0
           const mission      = missionInfo(battle.rounds_data)
 
           return (
@@ -160,6 +159,7 @@ export default function BattleHistory({ walletAddress, playerRank }: Props) {
                 {gEarned > 0 && (
                   <p className="text-[10px] font-bold text-amber-400">
                     +{formatGDollarNumber(gEarned)} G$
+                    <span className="text-slate-600 font-normal ml-1">first clear</span>
                   </p>
                 )}
               </div>

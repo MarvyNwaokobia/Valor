@@ -539,15 +539,32 @@ pub async fn get_battles(
         // Carries mission context ({kind:"mission", level, won}) so the UI can show
         // "OP N · <mission> — WIN/LOSS" for campaign fights.
         rounds_data:           serde_json::Value,
+        // REAL G$ this specific fight paid, 0 for most of them. The UI used to render
+        // the player's current rank bonus on every won row, which invented money that
+        // was never paid (ten rows × "+1.5k G$" against 9k lifetime earnings). The only
+        // money a campaign op pays is the one-time first-clear bounty, so that is what
+        // is joined here — matched on the op AND on the moment, because the bounty is
+        // once per (wallet, level) and a REPLAY of a cleared op pays nothing. The
+        // bounty row is written in the same request as the battle (~20ms later), so the
+        // window is tight enough to attach it to the run that actually earned it.
+        g_awarded:             i64,
     }
 
     let result = sqlx::query_as::<_, BattleRow>(
-        "SELECT id, challenger_wallet, opponent_wallet, winner_wallet,
-                xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at,
-                game_record_tx, rounds_data
-         FROM battles
-         WHERE challenger_wallet = $1 OR opponent_wallet = $1
-         ORDER BY created_at DESC
+        "SELECT b.id, b.challenger_wallet, b.opponent_wallet, b.winner_wallet,
+                b.xp_awarded_challenger, b.xp_awarded_opponent, b.is_bot, b.created_at,
+                b.game_record_tx, b.rounds_data,
+                COALESCE(fc.amount, 0)::bigint AS g_awarded
+         FROM battles b
+         LEFT JOIN first_clear_bounties fc
+                ON fc.wallet_address = b.challenger_wallet
+               AND jsonb_typeof(b.rounds_data) = 'object'
+               AND b.rounds_data->>'level' ~ '^[0-9]+$'
+               AND fc.level = (b.rounds_data->>'level')::int
+               AND fc.created_at BETWEEN b.created_at - interval '5 seconds'
+                                     AND b.created_at + interval '5 seconds'
+         WHERE b.challenger_wallet = $1 OR b.opponent_wallet = $1
+         ORDER BY b.created_at DESC
          LIMIT 10",
     )
     .bind(&wallet)
