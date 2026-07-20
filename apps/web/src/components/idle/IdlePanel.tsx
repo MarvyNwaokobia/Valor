@@ -96,7 +96,11 @@ export default function IdlePanel({ walletAddress, player }: Props) {
       }
 
       updatePlayer({
-        xp: Math.min(999, player.xp + data.xp),
+        // No clamp. This used to be Math.min(999, ...), a stale copy of a rank
+        // threshold that no longer exists, which made the bar look stuck for anyone
+        // past it. The server is authoritative and re-syncs shortly after; this is
+        // only the optimistic local echo.
+        xp: player.xp + data.xp,
         last_active: new Date().toISOString(),
         decay_status: 'none',
       })

@@ -108,15 +108,18 @@ pub async fn collect_mission(
     .execute(&state.db)
     .await;
 
-    // Add XP to player and update last_active
+    // Credit the XP through the shared award path. This was a direct
+    // `xp = LEAST(xp + 50, 999)` — a third hardcoded copy of the stale 999 ceiling —
+    // which silently discarded the XP of anyone already past it and could never rank
+    // anyone up. award_player owns the progressive curve, the rank climb and the
+    // save-failure logging, so idle XP now behaves exactly like every other source.
+    // An idle collect is not a fight: it must not touch the win/loss record
+    // (count_result = false) and is not refereed combat, so it earns no rank-up
+    // bonus eligibility (reward_eligible = false) — it still advances the rank itself.
     let now = Utc::now();
-    let _ = sqlx::query(
-        "UPDATE players SET xp = LEAST(xp + 50, 999), last_active = $1, decay_status = 'none' WHERE wallet_address = $2",
-    )
-    .bind(now)
-    .bind(&wallet)
-    .execute(&state.db)
-    .await;
+    let _ = crate::handlers::battles::award_player(
+        &state, &wallet, true, 50, 1, false, false,
+    ).await;
 
     // Add item to inventory if dropped
     if let Some(ref item_id) = item_dropped {
