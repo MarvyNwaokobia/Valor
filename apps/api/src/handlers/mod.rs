@@ -15,6 +15,7 @@ pub mod gauntlet;
 pub mod seasons;
 pub mod ledger;
 pub mod admin;
+pub mod consistency;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -35,6 +36,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         .route("/", web::get().to(root))
         .route("/health", web::get().to(health))
+        // Read-only self-audit; the cron fails its job when this reports trouble.
+        .route("/health/consistency", web::post().to(consistency::run_consistency_check))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
         .route("/ws/battle", web::get().to(ws::battle_ws))
         .service(

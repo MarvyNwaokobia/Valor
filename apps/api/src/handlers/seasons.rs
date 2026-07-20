@@ -209,8 +209,11 @@ async fn settle_season_payout(
         Ok(true) => {
             let _ = sqlx::query("UPDATE season_payouts SET status = 'paid' WHERE season_id = $1 AND wallet_address = $2")
                 .bind(season_id).bind(wallet).execute(db).await;
-            let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+            let credited_locally = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
                 .bind(amount as i64).bind(wallet).execute(db).await;
+            // Paid on-chain already; a failed local credit means our ledger under-reports
+            // real money, so never swallow it.
+            crate::handlers::battles::log_write_failure("season g_earned_lifetime credit", wallet, &credited_locally);
             crate::handlers::ledger::insert_ledger_entry(
                 db, wallet, "season_reward", rust_decimal::Decimal::from(amount), None, None,
             ).await;

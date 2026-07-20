@@ -167,6 +167,23 @@ fn rank_ordinal(rank: &str) -> i32 {
     }
 }
 
+/// Shout when a write that carries a player's money or progress fails.
+///
+/// The default `let _ = sqlx::query(...)` discards the error, which is how a stale
+/// `xp <= 999` CHECK constraint froze one player's rank for 18 hours while every
+/// sibling write in the same request succeeded and the app looked perfectly healthy
+/// (see migrations/fix_xp_cap.sql). Anything on the reward path routes through here so
+/// the next such failure is one log search away instead of needing a player to notice.
+pub(crate) fn log_write_failure(
+    what: &str,
+    wallet: &str,
+    result: &Result<sqlx::postgres::PgQueryResult, sqlx::Error>,
+) {
+    if let Err(e) = result {
+        tracing::error!("WRITE FAILED [{}] for {}: {}", what, wallet, e);
+    }
+}
+
 /// Award one player for a finished fight: re-read them, compute XP (× multiplier),
 /// handle rank-up + its G$ reward, persist the player row, and kick the per-player
 /// rank-up on-chain records. The caller decides win/loss; all amounts are computed
@@ -861,11 +878,12 @@ pub async fn complete_live_fight(
     let mut bounty_awarded: u64 = 0;
     if first_clear {
         if let Some(level) = level {
-            let _ = sqlx::query("UPDATE players SET pve_level = $1 WHERE wallet_address = $2 AND pve_level < $1")
+            let advanced = sqlx::query("UPDATE players SET pve_level = $1 WHERE wallet_address = $2 AND pve_level < $1")
                 .bind(level)
                 .bind(&wallet)
                 .execute(&state.db)
                 .await;
+            log_write_failure("pve_level unlock", &wallet, &advanced);
 
             let amount = first_clear_bounty(level);
             // Claim the payout slot idempotently: only the first request to insert
@@ -962,8 +980,11 @@ async fn settle_first_clear_bounty(
             .unwrap_or(false);
 
             if credited {
-                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                let credited_locally = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
                     .bind(amount as i64).bind(wallet).execute(db).await;
+                // The transfer already CONFIRMED on-chain. If this local credit fails
+                // the player has the G$ but our ledger disagrees, so it must be loud.
+                log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
                 ).await;
@@ -1026,8 +1047,11 @@ async fn settle_rank_up_reward(
             .unwrap_or(false);
 
             if credited {
-                let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                let credited_locally = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
                     .bind(amount as i64).bind(wallet).execute(db).await;
+                // The transfer already CONFIRMED on-chain. If this local credit fails
+                // the player has the G$ but our ledger disagrees, so it must be loud.
+                log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
                 ).await;
@@ -1271,10 +1295,26 @@ pub async fn challenge_player(
     let battle_id = Uuid::new_v4();
     let winner = if result.challenger_won { &body.challenger_wallet } else { &body.opponent_wallet };
 
-    let xp_challenger = result.xp_challenger * ch_multiplier;
-    let xp_opponent   = result.xp_opponent   * op_multiplier;
+    // Award both players through the SAME path every other mode uses. This was a
+    // hand-rolled UPDATE that clamped with `.min(999)` — the exact ceiling that froze
+    // rank progress elsewhere, hardcoded a second time — so a challenge could silently
+    // destroy thousands of XP off anyone past 999. It also never ranked anyone up at
+    // all, and discarded its own write error. Routing through award_player means the
+    // progressive curve, the multi-rank climb, the rank-up payout, the Way-2 gate and
+    // the loud save-failure log all apply here too. The outcome is server-simulated,
+    // so it is refereed (reward_eligible) like the other server-authoritative modes.
+    let aw_ch = award_player(&state, &body.challenger_wallet, result.challenger_won,
+                             result.xp_challenger, ch_multiplier, true, true).await;
+    let aw_op = award_player(&state, &body.opponent_wallet, !result.challenger_won,
+                             result.xp_opponent, op_multiplier, true, true).await;
 
-    let _ = sqlx::query(
+    // Record what was actually credited, not what we hoped to credit.
+    let xp_challenger = aw_ch.as_ref().map(|a| a.xp_earned)
+        .unwrap_or(result.xp_challenger * ch_multiplier);
+    let xp_opponent = aw_op.as_ref().map(|a| a.xp_earned)
+        .unwrap_or(result.xp_opponent * op_multiplier);
+
+    let inserted = sqlx::query(
         "INSERT INTO battles (id, challenger_wallet, opponent_wallet, winner_wallet, rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8)",
     )
@@ -1288,22 +1328,12 @@ pub async fn challenge_player(
     .bind(now)
     .execute(&state.db)
     .await;
-
-    // Update both players
-    for (wallet, xp, won) in [
-        (&body.challenger_wallet, xp_challenger, result.challenger_won),
-        (&body.opponent_wallet, xp_opponent, !result.challenger_won),
-    ] {
-        let player = if wallet == &body.challenger_wallet { &challenger } else { &opponent };
-        let new_xp = (player.xp + xp).min(999);
-        let wins = if won { player.wins + 1 } else { player.wins };
-        let losses = if !won { player.losses + 1 } else { player.losses };
-        let _ = sqlx::query(
-            "UPDATE players SET xp = $1, wins = $2, losses = $3, last_active = $4 WHERE wallet_address = $5",
-        )
-        .bind(new_xp).bind(wins).bind(losses).bind(now).bind(wallet)
-        .execute(&state.db)
-        .await;
+    if let Err(e) = &inserted {
+        tracing::error!(
+            "BATTLE INSERT FAILED for challenge {} vs {}: history will be missing this \
+             fight (XP was still awarded): {}",
+            body.challenger_wallet, body.opponent_wallet, e
+        );
     }
 
     // Background chain write — non-blocking
