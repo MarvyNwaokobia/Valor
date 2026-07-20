@@ -111,17 +111,23 @@ fn rank_up_reward_g(reward_ordinal: i32) -> u64 {
 }
 const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
 
+/// THE LADDER, lowest to highest. This is the single source of truth for rank ORDER:
+/// `next_rank`, `rank_ordinal` and the leaderboard's SQL sort all derive from it, so
+/// adding a tier is one edit here rather than a hunt for every place that happens to
+/// list the ranks.
+///
+/// It is a const because the last time a tier was added by hand, one copy was missed:
+/// the leaderboard sort still spelled out the OLD five-rank ladder, which dropped
+/// Emerald (the second-highest rank) into its `ELSE` bucket and sorted Emerald players
+/// BELOW Silver. Deriving from one array makes that failure impossible.
+pub(crate) const RANK_LADDER: [&str; 7] =
+    ["Iron", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond"];
+
 fn next_rank(rank: &str) -> Option<&'static str> {
-    match rank {
-        "Iron"     => Some("Bronze"),
-        "Bronze"   => Some("Silver"),
-        "Silver"   => Some("Gold"),
-        "Gold"     => Some("Platinum"),
-        "Platinum" => Some("Emerald"),
-        "Emerald"  => Some("Diamond"),
-        // Diamond has no next rank — a full bar past it PRESTIGES instead (see award_player).
-        _          => None,
-    }
+    // Diamond (the last entry) has no next rank — a full bar past it PRESTIGES
+    // instead (see award_player). An unknown rank has no next step either.
+    let i = RANK_LADDER.iter().position(|r| *r == rank)?;
+    RANK_LADDER.get(i + 1).copied()
 }
 
 /// One-time G$ bounty for the FIRST clear of a Campaign op. Every op pays a flat
@@ -159,12 +165,10 @@ pub(crate) struct PlayerAward {
 /// Diamond the 6th. Used to size the refereed-XP a rank-up bonus requires
 /// (the curve's cumulative XP through N). Prestige levels extend past Diamond: prestige P is the
 /// (6 + P)th rank-up, computed inline in award_player rather than here.
+/// Position on the ladder: Iron 0 … Diamond 6. An unknown rank reads as the floor,
+/// which fails closed (it gates rewards harder, never softer).
 fn rank_ordinal(rank: &str) -> i32 {
-    match rank {
-        "Iron" => 0, "Bronze" => 1, "Silver" => 2, "Gold" => 3,
-        "Platinum" => 4, "Emerald" => 5, "Diamond" => 6,
-        _ => 0,
-    }
+    RANK_LADDER.iter().position(|r| *r == rank).unwrap_or(0) as i32
 }
 
 /// Shout when a write that carries a player's money or progress fails.
@@ -1405,6 +1409,29 @@ mod reward_amount_tests {
         // Iron is the start (never reached via a rank-up) so it gates at zero.
         assert_eq!(rank_ordinal("Iron"), 0);
         assert_eq!(cumulative_xp_for_rank(0), 0);
+    }
+
+    #[test]
+    fn the_ladder_array_is_the_only_source_of_rank_order() {
+        // next_rank and rank_ordinal must agree with RANK_LADDER for EVERY tier. A
+        // hand-written copy of this order is what sorted Emerald below Silver on the
+        // leaderboard for as long as Emerald existed.
+        for (i, rank) in RANK_LADDER.iter().enumerate() {
+            assert_eq!(rank_ordinal(rank), i as i32, "{} ordinal", rank);
+            let expected = RANK_LADDER.get(i + 1).copied();
+            assert_eq!(next_rank(rank), expected, "{} next", rank);
+        }
+        // The top of the ladder prestiges rather than promoting.
+        assert_eq!(next_rank(RANK_LADDER[RANK_LADDER.len() - 1]), None);
+        // An unknown rank never invents a promotion and reads as the floor.
+        assert_eq!(next_rank("Mythic"), None);
+        assert_eq!(rank_ordinal("Mythic"), 0);
+        // Emerald specifically: second-highest, and strictly above Silver. This is the
+        // exact assertion the leaderboard's old CASE would have failed.
+        assert_eq!(rank_ordinal("Emerald"), 5);
+        assert!(rank_ordinal("Emerald") > rank_ordinal("Silver"));
+        assert!(rank_ordinal("Diamond") > rank_ordinal("Emerald"));
+        assert!(rank_ordinal("Bronze") > rank_ordinal("Iron"));
     }
 
     #[test]
