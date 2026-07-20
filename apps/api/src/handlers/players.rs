@@ -391,6 +391,11 @@ pub async fn create_player(
 }
 
 // ── GET /players ──────────────────────────────────────────────────────────────
+/// How recently a player must have played to count as ACTIVE on the War Board.
+/// Matches the decay grace period, so the moment the game starts taking your rank is
+/// the same moment the board stops treating you as current.
+const LEADERBOARD_ACTIVE_HOURS: i64 = 72;
+
 pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
     // Sort by position on THE ladder, not a hand-written CASE. The old CASE still
     // spelled out the original five ranks, so the two tiers added later were wrong:
@@ -404,6 +409,16 @@ pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
     //
     // The array is built from a compile-time const of static strings, so the format!
     // carries no user input and cannot be injected into.
+    // ACTIVITY IS THE FIRST KEY. The board ranks people who are playing, not people who
+    // once played. A rank is a claim about how good you are right now, so someone who
+    // walked away sinks beneath everyone still turning up, whatever their badge says,
+    // and climbs back only by playing. Decay is the other half of the same idea: keep
+    // going and the badge itself steps down (see handlers/decay.rs), so the longer the
+    // absence the further they fall on BOTH keys rather than parking at the top.
+    //
+    // Read from last_active rather than decay_status, deliberately. decay_status only
+    // changes when the cron runs, and that scheduler drifts by hours, so a stale status
+    // would let someone linger at the top. last_active is always current.
     let ladder = crate::handlers::battles::RANK_LADDER
         .iter()
         .map(|r| format!("'{}'", r))
@@ -411,11 +426,14 @@ pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
         .join(",");
     let sql = format!(
         "SELECT * FROM players
-         ORDER BY array_position(ARRAY[{}]::text[], rank) DESC NULLS LAST,
+         ORDER BY (last_active >= NOW() - INTERVAL '{active} hours') DESC,
+                  array_position(ARRAY[{ladder}]::text[], rank) DESC NULLS LAST,
                   prestige_level DESC,
-                  xp DESC
+                  xp DESC,
+                  last_active DESC
          LIMIT 50",
-        ladder
+        active = LEADERBOARD_ACTIVE_HOURS,
+        ladder = ladder
     );
     let result = sqlx::query_as::<_, crate::models::player::Player>(&sql)
         .fetch_all(&state.db)
