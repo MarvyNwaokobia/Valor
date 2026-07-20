@@ -16,7 +16,6 @@ import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { CLASS_DEFINITIONS, CHARACTER_GLB } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import { xpForNextRank } from '@/lib/constants'
-import type { Rank } from '@/lib/constants'
 import type { Item } from '@/types'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import Link from 'next/link'
@@ -250,7 +249,7 @@ export default function ProfilePage() {
 
         <IdlePanel walletAddress={address} player={player} />
         <InventoryPanel inventory={inventory} walletAddress={address} />
-        <BattleHistory walletAddress={address} playerRank={player.rank as Rank} />
+        <BattleHistory walletAddress={address} />
       </motion.div>
 
       {showUsernameModal && (

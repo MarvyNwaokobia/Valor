@@ -11,7 +11,7 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
-import { xpForNextRank, RANK_G_REWARD } from '@/lib/constants'
+import { xpForNextRank, nextRankReward } from '@/lib/constants'
 import { rankLabel } from '@/lib/ranks'
 import { formatGDollarNumber } from '@/utils/format'
 
@@ -74,7 +74,7 @@ export default function HomePage() {
   const heroImg      = (player.character_customization as { avatar_url?: string } | null)?.avatar_url ?? CLASS_SOLO[charClass]
   const xpBar        = xpForNextRank(player.rank)
   const xpProgress   = (player.xp / xpBar) * 100
-  const nextReward   = RANK_G_REWARD[player.rank]
+  const nextReward   = nextRankReward(player.rank)
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-stretch min-h-[calc(100vh-7rem)]">

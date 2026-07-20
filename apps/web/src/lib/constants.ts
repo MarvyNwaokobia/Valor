@@ -55,6 +55,18 @@ export function xpForNextRank(rank: Rank): number {
   return next ? RANK_STEP_XP[next] : PRESTIGE_STEP_XP
 }
 
+/**
+ * G$ paid for the player's NEXT promotion. RANK_G_REWARD is keyed by the rank being
+ * REACHED, so reading it with the player's current rank shows what they were already
+ * paid, not what they are climbing toward (a Bronze player saw "next rank reward: 500"
+ * when Silver actually pays 1000). At the top the next step is a prestige, which pays
+ * the Diamond rate.
+ */
+export function nextRankReward(rank: Rank): number {
+  const next = RANKS[RANKS.indexOf(rank) + 1]
+  return RANK_G_REWARD[next ?? 'Diamond']
+}
+
 /** Total career XP needed to legitimately hold `rank` (cumulative down the curve). */
 export function cumulativeXpForRank(rank: Rank): number {
   const i = RANKS.indexOf(rank)
