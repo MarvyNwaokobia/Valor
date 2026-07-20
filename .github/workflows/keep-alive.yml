@@ -45,7 +45,13 @@ jobs:
           API_URL: ${{ secrets.API_URL }}
         run: |
           set -u
-          URL="${API_URL:-https://valor-qqzx.onrender.com}"
+          # No hardcoded host — the API_URL secret is the single source of truth so this
+          # can never ping a decommissioned host. On an always-on plan (e.g. Railway
+          # Hobby) the API never sleeps, so this whole workflow is an optional backstop.
+          if [ -z "${API_URL:-}" ]; then
+            echo "API_URL secret not set — nothing to keep alive, skipping."; exit 0
+          fi
+          URL="$API_URL"
           # 10 pings, 5 minutes apart = ~50 minutes of coverage from one trigger.
           for i in $(seq 1 10); do
             code=$(curl -fsS --max-time 90 -o /dev/null -w "%{http_code}" "$URL/health" || echo "000")

@@ -21,6 +21,24 @@ async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
+// Deep readiness probe. Unlike `/health` above (which only proves the web process is
+// accepting connections), this verifies the DATABASE is actually reachable — the thing
+// every real request needs. Point external monitors (UptimeRobot) at this so a green
+// check means "players can load", not just "the process is up". Deliberately NOT wired
+// to the platform healthcheck: a transient DB blip returning 503 here should page a
+// human, not make Railway restart a perfectly healthy process (a restart can't fix the
+// DB anyway).
+async fn ready(state: web::Data<crate::AppState>) -> HttpResponse {
+    match sqlx::query("SELECT 1").execute(&state.db).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ready", "db": "up" })),
+        Err(e) => {
+            tracing::warn!("readiness check failed: db unreachable: {}", e);
+            HttpResponse::ServiceUnavailable()
+                .json(serde_json::json!({ "status": "degraded", "db": "down" }))
+        }
+    }
+}
+
 // Friendly root — this is a backend API, not a website, so hitting `/` in a browser
 // used to 404 and look "down". Return a small alive message + where the real routes are.
 async fn root() -> HttpResponse {
@@ -36,6 +54,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         .route("/", web::get().to(root))
         .route("/health", web::get().to(health))
+        // DB-aware readiness — external monitors should watch THIS, not /health.
+        .route("/health/ready", web::get().to(ready))
         // Read-only self-audit; the cron fails its job when this reports trouble.
         .route("/health/consistency", web::post().to(consistency::run_consistency_check))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
