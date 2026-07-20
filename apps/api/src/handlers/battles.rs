@@ -232,7 +232,7 @@ pub(crate) async fn award_player(
     // to their current value, a harmless no-op. g_earned_lifetime is bumped separately,
     // only once the G$ transfer confirms on-chain — see the tokio::spawn block.
     let new_rank_str: &str = promote_to.unwrap_or(&player.rank);
-    let _ = sqlx::query(
+    let saved = sqlx::query(
         "UPDATE players
          SET xp = $1, wins = $2, losses = $3, rank = $4, prestige_level = $5,
              last_active = $6, decay_status = 'none'
@@ -241,6 +241,21 @@ pub(crate) async fn award_player(
     .bind(new_xp).bind(wins).bind(losses).bind(new_rank_str).bind(new_prestige)
     .bind(now).bind(wallet)
     .execute(&state.db).await;
+
+    // NEVER swallow this one. It is the only write that persists rank progress, and
+    // every other write in the request (battle row, ranked_xp_lifetime, pve_level,
+    // first-clear bounty) is a separate statement that succeeds without it, so a
+    // silent failure here looks exactly like a normal op while the player's rank is
+    // frozen. A stale `xp <= 999` CHECK did precisely that for a day (fix_xp_cap.sql).
+    // The fight still stands (the XP is banked in ranked_xp_lifetime and the battle
+    // row), so this logs loudly rather than failing the request.
+    if let Err(e) = &saved {
+        tracing::error!(
+            "PLAYER SAVE FAILED for {}: rank progress NOT persisted (xp={}, wins={}, \
+             losses={}, rank={}, prestige={}): {}",
+            wallet, new_xp, wins, losses, new_rank_str, new_prestige, e
+        );
+    }
 
     if let Some(reward_key) = reward_key {
         // This rank-up's payout grows with the rank (STEP × ordinal), capped on-chain.

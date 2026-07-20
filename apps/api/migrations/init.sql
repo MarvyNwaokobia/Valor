@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS players (
   character_name          TEXT NOT NULL,
   play_style              TEXT NOT NULL CHECK (play_style IN ('Wanderer', 'Fighter', 'Champion')),
   rank             TEXT NOT NULL DEFAULT 'Bronze' CHECK (rank IN ('Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond')),
-  xp               INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0 AND xp <= 999),
+  -- No upper bound: the rank threshold (XP_PER_RANK) is a game constant that moves,
+  -- and a stale ceiling here silently aborts every award. See fix_xp_cap.sql.
+  xp               INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0),
   attack_stat      INTEGER NOT NULL DEFAULT 10,
   defense_stat     INTEGER NOT NULL DEFAULT 10,
   speed_stat       INTEGER NOT NULL DEFAULT 10,
