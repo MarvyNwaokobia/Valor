@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import type { Player } from '@/types'
-import { XP_PER_RANK } from '@/lib/constants'
+import { xpForNextRank } from '@/lib/constants'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import { getDecayStatus } from '@/utils/decay'
@@ -150,7 +150,7 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
         </div>
 
         {/* XP Meter */}
-        <XpMeter xp={player.xp} max={XP_PER_RANK} rank={player.rank} />
+        <XpMeter xp={player.xp} max={xpForNextRank(player.rank)} rank={player.rank} />
 
         {/* Stat grid */}
         <div className="grid grid-cols-3 gap-2">

@@ -9,12 +9,15 @@ export {
 } from './FpsSim';
 export {
   XP_REWARD,
-  XP_PER_RANK,
+  RANK_STEP_XP,
+  PRESTIGE_STEP_XP,
+  xpForNextRank,
   RANKS,
   xpForKill,
   rankForXp,
   rankIndexForXp,
   xpIntoRank,
+  xpBarSize,
   rankUpsBetween,
   gReward,
   careerXpFor,

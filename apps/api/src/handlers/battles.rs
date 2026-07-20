@@ -63,7 +63,39 @@ async fn apply_item_boosts(db: &sqlx::PgPool, mut player: Player) -> Player {
     player
 }
 
-const XP_PER_RANK: i32 = 5000;
+/// PROGRESSIVE rank ladder: the cost of a rank GROWS with the rank.
+///
+/// A flat cost per rank was the old design error. It charged the first rank (the one
+/// carrying retention) exactly what it charged the last (the one carrying prestige), and
+/// at a flat 5000 the entire 15-op campaign played perfectly (2610 XP body-shot, 3390
+/// all-headshot) could not buy even ONE rank. The only way up was replaying the single
+/// best-paying op ~20 times per rank.
+///
+/// Indexed by rank-up ordinal (Bronze = 1 … Diamond = 6). Calibrated against the real
+/// campaign ceiling: Bronze lands inside the first session (~op 3), and one full
+/// campaign clear (~2610 XP) lands Gold, so the story arc and the rank arc finish
+/// together. Diamond stays a genuine climb at ~6.7 campaign-equivalents.
+const RANK_STEP_XP: [i32; 6] = [400, 900, 1300, 2500, 4500, 8000];
+/// Past Diamond every prestige costs a flat step, forever (uncapped, see award_player).
+const PRESTIGE_STEP_XP: i32 = 8000;
+
+/// XP that the `ordinal`-th rank-up costs on its own (the size of the bar you fill
+/// while sitting at the rank below it). Ordinals past Diamond are prestiges.
+fn rank_step_xp(ordinal: i32) -> i32 {
+    if ordinal <= 0 {
+        return RANK_STEP_XP[0];
+    }
+    *RANK_STEP_XP
+        .get((ordinal - 1) as usize)
+        .unwrap_or(&PRESTIGE_STEP_XP)
+}
+
+/// Total XP a player must have earned across their whole career to legitimately hold
+/// the `ordinal`-th rank. This is the Way-2 anti-forgery gate: it must track the curve
+/// exactly, or an honest player's rank-up bonus gets silently withheld.
+fn cumulative_xp_for_rank(ordinal: i32) -> i32 {
+    (1..=ordinal.max(0)).map(rank_step_xp).sum()
+}
 /// Rank-up G$ GROWS with each rank: the Nth rank-up pays STEP × N (500, 1000, 1500,
 /// 2000, …). Higher ranks are rarer AND richer. Paid once per (wallet, rank) on-chain,
 /// idempotently — see award_player + settle_rank_up_reward. Capped at MAX_REWARD_G so a
@@ -125,7 +157,7 @@ pub(crate) struct PlayerAward {
 
 /// Number of rank-ups needed to reach a rank, from the Iron floor — Bronze is the 1st,
 /// Diamond the 6th. Used to size the refereed-XP a rank-up bonus requires
-/// (Nth rank ⇒ N × XP_PER_RANK). Prestige levels extend past Diamond: prestige P is the
+/// (the curve's cumulative XP through N). Prestige levels extend past Diamond: prestige P is the
 /// (6 + P)th rank-up, computed inline in award_player rather than here.
 fn rank_ordinal(rank: &str) -> i32 {
     match rank {
@@ -175,36 +207,61 @@ pub(crate) async fn award_player(
     let xp_earned  = base_xp * xp_multiplier;
     let raw_new_xp = player.xp + xp_earned;
 
-    // A full 1000-XP bar does one of two things:
+    // CLIMB the ladder, one step at a time, for as many steps as the new total pays for.
+    // A filled bar does one of two things:
     //   • PROMOTE — advance to the next rank (Iron→…→Diamond), or
     //   • PRESTIGE — at Diamond (no next rank), bump prestige_level instead. XP is never
     //     deleted; the bar keeps counting and keeps paying, forever. This is the fix for
     //     the old Diamond bug where a full bar subtracted 1000 XP and paid nothing.
-    let ranked_up   = raw_new_xp >= XP_PER_RANK;
-    let promote_to  = if ranked_up { next_rank(&player.rank) } else { None };
-    let prestige_up = ranked_up && promote_to.is_none() && player.rank == "Diamond";
-    let new_prestige = if prestige_up { player.prestige_level + 1 } else { player.prestige_level };
+    //
+    // This is a LOOP, not a single step, because the ladder is progressive: an early rank
+    // can cost less than one op pays, and a backfill or a big Endless award can span
+    // several. Awarding one rank per fight would strand that XP in the bar and quietly
+    // under-pay every rank it skipped, so each step crossed is its own reward event with
+    // its own key and its own G$.
+    let mut new_xp      = raw_new_xp;
+    let mut cur_rank: &str = &player.rank;
+    let mut new_prestige   = player.prestige_level;
+    // (reward_key, reward_ordinal, promoted_rank) per step crossed, in order.
+    let mut steps: Vec<(String, i32, Option<&'static str>)> = Vec::new();
 
-    // Consume the bar ONLY when a reward event actually fires. For every real rank this
-    // equals `ranked_up`; the guard just guarantees no XP is ever silently lost if an
-    // unknown rank ever reached here without a next rank or a prestige.
-    let rank_event = promote_to.is_some() || prestige_up;
-    let new_xp     = if rank_event { raw_new_xp - XP_PER_RANK } else { raw_new_xp };
-    let new_rank   = promote_to;
+    loop {
+        // The ordinal of the step being attempted: the next rank's ordinal, or for a
+        // player already at Diamond, the (6 + prestige)th.
+        let ordinal = match next_rank(cur_rank) {
+            Some(nr) => rank_ordinal(nr),
+            None if cur_rank == "Diamond" => rank_ordinal("Diamond") + new_prestige + 1,
+            // Unknown rank with no next step: bail WITHOUT touching xp, so a bad rank
+            // string can never silently eat a player's progress.
+            None => break,
+        };
+        let cost = rank_step_xp(ordinal);
+        if new_xp < cost {
+            break;
+        }
+        new_xp -= cost;
+        match next_rank(cur_rank) {
+            Some(nr) => {
+                steps.push((nr.to_string(), ordinal, Some(nr)));
+                cur_rank = nr;
+            }
+            None => {
+                // Prestige: rank stays "Diamond", so the plain name can't key the payout.
+                new_prestige += 1;
+                steps.push((format!("Diamond+{}", new_prestige), ordinal, None));
+            }
+        }
+        // Hard bound: a corrupt xp value can never spin here or mint unbounded payouts.
+        if steps.len() >= 16 {
+            break;
+        }
+    }
 
-    // A promotion or prestige pays a flat 500 G$ (RANK_UP_REWARD_G), keyed by a UNIQUE
-    // string so it pays exactly once: the rank name for a promotion, "Diamond+N" for the
-    // Nth prestige (rank stays "Diamond", so the plain name can't key it). The reward
-    // ordinal sizes the Way-2 gate — Nth rank-up ⇒ N × XP_PER_RANK of refereed XP —
-    // and prestige P is simply the (6 + P)th rank-up.
-    let (reward_key, reward_ordinal): (Option<String>, i32) = if let Some(nr) = promote_to {
-        (Some(nr.to_string()), rank_ordinal(nr))
-    } else if prestige_up {
-        (Some(format!("Diamond+{}", new_prestige)), rank_ordinal("Diamond") + new_prestige)
-    } else {
-        (None, 0)
-    };
-    // Set here only once the DB payout slot is actually claimed (see below).
+    let rank_event  = !steps.is_empty();
+    let prestige_up = steps.iter().any(|(_, _, r)| r.is_none());
+    // The highest rank actually reached this fight (None if only prestiges fired).
+    let new_rank    = steps.iter().rev().find_map(|(_, _, r)| *r);
+    // Set below, summed across every step whose payout slot is actually claimed.
     let mut g_awarded = 0i64;
 
     let wins   = if count_result && won  { player.wins + 1 }   else { player.wins };
@@ -231,7 +288,7 @@ pub(crate) async fn award_player(
     // prestige_level advances on a prestige (or stays put); when neither fires both bind
     // to their current value, a harmless no-op. g_earned_lifetime is bumped separately,
     // only once the G$ transfer confirms on-chain — see the tokio::spawn block.
-    let new_rank_str: &str = promote_to.unwrap_or(&player.rank);
+    let new_rank_str: &str = cur_rank;
     let saved = sqlx::query(
         "UPDATE players
          SET xp = $1, wins = $2, losses = $3, rank = $4, prestige_level = $5,
@@ -257,14 +314,19 @@ pub(crate) async fn award_player(
         );
     }
 
-    if let Some(reward_key) = reward_key {
+    // Every step crossed pays separately, oldest first, so a multi-rank climb pays each
+    // rank it passed through rather than only the one it landed on.
+    for (reward_key, reward_ordinal, promoted) in &steps {
+        let (reward_key, reward_ordinal) = (reward_key.clone(), *reward_ordinal);
         // This rank-up's payout grows with the rank (STEP × ordinal), capped on-chain.
         let reward_g = rank_up_reward_g(reward_ordinal);
         // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
-        // earns the level (Nth rank-up ⇒ N × XP_PER_RANK). The rank/prestige itself still
-        // advances above and on-chain below — only the money is gated — so honest
-        // progression is untouched while forged flat/Endless wins can never mint the bonus.
-        let earned_enough = honest_xp_after >= reward_ordinal * XP_PER_RANK;
+        // earns the level (the Nth rank-up needs the curve's cumulative XP through N).
+        // The rank/prestige itself still advances above and on-chain below — only the
+        // money is gated — so honest progression is untouched while forged flat/Endless
+        // wins can never mint the bonus.
+        let xp_needed = cumulative_xp_for_rank(reward_ordinal);
+        let earned_enough = honest_xp_after >= xp_needed;
 
         // Claim the once-per-key payout slot idempotently: only the first request to
         // insert (wallet, reward_key) owns the payout. A retry or a concurrent duplicate
@@ -281,11 +343,11 @@ pub(crate) async fn award_player(
         .unwrap_or(false);
 
         if claimed {
-            g_awarded = reward_g as i64;
+            g_awarded += reward_g as i64;
         } else if !earned_enough {
             tracing::info!(
                 "rank-up bonus withheld for {} → {}: refereed XP {} < {}",
-                wallet, reward_key, honest_xp_after, reward_ordinal * XP_PER_RANK
+                wallet, reward_key, honest_xp_after, xp_needed
             );
         }
 
@@ -294,7 +356,7 @@ pub(crate) async fn award_player(
             let wallet_owned = wallet.to_string();
             // A promotion enrolls the player in the new tier's on-chain pool; a prestige
             // does not (rank is unchanged, they're already in Diamond's pool).
-            let promoted_rank: Option<String> = promote_to.map(|r| r.to_string());
+            let promoted_rank: Option<String> = promoted.map(|r| r.to_string());
             tokio::spawn(async move {
                 // MONEY FIRST. Each of these takes the global tx_lock and waits for its
                 // own confirmation, so whatever runs first delays everything after it —
@@ -1300,23 +1362,117 @@ mod reward_amount_tests {
     }
 
     #[test]
-    fn refereed_xp_needed_scales_with_rank() {
-        // Reaching the Nth rank needs N full ranks' worth of verified XP before its
-        // G$ bonus pays — so a pure honor-system (flat/Endless) grind never earns one.
-        // Ladder v2: Iron floor, Bronze the 1st rank-up, Diamond the 6th. XP_PER_RANK = 5000.
-        assert_eq!(rank_ordinal("Bronze")   * XP_PER_RANK, 5000);
-        assert_eq!(rank_ordinal("Silver")   * XP_PER_RANK, 10000);
-        assert_eq!(rank_ordinal("Diamond")  * XP_PER_RANK, 30000);
+    fn refereed_xp_needed_tracks_the_progressive_curve() {
+        // Reaching the Nth rank needs the curve's CUMULATIVE XP through N before its G$
+        // bonus pays — so a pure honor-system (flat/Endless) grind never earns one. The
+        // gate must track the curve exactly or honest players get silently under-paid.
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Bronze")),   400);
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Silver")),   1_300);
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Gold")),     2_600);
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Platinum")), 5_100);
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Emerald")),  9_600);
+        assert_eq!(cumulative_xp_for_rank(rank_ordinal("Diamond")),  17_600);
         // Iron is the start (never reached via a rank-up) so it gates at zero.
         assert_eq!(rank_ordinal("Iron"), 0);
+        assert_eq!(cumulative_xp_for_rank(0), 0);
     }
 
     #[test]
-    fn prestige_reward_ordinal_extends_past_diamond() {
-        // Prestige P is the (6 + P)th rank-up, so the Way-2 gate keeps scaling and a
-        // grinder can't mint prestige bonuses without the refereed XP to back them.
-        assert_eq!(rank_ordinal("Diamond") + 1, 7);   // Diamond I  needs 7000 refereed XP
-        assert_eq!(rank_ordinal("Diamond") + 3, 9);   // Diamond III needs 9000
+    fn the_ladder_is_progressive_not_flat() {
+        // The whole point of the redesign: each rank costs strictly more than the last,
+        // so the first rank stays cheap (retention) while the top stays rare (prestige).
+        for n in 2..=6 {
+            assert!(
+                rank_step_xp(n) > rank_step_xp(n - 1),
+                "step {} must cost more than step {}", n, n - 1
+            );
+        }
+        // Calibration anchor: one full campaign clear (~2610 XP body-shot) reaches Gold
+        // but not Platinum, so finishing the story and finishing the rank arc coincide.
+        const FULL_CAMPAIGN_XP: i32 = 2_610;
+        assert!(cumulative_xp_for_rank(rank_ordinal("Gold")) <= FULL_CAMPAIGN_XP);
+        assert!(cumulative_xp_for_rank(rank_ordinal("Platinum")) > FULL_CAMPAIGN_XP);
+    }
+
+    /// Mirrors the climb loop in award_player so the ladder walk can be tested without
+    /// a database. Returns (final rank, xp left in the bar, ordinals crossed).
+    fn climb(start_rank: &str, start_prestige: i32, total_xp: i32) -> (String, i32, Vec<i32>) {
+        let mut xp = total_xp;
+        let mut cur: &str = start_rank;
+        let mut prestige = start_prestige;
+        let mut crossed = Vec::new();
+        loop {
+            let ordinal = match next_rank(cur) {
+                Some(nr) => rank_ordinal(nr),
+                None if cur == "Diamond" => rank_ordinal("Diamond") + prestige + 1,
+                None => break,
+            };
+            let cost = rank_step_xp(ordinal);
+            if xp < cost {
+                break;
+            }
+            xp -= cost;
+            match next_rank(cur) {
+                Some(nr) => { crossed.push(ordinal); cur = nr; }
+                None => { prestige += 1; crossed.push(ordinal); }
+            }
+            if crossed.len() >= 16 { break; }
+        }
+        (cur.to_string(), xp, crossed)
+    }
+
+    #[test]
+    fn a_single_award_can_climb_several_ranks_and_pays_each() {
+        // The old code subtracted ONE rank per fight, so a big award stranded the excess
+        // in the bar and silently skipped the ranks it passed. A full campaign's XP
+        // dropped on a fresh Iron player must land Gold, having paid Bronze+Silver+Gold.
+        let (rank, left, crossed) = climb("Iron", 0, 2_610);
+        assert_eq!(rank, "Gold");
+        assert_eq!(crossed, vec![1, 2, 3]);
+        assert_eq!(left, 2_610 - 2_600);
+        // Every rank passed through is its own payout, so none are skipped.
+        let paid: u64 = crossed.iter().map(|o| rank_up_reward_g(*o)).sum();
+        assert_eq!(paid, 500 + 1_000 + 1_500);
+    }
+
+    #[test]
+    fn the_climb_never_deletes_xp_it_did_not_buy() {
+        // Below the first step: nothing crossed, every point kept.
+        let (rank, left, crossed) = climb("Iron", 0, 399);
+        assert_eq!((rank.as_str(), left), ("Iron", 399));
+        assert!(crossed.is_empty());
+        // Exactly one step: the bar empties to zero, not below it.
+        let (rank, left, _) = climb("Iron", 0, 400);
+        assert_eq!((rank.as_str(), left), ("Bronze", 0));
+        // An unknown rank has no next step and must leave the bar untouched rather than
+        // eat it (the guard that kept the old Diamond XP-delete bug from reappearing).
+        let (rank, left, crossed) = climb("Mythic", 0, 999_999);
+        assert_eq!((rank.as_str(), left), ("Mythic", 999_999));
+        assert!(crossed.is_empty());
+    }
+
+    #[test]
+    fn past_diamond_the_climb_prestiges_instead_of_stalling() {
+        // Diamond with three prestiges' worth of XP banks three prestige events and
+        // keeps the remainder, paying each one (uncapped, the Diamond-bug fix).
+        let (rank, left, crossed) = climb("Diamond", 0, PRESTIGE_STEP_XP * 3 + 120);
+        assert_eq!(rank, "Diamond");
+        assert_eq!(left, 120);
+        assert_eq!(crossed, vec![7, 8, 9]);
+    }
+
+    #[test]
+    fn prestige_steps_are_a_flat_uncapped_tail() {
+        // Prestige P is the (6 + P)th rank-up: a flat step each, forever.
+        assert_eq!(rank_step_xp(7),  PRESTIGE_STEP_XP);
+        assert_eq!(rank_step_xp(50), PRESTIGE_STEP_XP);
+        // The Way-2 gate keeps scaling past Diamond, so a grinder can't mint prestige
+        // bonuses without the refereed XP to back them.
+        assert_eq!(
+            cumulative_xp_for_rank(7),
+            cumulative_xp_for_rank(6) + PRESTIGE_STEP_XP
+        );
+        assert!(cumulative_xp_for_rank(9) > cumulative_xp_for_rank(8));
     }
 
     #[test]
