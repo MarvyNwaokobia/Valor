@@ -392,20 +392,34 @@ pub async fn create_player(
 
 // ── GET /players ──────────────────────────────────────────────────────────────
 pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
-    let result = sqlx::query_as::<_, crate::models::player::Player>(
+    // Sort by position on THE ladder, not a hand-written CASE. The old CASE still
+    // spelled out the original five ranks, so the two tiers added later were wrong:
+    // Emerald, the second-HIGHEST rank, fell into the `ELSE` bucket and sorted below
+    // Silver, tied with Bronze and Iron. Deriving the order from RANK_LADDER means a
+    // future tier is ordered correctly the moment it is added there.
+    //
+    // prestige_level is the second key: past Diamond the rank name stops changing, so
+    // without it the game's most accomplished players (Diamond II, III…) sorted level
+    // with someone who had just arrived at Diamond, broken only by leftover bar XP.
+    //
+    // The array is built from a compile-time const of static strings, so the format!
+    // carries no user input and cannot be injected into.
+    let ladder = crate::handlers::battles::RANK_LADDER
+        .iter()
+        .map(|r| format!("'{}'", r))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
         "SELECT * FROM players
-         ORDER BY
-           CASE rank
-             WHEN 'Diamond'  THEN 1
-             WHEN 'Platinum' THEN 2
-             WHEN 'Gold'     THEN 3
-             WHEN 'Silver'   THEN 4
-             ELSE 5
-           END ASC, xp DESC
+         ORDER BY array_position(ARRAY[{}]::text[], rank) DESC NULLS LAST,
+                  prestige_level DESC,
+                  xp DESC
          LIMIT 50",
-    )
-    .fetch_all(&state.db)
-    .await;
+        ladder
+    );
+    let result = sqlx::query_as::<_, crate::models::player::Player>(&sql)
+        .fetch_all(&state.db)
+        .await;
 
     match result {
         Ok(players) => HttpResponse::Ok().json(players),

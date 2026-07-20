@@ -7,7 +7,9 @@ import { Medal } from 'lucide-react'
 
 import type { Player } from '@/types'
 import { formatGDollarNumber } from '@/utils/format'
-import { RANK_COLORS } from '@/lib/constants'
+import { RANK_COLORS, xpForNextRank } from '@/lib/constants'
+import { rankLabel } from '@/lib/ranks'
+
 interface Props { currentWallet: string | undefined }
 
 const MEDAL_COLOR = ['#FFD700', '#C0C0C0', '#CD7F32']
@@ -76,7 +78,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
                 <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: accent }}/>
                 <Medal size={22} className="mb-0.5" color={MEDAL_COLOR[rank - 1]} />
                 <p className="font-black text-white text-xs text-center truncate w-full">{p.character_name}</p>
-                <span className="text-[8px] uppercase tracking-wider font-bold" style={{ color: accent }}>{p.rank}</span>
+                <span className="text-[8px] uppercase tracking-wider font-bold" style={{ color: accent }}>{rankLabel(p.rank, p.prestige_level ?? 0)}</span>
                 {isMe && <span className="absolute top-1.5 right-1.5 text-[7px] font-black bg-amber-400 text-black px-1 rounded-sm">YOU</span>}
               </motion.div>
             )
@@ -131,7 +133,7 @@ export default function LeaderboardTable({ currentWallet }: Props) {
                       {player.character_class}
                     </span>
                     <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rankColor }}>
-                      {player.rank}
+                      {rankLabel(player.rank, player.prestige_level ?? 0)}
                     </span>
                     <span className="text-[9px] text-slate-600">{player.xp.toLocaleString()} XP</span>
                   </div>
@@ -152,7 +154,10 @@ export default function LeaderboardTable({ currentWallet }: Props) {
                   <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(42,42,58,0.8)' }}>
                     <motion.div className="h-full rounded-full"
                       style={{ background: rankColor }}
-                      animate={{ width: `${Math.min((player.xp / 1000) * 100, 100)}%` }}
+                      // Bar size varies by rank on the progressive ladder. This was a
+                      // hardcoded /1000, a threshold that stopped existing two changes
+                      // ago, so every row past 1000 XP read as permanently full.
+                      animate={{ width: `${Math.min((player.xp / xpForNextRank(player.rank)) * 100, 100)}%` }}
                       transition={{ duration: 0.5 }}
                     />
                   </div>
