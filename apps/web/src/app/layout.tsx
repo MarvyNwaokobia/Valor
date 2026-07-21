@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   },
   other: {
     'mobile-web-app-capable': 'yes',
+    'talentapp:project_verification':
+      'e533deb2e7132258b7993c84b2458f36a8fc8ab5f6d32a6aa25347ff61d284cc4ac8c09a6d18ae09bca77bac5a74a0532044156c3bd622df5d9780f3d5889125',
   },
 }
 
