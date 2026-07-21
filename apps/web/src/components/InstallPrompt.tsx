@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
 
 /**
  * "Install Valor" affordance.
@@ -41,6 +42,7 @@ function isIOS(): boolean {
 }
 
 export function InstallPrompt() {
+  const pathname = usePathname()
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
   const [showIOSHint, setShowIOSHint] = useState(false)
   // Start hidden until the client effect decides — avoids an SSR flash.
@@ -91,6 +93,8 @@ export function InstallPrompt() {
     dismiss()
   }
 
+  // Landing page only — never over the hub sub-pages or mid-fight.
+  if (pathname !== '/') return null
   if (hidden) return null
   // Nothing installable to offer on this browser → render nothing.
   if (!deferred && !showIOSHint) return null
