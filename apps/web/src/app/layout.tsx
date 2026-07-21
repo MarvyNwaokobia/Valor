@@ -6,12 +6,14 @@ import './globals.css'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Valor — One human. One warrior.',
-  description: 'Valor — One human. One warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
+  title: 'Valor · One human. One warrior.',
+  description: 'Valor · One human. One warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
   icons: {
     icon: [
-      { url: '/valor-icon.png', sizes: '512x512', type: 'image/png' },
+      { url: '/valor-icon-16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/valor-icon-32.png', sizes: '32x32', type: 'image/png' },
       { url: '/valor-icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/valor-icon.png', sizes: '512x512', type: 'image/png' },
     ],
     apple: '/apple-touch-icon.png',
   },

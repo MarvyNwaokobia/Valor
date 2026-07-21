@@ -24,7 +24,7 @@ export const wagmiConfig = createConfig({
           // never becomes ready and the wallet app won't launch.
           metadata: {
             name: 'Valor',
-            description: 'Earn your honor — web3 tactical FPS on Celo.',
+            description: 'Earn your honor. Web3 tactical FPS on Celo.',
             url: 'https://playvalor.app',
             icons: ['https://playvalor.app/valor-icon.png'],
           },
