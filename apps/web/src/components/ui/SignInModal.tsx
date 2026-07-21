@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
+import { isMobileBrowser, hasInjectedProvider, MOBILE_WALLETS } from '@/lib/mobileWallets'
 
 interface Props {
   onClose: () => void
@@ -28,8 +29,14 @@ export default function SignInModal({ onClose }: Props) {
   // to the generic one if a legacy (non-EIP-6963) provider is actually
   // present, and hide it entirely once a named one exists.
   const [hasLegacyProvider, setHasLegacyProvider] = useState(false)
+  // On a plain mobile browser there's no injected provider, and WalletConnect's
+  // relay is unreachable on many mobile networks — so instead of a dead
+  // "Connecting…" we deep-link into the wallet's own dApp browser (where a
+  // provider IS injected). Computed client-side to avoid SSR hydration drift.
+  const [showMobileDeepLinks, setShowMobileDeepLinks] = useState(false)
   useEffect(() => {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
+    setShowMobileDeepLinks(isMobileBrowser() && !hasInjectedProvider())
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
   const visibleConnectors = connectors
@@ -148,7 +155,31 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {visibleConnectors.length > 0 && (
+        {showMobileDeepLinks ? (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-valor-border" />
+              <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold">or open in your wallet</span>
+              <div className="flex-1 h-px bg-valor-border" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {MOBILE_WALLETS.map((w) => (
+                <a
+                  key={w.id}
+                  href={w.build()}
+                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors"
+                >
+                  <Wallet size={16} />
+                  {w.name}
+                </a>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 -mt-2 leading-snug">
+              Opens Valor inside your wallet app, then tap connect. On mobile this is more reliable than a QR/WalletConnect link.
+            </p>
+          </>
+        ) : visibleConnectors.length > 0 && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
