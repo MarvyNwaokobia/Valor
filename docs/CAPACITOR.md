@@ -26,12 +26,17 @@ Two consequences, both good:
 - `apps/web/ios/` — native iOS (Xcode, Swift Package Manager — **no CocoaPods**) project.
 - `apps/web/capacitor/www/` — offline fallback shell.
 
-## Prerequisites to actually BUILD/RUN (not installed yet)
+## App icon + splash
 
-Scaffolding is done; **building** needs the native toolchains:
+Done. Generated from the Valor emblem (`design/generated/valor-icon.png`, 2048px) via `@capacitor/assets` into `apps/web/assets/` (source: `icon-only.png`, `splash.png`, `splash-dark.png`). Both platforms show the gold emblem on `#04030c`. To regenerate after changing the art: `npx @capacitor/assets generate` from `apps/web` — but note it also rewrites `public/manifest.json` + drops `apps/web/icons/`; **revert those two** (our PWA icons/manifest are hand-tuned): `git checkout -- apps/web/public/manifest.json && rm -rf apps/web/icons`.
 
-- **Android:** a JDK (21) + **Android Studio** (brings the Android SDK). Set `ANDROID_HOME`.
-- **iOS:** **Xcode** (from the Mac App Store) + its command-line tools. SPM handles deps, so no CocoaPods.
+## Prerequisites to actually BUILD/RUN
+
+- **Android — mostly ready:**
+  - ✅ JDK 21 installed (`brew install openjdk@21`, keg-only at `/usr/local/opt/openjdk@21`).
+  - ✅ `JAVA_HOME` + `ANDROID_HOME` exported in `~/.zshrc` (open a NEW terminal to pick them up).
+  - ⏳ **Android Studio** installing via `brew install --cask android-studio` — on first launch let its setup wizard install the SDK (lands at `~/Library/Android/sdk`, which `ANDROID_HOME` already points to).
+- **iOS — needs Xcode (manual):** **Xcode must be installed by you from the Mac App Store** (several GB, needs your Apple ID — can't be scripted). Only the Command Line Tools are present now, which aren't enough to build/run the app. Once Xcode is in, no CocoaPods needed (SPM).
 
 ## Everyday commands (run from `apps/web/`)
 
