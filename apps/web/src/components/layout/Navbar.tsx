@@ -67,12 +67,18 @@ export default function Navbar() {
         <div className="flex items-center gap-6">
           <Link
             href="/"
-            className="font-display font-black text-lg tracking-[0.12em] relative"
+            className="flex items-center gap-2 font-display font-black text-lg tracking-[0.12em] relative"
             style={{
               color: '#eab308',
               textShadow: '0 0 20px rgba(234,179,8,0.6)',
             }}
           >
+            <img
+              src="/valor-mark.png"
+              alt="Valor"
+              className="h-7 w-auto"
+              style={{ filter: 'drop-shadow(0 0 10px rgba(234,179,8,0.35))' }}
+            />
             VALOR
           </Link>
 
