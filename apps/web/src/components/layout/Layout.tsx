@@ -93,9 +93,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </AnimatePresence>
 
       {/* ── UI layers ── */}
-      <div className="relative z-10 flex flex-col min-h-screen">
+      <div className="app-shell relative z-10 flex flex-col min-h-screen">
         <Navbar />
-        <main className="flex-1 container mx-auto px-4 py-6 max-w-6xl pb-24 md:pb-8">
+        <main className="flex-1 container mx-auto px-4 py-6 max-w-6xl">
           {children}
         </main>
         <MobileNav />

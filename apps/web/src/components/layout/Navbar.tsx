@@ -52,6 +52,11 @@ export default function Navbar() {
         backdropFilter: 'blur(16px)',
         borderBottom: `1px solid ${classDef ? `${classDef.accentColor}30` : 'rgba(42,42,58,0.8)'}`,
         boxShadow: classDef ? `0 1px 0 0 ${classDef.accentColor}20, 0 4px 24px rgba(0,0,0,0.6)` : '0 4px 24px rgba(0,0,0,0.6)',
+        // Standalone PWA: keep the header below the status bar / notch while the
+        // blurred background still fills up to the very top edge.
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
       }}
     >
       {/* Gold accent line at very top */}
