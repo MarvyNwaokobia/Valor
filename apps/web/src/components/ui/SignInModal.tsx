@@ -155,31 +155,7 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {showMobileDeepLinks ? (
-          <>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-valor-border" />
-              <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold">or open in your wallet</span>
-              <div className="flex-1 h-px bg-valor-border" />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              {MOBILE_WALLETS.map((w) => (
-                <a
-                  key={w.id}
-                  href={w.build()}
-                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors"
-                >
-                  <Wallet size={16} />
-                  {w.name}
-                </a>
-              ))}
-            </div>
-            <p className="text-[11px] text-slate-500 -mt-2 leading-snug">
-              Opens Valor inside your wallet app, then tap connect. On mobile this is more reliable than a QR/WalletConnect link.
-            </p>
-          </>
-        ) : visibleConnectors.length > 0 && (
+        {visibleConnectors.length > 0 && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -201,6 +177,29 @@ export default function SignInModal({ onClose }: Props) {
               ))}
             </div>
           </>
+        )}
+
+        {/* Fallback for mobile networks that block the WalletConnect relay (the
+            "Connecting…" hang): open Valor inside the wallet's own browser, where
+            a provider is injected and no relay is needed. */}
+        {showMobileDeepLinks && (
+          <details className="text-slate-500">
+            <summary className="text-[11px] cursor-pointer select-none hover:text-slate-300 transition-colors">
+              Wallet stuck on “Connecting…”? Open Valor inside your wallet instead
+            </summary>
+            <div className="flex flex-wrap gap-2 mt-2.5">
+              {MOBILE_WALLETS.map((w) => (
+                <a
+                  key={w.id}
+                  href={w.build()}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-valor-surface-2 border border-valor-border text-white font-semibold text-xs hover:border-valor-gold/60 transition-colors"
+                >
+                  <Wallet size={13} />
+                  {w.name}
+                </a>
+              ))}
+            </div>
+          </details>
         )}
 
         <AnimatePresence>
