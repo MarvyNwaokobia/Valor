@@ -17,6 +17,13 @@ export const wagmiConfig = createConfig({
     ...(walletConnectProjectId
       ? [walletConnect({
           projectId: walletConnectProjectId,
+          // The SDK (2.23.x) defaults its relay to `wss://relay.walletconnect.org`, which
+          // fails to resolve on many mobile carrier/ISP resolvers ("hostname could not be
+          // found") — desktop browsers work only because they use DNS-over-HTTPS and bypass
+          // it. Pin the relay to the older `.com` endpoint (still live, different IPs/network
+          // path) so mobile wallet connect works where `.org` is unreachable. Revisit if
+          // WalletConnect deprecates `.com`.
+          relayUrl: 'wss://relay.walletconnect.com',
           // Explicit metadata so the wallet prompt shows Valor's identity and,
           // crucially, a `url` that matches the domain allowlisted in the Reown/
           // WalletConnect Cloud project. A mismatch (or missing entry) makes the
