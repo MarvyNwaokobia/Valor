@@ -38,13 +38,13 @@ Verify: `cast call $REWARD_POOL_CONTRACT "MAX_REWARD()(uint256)" --rpc-url $CELO
 should return `500000000000000000000` (500e18).
 
 > **Status: DONE + VERIFIED (2026-07-12).** The proxy is upgraded, the migration is
-> applied to Neon, and a first-clear bounty was confirmed paying on-chain end-to-end.
-> The steps below are the runbook for a fresh environment.
+> applied to prod Postgres, and a first-clear bounty was confirmed paying on-chain
+> end-to-end. The steps below are the runbook for a fresh environment.
 
-### 2. Run the migration (Neon prod Postgres)
+### 2. Run the migration (Railway prod Postgres)
 
 ```bash
-# use Neon's DIRECT (non-`-pooler`) connection string as DATABASE_URL
+# DATABASE_URL = the Railway Postgres connection string (direct — no pooler)
 psql "$DATABASE_URL" < apps/api/migrations/add_first_clear_bounties.sql
 ```
 
@@ -58,10 +58,10 @@ against the local Supabase sandbox too if you test locally.
 bounties can actually pay out. On failure the bounty row is marked `failed` and the
 `/battles/bounties/reconcile` cron re-attempts it (idempotent via the on-chain ref).
 
-### 4. Redeploy the API (Render — auto-deploys on push to `main`)
+### 4. Redeploy the API (Railway — auto-deploys on push to `main`)
 
-Render rebuilds `apps/api/Dockerfile` automatically on push. `REWARD_POOL_CONTRACT`
-must be set in the Render env (no code fallback — unset means bounties silently fail).
+Railway rebuilds `apps/api/Dockerfile` automatically on push. `REWARD_POOL_CONTRACT`
+must be set in the Railway env (no code fallback — unset means bounties silently fail).
 
 The backend signer wallet must be the pool's `backendSigner` (already the case for the
 existing rank-up/daily-claim payouts — same signer).

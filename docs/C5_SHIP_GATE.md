@@ -45,8 +45,9 @@
 
 ## Known friction points (most likely to fail first)
 
-- **Cold start (~50s)** on the free Render tier — the scariest silent wait. If
-  testers bail here, warm the instance first or make the banner louder.
+- **API latency / first request after a deploy** — Railway Hobby doesn't sleep, so
+  there's no cold-start wait, but a fresh deploy still takes a moment to go live. If
+  testers hit an error right after a push, give the rollout a few seconds.
 - **Mobile Safari + Magic** — login and any live on-chain read can be flaky under
   ITP; read-only checks already use plain HTTP clients, but re-watch login itself.
 - **The verify step** — the biggest "wait, what is this?" moment for a normal person.

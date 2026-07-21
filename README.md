@@ -5,7 +5,7 @@ A Web3 **first-person tactical shooter** built on [GoodDollar](https://gooddolla
 Players verify their identity via GoodDollar, pick a class + callsign, and drop into a solo campaign of first-person doorkicker operations — breach, clear, defend, rescue — across three theatres with escalating bosses. Every kill earns XP toward your rank; clearing an operation for the first time pays a one-time G$ bounty. An endless **Kill-House** and a ranked, seasonal **Gauntlet** feed a competitive economy where scarce G$ is earned from competition and spent on gear and survival — with no gas fees required.
 
 **Live**: https://playvalor.app
-**API**: https://valor-qqzx.onrender.com
+**API**: https://valor-production.up.railway.app
 **Contracts**: Celo Mainnet · [Celoscan](https://celoscan.io)
 
 > The turn-based melee/stat-duel game Valor grew out of is preserved and fully playable at `/fight-legacy` — its engine code is untouched.
@@ -17,7 +17,7 @@ Players verify their identity via GoodDollar, pick a class + callsign, and drop 
 ```
 ┌─────────────────────┐     ┌──────────────────────────┐     ┌────────────────┐
 │   Next.js 15 App    │────▶│   Rust / Actix-web API   │────▶│  PostgreSQL    │
-│   (Vercel)          │     │   (Render, Docker)        │     │  (Neon)        │
+│   (Vercel)          │     │   (Railway, Docker)       │     │ (Railway PG)   │
 └─────────────────────┘     └──────────────────────────┘     └────────────────┘
          │                              │
          │ Magic auth (deterministic    │ Celo RPC (forno.celo.org)
@@ -36,13 +36,13 @@ Players verify their identity via GoodDollar, pick a class + callsign, and drop 
 | Frontend | Next.js 15 App Router, Tailwind, Framer Motion, Three.js / React Three Fiber (the FPS scene) |
 | Auth | [Magic](https://magic.link) (email + Google → deterministic wallet), viem (no wagmi connector) |
 | Backend | Rust, Actix-web 4, SQLx, Tokio |
-| Database | PostgreSQL on [Neon](https://neon.tech) (permanent free tier). Local dev uses a separate Supabase sandbox. |
-| Hosting | Vercel (frontend) + Render (API, Docker) + GitHub Actions (decay/reconcile crons) |
+| Database | PostgreSQL on [Railway](https://railway.com) (Hobby, same project as the API — direct connection, no pooler). Local dev uses a separate Supabase sandbox. |
+| Hosting | Vercel (frontend) + Railway (API + Postgres, Docker) + GitHub Actions (decay/reconcile crons) |
 | Chain | Celo Mainnet (chainId 42220) |
 | Identity | GoodDollar Citizen SDK (ERC-725 whitelist) |
 | Contracts | Foundry (Forge), OpenZeppelin UUPS upgradeable, ERC1155 + ERC677 |
 
-> The stack migrated off Railway in July 2026 (trial expired). Money + identity are all on-chain and were safe; ~28 players' off-chain rows were reconstructed from on-chain `ValorGameRecord` events (`scripts/reconstruct-players.mjs`).
+> The stack briefly ran on Render + Neon (mid-2026) but consolidated back onto a single Railway Hobby project (API + Postgres) — see [docs/RAILWAY_MIGRATION.md](docs/RAILWAY_MIGRATION.md). Money + identity are all on-chain, so no funds were ever at risk during platform moves; `scripts/reconstruct-players.mjs` can rebuild off-chain rows from on-chain `ValorGameRecord` events if ever needed.
 
 ---
 
@@ -54,7 +54,8 @@ All contracts are UUPS upgradeable proxies, owned by the deployer EOA. Verified 
 |----------|--------------|---------|
 | `ValorItems` | `0x3ba09c51895Dacb90273A2A40C95369a5A1b4bFe` | ERC1155 NFT — one token type per item |
 | `ValorMarketplace` | `0x95D167f569cf05C967C0432e3123baeac5D8d78D` | G$ purchases via permit relay; mints item NFTs |
-| `ValorRewardPool` | `0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4` | Holds G$; pays first-clear bounties + season payouts via `distributeReward(player, amount, ref)` (idempotent per `ref`, capped at `MAX_REWARD` 500 G$) |
+| `ValorRewardPool` | `0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4` | Holds G$; pays first-clear bounties + rank-up rewards + season payouts via `distributeReward(player, amount, ref)` (idempotent per `ref`, capped at `MAX_REWARD` 10,000 G$/call) |
+| `ValorRewardPool` (Endless) | `0xd44D31645e3abBDc48a6Fc5E6E1bCd894db77Ba0` | Separate pool for Endless per-wave payouts (UUPS; fund + set `ENDLESS_REWARD_POOL_CONTRACT` to enable) |
 | `ValorGameRecord` | `0xd4ec6dB553E206cdf741448F94bD3B02D81c8571` | Immutable on-chain log of battles, rank-ups, character claims |
 | G$ SuperToken | `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` | GoodDollar token (ERC20 + EIP-2612 permit) |
 
@@ -68,6 +69,10 @@ Players never need CELO. The pattern:
 4. Backend submits the on-chain call, **paying CELO gas from the relayer wallet**, and records the result
 
 Used for: marketplace `purchaseWithPermit`, player-to-player transfers (`permit` + `transferFrom`), and the Survival re-arm **session allowance** (one permit per run authorizes many instant re-arms). All signer transactions are serialized behind a nonce lock so concurrent writes can't collide.
+
+### On-chain transaction surface
+
+Valor writes to Celo mainnet constantly — every fight, rank-up, reward, purchase, transfer and re-arm is a real transaction. See **[docs/ONCHAIN_TRANSACTIONS.md](docs/ONCHAIN_TRANSACTIONS.md)** for the full catalog of what triggers a transaction, who pays gas, and the ideas for driving more on-chain volume.
 
 ---
 
@@ -91,9 +96,11 @@ A solo, first-person doorkicker campaign: **15 operations across 3 zones** with 
 
 ### Ranks & XP (the progression loop)
 
-`Bronze → Silver → Gold → Platinum → Diamond` · 1,000 XP per rank.
+`Iron → Bronze → Silver → Gold → Platinum → Emerald → Diamond` → **prestige** (Diamond I, II, III… uncapped).
 
-Every kill earns XP (headshots worth more); the in-game rank bar reflects your **real server account** (seeded from `pve_level`/rank, not a local counter). **XP is pure progression — ranking up mints no G$** (the old faucet is gone). Rank is recorded on-chain and enrolls you in the rank pool.
+Every kill earns XP (headshots worth more); the in-game rank bar reflects your **real server account** (seeded from `pve_level`/rank, not a local counter). The curve is **progressive**, not flat: each rank-up costs more than the last (`RANK_STEP_XP` = 400 / 900 / 1,300 / 2,500 / 4,500 / 8,000; every prestige past Diamond is a flat 8,000). Calibrated so Bronze lands in the first session and one full campaign clear (~2,610 XP) lands Gold.
+
+Ranking up **does** pay G$, and it **grows** with the rank: the Nth rank-up pays `500 × N` (Bronze 500 → Silver 1,000 → … → Diamond 3,000), idempotent per `(wallet, rank)` on-chain and clamped to the 10,000 G$ per-call cap. Rank is also recorded on-chain (`recordRankUp`) and enrolls you in the rank pool.
 
 ### Character classes
 
@@ -108,7 +115,9 @@ Classes (**Berserker / Sentinel / Phantom**) are the player's chosen identity, s
 | | Flow | Detail |
 |---|------|--------|
 | **In · first-clear bounty** (B0) | on-chain | Clearing a Campaign op the first time pays a one-time, capped G$ bounty (ordinary 2 G$; bosses op 5/10/15 pay 10/15/25). Idempotent in DB (`first_clear_bounties` PK) **and** on-chain (`ref` guard). A cron reconciles any failed payout. |
-| **In · daily UBI** | GoodDollar | The Daily Check-In claims GoodDollar UBI (5 G$/day) straight from the protocol. Untouched by the XP change. |
+| **In · rank-up reward** | on-chain | Every rank-up pays `500 × ordinal` G$ (Bronze 500 … Diamond 3,000), from the RewardPool, idempotent per `(wallet, rank)`. |
+| **In · Endless per-wave** | on-chain | Every Endless wave cleared pays G$ directly (banded `500 × ceil(wave/4)`: waves 1–4 → 500 each, 5–8 → 1,000 …). Server owns the wave count; a min-seconds-per-wave floor blocks machine-speed spam. Paid from the **Endless pool** (own contract, own ref guard). |
+| **In · daily UBI** | GoodDollar | The Daily Check-In claims GoodDollar UBI (5 G$/day) straight from the protocol. (Valor's `/daily-claim` endpoint only records the cooldown; the UBI itself is a protocol tx.) |
 | **In · season payout** (B3) | on-chain | At season close an admin computes the top Gauntlet runs in the window and distributes a top-heavy split of the prize pool via the RewardPool. |
 | **Out · marketplace** (B1) | on-chain | Buy guns / ammo / attachments / cosmetics with G$, gasless via permit relay. |
 | **Out · Survival re-arm** (B1) | on-chain | Mid-run **revive / resupply / wave-skip** for G$. One permit per run grants a spending cap (session allowance); re-arms are instant + non-custodial; spent G$ flows into the RewardPool (refilling the prize pool). *Disabled in the ranked Gauntlet — pure skill.* |
@@ -124,7 +133,7 @@ Classes (**Berserker / Sentinel / Phantom**) are the player's chosen identity, s
 - Node.js 22+
 - Rust 1.80+ (`rustup update stable`)
 - Foundry (`curl -L https://foundry.paradigm.xyz | bash && foundryup`)
-- PostgreSQL 15+ (or a Neon / Supabase project) + `psql`
+- PostgreSQL 15+ (or a Railway / Supabase project) + `psql`
 
 ### 1. Clone and install
 
@@ -173,7 +182,7 @@ forge build && forge test
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `NEXT_PUBLIC_MAGIC_API_KEY` | ✅ | Magic publishable key — email + Google login → deterministic wallet |
-| `NEXT_PUBLIC_API_URL` | ✅ | Backend API base URL (the Render URL in prod) |
+| `NEXT_PUBLIC_API_URL` | ✅ | Backend API base URL (the Railway URL in prod) |
 | `NEXT_PUBLIC_GOODDOLLAR_ENV` | ✅ | `production` or `staging` |
 | `NEXT_PUBLIC_MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy address |
 | `NEXT_PUBLIC_VALOR_APP_ADDRESS` | ✅ | Backend relayer / signer public address |
@@ -183,11 +192,11 @@ forge build && forge test
 
 > Runtime URLs (share links, auth redirect, verify callback) are all built from `window.location.origin`, so they follow the custom domain automatically — no per-domain config in the frontend.
 
-### `apps/api/.env` (and Render env in prod)
+### `apps/api/.env` (and Railway env in prod)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | ✅ | Postgres connection string. In prod: Neon's **direct** (non-`-pooler`) URL for SQLx. |
+| `DATABASE_URL` | ✅ | Postgres connection string. In prod: Railway Postgres (a **direct** connection — no pooler, so no SQLx pooler workarounds needed). |
 | `BACKEND_PRIVATE_KEY` | ✅ | Relayer wallet key — pays CELO gas + is the RewardPool `backendSigner` |
 | `GAME_RECORD_CONTRACT` | ✅ | `ValorGameRecord` proxy — on-chain battle/rank logging |
 | `MARKETPLACE_CONTRACT` | ✅ | `ValorMarketplace` proxy — gasless purchase relay |
@@ -200,7 +209,7 @@ forge build && forge test
 | `VALOR_APP_ADDRESS` | ✅ | Public address of `BACKEND_PRIVATE_KEY` |
 | `DECAY_CRON_SECRET` | ✅ | Shared `x-cron-secret` for `/decay/run` + `/battles/bounties/reconcile` |
 | `FRONTEND_ORIGIN` | ✅ | Comma-separated CORS origins (`https://playvalor.app,https://playvalor.vercel.app`) |
-| `BIND_ADDR` | — | Bind address (Render sets `0.0.0.0:10000`; default `0.0.0.0:8080`) |
+| `BIND_ADDR` | — | Bind address (default `0.0.0.0:8080`; Railway targets 8080 via the Dockerfile `EXPOSE`, so leave it at the default) |
 | `RANK_POOL_{SILVER,GOLD,PLATINUM,EMERALD,DIAMOND}` | — | GoodCollective UBI pool addresses |
 | `G_TOKEN_CONTRACT` | — | G$ SuperToken (defaults to the known mainnet address) |
 | `ADMIN_WALLETS` | — | Comma-separated wallets allowed to sign into `/admin` |
@@ -266,15 +275,15 @@ forge build && forge test
 
 ### Frontend (Vercel)
 
-Auto-deploys on push to `main`. Set all `NEXT_PUBLIC_*` in the Vercel dashboard. Custom domain **`playvalor.app`** is primary (`playvalor.vercel.app` 308-redirects to it). New domains must be added to **Render `FRONTEND_ORIGIN`** (CORS) and the **Magic allowlist** (origins + `/auth/callback`).
+Auto-deploys on push to `main`. Set all `NEXT_PUBLIC_*` in the Vercel dashboard. Custom domain **`playvalor.app`** is primary (`playvalor.vercel.app` 308-redirects to it). New domains must be added to the API's **`FRONTEND_ORIGIN`** (CORS, in the Railway env) and the **Magic allowlist** (origins + `/auth/callback`).
 
-### API (Render, Docker)
+### API (Railway, Docker)
 
-A Render Web Service builds `apps/api/Dockerfile` and auto-deploys on push. Health check `/health`, `BIND_ADDR=0.0.0.0:10000`. Free tier spins down after ~15 min idle (≈50 s cold start). Env vars per the table above (ported from Railway; `FRONTEND_ORIGIN` + `DATABASE_URL` are the ones that change per environment).
+A Railway service (root directory `apps/api`) builds `apps/api/Dockerfile` and auto-deploys on push to `main`. Health check `/health`; the app binds `0.0.0.0:8080` and Railway auto-targets 8080 via the Dockerfile `EXPOSE`. Railway Hobby doesn't sleep, so there's no cold-start wait. The API and Postgres live in the **same Railway project** (`FRONTEND_ORIGIN` is the main env that changes per environment; `DATABASE_URL` is provided by the Postgres service). Public URL: `https://valor-production.up.railway.app`.
 
-### Database (Neon) — bootstrap + migrations
+### Database (Railway Postgres) — bootstrap + migrations
 
-Apply migrations in order via `scripts/bootstrap-neon.mjs` (run from repo root after `npm i pg --no-save`, with `DATABASE_URL` set):
+Prod Postgres runs in the same Railway project as the API (direct connection, no pooler). Apply migrations in order via `scripts/bootstrap-neon.mjs` (name is historical — it works against any `DATABASE_URL`; run from repo root after `npm i pg --no-save`, with `DATABASE_URL` set to the Railway Postgres connection string):
 
 ```
 init.sql → 004_guns → 005_pve_level → 006_endless → 007_remove_melee_items →
@@ -318,7 +327,7 @@ Valor/
 │   │       ├── components/       # battle/ (OperationsSelect…), marketplace/, player-card/, ui/, providers/
 │   │       ├── hooks/            # useSurvivalRearm, useGauntlet, useFightRewards, useMarketplace, useTransferOut…
 │   │       ├── stores/ lib/ types/
-│   └── api/                      # Rust / Actix-web backend (Render)
+│   └── api/                      # Rust / Actix-web backend (Railway)
 │       └── src/handlers/         # players, battles, survival, gauntlet, seasons, items, admin, decay, ledger…
 │       └── migrations/           # SQL migrations
 ├── contracts/                    # Foundry: ValorItems / Marketplace / RewardPool / GameRecord
