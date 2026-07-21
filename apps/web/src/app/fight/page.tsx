@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { Suspense, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Rajdhani } from 'next/font/google';
 import { useFightRewards } from '@/hooks/useFightRewards';
 import { usePlayerStore } from '@/stores/usePlayerStore';
@@ -35,6 +35,7 @@ const ValorScene = dynamic(
 );
 
 function FightInner() {
+  const router = useRouter();
   const { startFight, submitResult } = useFightRewards();
   const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
   // C1: the real account rank + XP so the in-game HUD reflects true server standing.
@@ -105,6 +106,7 @@ function FightInner() {
         equippedAmmo={equippedAmmo}
         equippedMods={equippedMods}
         fieldKit={fieldKit}
+        onExit={() => router.push('/battle')}
       />
     </div>
   );
