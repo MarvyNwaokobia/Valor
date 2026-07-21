@@ -26,6 +26,9 @@ jsonwebtoken = "9"
 dashmap = "6"
 actix-ws = "0.3"
 futures-util = "0.3"
+# Outbound WS client for the WalletConnect relay proxy (see handlers/relay_proxy.rs).
+# 0.20 is already in the tree via ethers; rustls-tls-webpki-roots gives wss:// support.
+tokio-tungstenite = { version = "0.20", features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }
