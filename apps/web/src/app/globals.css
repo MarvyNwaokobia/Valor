@@ -420,3 +420,17 @@ body {
     padding-right: max(12px, env(safe-area-inset-right, 12px));
   }
 }
+
+/* ── Standalone PWA safe areas ───────────────────────────────
+   Installed full-screen, the page draws UNDER the notch / Dynamic Island and
+   the home indicator. Pad the app chrome (top nav, bottom nav, content) so the
+   menu pages fit any device — iPhone (notched or not), iPad, all sizes. The
+   fight scene is intentionally excluded and stays full-bleed. */
+.app-shell > main {
+  /* clear the bottom tab bar (~5.5rem) + the home-indicator inset */
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  /* desktop has no bottom tab bar */
+  .app-shell > main { padding-bottom: 2rem; }
+}

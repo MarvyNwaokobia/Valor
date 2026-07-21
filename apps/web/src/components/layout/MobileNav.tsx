@@ -33,6 +33,11 @@ export default function MobileNav() {
         backdropFilter: 'blur(16px)',
         borderTop: `1px solid ${accent}25`,
         boxShadow: `0 -4px 24px rgba(0,0,0,0.8), 0 -1px 0 ${accent}15`,
+        // Standalone PWA: lift the tab bar above the home indicator, with the
+        // blurred background still filling down to the bottom edge.
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
       }}
     >
       {/* Top accent line */}
