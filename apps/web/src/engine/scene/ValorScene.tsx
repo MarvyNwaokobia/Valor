@@ -2335,7 +2335,12 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit }: {
+  /** Leave the fight entirely and return to the mode-select page (Campaign /
+   *  Live PvP / Challenge). `/fight` wires this to router.push('/battle'). In a
+   *  standalone PWA there is NO browser back button, so this is the only way out —
+   *  surfaced both as a HUD "EXIT" button and inside the pause menu. */
+  onExit?: () => void;
   /** Fires when a campaign op BEGINS (1-based level) — `/fight` uses it to open a
    *  server-authoritative fight session (the anti-forgery token). Resolves TRUE once a
    *  session is confirmed (or the player is signed out); FALSE if the server can't be
@@ -2995,6 +3000,13 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
               <button onClick={resume} style={{ ...btnC4('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>{iconRow('play', 'RESUME', 13)}</button>
               <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
               <button onClick={exitToOps} style={btnC4('#6f7d8c')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
+              {onExit && (
+                <button onClick={onExit} style={{ ...btnC4('#e0796f'), background: 'rgba(224,121,111,.10)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+                  </span>
+                </button>
+              )}
             </div>
             {/* Manual graphics quality — instant relief on a laggy machine (LOW = drop
                 shadows, set-dressing, and render resolution). AUTO adapts on its own. */}
@@ -3028,8 +3040,9 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
           <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => setSelect(false)} />
         )}
 
-        {/* zone / op label (operations are chosen outside the game now) */}
-        <div style={{ position: 'absolute', left: 26, top: 20 }}>
+        {/* zone / op label (operations are chosen outside the game now). On touch it
+            shifts right to clear the top-left EXIT button. */}
+        <div style={{ position: 'absolute', left: isTouch ? 90 : 26, top: 20 }}>
           <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'gauntlet' ? 'Valor · GAUNTLET · RANKED' : mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
         </div>
         {!isTouch && (
@@ -3055,6 +3068,17 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
             style={{ position: 'absolute', left: '50%', top: 8, transform: 'translateX(-50%)', zIndex: 20, width: 40, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(255,255,255,.18)', color: '#cfe0ea', backdropFilter: 'blur(6px)', pointerEvents: 'auto' }}>
             <Icon name="pause" size={18} />
           </div>
+
+          {/* EXIT — top-left. Leaves the fight for the mode-select page (Campaign /
+              PvP / Challenge). In a standalone PWA there's no browser back button, so
+              this is the visible way out. Tucked in the corner, away from the action
+              buttons, so it isn't mis-tapped mid-fight. */}
+          {onExit && (
+            <div onTouchStart={(e) => { e.stopPropagation(); onExit(); }} onClick={onExit}
+              style={{ position: 'absolute', left: 10, top: 8, zIndex: 20, height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, backdropFilter: 'blur(6px)', pointerEvents: 'auto' }}>
+              <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+            </div>
+          )}
 
           {/* drag ANYWHERE below the top strip to aim — over the gun included; the
               joystick + action buttons sit on top and capture their own touches */}
