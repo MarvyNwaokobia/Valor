@@ -34,6 +34,10 @@ pub async fn wc_relay_proxy(
         format!("{UPSTREAM}/?{q}")
     };
 
+    // Forward the browser's Origin to the relay so Reown's domain check (playvalor.app is
+    // allowlisted) sees the real origin, not our server. Both crates use http 0.2.
+    let origin = req.headers().get("origin").cloned();
+
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
 
     // client → upstream, and upstream → client, bridged over channels so the !Send actix
@@ -43,9 +47,22 @@ pub async fn wc_relay_proxy(
 
     // ── Upstream half (Send): connect to the real relay + pump both directions ──
     tokio::spawn(async move {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
         use tokio_tungstenite::tungstenite::Message as T;
 
-        let ws = match tokio_tungstenite::connect_async(upstream_url.as_str()).await {
+        let mut request = match upstream_url.as_str().into_client_request() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("wc-relay-proxy: bad upstream url: {e}");
+                let _ = u2c_tx.send(WsMsg::Close);
+                return;
+            }
+        };
+        if let Some(origin) = origin {
+            request.headers_mut().insert("origin", origin);
+        }
+
+        let ws = match tokio_tungstenite::connect_async(request).await {
             Ok((ws, _resp)) => ws,
             Err(e) => {
                 tracing::warn!("wc-relay-proxy: upstream connect failed: {e}");
