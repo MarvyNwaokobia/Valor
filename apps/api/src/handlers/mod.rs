@@ -9,6 +9,7 @@ pub mod decay;
 pub mod rewards;
 pub mod auth;
 pub mod ws;
+pub mod relay_proxy;
 pub mod endless;
 pub mod survival;
 pub mod gauntlet;
@@ -60,6 +61,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/health/consistency", web::post().to(consistency::run_consistency_check))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
         .route("/ws/battle", web::get().to(ws::battle_ws))
+        // Transparent proxy to the WalletConnect relay — lets external-wallet login work
+        // on mobile networks that can't resolve relay.walletconnect.* (see relay_proxy.rs).
+        .route("/relay", web::get().to(relay_proxy::wc_relay_proxy))
         .service(
             web::scope("/identity")
                 .route("/verify/{wallet}", web::get().to(identity::verify_identity)),
