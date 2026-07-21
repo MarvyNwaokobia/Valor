@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next'
 import path from 'path'
+import withSerwistInit from '@serwist/next'
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@goodsdks/citizen-sdk', '@goodsdks/engagement-sdk'],
@@ -37,4 +38,13 @@ const nextConfig: NextConfig = {
   },
 }
 
-export default nextConfig
+// Serwist wraps the config to compile src/app/sw.ts → public/sw.js and inject
+// the SW registration script. `register: true` (default) auto-registers on the
+// client. Disabled in dev so the SW doesn't cache the dev server aggressively.
+const withSerwist = withSerwistInit({
+  swSrc: 'src/app/sw.ts',
+  swDest: 'public/sw.js',
+  disable: process.env.NODE_ENV === 'development',
+})
+
+export default withSerwist(nextConfig)
