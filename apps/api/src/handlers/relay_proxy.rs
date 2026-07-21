@@ -61,11 +61,49 @@ pub async fn wc_relay_proxy(
         if let Some(origin) = origin {
             request.headers_mut().insert("origin", origin);
         }
+        // A browser-ish UA — bot-management is friendlier to it than an empty/rust UA.
+        request.headers_mut().insert(
+            "user-agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                .parse()
+                .unwrap(),
+        );
 
-        let ws = match tokio_tungstenite::connect_async(request).await {
+        // Force OpenSSL (native-tls): the relay's Cloudflare front 401s rustls's TLS
+        // fingerprint but accepts OpenSSL (what browsers/Node use).
+        let connector = match native_tls::TlsConnector::builder().build() {
+            Ok(tls) => Some(tokio_tungstenite::Connector::NativeTls(tls)),
+            Err(e) => {
+                tracing::warn!("wc-relay-proxy: native-tls build failed: {e}");
+                None
+            }
+        };
+
+        let ws = match tokio_tungstenite::connect_async_tls_with_config(
+            request, None, false, connector,
+        )
+        .await
+        {
             Ok((ws, _resp)) => ws,
             Err(e) => {
-                tracing::warn!("wc-relay-proxy: upstream connect failed: {e}");
+                // Surface the relay's actual rejection (status + a couple headers) so a
+                // future failure is diagnosable, not just "401".
+                if let tokio_tungstenite::tungstenite::Error::Http(resp) = &e {
+                    let hdr = |k: &str| {
+                        resp.headers()
+                            .get(k)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("-")
+                            .to_string()
+                    };
+                    tracing::warn!(
+                        "wc-relay-proxy: upstream rejected: status={} server={} cf-ray={} cf-mitigated={}",
+                        resp.status(), hdr("server"), hdr("cf-ray"), hdr("cf-mitigated")
+                    );
+                } else {
+                    tracing::warn!("wc-relay-proxy: upstream connect failed: {e}");
+                }
                 let _ = u2c_tx.send(WsMsg::Close);
                 return;
             }
