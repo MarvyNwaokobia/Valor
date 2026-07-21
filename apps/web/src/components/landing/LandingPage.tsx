@@ -207,6 +207,12 @@ export default function LandingPage() {
 
           {/* VALOR logotype */}
           <div className="flex flex-col items-center gap-1.5">
+            <motion.img
+              src="/valor-mark.png" alt="Valor"
+              style={{ height:'clamp(72px,14vw,150px)', width:'auto', filter:'drop-shadow(0 0 34px rgba(234,179,8,0.4)) drop-shadow(0 4px 10px rgba(0,0,0,0.85))', marginBottom:'clamp(6px,1.4vh,16px)' }}
+              initial={{ opacity:0, y:-14, scale:0.92 }} animate={{ opacity:1, y:0, scale:1 }}
+              transition={{ duration:0.8, ease:[0.16,1,0.3,1] }}
+            />
             <motion.div className="flex items-center gap-2.5"
               initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:0.7, delay:0.25 }}>
               <div style={{ height:1, width:'clamp(36px,7vw,80px)', background:'linear-gradient(to right, transparent, rgba(234,179,8,0.55))' }} />

@@ -26,7 +26,7 @@ export const wagmiConfig = createConfig({
             name: 'Valor',
             description: 'Earn your honor — web3 tactical FPS on Celo.',
             url: 'https://playvalor.app',
-            icons: ['https://playvalor.app/favicon.svg'],
+            icons: ['https://playvalor.app/valor-icon.png'],
           },
         })]
       : []),

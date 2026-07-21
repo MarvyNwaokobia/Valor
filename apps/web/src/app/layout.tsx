@@ -8,7 +8,13 @@ export const dynamic = 'force-dynamic'
 export const metadata: Metadata = {
   title: 'Valor — One human. One warrior.',
   description: 'Valor — One human. One warrior. Fight, earn real G$, own everything. Built on GoodDollar + Celo.',
-  icons: { icon: '/valor-icon.svg' },
+  icons: {
+    icon: [
+      { url: '/valor-icon.png', sizes: '512x512', type: 'image/png' },
+      { url: '/valor-icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: '/apple-touch-icon.png',
+  },
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
