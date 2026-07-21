@@ -1,5 +1,9 @@
 # Railway Migration Runbook (Render + Neon → Railway Hobby)
 
+> **✅ COMPLETED.** The API + Postgres now run on one Railway Hobby project (`Valor` /
+> `production`). Live API: **https://valor-production.up.railway.app**. Render + Neon are
+> decommissioned. The runbook below is kept for reference / disaster recovery.
+
 Goal: move the Valor API and its database onto **one** Railway Hobby project, then
 decommission Render and Neon. The repo is already Railway-ready (`apps/api/railway.toml`
 + `Dockerfile`); this is a data + wiring job, not a code job.

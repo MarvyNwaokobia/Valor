@@ -185,6 +185,6 @@ fluidly, Sentinel absorbs hits stoically.
   `camera/` (BattleCamera), `vfx/` (CombatFeel, KnockbackPhysics, TrailRenderer,
   ParticleSystem, ScreenEffects), `audio/` (CombatAudio), `world/` (ArenaManager,
   StageLighting, Crowd), `input/`, `scene/` (GameScene, FighterModel, ArenaStage).
-- **Magic** auth, **GoodDollar** SDK, **Neon/Postgres** (Render API), **API** (`apps/api`),
+- **Magic** auth, **GoodDollar** SDK, **Railway Postgres** (Railway API), **API** (`apps/api`),
   **contracts/** (Foundry), **packages/shared**.
 - Entry point for the shooter: `/fight?level=N` → `GameScene` (via CampaignSelect).
