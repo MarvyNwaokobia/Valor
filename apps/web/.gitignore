@@ -29,3 +29,8 @@ coverage/
 playwright-report/
 test-results/
 .next/
+
+# Serwist / service worker (generated at build from src/app/sw.ts)
+public/sw.js
+public/sw.js.map
+public/swe-worker-*.js

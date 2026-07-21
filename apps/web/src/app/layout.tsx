@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Providers } from './providers'
 import { NoZoom } from '@/components/NoZoom'
+import { InstallPrompt } from '@/components/InstallPrompt'
 import './globals.css'
 
 export const dynamic = 'force-dynamic'
@@ -54,6 +55,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <NoZoom />
         <Providers>{children}</Providers>
+        <InstallPrompt />
       </body>
     </html>
   )
