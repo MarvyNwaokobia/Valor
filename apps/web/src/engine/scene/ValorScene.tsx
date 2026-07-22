@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import {
   FpsSim,
-  xpForKill, rankForXp, xpIntoRank, xpBarSize, rankUpsBetween, gReward, careerXpFor, XP_REWARD, rayAABB, aabbOfCover, type FpsInput, type Vec3, type Rank, type Attachment,
+  xpForKill, rankForXp, xpIntoRank, xpBarSize, rankUpsBetween, gReward, careerXpFor, XP_REWARD, rayAABB, aabbOfCover, slideMove, type FpsInput, type Vec3, type Rank, type Attachment,
 } from '../fps';
 import { RANK_COLORS } from '../../lib/constants';
 import { linesFor, SPEAKER_META, type PresenceLine, type PresenceTrigger } from '../story/presence';
@@ -930,7 +930,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // forward on ground = (-sinY, 0, -cosY); right = (cosY, 0, -sinY)
     let nx = pos.current.x + (-sinY * mf + cosY * ms) * speed * dt;
     let nz = pos.current.z + (-cosY * mf - sinY * ms) * speed * dt;
-    ({ x: nx, z: nz } = clampAndSlide(nx, nz));
+    ({ x: nx, z: nz } = clampAndSlide(pos.current.x, pos.current.z, nx, nz));
     pos.current.x = nx; pos.current.z = nz;
     if (moving) bobPhase.current += dt * (adsCur.current > 0.5 ? 6 : 9);
     if (moving && sim.time - footstepAt.current > (adsCur.current > 0.5 ? 0.62 : 0.42)) {
@@ -1012,6 +1012,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       local.y += Math.abs(Math.cos(bobPhase.current)) * BOB * (moving ? 1 : 0);
       local.y -= swapRaise.current * 0.22;                  // dips down as it's raised
       local.z += recoilP.current * 2.2; // kick back toward the camera on fire
+      // WALL PULLBACK: retract the viewmodel toward the eye when a wall is close ahead,
+      // so the barrel can't poke through geometry when you press up against it. Cast the
+      // camera's forward ray at the colliders; the nearer the wall, the further back the
+      // gun is pulled (never fully collapsed, so it doesn't pop out of view).
+      cam.getWorldDirection(fwd);
+      const gco: Vec3 = [cam.position.x, cam.position.y, cam.position.z];
+      const gcd: Vec3 = [fwd.x, fwd.y, fwd.z];
+      let wallAhead = Infinity;
+      for (const c of COLLIDERS) {
+        const tc = rayAABB(gco, gcd, aabbOfCover(c));
+        if (tc !== null && tc < wallAhead) wallAhead = tc;
+      }
+      const GUN_CLEAR = 1.1; // begin retracting when a wall is within this many metres
+      if (wallAhead < GUN_CLEAR) {
+        const k = Math.max(0.12, wallAhead / GUN_CLEAR);
+        local.z *= k;                 // barrel drawn back toward the eye
+        local.y -= (1 - k) * 0.06;    // and dipped a touch, like lowering the weapon
+      }
       vm.position.copy(cam.localToWorld(local));
       vm.quaternion.copy(cam.quaternion);
       vm.rotateX(-recoilP.current * 1.6);
@@ -1406,13 +1424,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     return false;
   }
 
-  function slideOutOfGeometry(x: number, z: number): { x: number; z: number } {
+  /** Last-resort eject if the body is already buried in geometry (shoved off a corpse,
+   *  clamped into a wall). Normal movement never reaches an inside state because
+   *  slideMove blocks at the entry face; this only catches the degenerate cases. */
+  function ejectFromGeometry(x: number, z: number): { x: number; z: number } {
     let cx = x, cz = z;
     for (const c of COLLIDERS) {
       const hx = c.w / 2 + PLAYER_R, hz = c.d / 2 + PLAYER_R;
       const dx = cx - c.x, dz = cz - c.z;
       if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
-        // push out along the smaller penetration axis
         const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
         if (px < pz) cx = c.x + Math.sign(dx || 1) * hx;
         else cz = c.z + Math.sign(dz || 1) * hz;
@@ -1421,10 +1441,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     return { x: cx, z: cz };
   }
 
-  function clampAndSlide(x: number, z: number): { x: number; z: number } {
-    let cx = Math.max(-9.4, Math.min(9.4, x));
-    let cz = Math.max(-17.6, Math.min(17.4, z));
-    ({ x: cx, z: cz } = slideOutOfGeometry(cx, cz));
+  /** Move the player from their CURRENT position (ox,oz) toward (x,z), sliding along
+   *  walls so they can never pass through one. Takes the origin, not just the target,
+   *  because blocking has to know which face the body is entering (see slideMove). */
+  function clampAndSlide(ox: number, oz: number, x: number, z: number): { x: number; z: number } {
+    // Swept slide against every wall + crate — solid, no tunnelling on a slow frame.
+    let [cx, cz] = slideMove(ox, oz, x, z, PLAYER_R, COLLIDERS);
+    // Arena bounds.
+    cx = Math.max(-9.4, Math.min(9.4, cx));
+    cz = Math.max(-17.6, Math.min(17.4, cz));
 
     // You cannot walk through people either.
     const rr = PLAYER_R + 0.35;
@@ -1434,8 +1459,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       const d = Math.hypot(dx, dz);
       if (d < rr && d > 1e-4) { cx = e.x + (dx / d) * rr; cz = e.z + (dz / d) * rr; }
     }
-    // being shoved off a body must not shove us into a wall
-    ({ x: cx, z: cz } = slideOutOfGeometry(cx, cz));
+    // Being shoved off a body (or clamped) must not leave us inside a wall.
+    ({ x: cx, z: cz } = ejectFromGeometry(cx, cz));
     return { x: cx, z: cz };
   }
 

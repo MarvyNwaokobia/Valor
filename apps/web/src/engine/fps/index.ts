@@ -6,6 +6,7 @@ export {
   jitter,
   bodyZones,
   aabbOfCover,
+  slideMove,
 } from './FpsSim';
 export {
   XP_REWARD,

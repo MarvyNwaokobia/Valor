@@ -363,10 +363,13 @@ export class FpsSim {
 
   private addEnemy(spec: EnemySpec): FpsEnemy {
     const hp = spec.hp ?? FPS_TUNING.DEFAULT_ENEMY_HP;
+    // A spawn point authored a touch inside a wall would otherwise leave the enemy
+    // half-buried and reading as "coming out of the wall". Eject it to a clear spot.
+    const [sx, sz] = this.pushOutOfCover(spec.pos[0], spec.pos[1]);
     const e: FpsEnemy = {
       id: this.nextId++,
-      x: spec.pos[0],
-      z: spec.pos[1],
+      x: sx,
+      z: sz,
       hp,
       maxHp: hp,
       alive: true,
@@ -376,8 +379,8 @@ export class FpsSim {
       facing: 0,
       token: false,
       ducking: 1,
-      goalX: spec.pos[0],
-      goalZ: spec.pos[1],
+      goalX: sx,
+      goalZ: sz,
       nextGoalAt: 0,
       room: spec.room ?? 0,
       active: true,
@@ -387,7 +390,8 @@ export class FpsSim {
       burnDps: 0,
     };
     this.enemies.push(e);
-    this.spawns.push([spec.pos[0], spec.pos[1]]);
+    // Store the CLEARED spawn so reinforce/respawn also come back out of geometry.
+    this.spawns.push([sx, sz]);
     return e;
   }
 
@@ -864,10 +868,13 @@ export class FpsSim {
 
   private moveToward(e: FpsEnemy, px: number, pz: number, dt: number, speedMult = 1): void {
     const C = FPS_TUNING.ENEMY.WORLD_CLAMP;
+    const R = FPS_TUNING.ENEMY.BODY_R;
     const dx = px - e.x, dz = pz - e.z;
     const len = Math.hypot(dx, dz) || 1;
     const step = FPS_TUNING.ENEMY.MOVE_SPEED * speedMult * dt;
-    const [nx, nz] = this.pushOutOfCover(e.x + (dx / len) * step, e.z + (dz / len) * step);
+    // Slide toward the target instead of "step then eject": walls become solid, and an
+    // enemy pressing into one now hugs it rather than popping through to the far side.
+    const [nx, nz] = slideMove(e.x, e.z, e.x + (dx / len) * step, e.z + (dz / len) * step, R, this.cover);
     e.x = Math.max(-C, Math.min(C, nx));
     e.z = Math.max(-C, Math.min(C, nz));
   }
@@ -1001,6 +1008,95 @@ export class FpsSim {
 }
 
 // ── Pure geometry (exported for unit tests) ──────────────────────────────────
+
+/**
+ * Swept collision of a POINT (a body of radius `r`, folded into the box via Minkowski
+ * expansion) moving by (dx,dz) against one box. Returns the fraction of the move at
+ * which it first touches, plus the face normal, or null for no hit.
+ *
+ * This is what makes a wall genuinely solid. A detect-then-eject resolver can always be
+ * defeated by a big enough step (a slow phone frame): once the centre is past a thin
+ * wall's midline it gets ejected out the FAR side. A swept test instead finds the exact
+ * entry point along the path, so the body is stopped BEFORE the surface no matter how
+ * large the step or how thin the wall — passing through is geometrically impossible.
+ */
+function sweepBox(
+  ox: number, oz: number, dx: number, dz: number, c: CoverBox, r: number,
+): { t: number; nx: number; nz: number } | null {
+  const loX = c.x - c.w / 2 - r, hiX = c.x + c.w / 2 + r;
+  const loZ = c.z - c.d / 2 - r, hiZ = c.z + c.d / 2 + r;
+  // Already inside ⇒ not an ENTRY event; the eject pass in slideMove handles that.
+  if (ox > loX && ox < hiX && oz > loZ && oz < hiZ) return null;
+
+  // Parametric entry/exit distance along the move for each axis (slab method).
+  let xEntry: number, xExit: number;
+  if (dx > 0) { xEntry = (loX - ox) / dx; xExit = (hiX - ox) / dx; }
+  else if (dx < 0) { xEntry = (hiX - ox) / dx; xExit = (loX - ox) / dx; }
+  else { if (ox <= loX || ox >= hiX) return null; xEntry = -Infinity; xExit = Infinity; }
+
+  let zEntry: number, zExit: number;
+  if (dz > 0) { zEntry = (loZ - oz) / dz; zExit = (hiZ - oz) / dz; }
+  else if (dz < 0) { zEntry = (hiZ - oz) / dz; zExit = (loZ - oz) / dz; }
+  else { if (oz <= loZ || oz >= hiZ) return null; zEntry = -Infinity; zExit = Infinity; }
+
+  const entry = Math.max(xEntry, zEntry);
+  const exit = Math.min(xExit, zExit);
+  if (entry > exit || entry < 0 || entry > 1) return null;
+
+  // The gating axis (later entry) owns the contact normal.
+  if (xEntry > zEntry) return { t: entry, nx: dx < 0 ? 1 : -1, nz: 0 };
+  return { t: entry, nx: 0, nz: dz < 0 ? 1 : -1 };
+}
+
+/** Least-penetration eject for a body that is ALREADY embedded (spawned inside a wall,
+ *  or shoved in off a corpse). Two passes because leaving one box can enter another.
+ *  For a thin slab this pushes out along the thin axis, which is the correct direction. */
+function ejectEmbedded(
+  x: number, z: number, r: number, boxes: readonly CoverBox[],
+): [number, number] {
+  let nx = x, nz = z;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const c of boxes) {
+      const hx = c.w / 2 + r, hz = c.d / 2 + r;
+      const dx = nx - c.x, dz = nz - c.z;
+      if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
+        if (hx - Math.abs(dx) < hz - Math.abs(dz)) nx = c.x + Math.sign(dx || 1) * hx;
+        else nz = c.z + Math.sign(dz || 1) * hz;
+      }
+    }
+  }
+  return [nx, nz];
+}
+
+/**
+ * Move a body of radius `r` from (ox,oz) toward (tx,tz), sliding along any wall or crate
+ * it would hit rather than passing through it. Collide-and-slide: sweep to the first
+ * contact, cancel the velocity component into that surface, then sweep the remainder so
+ * the body glides along the wall. Two iterations handle an inside corner. A final
+ * least-penetration eject frees anything that started embedded. Pure; exported for tests.
+ */
+export function slideMove(
+  ox: number, oz: number, tx: number, tz: number, r: number, boxes: readonly CoverBox[],
+): [number, number] {
+  const SKIN = 1e-3; // stop a hair short of the face so the next frame isn't "inside"
+  let px = ox, pz = oz;
+  let dx = tx - ox, dz = tz - oz;
+  for (let iter = 0; iter < 2 && (dx !== 0 || dz !== 0); iter++) {
+    let best: { t: number; nx: number; nz: number } | null = null;
+    for (const c of boxes) {
+      const h = sweepBox(px, pz, dx, dz, c, r);
+      if (h && (best === null || h.t < best.t)) best = h;
+    }
+    if (best === null) { px += dx; pz += dz; break; }
+    const t = Math.max(0, best.t - SKIN);
+    px += dx * t; pz += dz * t;
+    // Slide: drop the remaining motion along the contact normal, keep the tangent.
+    const rem = 1 - t;
+    dx = best.nx !== 0 ? 0 : dx * rem;
+    dz = best.nz !== 0 ? 0 : dz * rem;
+  }
+  return ejectEmbedded(px, pz, r, boxes);
+}
 
 export function aabbOfCover(c: CoverBox): [Vec3, Vec3] {
   return [

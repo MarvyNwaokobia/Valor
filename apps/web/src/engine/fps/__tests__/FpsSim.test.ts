@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FpsSim, FPS_TUNING, raySphere, rayAABB, jitter, type FpsInput, type Vec3 } from '../FpsSim';
+import { FpsSim, FPS_TUNING, raySphere, rayAABB, jitter, slideMove, type FpsInput, type Vec3, type CoverBox } from '../FpsSim';
 import { getGun } from '../../combat/GunStats';
 
 // A shooter at the origin, eye height 1.6, looking straight down -Z. rng=0 makes
@@ -32,6 +32,78 @@ describe('FpsSim geometry helpers', () => {
     const d = jitter(FWD, 0.1, rng);
     const dot = d[0] * FWD[0] + d[1] * FWD[1] + d[2] * FWD[2];
     expect(Math.acos(dot)).toBeLessThanOrEqual(0.1 + 1e-6);
+  });
+});
+
+describe('slideMove: walls are solid, no tunnelling', () => {
+  // A thin wall centred at x=0, spanning z ∈ [-5, 5], 0.3m thick.
+  const WALL: CoverBox = { x: 0, z: 0, w: 0.3, d: 10, h: 3 };
+  const R = 0.35;
+  const inside = (x: number, z: number, c: CoverBox, r: number) =>
+    Math.abs(x - c.x) < c.w / 2 + r - 1e-9 && Math.abs(z - c.z) < c.d / 2 + r - 1e-9;
+
+  const FACE = WALL.w / 2 + R; // 0.65: distance from centre a body's centre can reach
+
+  it('blocks a body walking straight into a wall, stopping just outside the near face', () => {
+    // Start left of the wall, aim well past it.
+    const [nx, nz] = slideMove(-2, 0, 2, 0, R, [WALL]);
+    expect(nx).toBeLessThanOrEqual(-FACE);     // never reaches the surface
+    expect(nx).toBeCloseTo(-FACE, 2);          // and stops right at it
+    expect(nz).toBeCloseTo(0, 5);
+    expect(inside(nx, nz, WALL, R)).toBe(false);
+  });
+
+  it('does NOT tunnel even when one step would cross the whole wall', () => {
+    // A huge step (slow frame): from far left to far right in one move.
+    const [nx] = slideMove(-8, 0, 8, 0, R, [WALL]);
+    expect(nx).toBeLessThanOrEqual(-FACE); // never reaches the far side
+    expect(nx).toBeGreaterThan(-8);        // but it did advance up to the wall
+  });
+
+  it('the reverse direction is symmetric (blocks at the +x face)', () => {
+    const [nx] = slideMove(2, 0, -2, 0, R, [WALL]);
+    expect(nx).toBeGreaterThanOrEqual(FACE);
+    expect(nx).toBeCloseTo(FACE, 2);
+  });
+
+  it('slides ALONG a wall instead of stopping dead', () => {
+    // Pressing into the wall (+x) while also moving down (+z): x is blocked, z passes.
+    const [nx, nz] = slideMove(-1, 0, 1, 3, R, [WALL]);
+    expect(nx).toBeLessThanOrEqual(-FACE); // held outside the face
+    expect(nx).toBeCloseTo(-FACE, 2);
+    expect(nz).toBeCloseTo(3, 2);          // free to slide along it
+    expect(inside(nx, nz, WALL, R)).toBe(false);
+  });
+
+  it('rounds a corner: moving past the end of the wall is not blocked', () => {
+    // Origin is beyond the wall's z-extent, so the wall cannot block x movement.
+    const [nx] = slideMove(-2, 8, 2, 8, R, [WALL]);
+    expect(nx).toBeCloseTo(2, 5); // free, went around the end
+  });
+
+  it('ejects a body that starts buried inside geometry', () => {
+    const [nx] = slideMove(0.05, 0, 0.05, 0, R, [WALL]); // dead centre in the wall
+    expect(inside(nx, 0, WALL, R)).toBe(false);
+  });
+
+  it('a random walk can never end up inside a wall (fuzz)', () => {
+    const boxes: CoverBox[] = [
+      { x: 0, z: 0, w: 0.3, d: 8, h: 3 },
+      { x: 3, z: 2, w: 2, d: 0.3, h: 3 },
+      { x: -2, z: -3, w: 1, d: 1, h: 3 },
+    ];
+    let rng = 42;
+    const rand = () => { rng = (rng * 1103515245 + 12345) & 0x7fffffff; return rng / 0x7fffffff; };
+    let x = -6, z = -6;
+    for (let i = 0; i < 4000; i++) {
+      // Deliberately large steps (up to ~1.2m) to stress the thin walls on a slow frame.
+      const tx = x + (rand() - 0.5) * 2.4;
+      const tz = z + (rand() - 0.5) * 2.4;
+      [x, z] = slideMove(x, z, tx, tz, R, boxes);
+      for (const c of boxes) {
+        expect(inside(x, z, c, R)).toBe(false);
+      }
+    }
   });
 });
 
