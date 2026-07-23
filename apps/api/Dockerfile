@@ -9,6 +9,10 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo 'fn main(){}' > src/main.rs && cargo build --release && rm -rf src
 
 COPY src ./src
+# migrate.rs embeds migrations/*.sql into the binary via include_str! — the folder
+# MUST be in the build context or every include_str! fails to compile (this is what
+# broke the build after auto-migrate shipped: src was copied, migrations/ was not).
+COPY migrations ./migrations
 # Touch main.rs so cargo rebuilds the binary (not just deps)
 RUN touch src/main.rs && cargo build --release
 
