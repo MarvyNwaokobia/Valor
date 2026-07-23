@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * Bootstrap a fresh Postgres (Neon) with Valor's full current schema, in order.
- * Run from the repo root:
- *   DATABASE_URL=postgres://..  node scripts/bootstrap-neon.mjs
+ * Bootstrap a fresh Railway Postgres with Valor's full current schema, in order.
+ *
+ * Mostly redundant now: the API applies pending migrations automatically on startup
+ * (apps/api/src/migrate.rs). Keep this for spinning up a brand-new empty DB out-of-band,
+ * or for inspecting the ordering. Run from the repo root:
+ *   DATABASE_URL=postgres://..  node scripts/bootstrap-db.mjs
  *
  * Then reconstruct players from chain:
  *   GAME_RECORD_CONTRACT=.. CELOSCAN_API_KEY=.. DATABASE_URL=..  node scripts/reconstruct-players.mjs

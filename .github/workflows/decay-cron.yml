@@ -3,8 +3,7 @@ name: decay-cron
 # Replaces the old Railway decay-cron. Two sweeps live here on DIFFERENT cadences,
 # because they are not equally urgent:
 #
-#   decay      — a slow (days) mechanic. Every 3h is plenty, and the gaps let the
-#                free Render/Neon instances sleep, keeping us inside the free tiers.
+#   decay      — a slow (days) mechanic. Every 3h is plenty.
 #   reconcile  — re-attempts payouts whose on-chain transfer didn't land. This is
 #                REAL MONEY a player was already told they earned, and this sweep is
 #                the ONLY thing that retries it, so its cadence IS the worst-case
@@ -16,7 +15,7 @@ name: decay-cron
 # no-op when nothing is failed/abandoned, so the extra runs are one cheap request.
 #
 # Requires two repository secrets (Settings → Secrets and variables → Actions):
-#   API_URL            e.g. https://valor-api-xxxx.onrender.com
+#   API_URL            the live API, e.g. https://valor-production.up.railway.app
 #   DECAY_CRON_SECRET  same value as the API's DECAY_CRON_SECRET env var
 on:
   schedule:

@@ -283,7 +283,7 @@ A Railway service (root directory `apps/api`) builds `apps/api/Dockerfile` and a
 
 ### Database (Railway Postgres) — bootstrap + migrations
 
-Prod Postgres runs in the same Railway project as the API (direct connection, no pooler). Apply migrations in order via `scripts/bootstrap-neon.mjs` (name is historical — it works against any `DATABASE_URL`; run from repo root after `npm i pg --no-save`, with `DATABASE_URL` set to the Railway Postgres connection string):
+Prod Postgres runs in the same Railway project as the API (direct connection, no pooler). **Migrations apply automatically on API startup** (`apps/api/src/migrate.rs` — a run-once `_schema_migrations` table, embedded `.sql` files, `init.sql` first). To bootstrap a brand-new empty DB out-of-band you can still run them in order via `scripts/bootstrap-db.mjs` (works against any `DATABASE_URL`; run from repo root after `npm i pg --no-save`, with `DATABASE_URL` set to the Railway Postgres connection string):
 
 ```
 init.sql → 004_guns → 005_pve_level → 006_endless → 007_remove_melee_items →
@@ -332,7 +332,7 @@ Valor/
 │       └── migrations/           # SQL migrations
 ├── contracts/                    # Foundry: ValorItems / Marketplace / RewardPool / GameRecord
 ├── docs/                         # B0_ECONOMY_DEPLOY, C5_SHIP_GATE, GAME_DESIGN…
-└── scripts/                      # bootstrap-neon.mjs, reconstruct-players.mjs, generate-vo.mjs…
+└── scripts/                      # bootstrap-db.mjs, reconstruct-players.mjs, generate-vo.mjs…
 ```
 
 ---
