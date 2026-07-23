@@ -61,6 +61,10 @@ export function InstallPrompt() {
   const [ctx, setCtx] = useState<Ctx | null>(null)
   // Start hidden until the client effect decides — avoids an SSR flash.
   const [hidden, setHidden] = useState(true)
+  // Android Chrome fires `beforeinstallprompt` on its own schedule (engagement
+  // heuristics) — often not at all on first visit. Give it a moment, then fall
+  // back to a manual "tap ⋮ → Install app" hint so guidance ALWAYS shows.
+  const [late, setLate] = useState(false)
 
   useEffect(() => {
     if (isStandalone()) return
@@ -88,9 +92,12 @@ export function InstallPrompt() {
     window.addEventListener('beforeinstallprompt', onBeforeInstall)
     window.addEventListener('appinstalled', onInstalled)
 
+    const t = setTimeout(() => setLate(true), 2500)
+
     return () => {
       window.removeEventListener('beforeinstallprompt', onBeforeInstall)
       window.removeEventListener('appinstalled', onInstalled)
+      clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -117,15 +124,23 @@ export function InstallPrompt() {
   if (hidden || !ctx) return null
 
   // Decide what to show. `native` = a real install prompt is available.
-  const mode: 'native' | 'ios-safari' | 'ios-open-in-safari' | 'android-open-in-chrome' | null =
-    deferred
-      ? 'native'
-      : ctx.ios && (ctx.inApp || ctx.iosOther)
-        ? 'ios-open-in-safari'
-        : ctx.ios
-          ? 'ios-safari'
-          : ctx.android && ctx.inApp
-            ? 'android-open-in-chrome'
+  const mode:
+    | 'native'
+    | 'ios-safari'
+    | 'ios-open-in-safari'
+    | 'android-open-in-chrome'
+    | 'android-manual'
+    | null = deferred
+    ? 'native'
+    : ctx.ios && (ctx.inApp || ctx.iosOther)
+      ? 'ios-open-in-safari'
+      : ctx.ios
+        ? 'ios-safari'
+        : ctx.android && ctx.inApp
+          ? 'android-open-in-chrome'
+          : // Android Chrome that never fired the auto-prompt → manual hint (after a beat)
+            ctx.android && late
+            ? 'android-manual'
             : null
 
   if (!mode) return null
@@ -146,6 +161,10 @@ export function InstallPrompt() {
     'android-open-in-chrome': {
       title: 'Open in Chrome to install',
       body: 'You’re in an in-app browser. Tap ⋮ → “Open in Chrome” to install Valor.',
+    },
+    'android-manual': {
+      title: 'Install Valor',
+      body: 'Tap ⋮ (top-right), then “Install app” or “Add to home screen”.',
     },
   }
 
