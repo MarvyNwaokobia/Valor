@@ -4,16 +4,22 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 
 /**
- * "Install Valor" affordance.
+ * "Install Valor" affordance — and, crucially, guidance so users don't create a
+ * BROKEN install.
  *
- * Two platforms behave differently:
- *  - Android/Chrome + desktop Chrome/Edge fire `beforeinstallprompt`. We capture
- *    it, show an Install button, and trigger the native prompt on tap.
- *  - iOS Safari fires NOTHING (Apple gives no programmatic install). There we
- *    show a manual hint: Share → Add to Home Screen.
+ * The iPhone trap: on iOS, only **Safari** turns "Add to Home Screen" into a real
+ * full-screen app. If the user opens the link in an in-app browser (Instagram,
+ * WhatsApp, Telegram, X, Facebook…) or in Chrome/Firefox for iOS, "Add to Home
+ * Screen" just saves a browser bookmark that opens WITH the browser bar. So when
+ * we detect a non-Safari context we tell them to open in Safari first.
  *
- * It never shows when the app is already installed (launched standalone), and a
- * dismissal is remembered so we don't nag.
+ * Platforms:
+ *  - Android/desktop Chrome/Edge fire `beforeinstallprompt` → we show an Install button.
+ *  - iOS Safari → manual "Share → Add to Home Screen" hint.
+ *  - iOS in-app / Chrome-iOS → "Open in Safari to install".
+ *  - Android in-app browser → "Open in Chrome to install".
+ *
+ * Never shows when already installed (standalone), and a dismissal is remembered.
  */
 
 type BeforeInstallPromptEvent = Event & {
@@ -23,11 +29,17 @@ type BeforeInstallPromptEvent = Event & {
 
 const DISMISS_KEY = 'valor:install-dismissed'
 
+// Major in-app browsers (their WebViews can't make a standalone iOS PWA, and don't
+// fire beforeinstallprompt on Android). `; wv)` is the generic Android WebView tell.
+const IN_APP_RE =
+  /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|WhatsApp|Telegram|TikTok|musical_ly|Snapchat|LinkedInApp|Pinterest|GSA\/|Twitter|; ?wv\)/i
+// Non-Safari browsers on iOS (Chrome, Firefox, Edge, Opera) — also can't make a PWA.
+const IOS_OTHER_BROWSER_RE = /CriOS|FxiOS|EdgiOS|OPiOS|Opera Touch/i
+
 function isStandalone(): boolean {
   if (typeof window === 'undefined') return false
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
-    // iOS Safari's non-standard flag for home-screen apps
     (window.navigator as unknown as { standalone?: boolean }).standalone === true
   )
 }
@@ -41,10 +53,12 @@ function isIOS(): boolean {
   )
 }
 
+type Ctx = { ios: boolean; android: boolean; inApp: boolean; iosOther: boolean }
+
 export function InstallPrompt() {
   const pathname = usePathname()
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
-  const [showIOSHint, setShowIOSHint] = useState(false)
+  const [ctx, setCtx] = useState<Ctx | null>(null)
   // Start hidden until the client effect decides — avoids an SSR flash.
   const [hidden, setHidden] = useState(true)
 
@@ -57,6 +71,14 @@ export function InstallPrompt() {
     }
     setHidden(false)
 
+    const ua = navigator.userAgent
+    setCtx({
+      ios: isIOS(),
+      android: /Android/i.test(ua),
+      inApp: IN_APP_RE.test(ua),
+      iosOther: IOS_OTHER_BROWSER_RE.test(ua),
+    })
+
     const onBeforeInstall = (e: Event) => {
       e.preventDefault() // stop Chrome's mini-infobar; we drive it ourselves
       setDeferred(e as BeforeInstallPromptEvent)
@@ -65,8 +87,6 @@ export function InstallPrompt() {
 
     window.addEventListener('beforeinstallprompt', onBeforeInstall)
     window.addEventListener('appinstalled', onInstalled)
-
-    if (isIOS()) setShowIOSHint(true)
 
     return () => {
       window.removeEventListener('beforeinstallprompt', onBeforeInstall)
@@ -78,7 +98,6 @@ export function InstallPrompt() {
   const dismiss = () => {
     setHidden(true)
     setDeferred(null)
-    setShowIOSHint(false)
     try {
       localStorage.setItem(DISMISS_KEY, '1')
     } catch {
@@ -95,23 +114,52 @@ export function InstallPrompt() {
 
   // Landing page only — never over the hub sub-pages or mid-fight.
   if (pathname !== '/') return null
-  if (hidden) return null
-  // Nothing installable to offer on this browser → render nothing.
-  if (!deferred && !showIOSHint) return null
+  if (hidden || !ctx) return null
+
+  // Decide what to show. `native` = a real install prompt is available.
+  const mode: 'native' | 'ios-safari' | 'ios-open-in-safari' | 'android-open-in-chrome' | null =
+    deferred
+      ? 'native'
+      : ctx.ios && (ctx.inApp || ctx.iosOther)
+        ? 'ios-open-in-safari'
+        : ctx.ios
+          ? 'ios-safari'
+          : ctx.android && ctx.inApp
+            ? 'android-open-in-chrome'
+            : null
+
+  if (!mode) return null
+
+  const copy: Record<Exclude<typeof mode, null>, { title: string; body: string }> = {
+    native: {
+      title: 'Install Valor',
+      body: 'Add it to your home screen for a full-screen app.',
+    },
+    'ios-safari': {
+      title: 'Install Valor',
+      body: 'Tap the Share icon, then “Add to Home Screen”.',
+    },
+    'ios-open-in-safari': {
+      title: 'Open in Safari to install',
+      body: 'You’re in an in-app browser. Tap ••• (or the share icon) → “Open in Safari”, then Share → Add to Home Screen.',
+    },
+    'android-open-in-chrome': {
+      title: 'Open in Chrome to install',
+      body: 'You’re in an in-app browser. Tap ⋮ → “Open in Chrome” to install Valor.',
+    },
+  }
+
+  const { title: cardTitle, body } = copy[mode]
 
   return (
     <div style={wrap}>
       <div style={card}>
         <img src="/valor-icon-192.png" alt="" width={40} height={40} style={icon} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={title}>Install Valor</div>
-          <div style={subtitle}>
-            {deferred
-              ? 'Add it to your home screen for a full-screen app.'
-              : 'Tap Share, then "Add to Home Screen".'}
-          </div>
+          <div style={title}>{cardTitle}</div>
+          <div style={subtitle}>{body}</div>
         </div>
-        {deferred ? (
+        {mode === 'native' ? (
           <button onClick={install} style={cta}>
             Install
           </button>
@@ -153,16 +201,15 @@ const card: React.CSSProperties = {
   fontFamily: 'Inter, system-ui, sans-serif',
 }
 
-const icon: React.CSSProperties = { borderRadius: 8, flexShrink: 0 }
+const icon: React.CSSProperties = { borderRadius: 8, flexShrink: 0, alignSelf: 'flex-start' }
 
-const title: React.CSSProperties = { fontWeight: 700, fontSize: 14, lineHeight: 1.2 }
+const title: React.CSSProperties = { fontWeight: 700, fontSize: 14, lineHeight: 1.25 }
 
 const subtitle: React.CSSProperties = {
   fontSize: 12,
-  color: 'rgba(244, 239, 230, 0.65)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  color: 'rgba(244, 239, 230, 0.7)',
+  lineHeight: 1.35,
+  marginTop: 2,
 }
 
 const cta: React.CSSProperties = {
@@ -179,6 +226,7 @@ const cta: React.CSSProperties = {
 
 const closeBtn: React.CSSProperties = {
   flexShrink: 0,
+  alignSelf: 'flex-start',
   width: 28,
   height: 28,
   borderRadius: 8,
