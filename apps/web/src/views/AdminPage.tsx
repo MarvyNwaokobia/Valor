@@ -31,6 +31,7 @@ interface AdminStats {
   total_battles: number
   total_g_awarded: number
   total_g_volume: number
+  total_g_transferred_out: number
 }
 
 interface OnchainRow {
@@ -274,6 +275,7 @@ export default function AdminPage() {
           <StatTile label="Total Battles" value={stats.total_battles.toLocaleString()} />
           <StatTile label="G$ Awarded" value={`${formatGDollarNumber(stats.total_g_awarded)} G$`} />
           <StatTile label="G$ Volume Moved" value={`${formatGDollarNumber(stats.total_g_volume)} G$`} />
+          <StatTile label="G$ Transferred Out" value={`${formatGDollarNumber(stats.total_g_transferred_out)} G$`} />
         </div>
       )}
 

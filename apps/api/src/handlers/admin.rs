@@ -146,6 +146,10 @@ pub struct AdminStats {
     pub total_g_awarded: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
     pub total_g_volume: Decimal,
+    /// Total G$ players have withdrawn/transferred OUT to external wallets
+    /// (g_ledger 'transfer_out' rows, stored positive) within the window.
+    #[serde(with = "rust_decimal::serde::float")]
+    pub total_g_transferred_out: Decimal,
 }
 
 pub async fn get_stats(
@@ -214,6 +218,13 @@ pub async fn get_stats(
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((Decimal::ZERO,));
 
+    let total_g_transferred_out: (Decimal,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(amount), 0) FROM g_ledger
+         WHERE category = 'transfer_out' AND created_at >= $1 AND created_at < $2",
+    )
+    .bind(starts_at).bind(window_end)
+    .fetch_one(&state.db).await.unwrap_or((Decimal::ZERO,));
+
     HttpResponse::Ok().json(AdminStats {
         season_name,
         starts_at,
@@ -223,6 +234,7 @@ pub async fn get_stats(
         total_battles: total_battles.0,
         total_g_awarded: total_g_awarded.0,
         total_g_volume: total_g_volume.0,
+        total_g_transferred_out: total_g_transferred_out.0,
     })
 }
 
