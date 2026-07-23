@@ -7,6 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
 mod handlers;
+mod migrate;
 mod models;
 mod services;
 mod utils;
@@ -41,6 +42,11 @@ async fn main() -> anyhow::Result<()> {
         .max_connections(20)
         .connect_with(connect_opts)
         .await?;
+
+    // Apply any pending schema migrations BEFORE serving. Railway auto-deploys from main,
+    // so this is what keeps a schema-dependent deploy from shipping ahead of its migration.
+    // A failure aborts boot on purpose (better than serving on a half-migrated schema).
+    migrate::run(&db).await?;
 
     let rewards = services::rewards::RewardService::from_env()
         .map_err(|e| tracing::warn!("Reward service disabled: {}", e))

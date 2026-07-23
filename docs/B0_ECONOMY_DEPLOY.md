@@ -48,7 +48,7 @@ should return `500000000000000000000` (500e18).
 psql "$DATABASE_URL" < apps/api/migrations/add_first_clear_bounties.sql
 ```
 
-It's also in `scripts/bootstrap-neon.mjs`, so a fresh bootstrap includes it. Run it
+It's also in `scripts/bootstrap-db.mjs`, so a fresh bootstrap includes it. Run it
 against the local Supabase sandbox too if you test locally.
 
 ### 3. Fund the pool (if low)
