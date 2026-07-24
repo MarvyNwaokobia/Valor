@@ -269,11 +269,11 @@ impl ChainWriter {
     /// Pays a one-time G$ bounty (first-clear reward, competition payout) from the
     /// ValorRewardPool. `amount_g` is whole G$; `ref` is an idempotency key so the
     /// same bounty can never pay twice on-chain (a duplicate call reverts).
-    /// Returns Ok(true) on success, Ok(false) if the pool isn't configured.
-    pub async fn distribute_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<bool, String> {
+    /// Returns Ok(Some(tx_hash)) on success, Ok(None) if the pool isn't configured.
+    pub async fn distribute_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<Option<String>, String> {
         let pool = match &self.reward_pool {
             Some(p) => p,
-            None => return Ok(false),
+            None => return Ok(None),
         };
         // G$ has 18 decimals; amount_g is whole tokens.
         let amount = U256::from(amount_g) * U256::exp10(18);
@@ -287,13 +287,13 @@ impl ChainWriter {
                 .await
                 .map_err(|e| format!("distributeReward failed: {}", e))?
         };
-        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+        let receipt = tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
             .await
             .map_err(|_| "distributeReward tx timed out".to_string())?
             .map_err(|e| format!("distributeReward tx failed: {}", e))?
             .ok_or_else(|| "distributeReward tx was dropped from mempool".to_string())?;
         tracing::info!("distributeReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
-        Ok(true)
+        Ok(Some(format!("{:?}", receipt.transaction_hash)))
     }
 
     /// The pool Endless pays from: its dedicated pool if configured, else the shared one.
@@ -305,10 +305,10 @@ impl ChainWriter {
     /// Like `distribute_reward`, but from the Endless pool (see `endless_or_main`). A
     /// separate pool means a survival grinder drains its own budget, not the rank-up /
     /// bounty budget.
-    pub async fn distribute_endless_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<bool, String> {
+    pub async fn distribute_endless_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<Option<String>, String> {
         let pool = match self.endless_or_main() {
             Some(p) => p.clone(),
-            None => return Ok(false),
+            None => return Ok(None),
         };
         let amount = U256::from(amount_g) * U256::exp10(18);
         let call = pool.distribute_reward(player, amount, reference);
@@ -318,13 +318,13 @@ impl ChainWriter {
                 .await
                 .map_err(|e| format!("distributeEndlessReward failed: {}", e))?
         };
-        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+        let receipt = tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
             .await
             .map_err(|_| "distributeEndlessReward tx timed out".to_string())?
             .map_err(|e| format!("distributeEndlessReward tx failed: {}", e))?
             .ok_or_else(|| "distributeEndlessReward tx was dropped from mempool".to_string())?;
         tracing::info!("distributeEndlessReward: {} +{} G$ (ref {})", player, amount_g, hex::encode(reference));
-        Ok(true)
+        Ok(Some(format!("{:?}", receipt.transaction_hash)))
     }
 
     /// `rewardRefUsed` against the Endless pool — the idempotency check for endless refs.
