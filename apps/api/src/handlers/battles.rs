@@ -965,21 +965,26 @@ async fn settle_first_clear_bounty(
     // If the chain already recorded this ref, the payout landed — reconcile the DB
     // instead of sending a transaction that would revert with RefAlreadyUsed.
     let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
-    let result = if already_paid { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+    let result = if already_paid {
+        Ok(Some(None))
+    } else {
+        chain.distribute_reward(addr, amount, reference).await.map(|r| r.map(Some))
+    };
 
     match result {
-        Ok(true) => {
+        Ok(Some(tx_hash)) => {
             // Flip to 'paid' and let ONLY the row that actually made that transition
             // credit the ledger + lifetime. The sweep now re-attempts 'pending' rows,
             // which can run while the live task is still in flight, so two settles may
-            // race on one bounty; both would see Ok(true) (the on-chain ref guard makes
+            // race on one bounty; both would see success (the on-chain ref guard makes
             // the second a no-op read). Gating the credit on rows_affected means the
             // loser credits nothing and the player is never double-counted.
             let credited = sqlx::query(
-                "UPDATE first_clear_bounties SET status = 'paid'
+                "UPDATE first_clear_bounties SET status = 'paid', tx_hash = COALESCE($3, tx_hash)
                  WHERE wallet_address = $1 AND level = $2 AND status <> 'paid'",
             )
-            .bind(wallet).bind(level).execute(db).await
+            .bind(wallet).bind(level).bind(&tx_hash).execute(db).await
             .map(|r| r.rows_affected() == 1)
             .unwrap_or(false);
 
@@ -990,7 +995,7 @@ async fn settle_first_clear_bounty(
                 // the player has the G$ but our ledger disagrees, so it must be loud.
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
-                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
                 ).await;
                 tracing::info!(
                     "first-clear bounty paid: {} op{} +{} G${}",
@@ -999,7 +1004,7 @@ async fn settle_first_clear_bounty(
             }
             "paid"
         }
-        Ok(false) => {
+        Ok(None) => {
             tracing::warn!("Reward pool not configured — first-clear bounty for {} op{} not paid", wallet, level);
             let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
                 .bind(wallet).bind(level).execute(db).await;
@@ -1035,18 +1040,23 @@ async fn settle_rank_up_reward(
     let reference = ethers::utils::keccak256(format!("rank_up:{}:{}", wallet, rank).as_bytes());
 
     let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
-    let result = if already_paid { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+    let result = if already_paid {
+        Ok(Some(None))
+    } else {
+        chain.distribute_reward(addr, amount, reference).await.map(|r| r.map(Some))
+    };
 
     match result {
-        Ok(true) => {
+        Ok(Some(tx_hash)) => {
             // Only the settle that actually flips 'pending'/'failed' → 'paid' credits the
             // ledger + lifetime; see settle_first_clear_bounty for why (the sweep can now
             // race the live task on a 'pending' row).
             let credited = sqlx::query(
-                "UPDATE rank_up_rewards SET status = 'paid'
+                "UPDATE rank_up_rewards SET status = 'paid', tx_hash = COALESCE($3, tx_hash)
                  WHERE wallet_address = $1 AND rank = $2 AND status <> 'paid'",
             )
-            .bind(wallet).bind(rank).execute(db).await
+            .bind(wallet).bind(rank).bind(&tx_hash).execute(db).await
             .map(|r| r.rows_affected() == 1)
             .unwrap_or(false);
 
@@ -1057,7 +1067,7 @@ async fn settle_rank_up_reward(
                 // the player has the G$ but our ledger disagrees, so it must be loud.
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
-                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
                 ).await;
                 tracing::info!(
                     "rank-up reward paid: {} {} +{} G${}",
@@ -1066,7 +1076,7 @@ async fn settle_rank_up_reward(
             }
             "paid"
         }
-        Ok(false) => {
+        Ok(None) => {
             tracing::warn!("Reward pool not configured — rank-up reward for {} {} not paid", wallet, rank);
             let _ = sqlx::query("UPDATE rank_up_rewards SET status = 'failed' WHERE wallet_address = $1 AND rank = $2")
                 .bind(wallet).bind(rank).execute(db).await;

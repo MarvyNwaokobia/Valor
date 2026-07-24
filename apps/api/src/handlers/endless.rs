@@ -325,15 +325,20 @@ pub async fn settle_endless_reward(
         format!("endless:{}:{}:{}", wallet, session_id, wave).as_bytes(),
     );
     let already_paid = chain.endless_ref_used(reference).await.unwrap_or(false);
-    let result = if already_paid { Ok(true) } else { chain.distribute_endless_reward(addr, amount, reference).await };
+    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+    let result = if already_paid {
+        Ok(Some(None))
+    } else {
+        chain.distribute_endless_reward(addr, amount, reference).await.map(|r| r.map(Some))
+    };
 
     match result {
-        Ok(true) => {
+        Ok(Some(tx_hash)) => {
             let credited = sqlx::query(
-                "UPDATE endless_rewards SET status = 'paid'
+                "UPDATE endless_rewards SET status = 'paid', tx_hash = COALESCE($3, tx_hash)
                  WHERE session_id = $1 AND wave = $2 AND status <> 'paid'",
             )
-            .bind(session_id).bind(wave).execute(db).await
+            .bind(session_id).bind(wave).bind(&tx_hash).execute(db).await
             .map(|r| r.rows_affected() == 1)
             .unwrap_or(false);
 
@@ -341,7 +346,7 @@ pub async fn settle_endless_reward(
                 let _ = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
                     .bind(amount as i64).bind(wallet).execute(db).await;
                 crate::handlers::ledger::insert_ledger_entry(
-                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), None, None,
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
                 ).await;
                 tracing::info!("endless reward paid: {} wave{} +{} G${}",
                     wallet, wave, amount, if already_paid { " (reconciled)" } else { "" });
@@ -349,7 +354,7 @@ pub async fn settle_endless_reward(
             }
             "paid"
         }
-        Ok(false) => {
+        Ok(None) => {
             tracing::warn!("Reward pool not configured — endless reward for {} wave{} not paid", wallet, wave);
             let _ = sqlx::query("UPDATE endless_rewards SET status = 'failed' WHERE session_id = $1 AND wave = $2")
                 .bind(session_id).bind(wave).execute(db).await;

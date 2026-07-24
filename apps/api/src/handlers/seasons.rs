@@ -204,23 +204,28 @@ async fn settle_season_payout(
     let Ok(addr) = wallet.parse::<Address>() else { return false; };
     let reference = ethers::utils::keccak256(format!("season_payout:{}:{}", season_id, wallet).as_bytes());
     let already = chain.reward_ref_used(reference).await.unwrap_or(false);
-    let result = if already { Ok(true) } else { chain.distribute_reward(addr, amount, reference).await };
+    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+    let result = if already {
+        Ok(Some(None))
+    } else {
+        chain.distribute_reward(addr, amount, reference).await.map(|r| r.map(Some))
+    };
     match result {
-        Ok(true) => {
-            let _ = sqlx::query("UPDATE season_payouts SET status = 'paid' WHERE season_id = $1 AND wallet_address = $2")
-                .bind(season_id).bind(wallet).execute(db).await;
+        Ok(Some(tx_hash)) => {
+            let _ = sqlx::query("UPDATE season_payouts SET status = 'paid', tx_hash = COALESCE($3, tx_hash) WHERE season_id = $1 AND wallet_address = $2")
+                .bind(season_id).bind(wallet).bind(&tx_hash).execute(db).await;
             let credited_locally = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
                 .bind(amount as i64).bind(wallet).execute(db).await;
             // Paid on-chain already; a failed local credit means our ledger under-reports
             // real money, so never swallow it.
             crate::handlers::battles::log_write_failure("season g_earned_lifetime credit", wallet, &credited_locally);
             crate::handlers::ledger::insert_ledger_entry(
-                db, wallet, "season_reward", rust_decimal::Decimal::from(amount), None, None,
+                db, wallet, "season_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
             ).await;
             tracing::info!("season payout paid: {} +{} G${}", wallet, amount, if already { " (reconciled)" } else { "" });
             true
         }
-        Ok(false) | Err(_) => {
+        Ok(None) | Err(_) => {
             let _ = sqlx::query("UPDATE season_payouts SET status = 'failed' WHERE season_id = $1 AND wallet_address = $2")
                 .bind(season_id).bind(wallet).execute(db).await;
             false
