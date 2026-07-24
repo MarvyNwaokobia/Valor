@@ -50,6 +50,47 @@ const KIND_LABEL: Record<string, string> = {
   ubi_claim:            'UBI claim',
 }
 
+// ── CSV export ───────────────────────────────────────────────────────────────
+type CsvValue = string | number | null | undefined
+
+function csvCell(v: CsvValue): string {
+  const s = v == null ? '' : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+function toCsv(rows: CsvValue[][]): string {
+  return rows.map((r) => r.map(csvCell).join(',')).join('\r\n')
+}
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+function todayStamp(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function DownloadButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:text-white border disabled:opacity-50 shrink-0"
+      style={{ borderColor: '#2a2a3a' }}
+    >
+      ⤓ Download CSV
+    </button>
+  )
+}
+
 function loadSession(): AdminSession | null {
   if (typeof window === 'undefined') return null
   try {
@@ -182,6 +223,46 @@ export default function AdminPage() {
     }
   }
 
+  function handleDownloadStats() {
+    if (!stats) return
+    const label = stats.season_name ?? 'all-time'
+    const rows: CsvValue[][] = [
+      ['metric', 'value'],
+      ['season', label],
+      ['window_start', stats.starts_at],
+      ['window_end', stats.ends_at ?? 'now'],
+      ['new_players', stats.new_players],
+      ['active_players', stats.active_players],
+      ['total_battles', stats.total_battles],
+      ['g_awarded', stats.total_g_awarded],
+      ['g_volume_moved', stats.total_g_volume],
+      ['g_transferred_out', stats.total_g_transferred_out],
+    ]
+    downloadCsv(`valor-summary-${label.replace(/\s+/g, '-').toLowerCase()}-${todayStamp()}.csv`, toCsv(rows))
+  }
+
+  async function handleDownloadActivity() {
+    setBusy(true)
+    try {
+      // Pull the FULL history for the export, not just the 100 shown in the list.
+      const res = await authedFetch('/admin/onchain?limit=10000')
+      if (!res.ok) return
+      const all: OnchainRow[] = await res.json()
+      const header: CsvValue[] = ['date', 'type', 'wallet', 'detail', 'tx_hash', 'celoscan_url']
+      const body: CsvValue[][] = all.map((r) => [
+        r.created_at,
+        KIND_LABEL[r.kind] ?? r.kind,
+        r.wallet,
+        r.detail ?? '',
+        r.tx_hash,
+        `https://celoscan.io/tx/${r.tx_hash}`,
+      ])
+      downloadCsv(`valor-onchain-activity-${todayStamp()}.csv`, toCsv([header, ...body]))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const openSeason = seasons.find((s) => !s.ends_at)
 
   if (!session) {
@@ -269,21 +350,32 @@ export default function AdminPage() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <StatTile label="New Players" value={stats.new_players.toLocaleString()} />
-          <StatTile label="Active Players" value={stats.active_players.toLocaleString()} />
-          <StatTile label="Total Battles" value={stats.total_battles.toLocaleString()} />
-          <StatTile label="G$ Awarded" value={`${formatGDollarNumber(stats.total_g_awarded)} G$`} />
-          <StatTile label="G$ Volume Moved" value={`${formatGDollarNumber(stats.total_g_volume)} G$`} />
-          <StatTile label="G$ Transferred Out" value={`${formatGDollarNumber(stats.total_g_transferred_out)} G$`} />
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display font-bold text-white text-sm">
+              {stats.season_name ?? 'All-Time'} Summary
+            </h3>
+            <DownloadButton onClick={handleDownloadStats} />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <StatTile label="New Players" value={stats.new_players.toLocaleString()} />
+            <StatTile label="Active Players" value={stats.active_players.toLocaleString()} />
+            <StatTile label="Total Battles" value={stats.total_battles.toLocaleString()} />
+            <StatTile label="G$ Awarded" value={`${formatGDollarNumber(stats.total_g_awarded)} G$`} />
+            <StatTile label="G$ Volume Moved" value={`${formatGDollarNumber(stats.total_g_volume)} G$`} />
+            <StatTile label="G$ Transferred Out" value={`${formatGDollarNumber(stats.total_g_transferred_out)} G$`} />
+          </div>
         </div>
       )}
 
       {/* On-chain activity — mission records + G$ moves, each linked to Celoscan */}
       <div className="bg-valor-surface border border-valor-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-3">
           <h3 className="font-display font-bold text-white text-sm">On-Chain Activity</h3>
-          <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Latest {onchain.length}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Latest {onchain.length}</span>
+            <DownloadButton onClick={handleDownloadActivity} disabled={busy} />
+          </div>
         </div>
         {onchain.length === 0 ? (
           <p className="text-slate-600 text-xs">No on-chain activity yet.</p>

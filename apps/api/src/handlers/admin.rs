@@ -248,13 +248,25 @@ pub struct OnchainRow {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Deserialize)]
+pub struct OnchainQuery {
+    /// Row cap. The UI list uses the default 100; the CSV export asks for the full
+    /// history with a large limit. Clamped to [1, 10000] so a bad value can't run away.
+    pub limit: Option<i64>,
+}
+
 /// Merges on-chain game records (battles.game_record_tx) with on-chain G$ moves
 /// (g_ledger.tx_hash), newest first — only genuine 0x tx hashes. The admin UI
 /// links each to Celoscan.
-pub async fn list_onchain(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+pub async fn list_onchain(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    query: web::Query<OnchainQuery>,
+) -> HttpResponse {
     if let Err(resp) = verify_admin_token(&req) {
         return resp;
     }
+    let limit = query.limit.unwrap_or(100).clamp(1, 10_000);
     let rows = sqlx::query_as::<_, OnchainRow>(
         "SELECT 'mission_record' AS kind, winner_wallet AS wallet,
                 (rounds_data->>'level') AS detail, game_record_tx AS tx_hash, created_at
@@ -266,8 +278,9 @@ pub async fn list_onchain(req: HttpRequest, state: web::Data<AppState>) -> HttpR
            FROM g_ledger
           WHERE tx_hash LIKE '0x%'
          ORDER BY created_at DESC
-         LIMIT 100",
+         LIMIT $1",
     )
+    .bind(limit)
     .fetch_all(&state.db)
     .await;
 
