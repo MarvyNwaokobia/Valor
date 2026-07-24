@@ -2129,8 +2129,8 @@ function MissionDebrief({ mode, cleared, next, reward, onDeploy, onRetry, onExit
         {reward && (
           <div style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 14, letterSpacing: 3, color: '#5fe0a8', fontWeight: 700 }}>+{reward.xpAwarded} XP</div>
-            {reward.firstClear && reward.bountyAwarded > 0 && (
-              <div style={{ fontSize: 12, letterSpacing: 2, color: '#ffcf5f', marginTop: 7 }}>FIRST CLEAR BONUS · +{reward.bountyAwarded} G$</div>
+            {reward.bountyAwarded > 0 && (
+              <div style={{ fontSize: 12, letterSpacing: 2, color: '#ffcf5f', marginTop: 7 }}>{reward.firstClear ? 'FIRST CLEAR BONUS' : 'OP BOUNTY'} · +{reward.bountyAwarded} G$</div>
             )}
             {reward.rankedUp && reward.newRank && (
               <div style={{ fontSize: 16, letterSpacing: 3, color: '#37d0e0', fontWeight: 800, marginTop: 7 }}>RANK UP → {reward.newRank.toUpperCase()} · +{reward.gAwarded} G$</div>

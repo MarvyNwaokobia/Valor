@@ -908,6 +908,27 @@ pub async fn complete_live_fight(
                 pay_first_clear_bounty(&state, wallet.clone(), level, amount);
             }
         }
+    } else if body.won {
+        // Pay-per-play (policy change 2026-07-24): a session-backed Campaign WIN that is
+        // NOT a first clear pays the op bounty too — play it again, earn it again. Keyed
+        // by battle id, so each play is its own idempotent payout slot; a retry of the
+        // same submit hits the PK conflict and pays nothing.
+        if let Some(level) = level {
+            let amount = first_clear_bounty(level);
+            let claimed = sqlx::query(
+                "INSERT INTO op_play_bounties (battle_id, wallet_address, level, amount)
+                 VALUES ($1, $2, $3, $4) ON CONFLICT (battle_id) DO NOTHING",
+            )
+            .bind(outcome.battle_id).bind(&wallet).bind(level).bind(amount as i64)
+            .execute(&state.db).await
+            .map(|r| r.rows_affected() == 1)
+            .unwrap_or(false);
+
+            if claimed {
+                bounty_awarded = amount;
+                pay_op_play_bounty(&state, outcome.battle_id, wallet.clone(), level, amount);
+            }
+        }
     }
 
     HttpResponse::Ok().json(json!({
@@ -1014,6 +1035,83 @@ async fn settle_first_clear_bounty(
             tracing::error!("first-clear bounty on-chain failed for {} op{}: {}", wallet, level, e);
             let _ = sqlx::query("UPDATE first_clear_bounties SET status = 'failed' WHERE wallet_address = $1 AND level = $2")
                 .bind(wallet).bind(level).execute(db).await;
+            "failed"
+        }
+    }
+}
+
+/// Fire-and-forget the on-chain pay-per-play op bounty. The (battle_id) row was already
+/// claimed by the caller (PK-idempotent), so this runs at most once per play. Delegates to
+/// `settle_op_play_bounty`, which is shared with the reconcile job.
+fn pay_op_play_bounty(state: &AppState, battle_id: Uuid, wallet: String, level: i32, amount: u64) {
+    let Some(chain) = state.chain.as_ref().cloned() else { return; };
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        settle_op_play_bounty(&db, &chain, battle_id, &wallet, level, amount).await;
+    });
+}
+
+/// Attempt (or re-attempt) the on-chain payout for one pay-per-play op bounty. Mirrors
+/// `settle_first_clear_bounty` exactly, except the idempotency key is the battle id —
+/// every play is its own one-time payout, so replays of the same op each pay once.
+async fn settle_op_play_bounty(
+    db: &sqlx::PgPool,
+    chain: &crate::services::chain::ChainWriter,
+    battle_id: Uuid,
+    wallet: &str,
+    level: i32,
+    amount: u64,
+) -> &'static str {
+    let Ok(addr) = wallet.parse::<Address>() else {
+        tracing::error!("op-play bounty: bad wallet {}", wallet);
+        return "bad_wallet";
+    };
+    // Deterministic on-chain idempotency key per play.
+    let reference = ethers::utils::keccak256(format!("op_play:{}:{}", wallet, battle_id).as_bytes());
+
+    let already_paid = chain.reward_ref_used(reference).await.unwrap_or(false);
+    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+    let result = if already_paid {
+        Ok(Some(None))
+    } else {
+        chain.distribute_reward(addr, amount, reference).await.map(|r| r.map(Some))
+    };
+
+    match result {
+        Ok(Some(tx_hash)) => {
+            // Credit gated on the row actually flipping to 'paid' — see
+            // settle_first_clear_bounty for why (live task + sweep can race).
+            let credited = sqlx::query(
+                "UPDATE op_play_bounties SET status = 'paid', tx_hash = COALESCE($2, tx_hash)
+                 WHERE battle_id = $1 AND status <> 'paid'",
+            )
+            .bind(battle_id).bind(&tx_hash).execute(db).await
+            .map(|r| r.rows_affected() == 1)
+            .unwrap_or(false);
+
+            if credited {
+                let credited_locally = sqlx::query("UPDATE players SET g_earned_lifetime = g_earned_lifetime + $1 WHERE wallet_address = $2")
+                    .bind(amount as i64).bind(wallet).execute(db).await;
+                // The transfer already CONFIRMED on-chain. If this local credit fails
+                // the player has the G$ but our ledger disagrees, so it must be loud.
+                log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
+                crate::handlers::ledger::insert_ledger_entry(
+                    db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                ).await;
+                tracing::info!("op-play bounty paid: {} op{} +{} G$ (battle {})", wallet, level, amount, battle_id);
+            }
+            "paid"
+        }
+        Ok(None) => {
+            tracing::warn!("Reward pool not configured — op-play bounty for {} op{} not paid", wallet, level);
+            let _ = sqlx::query("UPDATE op_play_bounties SET status = 'failed' WHERE battle_id = $1")
+                .bind(battle_id).execute(db).await;
+            "unconfigured"
+        }
+        Err(e) => {
+            tracing::error!("op-play bounty on-chain failed for {} op{} (battle {}): {}", wallet, level, battle_id, e);
+            let _ = sqlx::query("UPDATE op_play_bounties SET status = 'failed' WHERE battle_id = $1")
+                .bind(battle_id).execute(db).await;
             "failed"
         }
     }
@@ -1167,18 +1265,42 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         }
     }
 
+    // Same idempotent rail for pay-per-play op bounties (replay wins), including the
+    // abandoned-'pending' case above.
+    let play_rows: Vec<(Uuid, String, i32, i64)> = sqlx::query_as(
+        "SELECT battle_id, wallet_address, level, amount
+         FROM op_play_bounties
+         WHERE status = 'failed'
+            OR (status = 'pending' AND created_at < now() - interval '5 minutes')
+         ORDER BY created_at ASC
+         LIMIT 25",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let play_attempted = play_rows.len();
+    let mut play_reconciled = 0u32;
+    for (battle_id, wallet, level, amount) in play_rows {
+        if settle_op_play_bounty(&state.db, &chain, battle_id, &wallet, level, amount.max(0) as u64).await == "paid" {
+            play_reconciled += 1;
+        }
+    }
+
     // Same idempotent rail for Endless per-wave payouts.
     let (endless_attempted, endless_reconciled) =
         crate::handlers::endless::sweep_endless_rewards(&state.db, &chain).await;
 
     tracing::info!(
-        "reward reconcile: bounties {}/{}, rank-ups {}/{}, endless {}/{} settled",
-        reconciled, attempted, rank_reconciled, rank_attempted, endless_reconciled, endless_attempted
+        "reward reconcile: bounties {}/{}, rank-ups {}/{}, op-plays {}/{}, endless {}/{} settled",
+        reconciled, attempted, rank_reconciled, rank_attempted, play_reconciled, play_attempted, endless_reconciled, endless_attempted
     );
     HttpResponse::Ok().json(json!({
         "attempted":         attempted,
         "reconciled":        reconciled,
         "still_failed":      attempted as u32 - reconciled,
+        "play_attempted":    play_attempted,
+        "play_reconciled":   play_reconciled,
         "rank_attempted":    rank_attempted,
         "rank_reconciled":   rank_reconciled,
         "rank_still_failed": rank_attempted as u32 - rank_reconciled,

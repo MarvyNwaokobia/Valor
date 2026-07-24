@@ -100,6 +100,11 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
          FROM rank_up_rewards
          WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         UNION ALL
+         SELECT 'op_play', wallet_address, level::text, amount, status,
+                (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
+         FROM op_play_bounties
+         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
          ORDER BY minutes_old DESC
          LIMIT 50",
     )
