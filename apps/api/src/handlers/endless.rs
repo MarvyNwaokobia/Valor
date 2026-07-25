@@ -41,11 +41,13 @@ fn pool_warn_g() -> u64 {
     std::env::var("ENDLESS_POOL_WARN_G").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000)
 }
 
-/// G$ paid for clearing `wave` (1-based). Banded: 500 × ceil(wave/4). Waves 1–4 pay
-/// 500 each, 5–8 pay 1,000, 9–12 pay 1,500 … deeper always pays more.
+/// G$ paid for clearing `wave` (1-based): +500 per wave (wave N pays 500 × N), clamped
+/// to the on-chain per-payout cap. Wave 1 pays 500, wave 2 pays 1,000 … wave 20 hits the
+/// 10,000 ceiling and every deeper wave pays that (a bigger distributeReward reverts).
 fn wave_reward_g(wave: i32) -> u64 {
-    let band = ((wave + 3) / 4).max(1) as u64;
-    500 * band
+    const MAX_REWARD_G: u64 = 10_000; // mirrors ValorRewardPool.MAX_REWARD (on-chain cap)
+    let w = wave.max(1) as u64;
+    (500 * w).min(MAX_REWARD_G)
 }
 
 #[derive(Deserialize)]
