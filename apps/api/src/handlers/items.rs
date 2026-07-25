@@ -186,6 +186,20 @@ pub async fn purchase_item_relay(
         &state.db, &wallet, "marketplace_purchase", item.price_g, Some(&tx_hash), None,
     ).await;
 
+    // Recirculate shop revenue: sweep what this purchase just added into the reward
+    // pool (the prize pool that pays battles / rank-ups / bounties). On-chain items
+    // only — off-chain items move no G$. Fire-and-forget so it never blocks or fails
+    // the purchase response; the sweep is a no-op if nothing has accrued.
+    if item.on_chain_id.is_some() {
+        if let Some(chain) = state.chain.as_ref().cloned() {
+            tokio::spawn(async move {
+                if let Err(e) = chain.sweep_revenue_to_pool().await {
+                    tracing::warn!("marketplace revenue sweep failed: {}", e);
+                }
+            });
+        }
+    }
+
     tracing::info!("Purchase confirmed: item={} buyer={} tx={}", item_id, wallet, tx_hash);
 
     HttpResponse::Ok().json(json!({

@@ -27,6 +27,8 @@ abigen!(
     ValorMarketplace,
     r#"[
         function purchaseWithPermit(address buyer, uint256 itemId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+        function withdrawRevenue(address to) external
+        function accumulatedRevenue() external view returns (uint256)
     ]"#
 );
 
@@ -440,6 +442,49 @@ impl ChainWriter {
 
         tracing::info!("purchaseWithPermit confirmed: {:?}", hash);
         Ok(hash)
+    }
+
+    /// Sweep the marketplace's accumulated revenue into the ValorRewardPool so shop
+    /// spend recirculates into the prize pool that pays battles / rank-ups / bounties
+    /// (instead of sitting idle until a manual withdraw). `withdrawRevenue` is owner-only
+    /// on the contract; the relay wallet IS the marketplace owner, so this just works.
+    /// No-op (returns `Ok(None)`) when nothing has accrued, so we never spend gas on a
+    /// zero-value transfer. Fire-and-forget from the purchase handler.
+    pub async fn sweep_revenue_to_pool(&self) -> Result<Option<H256>, String> {
+        let marketplace = self
+            .marketplace
+            .as_ref()
+            .ok_or_else(|| "Marketplace relay not configured (MARKETPLACE_CONTRACT unset)".to_string())?;
+        let pool = self
+            .reward_pool_address()
+            .ok_or_else(|| "Reward pool not configured (REWARD_POOL_CONTRACT unset)".to_string())?;
+
+        // Skip the tx entirely if there's nothing to sweep (a concurrent sweep may have
+        // just drained it, or the item was off-chain and moved no G$).
+        let accrued: U256 = marketplace
+            .accumulated_revenue()
+            .call()
+            .await
+            .map_err(|e| format!("accumulatedRevenue read failed: {}", e))?;
+        if accrued.is_zero() {
+            return Ok(None);
+        }
+
+        let call = marketplace.withdraw_revenue(pool);
+        let pending = {
+            let _tx = self.tx_lock.lock().await;
+            call.send().await
+                .map_err(|e| format!("withdrawRevenue submission failed: {}", e))?
+        };
+        let hash = pending.tx_hash();
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+            .await
+            .map_err(|_| "withdrawRevenue tx timed out".to_string())?
+            .map_err(|e| format!("withdrawRevenue tx failed: {}", e))?
+            .ok_or_else(|| "withdrawRevenue tx was dropped from mempool".to_string())?;
+
+        tracing::info!("swept {} G$ (wei) marketplace revenue → reward pool {:?} (tx {:?})", accrued, pool, hash);
+        Ok(Some(hash))
     }
 
     /// Relays a player-initiated G$ transfer to any destination address.
