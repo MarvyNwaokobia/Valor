@@ -11,6 +11,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
 import { useLedgerSummary } from '@/hooks/useLedgerSummary'
 import { useTransferOut } from '@/hooks/useTransferOut'
+import { useDebt, useSettleDebt } from '@/hooks/useDebt'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import { formatGDollarNumber } from '@/utils/format'
@@ -26,6 +27,58 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
       <p className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">{label}</p>
       <p className="font-display font-black text-white text-xl leading-none">{value}</p>
       {sub && <p className="text-[10px] text-slate-600 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+/** Outstanding-balance banner: shown when the player owes the shop (e.g. a price
+ *  adjustment). Dismissible; settling signs a G$ permit that moves the owed amount
+ *  into the reward pool. Renders nothing when there's no debt. */
+function SettleBanner({ address }: { address: string | undefined }) {
+  const { data: debt } = useDebt(address)
+  const { settle, pending } = useSettleDebt(address)
+  const [dismissed, setDismissed] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  const owed = debt?.owed ?? 0
+  if (owed <= 0 || dismissed || done) return null
+
+  async function handleSettle() {
+    setError(null)
+    try {
+      await settle(owed)
+      setDone(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Settlement failed')
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 rounded-xl border"
+      style={{ background: 'rgba(239,68,68,0.09)', borderColor: 'rgba(239,68,68,0.4)' }}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[9px] uppercase tracking-widest text-red-400/80 font-bold">Outstanding balance</p>
+          <p className="font-black text-red-300 text-lg leading-tight">{formatGDollarNumber(owed)} G$ due</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            {debt?.reason ? `From: ${debt.reason}. ` : ''}Sign to settle — it moves into the prize pool.
+          </p>
+          {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
+        </div>
+        <div className="flex flex-col gap-1.5 shrink-0">
+          <button
+            onClick={handleSettle}
+            disabled={pending}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+            style={{ background: 'rgba(239,68,68,0.85)' }}>
+            {pending ? 'Settling…' : `Settle ${formatGDollarNumber(owed)} G$`}
+          </button>
+          <button onClick={() => setDismissed(true)} className="text-[10px] text-slate-500 hover:text-slate-300">
+            Later
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -108,6 +161,9 @@ export default function BankPage() {
           <LogOut size={13} /> Sign out
         </button>
       </div>
+
+      {/* Outstanding balance (price adjustment) — renders only when owed > 0 */}
+      <SettleBanner address={address} />
 
       {/* Balance */}
       <div className="flex items-center justify-between px-4 py-3 rounded-xl border"
