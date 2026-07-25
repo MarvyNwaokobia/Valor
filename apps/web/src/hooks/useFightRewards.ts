@@ -172,5 +172,37 @@ export function useFightRewards() {
     [player, updatePlayer, checkAchievements, checkDecayRecovery]
   )
 
-  return { startFight, submitResult, reward, pending, error }
+  // Record a DEATH (a lost run) with the server. Unlike submitResult this goes through
+  // the sessionless flat path ON PURPOSE: it must NOT consume the campaign token (the
+  // op auto-restarts in place, and the eventual clear still needs that token to earn
+  // G$ / advance the level). A loss never pays, so it needs no session anti-cheat. The
+  // server still writes the on-chain ValorGameRecord (player as loser). Fire-and-forget.
+  const reportLoss = useCallback(
+    async (telemetry?: FightTelemetry): Promise<void> => {
+      if (!player) return
+      const wallet    = player.wallet_address
+      const kills     = Math.max(0, Math.round(telemetry?.kills ?? 0))
+      const headshots = Math.max(0, Math.round(telemetry?.headshots ?? 0))
+      try {
+        const res = await fetch(`${API}/battles/fight/complete`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // No session_id → flat path → level forced None → records the loss, pays nothing.
+          body:    JSON.stringify({ won: false, wallet, kills, headshots }),
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        // Mirror the server: bump the loss tally (and any XP it awarded).
+        updatePlayer({
+          losses: player.losses + 1,
+          ...(typeof data.new_xp === 'number' ? { xp: data.new_xp } : {}),
+        })
+      } catch {
+        // offline / server down — the death simply doesn't record; play continues.
+      }
+    },
+    [player, updatePlayer]
+  )
+
+  return { startFight, submitResult, reportLoss, reward, pending, error }
 }

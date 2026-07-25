@@ -368,12 +368,15 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
   // desktop/laptop: also kills shadows + set-dressing (mobile never sets this).
   audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: (stats: { kills: number; headshots: number }) => void;
+  // Fires once per death, just before the op auto-restarts. The scene records the loss
+  // (campaign only). Omitted where losses aren't recorded (/dev/verb).
+  onDeath?: (stats: { kills: number; headshots: number }) => void;
   pausedRef: React.MutableRefObject<boolean>;
   // While the server-readiness gate is up (connecting / retry), freeze the sim so the
   // briefing + countdown don't run out behind the overlay and drop you into a live fight.
@@ -1160,6 +1163,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       } else if (ev.kind === 'playerDown') {
         downAt.current = now;
         if (hud.current.down) hud.current.down.style.opacity = '1';
+        // Record the death (once per down event, before the op auto-restarts). The
+        // scene reports it only for a campaign op; other modes ignore it.
+        onDeath?.(sim.snapshot().stats);
       } else if (ev.kind === 'bossPhase') {
         // The boss just escalated: pulse it, jolt the view, and let Valor mark it.
         bossFlash.current = 1;
@@ -2360,7 +2366,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit }: {
+export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit }: {
   /** Leave the fight entirely and return to the mode-select page (Campaign /
    *  Live PvP / Challenge). `/fight` wires this to router.push('/battle'). In a
    *  standalone PWA there is NO browser back button, so this is the only way out —
@@ -2376,6 +2382,11 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
    *  server-authoritative reward (XP → rank → G$). Omitted at `/dev/verb`, which
    *  stays a self-contained sandbox. */
   onOpCleared?: (level: number, stats?: { kills: number; headshots: number }) => Promise<OpReward | null> | void;
+  /** Fires when the player is KILLED on a campaign op (once per death). `/fight` uses
+   *  it to record the loss on-chain (player as loser) via the sessionless flat path,
+   *  which never touches the op token — the in-place retry still clears for full
+   *  reward. Omitted at `/dev/verb`. */
+  onOpFailed?: (stats?: { kills: number; headshots: number }) => void;
   /** Boot straight into this operation index (chosen on the external Operations
    *  list). Selection lives OUTSIDE the game, so we drop right into the op. */
   startMission?: number;
@@ -2554,6 +2565,14 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
     // Hold the completion promise so the NEXT op's session-start waits for it (the clear
     // advances pve_level server-side, which the next op's unlock gate checks).
     pendingClear.current = Promise.resolve(onOpCleared?.(missionIndex + 1, stats)).then((r) => { if (r) setLastReward(r); return r; });
+  };
+  // Killed in action on a campaign op. Record the loss (on-chain, via the sessionless
+  // flat path) without disturbing the op token — the op restarts in place and the
+  // eventual clear still earns full reward. Only campaign runs record a loss; survival
+  // and the gauntlet have their own (unsessioned) flows.
+  const handleDeath = (stats: { kills: number; headshots: number }) => {
+    if (mode !== 'campaign') return;
+    onOpFailed?.(stats);
   };
   const deployNext = () => {
     const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);
@@ -2870,7 +2889,7 @@ export function ValorScene({ onOpStart, onOpCleared, startMission, resumeLevel, 
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
         </Suspense>
       </Canvas>
 

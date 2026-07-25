@@ -36,7 +36,7 @@ const ValorScene = dynamic(
 
 function FightInner() {
   const router = useRouter();
-  const { startFight, submitResult } = useFightRewards();
+  const { startFight, submitResult, reportLoss } = useFightRewards();
   const walletAddress = usePlayerStore((s) => s.player?.wallet_address);
   // C1: the real account rank + XP so the in-game HUD reflects true server standing.
   const accountRank = usePlayerStore((s) => s.player?.rank);
@@ -91,12 +91,19 @@ function FightInner() {
     (_level: number, stats?: { kills: number; headshots: number }) => submitResult(true, stats).catch(() => null),
     [submitResult],
   );
+  // Killed in action: record the loss (on-chain via the server) without touching the
+  // op token, so the in-place retry still clears for full reward. Fire-and-forget.
+  const onOpFailed = useCallback(
+    (stats?: { kills: number; headshots: number }) => { void reportLoss(stats); },
+    [reportLoss],
+  );
 
   return (
     <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
       <ValorScene
         onOpStart={onOpStart}
         onOpCleared={onOpCleared}
+        onOpFailed={onOpFailed}
         startMission={startMission}
         resumeLevel={pveLevel}
         walletAddress={walletAddress}
