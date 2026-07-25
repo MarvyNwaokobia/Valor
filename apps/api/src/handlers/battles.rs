@@ -868,8 +868,9 @@ pub async fn complete_live_fight(
         Some(level) => json!({ "kind": "mission", "level": level, "won": body.won }),
         None => json!([]),
     };
-    // Option B: record wins/completions on-chain; losses stay history-only (no gas).
-    let record_on_chain = body.won;
+    // Record every result on-chain — both a completion (win) and a death (loss)
+    // write a ValorGameRecord. Losses cost gas but give an honest on-chain history.
+    let record_on_chain = true;
     // Refereed (bonus-eligible) only when session-backed — the flat/Endless path is not.
     let reward_eligible = body.session_id.is_some();
     let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain, reward_eligible).await {
