@@ -17,6 +17,17 @@ export const wagmiConfig = createConfig({
     ...(walletConnectProjectId
       ? [walletConnect({
           projectId: walletConnectProjectId,
+          // Route pairing through Reown's current relay host. The SDK still
+          // defaults to the legacy `relay.walletconnect.org`, which some ISP/
+          // router DNS resolvers sinkhole (they return NO address for the
+          // `relay.` subdomain while the marketing apex resolves fine) — the
+          // socket then dies with "A server with the specified hostname could
+          // not be found" and the wallet hangs on "Connecting…". `relay.reown.com`
+          // is the same relay network under a host those filters don't catch.
+          // NOTE: this is NOT the reverted `.com` pin (that was
+          // relay.walletconnect.com, blocked by the same filter) — it's the
+          // Reown-branded host, which resolves where the walletconnect.* ones don't.
+          relayUrl: 'wss://relay.reown.com',
           // Explicit metadata so the wallet prompt shows Valor's identity and,
           // crucially, a `url` that matches the domain allowlisted in the Reown/
           // WalletConnect Cloud project. A mismatch (or missing entry) makes the
