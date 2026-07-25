@@ -16,14 +16,26 @@ serialized behind a nonce lock (`ChainWriter.tx_lock`) so concurrent fights can'
 
 | # | Transaction | Contract / call | Trigger | Volume shape | Code |
 |---|-------------|-----------------|---------|--------------|------|
-| 1 | **Record battle** | `ValorGameRecord.recordBattle` | **Every fight completion** (campaign op and PvP) | **1 per fight** — the biggest natural driver | `handlers/battles.rs:447`, `:1356` |
+| 1 | **Record battle** | `ValorGameRecord.recordBattle` | **Every fight outcome** — a campaign clear (win) **and a death (loss)**, plus PvP | **1 per outcome** — the biggest natural driver | `handlers/battles.rs:447`, `:1488` |
 | 2 | **Record rank-up** | `ValorGameRecord.recordRankUp` | Crossing a rank threshold | 1 per rank-up | `handlers/battles.rs:393` |
 | 3 | **Enroll in rank pool** | GoodCollective UBI pool `addMember` | Crossing a rank threshold | 1 per rank-up | `handlers/battles.rs:394` |
 | 4 | **Claim character** | `ValorGameRecord.claimCharacter` | Creating / claiming a character at onboarding | 1 per player (once) | `handlers/players.rs:370` |
-| 5 | **First-clear bounty** | `ValorRewardPool.distributeReward` | Clearing a campaign op for the first time | 1 per op, per player (15 ops) | `handlers/battles.rs:968` |
-| 6 | **Rank-up reward** | `ValorRewardPool.distributeReward` | Every rank-up (`500 × ordinal` G$) | 1 per rank-up | `handlers/battles.rs:1038` |
-| 7 | **Season payout** | `ValorRewardPool.distributeReward` | Season close, per winning wallet | 1 per winner per season | `handlers/seasons.rs:207` |
-| 8 | **Endless per-wave payout** | Endless pool `distributeReward` | Each Endless wave cleared | **1 per wave** — many per run | `handlers/endless.rs:328` |
+| 5 | **Pay-per-play op bounty** | `ValorRewardPool.distributeReward` | **Every campaign op WIN** (not just the first clear), keyed by `battle_id` | **1 per win** — every cleared op pays | `handlers/battles.rs:930`, `:1055` |
+| 6 | **First-clear bounty** | `ValorRewardPool.distributeReward` | Clearing a campaign op for the *first* time | 1 per op, per player (15 ops) | `handlers/battles.rs:909`, `:973` |
+| 7 | **Rank-up reward** | `ValorRewardPool.distributeReward` | Every rank-up (`500 × ordinal` G$) | 1 per rank-up | `handlers/battles.rs:1145` |
+| 8 | **Season payout** | `ValorRewardPool.distributeReward` | Season close, per winning wallet | 1 per winner per season | `handlers/seasons.rs:211` |
+| 9 | **Endless per-wave payout** | Endless pool `distributeReward` | Each Endless wave cleared | **1 per wave** — many per run | `handlers/endless.rs:332` |
+
+> **Losses now record on-chain (as of `95abeaf`).** Previously PvE losses were skipped to save
+> gas *and* the client never even reported a death to the server, so no loss existed anywhere
+> (on-chain or in the DB). Now a death fires `recordBattle(winner=0x0, loser=player, is_bot=true)`
+> — no payout (losses never pay), just an honest record. It goes through the **sessionless flat
+> path** so it never consumes the campaign op token; the op auto-restarts in place and the
+> eventual clear still earns its full pay-per-play + first-clear reward. This roughly **doubles**
+> the `recordBattle` volume, at the cost of relay CELO gas on every death.
+>
+> **Gas is CELO-only.** The relay pays native CELO for every write above — G$ is **not** a Celo
+> fee currency (not in the FeeCurrencyDirectory), so gas can never be paid in G$.
 
 Each payout is idempotent on-chain via a deterministic `keccak256` `ref` (e.g.
 `first_clear:{wallet}:{level}`, `rank_up:{wallet}:{rank}`), and reconciled by cron if a send
@@ -33,27 +45,27 @@ fails — so retries never double-pay and never fabricate volume.
 
 | # | Transaction | Call | Trigger | Volume shape | Code |
 |---|-------------|------|---------|--------------|------|
-| 9 | **Marketplace purchase** | `ValorMarketplace.purchaseWithPermit` | Buying a gun / ammo / attachment / booster / field-kit | 1 per purchase | `handlers/items.rs:152` |
-| 10 | **Transfer out / P2P** | G$ `permit` + `transferFrom` | Sending G$ to another wallet (Bank transfer-out) | up to 2 calls per transfer | `handlers/ledger.rs:185` |
-| 11 | **Re-arm: session allowance** | G$ `permit` | Signed once at Survival run start | 1 per run | `handlers/survival.rs:100` |
-| 12 | **Re-arm: spend** | G$ `transferFrom` | Each mid-run revive / restock / wave-skip | **many per run** (no new signature) | `handlers/survival.rs:201` |
+| 10 | **Marketplace purchase** | `ValorMarketplace.purchaseWithPermit` | Buying a gun / ammo / attachment / booster / field-kit | 1 per purchase | `handlers/items.rs:152` |
+| 11 | **Transfer out / P2P** | G$ `permit` + `transferFrom` | Sending G$ to another wallet (Bank transfer-out) | up to 2 calls per transfer | `handlers/ledger.rs:185` |
+| 12 | **Re-arm: session allowance** | G$ `permit` | Signed once at Survival run start | 1 per run | `handlers/survival.rs:100` |
+| 13 | **Re-arm: spend** | G$ `transferFrom` | Each mid-run revive / restock / wave-skip | **many per run** (no new signature) | `handlers/survival.rs:201` |
 
 ### C. Player-signed direct wallet txs (P2P resale)
 
 | # | Transaction | Call | Trigger | Code |
 |---|-------------|------|---------|------|
-| 13 | **List for resale** | `ValorMarketplace.listForResale` | Seller lists an owned item NFT | `hooks/useResale.ts` |
-| 14 | **Operator approval** | ERC-1155 `setApprovalForAll` | One-time, before first listing | `hooks/useResale.ts` |
-| 15 | **Cancel resale** | `ValorMarketplace.cancelResale` | Seller delists | `hooks/useResale.ts` |
-| 16 | **Buy resale** | `ValorMarketplace.buyResaleWithPermit` | Buyer purchases a listed item (permit) | `hooks/useResale.ts` |
+| 14 | **List for resale** | `ValorMarketplace.listForResale` | Seller lists an owned item NFT | `hooks/useResale.ts` |
+| 15 | **Operator approval** | ERC-1155 `setApprovalForAll` | One-time, before first listing | `hooks/useResale.ts` |
+| 16 | **Cancel resale** | `ValorMarketplace.cancelResale` | Seller delists | `hooks/useResale.ts` |
+| 17 | **Buy resale** | `ValorMarketplace.buyResaleWithPermit` | Buyer purchases a listed item (permit) | `hooks/useResale.ts` |
 
 ### D. GoodDollar protocol claims (user claims directly against GoodDollar contracts)
 
 | # | Transaction | Trigger | Code |
 |---|-------------|---------|------|
-| 17 | **Daily UBI claim** | Daily Check-In → GoodDollar UBI (5 G$/day) | `hooks/*`, `lib/gooddollar.ts` |
-| 18 | **Engagement rewards claim** | GoodDollar EngagementRewards `appClaim` (backend signs EIP-712, user submits) | `hooks/useEngagementRewards.ts`, `services/rewards.rs` |
-| 19 | **Rank pool UBI claim** | GoodCollective UBI pool claim (⚠️ pools never funded/created in prod) | `hooks/useRankPool.ts` |
+| 18 | **Daily UBI claim** | Daily Check-In → GoodDollar UBI (5 G$/day) | `hooks/*`, `lib/gooddollar.ts` |
+| 19 | **Engagement rewards claim** | GoodDollar EngagementRewards `appClaim` (backend signs EIP-712, user submits) | `hooks/useEngagementRewards.ts`, `services/rewards.rs` |
+| 20 | **Rank pool UBI claim** | GoodCollective UBI pool claim (⚠️ pools never funded/created in prod) | `hooks/useRankPool.ts` |
 
 > Note: Valor's own `POST /players/{wallet}/daily-claim` endpoint is **DB-only** (it records the
 > 24h cooldown). The actual UBI is a GoodDollar protocol transaction, separate from that write.
@@ -64,15 +76,16 @@ fails — so retries never double-pay and never fabricate volume.
 
 Per genuinely-active player, ranked by transactions generated:
 
-1. **Endless waves** (#8, #12) — 1 payout tx *per wave*, plus 1 re-arm tx per revive/restock.
+1. **Endless waves** (#9, #13) — 1 payout tx *per wave*, plus 1 re-arm tx per revive/restock.
    A single deep run can be dozens of txs. **Highest natural multiplier.**
-2. **Fights** (#1) — 1 `recordBattle` per fight, guaranteed, every mode.
-3. **Campaign progression** (#5, #6, #2, #3) — a burst as a new player clears the 15 ops and
-   climbs the ladder (bounty + rank-up + record + pool-enroll each fire).
-4. **Economy churn** (#9–#16) — purchases, transfers, resale, re-arm.
+2. **Fights** (#1, #5) — every campaign outcome writes 1 `recordBattle` (**win *and* loss** now),
+   and every *win* also fires the pay-per-play bounty (#5). Deaths add record volume with no payout.
+3. **Campaign progression** (#6, #7, #2, #3) — a burst as a new player clears the 15 ops and
+   climbs the ladder (first-clear bounty + rank-up reward + record-rank-up + pool-enroll each fire).
+4. **Economy churn** (#10–#17) — purchases, transfers, resale, re-arm.
 
 The lever still throttled:
-- The **rank UBI pools** (#19) were never created on-chain, so that daily-drip tx never fires.
+- The **rank UBI pools** (#20) were never created on-chain, so that daily-drip tx never fires.
 
 > **Endless is funded.** The Endless pool (`0xd44D…77Ba0`) holds G$; once `ENDLESS_REWARD_POOL_CONTRACT`
 > is set on the host, per-wave payouts (the biggest multiplier) fire live. Enabling the rank UBI
@@ -109,7 +122,7 @@ did or earned.
 - **Prestige mint.** Minting a prestige token when a player climbs past Diamond → 1 tx per prestige.
 - **Season buy-in.** Small G$ entry to join a ranked season → 1 escrow tx per player per season,
   plus the existing payout at close.
-- **Tipping / gifting.** Social P2P transfers already exist (#10); surfacing a "tip" affordance
+- **Tipping / gifting.** Social P2P transfers already exist (#11); surfacing a "tip" affordance
   turns them into a recurring `transferFrom` stream.
 
 ### For a GoodDollar/Celo grant specifically
