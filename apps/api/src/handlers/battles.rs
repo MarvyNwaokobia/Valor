@@ -130,12 +130,12 @@ fn next_rank(rank: &str) -> Option<&'static str> {
     RANK_LADDER.get(i + 1).copied()
 }
 
-/// G$ bounty step per Campaign op level — op N pays 1000 × N, so deeper ops pay more.
+/// G$ bounty step per Campaign op level — op N pays 500 × N, so deeper ops pay more.
 /// Paid on the first clear (once per (wallet, op)) AND on every pay-per-play replay win
 /// (keyed by battle id — see complete_live_fight + the on-chain refs).
-const FIRST_CLEAR_BOUNTY_G: u64 = 1000;
+const FIRST_CLEAR_BOUNTY_G: u64 = 500;
 
-/// Op payout: +1000 per op level, clamped to the on-chain per-payout cap (ops 10+ pay
+/// Op payout: +500 per op level, clamped to the on-chain per-payout cap (ops 20+ pay
 /// the 10,000 ceiling, since a bigger single distributeReward call reverts).
 fn first_clear_bounty(level: i32) -> u64 {
     let n = level.max(1) as u64;
@@ -1517,12 +1517,12 @@ mod reward_amount_tests {
     use super::*;
 
     #[test]
-    fn op_bounty_scales_1000_per_level_then_caps() {
-        assert_eq!(first_clear_bounty(1), 1000);
-        assert_eq!(first_clear_bounty(5), 5000);
-        assert_eq!(first_clear_bounty(10), 10_000);      // hits the ceiling
-        assert_eq!(first_clear_bounty(12), MAX_REWARD_G); // clamped past it
-        assert_eq!(first_clear_bounty(15), MAX_REWARD_G);
+    fn op_bounty_scales_500_per_level_then_caps() {
+        assert_eq!(first_clear_bounty(1), 500);
+        assert_eq!(first_clear_bounty(5), 2500);
+        assert_eq!(first_clear_bounty(15), 7500);        // deepest real op, under the cap
+        assert_eq!(first_clear_bounty(20), 10_000);      // hits the ceiling
+        assert_eq!(first_clear_bounty(30), MAX_REWARD_G); // clamped past it
     }
 
     #[test]
