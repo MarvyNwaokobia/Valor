@@ -23,16 +23,16 @@ INSERT INTO items (id, on_chain_id, name, description, rarity, category, stat_bo
 VALUES
   ('cccc0001-cccc-4ccc-8ccc-cccccccccc01', 26, 'Tactical Flashlight',
    'A barrel-mounted flashlight — throws a forward light cone so you can push dark rooms without night vision.',
-   'common', 'gear', 0, 90, '',
+   'common', 'gear', 0, 270, '',
    '{"kit_id":"light"}'),
 
   ('cccc0002-cccc-4ccc-8ccc-cccccccccc02', 27, 'Night Vision Goggles',
    'Head-mounted NVG — lifts the dark on night operations so the whole field reads in green.',
-   'rare', 'gear', 0, 350, '',
+   'rare', 'gear', 0, 1050, '',
    '{"kit_id":"nvg"}'),
 
   ('cccc0003-cccc-4ccc-8ccc-cccccccccc03', 28, 'Laser Sight',
    'An under-barrel laser — tightens hip-fire so snap shots land without aiming down sights.',
-   'common', 'gear', 0, 140, '',
+   'common', 'gear', 0, 420, '',
    '{"kit_id":"laser"}')
 ON CONFLICT (id) DO NOTHING;
