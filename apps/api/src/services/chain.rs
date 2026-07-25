@@ -607,6 +607,35 @@ impl ChainWriter {
             .map_err(|e| format!("balance read failed: {}", e))
     }
 
+    /// Reads an address's native CELO balance — used to decide whether a wallet
+    /// needs a gas top-up to afford its own GoodDollar UBI claim.
+    pub async fn celo_balance(&self, addr: Address) -> Result<U256, String> {
+        use ethers::providers::Middleware;
+        self.client.get_balance(addr, None).await
+            .map_err(|e| format!("CELO balance read failed: {}", e))
+    }
+
+    /// Drip a small amount of native CELO to `to` so a 0-CELO Magic wallet can pay
+    /// gas for its own UBI claim (fallback for when GoodDollar's free faucet doesn't
+    /// come through). The relay wallet pays. Returns the transfer tx hash.
+    pub async fn send_celo(&self, to: Address, amount_wei: U256) -> Result<H256, String> {
+        use ethers::providers::Middleware;
+        use ethers::types::TransactionRequest;
+        let tx = TransactionRequest::new().to(to).value(amount_wei);
+        let pending = {
+            let _lock = self.tx_lock.lock().await;
+            self.client.send_transaction(tx, None).await
+                .map_err(|e| format!("CELO transfer submission failed: {}", e))?
+        };
+        let hash = pending.tx_hash();
+        tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
+            .await
+            .map_err(|_| "CELO transfer timed out".to_string())?
+            .map_err(|e| format!("CELO transfer failed: {}", e))?
+            .ok_or_else(|| "CELO transfer was dropped from mempool".to_string())?;
+        Ok(hash)
+    }
+
     /// This wallet's own address — the frontend needs it as the `spender` in
     /// the EIP-2612 permit it signs for `transfer_g_for` above.
     pub fn relay_address(&self) -> Address {

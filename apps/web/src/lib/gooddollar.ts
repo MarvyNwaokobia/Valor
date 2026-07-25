@@ -155,6 +155,15 @@ async function requestGoodDollarFaucet(account: Address): Promise<void> {
   }).catch(() => {})
 }
 
+// Our own relay-funded fallback: when GoodDollar's faucet doesn't come through,
+// the Valor backend drips a little CELO to the player's wallet so they can still
+// afford the claim. Backend-gated (real player, under threshold, rate-limited).
+async function requestRelayGasTopup(account: Address): Promise<void> {
+  const api = process.env.NEXT_PUBLIC_API_URL
+  if (!api) return
+  await fetch(`${api}/players/${account}/gas-topup`, { method: 'POST' }).catch(() => {})
+}
+
 async function waitForCelo(
   publicClient: PublicClient,
   account: Address,
@@ -232,9 +241,14 @@ export async function claimUBI(
     }
   }
 
-  // 3. True first-timer (no CELO, no/failed G$ gas) — GoodDollar's free faucet.
+  // 3. True first-timer (no CELO, no/failed G$ gas). Try GoodDollar's free faucet
+  //    first (costs us nothing); if it doesn't land, our relay drips the gas.
   await requestGoodDollarFaucet(account)
-  const funded = await waitForCelo(publicClient, account, MIN_CELO_FOR_CLAIM, 30000)
+  let funded = await waitForCelo(publicClient, account, MIN_CELO_FOR_CLAIM, 18000)
+  if (!funded) {
+    await requestRelayGasTopup(account)
+    funded = await waitForCelo(publicClient, account, MIN_CELO_FOR_CLAIM, 25000)
+  }
   if (!funded) {
     throw new Error('Could not get gas for the claim. Please try again in a moment.')
   }

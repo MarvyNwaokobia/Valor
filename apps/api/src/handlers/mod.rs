@@ -15,6 +15,7 @@ pub mod gauntlet;
 pub mod seasons;
 pub mod ledger;
 pub mod debts;
+pub mod gas;
 pub mod admin;
 pub mod consistency;
 
@@ -87,7 +88,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/ledger-summary", web::get().to(ledger::get_ledger_summary))
                 .route("/{wallet}/transfer", web::post().to(ledger::transfer_out))
                 .route("/{wallet}/debt", web::get().to(debts::get_debt))
-                .route("/{wallet}/settle-debt", web::post().to(debts::settle_debt)),
+                .route("/{wallet}/settle-debt", web::post().to(debts::settle_debt))
+                .route("/{wallet}/gas-topup", web::post().to(gas::gas_topup)),
         )
         .service(
             web::scope("/battles")
