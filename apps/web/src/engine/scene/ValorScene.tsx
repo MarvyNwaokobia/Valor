@@ -520,6 +520,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // player's first step instead (see the endless flow), so the run starts on
       // their move rather than shooting at them before they've read the room.
       const last = rooms[rooms.length - 1];
+      // The enemy safety box defaults to a fixed square around the ORIGIN. Out here
+      // that would yank every moving enemy back toward the start of the chain and
+      // leave it firing from inside a wall, so it tracks the live window instead.
+      s.setBounds(-ENDLESS_HALF_W, ENDLESS_HALF_W, last.zFar, rooms[0].zNear);
       chain.current = {
         rooms, cursor: first, nextIndex: first + rooms.length, nextZ: last.zFar,
         wave, bankedThrough: wave - 1, armed: false, over: false,
@@ -1549,6 +1553,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
             sim.pruneBehind(keepFrom + 1, trailRoom.zNear);
             c.rooms = c.rooms.filter((r) => r.index >= keepFrom);
           }
+          // Keep the enemy safety box on the live window as it travels.
+          sim.setBounds(-ENDLESS_HALF_W, ENDLESS_HALF_W, c.rooms[c.rooms.length - 1].zFar, c.rooms[0].zNear);
           setGeoTick((t) => t + 1);
         }
       }
@@ -2097,11 +2103,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       <object3D ref={sunTargetRef} />
       <directionalLight position={[-10, 7, -12]} intensity={theme.fill.intensity} color={theme.fill.color} />
       <ambientLight intensity={theme.ambient} />
-      {/* practicals are ACCENTS, not floodlights: they shape darkness, not expose it */}
-      <pointLight position={[0, 2.6, 12]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
-      <pointLight position={[0, 2.6, 4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
-      <pointLight position={[0, 2.6, -4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
-      <pointLight position={[-3, 2.6, -13]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
+      {/* practicals are ACCENTS, not floodlights: they shape darkness, not expose it.
+          They are placed for the authored compound and sit near the origin with a 9-10m
+          falloff, so in endless the player leaves them behind in the first room and they
+          become four lights lighting nothing — while still costing every lit material a
+          slot in its shader's light loop. Endless runs daylight and drops them. */}
+      {!endless && <>
+        <pointLight position={[0, 2.6, 12]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
+        <pointLight position={[0, 2.6, 4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
+        <pointLight position={[0, 2.6, -4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
+        <pointLight position={[-3, 2.6, -13]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
+      </>}
 
       {/* burned ground */}
       {/* endless rides this plane along under the player (see the endless flow), so

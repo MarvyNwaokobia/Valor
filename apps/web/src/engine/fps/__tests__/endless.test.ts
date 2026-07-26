@@ -249,6 +249,38 @@ describe('streaming into a live sim', () => {
     }
   });
 
+  it('enemies deep in the chain are never yanked back toward the origin', () => {
+    // The sim's enemy safety box defaults to a fixed square around the ORIGIN. Every
+    // authored mission fits inside it, but the endless chain runs hundreds of metres
+    // out — and an enemy clamped back to that box teleports into the geometry near the
+    // start of the chain and shoots the player from inside a wall. This is the third
+    // origin-anchored assumption endless has tripped over (the player clamp and the
+    // sun's shadow frustum were the others), so it is worth pinning.
+    const seed = seedFromString('deep');
+    const chain = buildChain(0, 24, CHAIN_START_Z, seed);
+    const deep = chain[chain.length - 1];
+
+    const sim = new FpsSim({ loadout: ['assault_rifle'], enemies: [], cover: [], respawnEnabled: false });
+    sim.appendCover([...deep.walls, ...deep.cover]);
+    sim.appendEnemies(deep.enemies, true);
+    sim.setBounds(-9, 9, deep.zFar, deep.zNear);
+
+    // Drive the sim with the player standing at this room's entrance, so the AI has a
+    // reason to move. Deep rooms sit far past the default clamp.
+    expect(deep.zFar).toBeLessThan(-100);
+    for (let i = 0; i < 240; i++) {
+      sim.step(1 / 60, {
+        firing: false, wantReload: false, adsFactor: 0, moving: false, crouched: false,
+        origin: [0, 1.6, deep.zNear - 1], dir: [0, 0, -1],
+      });
+    }
+
+    for (const e of sim.getEnemies()) {
+      expect(e.z).toBeLessThanOrEqual(deep.zNear + 1e-6);
+      expect(e.z).toBeGreaterThanOrEqual(deep.zFar - 1e-6);
+    }
+  });
+
   it('a long run stays bounded when pruned as the player advances', () => {
     const seed = seedFromString('long');
     const sim = new FpsSim({ loadout: ['assault_rifle'], enemies: [], cover: [], respawnEnabled: false });
