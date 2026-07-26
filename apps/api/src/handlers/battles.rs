@@ -912,28 +912,11 @@ pub async fn complete_live_fight(
                 pay_first_clear_bounty(&state, wallet.clone(), level, amount);
             }
         }
-    } else if body.won {
-        // Pay-per-play (policy change 2026-07-24): a session-backed Campaign WIN that is
-        // NOT a first clear pays the op bounty too — play it again, earn it again. Keyed
-        // by battle id, so each play is its own idempotent payout slot; a retry of the
-        // same submit hits the PK conflict and pays nothing.
-        if let Some(level) = level {
-            let amount = first_clear_bounty(level);
-            let claimed = sqlx::query(
-                "INSERT INTO op_play_bounties (battle_id, wallet_address, level, amount)
-                 VALUES ($1, $2, $3, $4) ON CONFLICT (battle_id) DO NOTHING",
-            )
-            .bind(outcome.battle_id).bind(&wallet).bind(level).bind(amount as i64)
-            .execute(&state.db).await
-            .map(|r| r.rows_affected() == 1)
-            .unwrap_or(false);
-
-            if claimed {
-                bounty_awarded = amount;
-                pay_op_play_bounty(&state, outcome.battle_id, wallet.clone(), level, amount);
-            }
-        }
     }
+    // Pay-per-play was removed (2026-07-26): a Campaign op pays its bounty ONCE, on the
+    // first clear only. Replaying a cleared op earns XP but no G$ — this caps the per-op
+    // payout so one player can't drain the pool by grinding a single op. (The op_play
+    // bounty path + table are retired; see settle_op_play_bounty for the reconcile rail.)
 
     HttpResponse::Ok().json(json!({
         "won":            outcome.won,
@@ -1047,6 +1030,9 @@ async fn settle_first_clear_bounty(
 /// Fire-and-forget the on-chain pay-per-play op bounty. The (battle_id) row was already
 /// claimed by the caller (PK-idempotent), so this runs at most once per play. Delegates to
 /// `settle_op_play_bounty`, which is shared with the reconcile job.
+/// Retired 2026-07-26 (ops pay once, on first clear) but kept so pay-per-play can be
+/// toggled back on without rewiring the settle rail.
+#[allow(dead_code)]
 fn pay_op_play_bounty(state: &AppState, battle_id: Uuid, wallet: String, level: i32, amount: u64) {
     let Some(chain) = state.chain.as_ref().cloned() else { return; };
     let db = state.db.clone();
