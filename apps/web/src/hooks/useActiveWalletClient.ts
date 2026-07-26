@@ -4,36 +4,43 @@ import { useMemo } from 'react'
 import { createWalletClient, custom, type WalletClient } from 'viem'
 import { celo } from 'viem/chains'
 import { useWalletClient as useWagmiWalletClient } from 'wagmi'
-import { getMagic } from '@/lib/magic'
+import { getBridgedProvider } from '@/lib/walletBridge'
 import { useResolvedAuth } from './useResolvedAuth'
 
-// A plain viem WalletClient for whichever auth path is active.
-// - Magic path: built directly from magic.rpcProvider — deliberately NOT a
-//   wagmi connector (see wagmi.ts / MagicAuthProvider for why).
-// - Wallet path: wagmi's own useWalletClient. Safe to use here — it's
-//   wagmi's native connector talking directly to the wallet, not a shim
-//   bridging a third-party SDK's separate state.
+// The one seam every signing path goes through. Returns a plain viem
+// WalletClient for whichever auth path is active, so call sites can use
+// signTypedData / writeContract / signMessage without knowing or caring which
+// SDK is behind the wallet.
+//
+// - External wallet via wagmi's injected connector: wagmi's own
+//   useWalletClient. Safe because it's wagmi's native connector talking
+//   straight to the wallet.
+// - Anything else: built from whatever provider is published to
+//   lib/walletBridge — Magic's embedded wallet, or an external wallet connected
+//   through Web3Auth's chooser (wagmi registers no connector for that one, so
+//   it can only be reached through the bridge).
+//
+// Adding another SDK later means publishing to the bridge from its provider
+// component; this hook and all ten of its call sites stay untouched.
 export function useActiveWalletClient(): WalletClient | undefined {
   const { status, address, source } = useResolvedAuth()
   const { data: wagmiWalletClient } = useWagmiWalletClient()
 
   return useMemo(() => {
-    console.log('[ActiveWalletClient] resolving. status:', status, 'address:', address, 'source:', source)
-    if (status !== 'ready' || !address) {
-      console.warn('[ActiveWalletClient] not ready or no address — returning undefined')
-      return undefined
-    }
-    if (source === 'wallet') return wagmiWalletClient
-    const magic = getMagic()
-    if (!magic) {
-      console.warn('[ActiveWalletClient] source is magic but getMagic() returned null — returning undefined')
-      return undefined
-    }
-    console.log('[ActiveWalletClient] built Magic-backed walletClient')
+    if (status !== 'ready' || !address) return undefined
+    // A 'wallet' source is wagmi's only when wagmi actually holds the
+    // connection; a Web3Auth-connected wallet reports the same source but falls
+    // through to the bridge below.
+    if (source === 'wallet' && wagmiWalletClient) return wagmiWalletClient
+
+    const bridged = getBridgedProvider()
+    if (!bridged) return undefined
+    // The bridge publishes provider and address together, so the account here
+    // can never drift from the session the provider will actually sign with.
     return createWalletClient({
-      account: address,
+      account: bridged.address,
       chain: celo,
-      transport: custom(magic.rpcProvider),
+      transport: custom(bridged.provider),
     })
   }, [status, address, source, wagmiWalletClient])
 }

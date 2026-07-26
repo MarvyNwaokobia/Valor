@@ -1,49 +1,43 @@
-import { createConfig, http } from 'wagmi'
+import { createConfig, fallback, http } from 'wagmi'
 import { celo, celoAlfajores } from 'wagmi/chains'
-import { injected, walletConnect } from 'wagmi/connectors'
+import { injected } from 'wagmi/connectors'
 
-const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
-
-// Primary login is Magic's embedded wallet (see MagicAuthProvider), which
-// deliberately does NOT go through a wagmi connector. These two connectors
-// are for the separate "I already have a wallet" path (MetaMask, WalletConnect-
-// compatible mobile wallets) — safe to wire through wagmi normally because
-// they're wagmi's own first-party integrations talking directly to the
-// wallet, not a shim bridging a third-party SDK's own async state.
+// Primary login is Magic's embedded wallet, which deliberately does NOT go
+// through a wagmi connector — it publishes its EIP-1193 provider to
+// lib/walletBridge instead. wagmi's job here is only the separate "I already
+// have a wallet" path.
+//
+// That path is `injected()` alone, on purpose. We used to also run a
+// self-hosted `walletConnect()` connector, and every mobile connect bug we've
+// had traced back to owning that integration: the pairing relay host getting
+// sinkholed by consumer router/ISP resolvers (the endless "Connecting…" hang),
+// the Reown Cloud domain allowlist rejecting pairings when `metadata.url`
+// drifted, and relay-host pins that fixed our browser's leg while the wallet
+// app still dialled the blocked host itself. None of it was ours to fix.
+//
+// `injected()` needs no relay, no cloud project, and no allowlist: it talks to
+// a provider that is already in the page. Desktop extensions and in-wallet
+// dApp browsers inject one; a plain mobile browser doesn't, so SignInModal
+// deep-links those users into their wallet's own browser, where one exists.
+// wagmi additionally auto-discovers named extensions via EIP-6963.
 export const wagmiConfig = createConfig({
   chains: [celo, celoAlfajores],
-  connectors: [
-    injected(),
-    ...(walletConnectProjectId
-      ? [walletConnect({
-          projectId: walletConnectProjectId,
-          // Route pairing through Reown's current relay host. The SDK still
-          // defaults to the legacy `relay.walletconnect.org`, which some ISP/
-          // router DNS resolvers sinkhole (they return NO address for the
-          // `relay.` subdomain while the marketing apex resolves fine) — the
-          // socket then dies with "A server with the specified hostname could
-          // not be found" and the wallet hangs on "Connecting…". `relay.reown.com`
-          // is the same relay network under a host those filters don't catch.
-          // NOTE: this is NOT the reverted `.com` pin (that was
-          // relay.walletconnect.com, blocked by the same filter) — it's the
-          // Reown-branded host, which resolves where the walletconnect.* ones don't.
-          relayUrl: 'wss://relay.reown.com',
-          // Explicit metadata so the wallet prompt shows Valor's identity and,
-          // crucially, a `url` that matches the domain allowlisted in the Reown/
-          // WalletConnect Cloud project. A mismatch (or missing entry) makes the
-          // upgraded Reown stack reject the pairing — the mobile "Open" button then
-          // never becomes ready and the wallet app won't launch.
-          metadata: {
-            name: 'Valor',
-            description: 'Earn your honor. Web3 tactical FPS on Celo.',
-            url: 'https://playvalor.app',
-            icons: ['https://playvalor.app/valor-icon.png'],
-          },
-        })]
-      : []),
-  ],
+  connectors: [injected()],
+  // Defer connector reconnection to a client effect instead of running it
+  // during render, so the server HTML and first client render agree. The game
+  // shell stays server-rendered; without this, wagmi reads persisted connection
+  // state at render time and the tree can hydrate mismatched.
+  ssr: true,
   transports: {
-    [celo.id]: http('https://forno.celo.org'),
+    // Reads go through a private RPC when one is configured and fall back to
+    // public forno, so a single provider having a bad day doesn't take the
+    // shop, balances, and claim checks down with it.
+    [celo.id]: fallback([
+      ...(process.env.NEXT_PUBLIC_CELO_RPC_URL
+        ? [http(process.env.NEXT_PUBLIC_CELO_RPC_URL)]
+        : []),
+      http('https://forno.celo.org'),
+    ]),
     [celoAlfajores.id]: http('https://alfajores-forno.celo-testnet.org'),
   },
 })

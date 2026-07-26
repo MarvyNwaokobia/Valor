@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
+import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
+import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
 import { isMobileBrowser, hasInjectedProvider, MOBILE_WALLETS } from '@/lib/mobileWallets'
 
 interface Props {
@@ -19,6 +21,7 @@ const CONNECTOR_LABELS: Record<string, string> = {
 
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
+  const { connect: connectWeb3AuthWallet, isReady: web3authReady } = useWeb3AuthWallet()
   const { connectors, connect } = useConnect()
   // wagmi's static config always includes the generic `injected` connector,
   // regardless of whether a provider actually exists for it to target — on
@@ -29,10 +32,11 @@ export default function SignInModal({ onClose }: Props) {
   // to the generic one if a legacy (non-EIP-6963) provider is actually
   // present, and hide it entirely once a named one exists.
   const [hasLegacyProvider, setHasLegacyProvider] = useState(false)
-  // On a plain mobile browser there's no injected provider, and WalletConnect's
-  // relay is unreachable on many mobile networks — so instead of a dead
-  // "Connecting…" we deep-link into the wallet's own dApp browser (where a
-  // provider IS injected). Computed client-side to avoid SSR hydration drift.
+  // Web3Auth's chooser covers mobile, but it reaches most mobile wallets over
+  // WalletConnect, whose relay host is the thing some router/ISP resolvers
+  // sinkhole — the failure that started all of this. Deep-linking into the
+  // wallet's own dApp browser needs no relay at all, so it stays as the escape
+  // hatch when the chooser hangs. Computed client-side to avoid hydration drift.
   const [showMobileDeepLinks, setShowMobileDeepLinks] = useState(false)
   useEffect(() => {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
@@ -41,13 +45,23 @@ export default function SignInModal({ onClose }: Props) {
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
   const visibleConnectors = connectors
     .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
-    // A wallet the player already has installed connects in one click, no
-    // QR code — put those first. WalletConnect goes last, as the fallback
-    // for "mine isn't in the list above."
-    .sort((a, b) => (a.type === 'injected' ? 0 : 1) - (b.type === 'injected' ? 0 : 1))
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  async function handleWeb3AuthWallet() {
+    if (pending) return
+    setPending('web3auth')
+    setError(null)
+    try {
+      await connectWeb3AuthWallet()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open wallet options — try again.')
+    } finally {
+      setPending(null)
+    }
+  }
 
   async function handleConnectWallet(connectorId: string) {
     if (pending) return
@@ -104,7 +118,9 @@ export default function SignInModal({ onClose }: Props) {
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
       <motion.div
-        className="relative w-full max-w-sm rounded-2xl border border-valor-border bg-valor-surface p-6 flex flex-col gap-5"
+        // Capped and scrollable: with the mobile wallet list expanded, the
+        // panel is taller than a phone viewport and Cancel would sit off-screen.
+        className="relative w-full max-w-sm max-h-[85dvh] overflow-y-auto rounded-2xl border border-valor-border bg-valor-surface p-6 flex flex-col gap-5"
         initial={{ scale: 0.92, y: 16 }}
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.92, y: 16 }}
@@ -155,7 +171,11 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {visibleConnectors.length > 0 && (
+        {/* Bring-your-own-wallet. Ordered by how likely each is to just work:
+            a wallet already injected into this page connects with no network
+            hop at all, then Web3Auth's chooser for everything else, then the
+            relay-free deep-links if that hangs. */}
+        {(visibleConnectors.length > 0 || isWeb3AuthConfigured) && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -175,13 +195,28 @@ export default function SignInModal({ onClose }: Props) {
                   {pending === connector.id ? 'Connecting…' : (CONNECTOR_LABELS[connector.id] ?? connector.name)}
                 </button>
               ))}
+
+              {isWeb3AuthConfigured && (
+                <button
+                  onClick={handleWeb3AuthWallet}
+                  disabled={!!pending || !web3authReady}
+                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors disabled:opacity-60"
+                >
+                  <Wallet size={16} />
+                  {pending === 'web3auth'
+                    ? 'Opening wallets…'
+                    : visibleConnectors.length > 0
+                      ? 'Other Wallets'
+                      : 'Connect a Wallet'}
+                </button>
+              )}
             </div>
           </>
         )}
 
-        {/* Fallback for mobile networks that block the WalletConnect relay (the
-            "Connecting…" hang): open Valor inside the wallet's own browser, where
-            a provider is injected and no relay is needed. */}
+        {/* Relay-free escape hatch: open Valor inside the wallet's own browser,
+            where a provider is injected. Kept small — most players never need
+            it, but it's the only path that survives a sinkholed relay host. */}
         {showMobileDeepLinks && (
           <details className="text-slate-500">
             <summary className="text-[11px] cursor-pointer select-none hover:text-slate-300 transition-colors">

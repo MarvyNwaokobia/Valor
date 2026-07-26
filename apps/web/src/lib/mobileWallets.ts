@@ -1,15 +1,18 @@
 // Mobile external-wallet connect.
 //
-// WalletConnect is unusable for external wallets on much of mobile: its pairing
-// relay (`relay.walletconnect.*`) is unreachable on many carrier/ISP resolvers,
-// and a relay proxy can only fix OUR browser's leg — the wallet app (MetaMask,
-// etc.) still opens its own socket to the real relay and hangs on "Connecting…".
+// This is how Valor connects external wallets on mobile, now that we no longer
+// run a WalletConnect connector of our own. WalletConnect proved unusable for
+// this: its pairing relay (`relay.walletconnect.*`) is unreachable on many
+// carrier/ISP resolvers, and proxying the relay only fixes OUR browser's leg —
+// the wallet app still opens its own socket to the real relay and hangs on
+// "Connecting…". See lib/wagmi.ts.
 //
-// The reliable pattern instead: deep-link the user INTO their wallet's built-in
-// dApp browser. There the wallet injects `window.ethereum`, so the plain
-// `injected` connector connects in one tap with NO relay in the loop. Desktop
-// (extension present) and in-wallet-browser sessions already have an injected
-// provider and never hit this path.
+// Deep-linking the user INTO their wallet's built-in dApp browser has none of
+// that failure surface. There the wallet injects `window.ethereum`, so the
+// plain `injected` connector connects in one tap with no relay, no cloud
+// project, and no domain allowlist in the loop. Desktop (extension present)
+// and in-wallet-browser sessions already have an injected provider and never
+// reach this path.
 
 export function isMobileBrowser(): boolean {
   if (typeof navigator === 'undefined') return false
