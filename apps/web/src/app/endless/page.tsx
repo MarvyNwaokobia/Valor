@@ -10,6 +10,8 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useEndlessProgress } from '@/hooks/useEndlessProgress';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
+import { AnimatePresence } from 'framer-motion';
+import LoadoutModal from '@/components/battle/LoadoutModal';
 import WaveBoard from '@/components/battle/WaveBoard';
 
 const tactical = Rajdhani({
@@ -54,6 +56,8 @@ export default function EndlessPage() {
 
   const [playing, setPlaying] = useState(false);
   const [startWave, setStartWave] = useState(1);
+  const [pickingLoadout, setPickingLoadout] = useState(false);
+  const [fieldKit, setFieldKit] = useState<('light' | 'laser' | 'nvg')[]>([]);
 
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
   const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory]);
@@ -69,7 +73,11 @@ export default function EndlessPage() {
     return h >>> 0;
   }, [address]);
 
-  const begin = useCallback(async () => {
+  const begin = useCallback(() => setPickingLoadout(true), []);
+
+  const enterWithLoadout = useCallback(async (kit: ('light' | 'laser' | 'nvg')[]) => {
+    setPickingLoadout(false);
+    setFieldKit(kit);
     const resume = await progress.start();
     setStartWave(resume);
     setPlaying(true);
@@ -97,6 +105,7 @@ export default function EndlessPage() {
           equippedGun={equippedGun}
           equippedAmmo={equippedAmmo}
           equippedMods={equippedMods}
+          fieldKit={fieldKit}
           onExit={() => setPlaying(false)}
         />
       </div>
@@ -105,6 +114,19 @@ export default function EndlessPage() {
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex flex-col items-center px-6 py-10" style={{ background: '#04030c' }}>
+      <AnimatePresence>
+        {pickingLoadout && (
+          <LoadoutModal
+            opName="Campaign Endless"
+            label={`Loadout · Wave ${progress.wave}`}
+            cta="BEGIN"
+            walletAddress={address}
+            onClose={() => setPickingLoadout(false)}
+            onDeploy={enterWithLoadout}
+          />
+        )}
+      </AnimatePresence>
+
       <div className="w-full max-w-2xl">
         <button onClick={() => router.push('/battle')} className="text-slate-400 hover:text-white text-sm mb-6">
           ← Fight

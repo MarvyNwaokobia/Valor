@@ -11,6 +11,8 @@ import { useEndlessProgress } from '@/hooks/useEndlessProgress';
 import WaveBoard from '@/components/battle/WaveBoard';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
+import { AnimatePresence } from 'framer-motion';
+import LoadoutModal from '@/components/battle/LoadoutModal';
 import { Rajdhani } from 'next/font/google';
 
 // The tactical HUD face, same as /fight — exposed as a CSS var for the scene.
@@ -56,6 +58,11 @@ export default function SeasonalPage() {
   const [phase, setPhase] = useState<'lobby' | 'run'>('lobby');
   const [seed, setSeed] = useState<number | null>(null);
   const [startWave, setStartWave] = useState(1);
+  // The loadout picker stands between the lobby and the fight, exactly as it does
+  // for a campaign op — you choose the weapon you carry in, not whatever happened
+  // to be equipped last.
+  const [pickingLoadout, setPickingLoadout] = useState(false);
+  const [fieldKit, setFieldKit] = useState<('light' | 'laser' | 'nvg')[]>([]);
   const [, setTick] = useState(0); // drives the once-a-second countdown re-render
 
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
@@ -71,8 +78,16 @@ export default function SeasonalPage() {
 
   // Enter the season. The server hands back the shared layout seed and the wave this
   // player resumes on — quitting never costs progress, so this is usually not 1.
-  const begin = useCallback(async () => {
+  // Open the picker first; entering happens once a loadout is confirmed.
+  const begin = useCallback(() => {
     if (!season?.active || season.seed == null) return;
+    setPickingLoadout(true);
+  }, [season]);
+
+  const enterWithLoadout = useCallback(async (kit: ('light' | 'laser' | 'nvg')[]) => {
+    if (!season || season.seed == null) return;
+    setPickingLoadout(false);
+    setFieldKit(kit);
     const resume = await progress.start();
     setSeed(season.seed);
     setStartWave(resume);
@@ -107,6 +122,7 @@ export default function SeasonalPage() {
           equippedGun={equippedGun}
           equippedAmmo={equippedAmmo}
           equippedMods={equippedMods}
+          fieldKit={fieldKit}
           onExit={leave}
         />
       </div>
@@ -118,6 +134,19 @@ export default function SeasonalPage() {
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex flex-col items-center px-6 py-10" style={{ background: '#04030c' }}>
+      <AnimatePresence>
+        {pickingLoadout && (
+          <LoadoutModal
+            opName={season?.name ?? 'Seasonal Campaign'}
+            label={`Loadout · Wave ${progress.wave}`}
+            cta="ENTER THE SEASON"
+            walletAddress={address}
+            onClose={() => setPickingLoadout(false)}
+            onDeploy={enterWithLoadout}
+          />
+        )}
+      </AnimatePresence>
+
       <div className="w-full max-w-2xl">
         <button onClick={() => router.push('/battle')} className="text-slate-400 hover:text-white text-sm mb-6">
           ← Fight
