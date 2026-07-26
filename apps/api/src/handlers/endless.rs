@@ -194,6 +194,11 @@ pub async fn start_endless(
     // on the player's stored wave rather than at 1 — and the session's own counter
     // starts there too, so the min-seconds-per-wave floor stays honest.
     let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    if !season_is_open(&state.db, season).await {
+        return HttpResponse::Forbidden().json(json!({
+            "error": "That season is not running right now", "locked": true,
+        }));
+    }
     let resume = current_wave(&state.db, &wallet, season).await;
 
     let session_id = Uuid::new_v4();
@@ -249,6 +254,13 @@ pub async fn endless_wave(
     let week = current_week_key();
     let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
     let is_seasonal = season != CAMPAIGN_ENDLESS;
+    // Re-checked per wave, not just at session open: a run started a minute before the
+    // season closed must not keep banking waves for hours afterwards.
+    if !season_is_open(&state.db, season).await {
+        return HttpResponse::Forbidden().json(json!({
+            "error": "The season has closed", "locked": true, "season_closed": true,
+        }));
+    }
 
     // SEASONAL pays NOTHING per wave. Its whole prize is the end-of-season top 5, so
     // paying per wave as well would double the cost of a season and drain the endless
@@ -361,6 +373,24 @@ pub struct EndEndlessRequest {
 // season. A real season id partitions a Seasonal Campaign, which starts everyone
 // from scratch.
 pub const CAMPAIGN_ENDLESS: Uuid = Uuid::nil();
+
+/// Is this partition open for play right now?
+///
+/// Campaign Endless (the nil partition) is always open. A SEASON is only playable
+/// inside its scheduled window — and this has to be checked on the SERVER. The
+/// seasonal page gates its button on the season being live, but a button is not a
+/// permission: without this, anyone could post directly to /endless/start and
+/// /endless/wave with a season id and bank leaderboard progress before the season
+/// opened or after it closed, for a board that pays real money.
+async fn season_is_open(db: &sqlx::PgPool, season: Uuid) -> bool {
+    if season == CAMPAIGN_ENDLESS { return true; }
+    sqlx::query_scalar::<_, bool>(
+        "SELECT (starts_at <= now() AND (ends_at IS NULL OR ends_at >= now()))
+         FROM seasons WHERE id = $1",
+    )
+    .bind(season)
+    .fetch_optional(db).await.ok().flatten().unwrap_or(false)
+}
 
 /// The wave this wallet is currently ON for this partition (1 if they've never played).
 async fn current_wave(db: &sqlx::PgPool, wallet: &str, season: Uuid) -> i32 {
