@@ -1,0 +1,225 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
+import { usePlayerStore } from '@/stores/usePlayerStore';
+import { useResolvedAuth } from '@/hooks/useResolvedAuth';
+import { useSeasonalRun } from '@/hooks/useSeasonalRun';
+import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
+import { retryImport } from '@/lib/retryImport';
+import { Rajdhani } from 'next/font/google';
+
+// The tactical HUD face, same as /fight — exposed as a CSS var for the scene.
+const tactical = Rajdhani({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-tactical',
+  display: 'swap',
+});
+
+const ValorScene = dynamic(
+  () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-2xl font-black text-white">LOADING SEASON…</div>
+      </div>
+    ),
+  }
+);
+
+/** Countdown text for a future timestamp. */
+function untilText(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return 'now';
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+export default function SeasonalPage() {
+  const player = usePlayerStore((s) => s.player);
+  const inventory = usePlayerStore((s) => s.inventory);
+  const { address } = useResolvedAuth();
+  const router = useRouter();
+  const { season, board, loading, startRun, submitRun } = useSeasonalRun(address);
+
+  // 'lobby' → the season card + board. 'run' → the actual fight. 'result' → the score.
+  const [phase, setPhase] = useState<'lobby' | 'run' | 'result'>('lobby');
+  const [seed, setSeed] = useState<number | null>(null);
+  const [result, setResult] = useState<{ wave: number; kills: number; best: number } | null>(null);
+  const [, setTick] = useState(0); // drives the once-a-second countdown re-render
+
+  const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
+  const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory]);
+  const equippedMods = useMemo(() => equippedAttachments(inventory), [inventory]);
+
+  // Re-render once a second so the countdown moves and the season flips live on time
+  // without anyone reloading the page.
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const begin = useCallback(async () => {
+    const s = await startRun();
+    if (s === null) return; // the server said no season is live — stay in the lobby
+    setSeed(s);
+    setResult(null);
+    setPhase('run');
+  }, [startRun]);
+
+  // The run ended. Seasonal never resumes, so this is the whole score: submit it and
+  // show where it landed.
+  const onRunEnd = useCallback(
+    async (wave: number, stats: { kills: number; headshots: number }) => {
+      const waves = Math.max(0, wave - 1); // the wave they died ON was not cleared
+      setPhase('result');
+      const res = await submitRun(waves, stats.kills);
+      setResult({ wave: waves, kills: stats.kills, best: res?.seasonBest ?? waves });
+    },
+    [submitRun]
+  );
+
+  if (!player) {
+    router.replace('/');
+    return null;
+  }
+
+  if (phase === 'run' && seed !== null) {
+    return (
+      <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
+        <ValorScene
+          seasonal
+          endless={{ seed, startWave: 1, onRunEnd }}
+          walletAddress={address}
+          accountRank={player.rank}
+          accountXp={player.xp}
+          equippedGun={equippedGun}
+          equippedAmmo={equippedAmmo}
+          equippedMods={equippedMods}
+          onExit={() => setPhase('lobby')}
+        />
+      </div>
+    );
+  }
+
+  const live = !!season?.active;
+  const you = board.find((b) => b.wallet_address.toLowerCase() === (address ?? '').toLowerCase());
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto flex flex-col items-center px-6 py-10" style={{ background: '#04030c' }}>
+      <div className="w-full max-w-2xl">
+        <button onClick={() => router.push('/battle')} className="text-slate-400 hover:text-white text-sm mb-6">
+          ← Fight
+        </button>
+
+        {/* ── Result of the run just played ── */}
+        {phase === 'result' && result && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            className="mb-8 p-6 rounded-2xl border text-center"
+            style={{ background: 'rgba(234,179,8,0.06)', borderColor: 'rgba(234,179,8,0.3)' }}
+          >
+            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-red-400 mb-1">Run Over</p>
+            <h2 className="font-display font-black text-white" style={{ fontSize: 'clamp(2.5rem, 10vw, 4rem)' }}>
+              {result.wave}
+            </h2>
+            <p className="text-slate-400 text-sm">waves cleared · {result.kills} down</p>
+            <p className="text-amber-400 text-sm font-bold mt-2">season best: {result.best}</p>
+          </motion.div>
+        )}
+
+        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500 mb-1">Seasonal Campaign</p>
+        <h1 className="font-display font-black text-white text-3xl tracking-wide mb-1">
+          {season?.name ?? 'No season scheduled'}
+        </h1>
+
+        {loading ? (
+          <p className="text-slate-500 text-sm">loading…</p>
+        ) : !season ? (
+          <p className="text-slate-500 text-sm">No season is scheduled yet. Check back soon.</p>
+        ) : (
+          <>
+            <p className="text-slate-500 text-sm mb-5">
+              {season.upcoming
+                ? `opens in ${untilText(season.starts_at)}`
+                : season.ended
+                ? 'season closed · payouts settling'
+                : season.ends_at
+                ? `closes in ${untilText(season.ends_at)}`
+                : 'live now'}
+            </p>
+
+            <div className="flex flex-wrap gap-3 mb-6">
+              <div className="px-4 py-2 rounded-xl border" style={{ borderColor: 'rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.06)' }}>
+                <p className="text-[10px] uppercase tracking-widest text-amber-500/70 font-bold">Prize pool</p>
+                <p className="font-display font-black text-amber-400 text-lg">{season.prize_pool_g.toLocaleString()} G$</p>
+              </div>
+              <div className="px-4 py-2 rounded-xl border" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
+                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Your best</p>
+                <p className="font-display font-black text-white text-lg">{you?.best ?? 0} waves</p>
+              </div>
+            </div>
+
+            {/* One shared seed means everyone walks the same compound — worth saying,
+                because "why did they get an easier run" is the first thing a
+                competitive player asks. */}
+            <p className="text-slate-600 text-xs mb-6 leading-relaxed">
+              Every player runs the same generated compound, from wave 1, with no resume.
+              Your BEST single run takes your place on the board. Top 5 are paid when the
+              season closes.
+            </p>
+
+            <button
+              onClick={begin}
+              disabled={!live}
+              className="w-full px-6 py-4 rounded-xl font-display font-black text-black disabled:opacity-30 disabled:cursor-not-allowed transition-opacity"
+              style={{ background: '#eab308' }}
+            >
+              {live ? (phase === 'result' ? 'Run Again' : 'Enter the Season') : season.upcoming ? 'Locked until it opens' : 'Season closed'}
+            </button>
+          </>
+        )}
+
+        {/* ── The ladder ── */}
+        {board.length > 0 && (
+          <div className="mt-10">
+            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 mb-3">Leaderboard</p>
+            <div className="flex flex-col gap-1.5">
+              {board.map((e) => {
+                const mine = e.wallet_address.toLowerCase() === (address ?? '').toLowerCase();
+                const paid = e.est_payout_g > 0;
+                return (
+                  <div
+                    key={e.wallet_address}
+                    className="flex items-center gap-3 px-4 py-2.5 rounded-xl border"
+                    style={{
+                      background: mine ? 'rgba(234,179,8,0.08)' : 'rgba(8,8,14,0.9)',
+                      borderColor: mine ? 'rgba(234,179,8,0.4)' : 'rgba(42,42,58,0.8)',
+                    }}
+                  >
+                    <span className="font-display font-black text-slate-500 w-6 tabular-nums">{e.rank}</span>
+                    <span className="flex-1 min-w-0 truncate text-white text-sm">
+                      {e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`}
+                    </span>
+                    <span className="text-white font-bold tabular-nums text-sm">{e.best}</span>
+                    {paid && (
+                      <span className="text-amber-400 text-xs font-bold tabular-nums">
+                        {e.est_payout_g.toLocaleString()} G$
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
