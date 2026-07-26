@@ -125,7 +125,13 @@ export default function AdminPage() {
   const [selectedSeason, setSelectedSeason] = useState<string | 'all'>('all')
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [onchain, setOnchain] = useState<OnchainRow[]>([])
-  const [newSeasonName, setNewSeasonName] = useState('')
+  const [newSeasonName, setNewSeasonName] = useState('The Release')
+  // A season is a SCHEDULED window with a prize split, not just a name. These default
+  // to Season 1 as agreed: 27 Jul 2026 in local time, top 10 paid 50,000 G$ each.
+  const [seasonStart, setSeasonStart] = useState('2026-07-27T00:00')
+  const [seasonEnd, setSeasonEnd] = useState('2026-07-27T23:59')
+  const [seasonWinners, setSeasonWinners] = useState(10)
+  const [seasonPerWinner, setSeasonPerWinner] = useState(50000)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { setSession(loadSession()) }, [])
@@ -195,18 +201,46 @@ export default function AdminPage() {
     refreshOnchain()
   }, [session, refreshStats, refreshOnchain])
 
+  // Every winner is paid the same, so the split is simply 10000 basis points shared
+  // equally. Ties are broken by who reached the wave first, so no two players can end
+  // up sharing a place and the table is always unambiguous.
+  const seasonPool = seasonWinners * seasonPerWinner
+  const seasonBps = Array.from({ length: seasonWinners }, () => Math.floor(10000 / seasonWinners))
+
   async function handleCreateSeason() {
     if (!newSeasonName.trim()) return
+    // datetime-local is in the BROWSER's timezone, which is the one you're scheduling
+    // in; toISOString converts to the UTC the server stores.
+    const startsIso = seasonStart ? new Date(seasonStart).toISOString() : undefined
+    const endsIso = seasonEnd ? new Date(seasonEnd).toISOString() : undefined
+    if (startsIso && endsIso && endsIso <= startsIso) {
+      window.alert('The season must end after it starts.')
+      return
+    }
+    const summary =
+      `Create "${newSeasonName.trim()}"?\n\n` +
+      `Opens:  ${startsIso ?? 'now'}\n` +
+      `Closes: ${endsIso ?? 'left open'}\n` +
+      `Prize:  ${seasonPool.toLocaleString()} G$ — top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each`
+    if (!window.confirm(summary)) return
+
     setBusy(true)
     try {
       const res = await authedFetch('/admin/seasons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newSeasonName.trim() }),
+        body: JSON.stringify({
+          name: newSeasonName.trim(),
+          starts_at: startsIso,
+          ends_at: endsIso,
+          prize_pool_g: seasonPool,
+          payout_bps: seasonBps,
+        }),
       })
       if (res.ok) {
-        setNewSeasonName('')
         await refreshSeasons()
+      } else {
+        window.alert(`Could not create the season: ${await res.text()}`)
       }
     } finally {
       setBusy(false)
@@ -319,32 +353,66 @@ export default function AdminPage() {
           ))}
         </div>
 
-        <div className="flex gap-2 pt-2 border-t" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
+        <div className="flex flex-col gap-2 pt-3 border-t" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
+          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500">Schedule a season</p>
           <input
             type="text"
             value={newSeasonName}
             onChange={(e) => setNewSeasonName(e.target.value)}
-            placeholder="New season name"
-            className="flex-1 px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none"
+            placeholder="Season name"
+            className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none"
           />
-          <button
-            onClick={handleCreateSeason}
-            disabled={busy || !newSeasonName.trim()}
-            className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50"
-            style={{ background: '#eab308' }}
-          >
-            Start
-          </button>
-          {openSeason && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Opens (your local time)</span>
+              <input type="datetime-local" value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Closes</span>
+              <input type="datetime-local" value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Winners paid</span>
+              <input type="number" min={1} max={20} value={seasonWinners}
+                onChange={(e) => setSeasonWinners(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+              <input type="number" min={0} step={1000} value={seasonPerWinner}
+                onChange={(e) => setSeasonPerWinner(Math.max(0, Number(e.target.value) || 0))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+          </div>
+          <p className="text-xs text-slate-500">
+            Prize pool <span className="text-amber-400 font-bold">{seasonPool.toLocaleString()} G$</span>
+            {' · '}top {seasonWinners} take {seasonPerWinner.toLocaleString()} G$ each
+            {seasonPerWinner > 10000 && (
+              <span className="text-slate-600"> · paid in {Math.ceil(seasonPerWinner / 10000)} transactions each (10,000 G$ on-chain cap)</span>
+            )}
+          </p>
+          <div className="flex gap-2">
             <button
-              onClick={() => handleEndSeason(openSeason.id)}
-              disabled={busy}
-              className="px-3 py-2 rounded-lg text-xs font-bold text-slate-300 hover:text-white border disabled:opacity-50"
-              style={{ borderColor: '#2a2a3a' }}
+              onClick={handleCreateSeason}
+              disabled={busy || !newSeasonName.trim()}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50"
+              style={{ background: '#eab308' }}
             >
-              End &quot;{openSeason.name}&quot;
+              Schedule season
             </button>
-          )}
+            {openSeason && (
+              <button
+                onClick={() => handleEndSeason(openSeason.id)}
+                disabled={busy}
+                className="px-3 py-2 rounded-lg text-xs font-bold text-slate-300 hover:text-white border disabled:opacity-50"
+                style={{ borderColor: '#2a2a3a' }}
+              >
+                End &quot;{openSeason.name}&quot;
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
