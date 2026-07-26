@@ -16,7 +16,7 @@
 import type { EIP1193Provider } from 'viem'
 
 /** Which SDK published the current provider. Used to scope clears. */
-export type BridgeSource = 'magic'
+export type BridgeSource = 'magic' | 'web3auth'
 
 interface BridgeEntry {
   source: BridgeSource
