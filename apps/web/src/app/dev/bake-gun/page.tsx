@@ -34,6 +34,11 @@ export default function BakeGun() {
   const id = (useSearchParams().get('id') ?? 'ember_halo') as ProceduralGunId;
   return (
     <div style={{ width: 1040, height: 520, background: 'transparent' }}>
+      {/* The app's global stylesheet paints a dark body, which the screenshot
+          composites UNDER the canvas — that is what made the first bakes opaque
+          rectangles instead of cut-out weapons. Force the page fully transparent so
+          the alpha in the canvas survives to the PNG. */}
+      <style>{'html,body{background:transparent!important}body::before,body::after{display:none!important}'}</style>
       <Canvas
         camera={{ position: [0, 0.14, 1.05], fov: 32 }}
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
@@ -48,7 +53,7 @@ export default function BakeGun() {
           <Gun id={id} />
           {/* Metal is 0.9 metalness: with nothing to reflect it renders black however
               many lights you add. An environment is what actually makes it read. */}
-          <Environment preset="warehouse" />
+          <Environment preset="warehouse" background={false} />
         </Suspense>
       </Canvas>
     </div>
