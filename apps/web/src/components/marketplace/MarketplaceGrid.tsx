@@ -1,16 +1,17 @@
 import { useState } from 'react'
-import { Zap, CircleDot, Wrench, Shield, Flashlight } from 'lucide-react'
+import { Crosshair, Zap, CircleDot, Wrench, Shield, Flashlight } from 'lucide-react'
 import { useMarketplaceItems } from '@/hooks/useMarketplace'
 import MarketplaceItem from './MarketplaceItem'
-import WeaponsShowcase from './WeaponsShowcase'
+
 import { gunIdFromItemId } from './GunIcons'
 
 interface Props {
   walletAddress: string | undefined
 }
 
-const CATEGORIES = ['ammo', 'attachment', 'gear', 'shield', 'booster'] as const
+const CATEGORIES = ['weapon', 'ammo', 'attachment', 'gear', 'shield', 'booster'] as const
 const CATEGORY_META = {
+  weapon:     { label: 'Guns',        Icon: Crosshair  },
   ammo:       { label: 'Ammo',        Icon: CircleDot  },
   attachment: { label: 'Attachments', Icon: Wrench     },
   gear:       { label: 'Field Kit',   Icon: Flashlight },
@@ -26,13 +27,10 @@ export default function MarketplaceGrid({ walletAddress }: Props) {
   // shooter's catalogue (swords from before the pivot still live in the DB).
   const items = rawItems.filter((i) => i.category !== 'weapon' || gunIdFromItemId(i.id))
 
-  // Guns get their own ranked ARMOURY section rather than being scattered: every
-  // legendary used to take a full-width hero banner, so the page opened with a stack
-  // of them and the ladder between weapons was impossible to see.
-  const weapons = items.filter((i) => i.category === 'weapon')
-  const filteredItems = items.filter(
-    (i) => i.category !== 'weapon' && (filter === 'all' || i.category === filter),
-  )
+  // Every item — weapons included — uses the same card. Guns previously got
+  // full-width hero banners per legendary, which stacked up once there were several;
+  // the fix was to stop treating them as special, not to invent a second layout.
+  const filteredItems = items.filter((i) => filter === 'all' || i.category === filter)
 
   if (isLoading) {
     return (
@@ -46,8 +44,7 @@ export default function MarketplaceGrid({ walletAddress }: Props) {
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Every gun, ranked by tier — including the Valor Prototype. */}
-      <WeaponsShowcase items={weapons} walletAddress={walletAddress} />
+
 
       {/* Category filter */}
       <div className="flex gap-2 flex-wrap">
