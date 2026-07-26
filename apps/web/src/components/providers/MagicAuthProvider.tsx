@@ -1,7 +1,9 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import type { EIP1193Provider } from 'viem'
 import { getMagic, AUTH_CALLBACK_PATH } from '@/lib/magic'
+import { setBridgedProvider, clearBridgedProvider } from '@/lib/walletBridge'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -57,6 +59,16 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const { address, email, issuer } = await resolveIdentity()
+      // Publish to the bridge only now that Magic has actually resolved an
+      // address. Everything that signs reads the provider from there, so
+      // publishing any earlier would hand out a client for a session that
+      // isn't real yet.
+      const magic = getMagic()
+      if (address && magic) {
+        setBridgedProvider('magic', magic.rpcProvider as unknown as EIP1193Provider, address)
+      } else {
+        clearBridgedProvider('magic')
+      }
       setState({ status: address ? 'ready' : 'unauthenticated', address, email, issuer })
       // Best-effort backfill so returning users' login identity is captured too. The
       // endpoint only UPDATEs an existing row, so it's a no-op until onboarding creates one.
@@ -68,6 +80,7 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
         }).catch(() => {})
       }
     } catch {
+      clearBridgedProvider('magic')
       setState({ status: 'unauthenticated', address: undefined, email: undefined, issuer: undefined })
     }
   }, [])
@@ -97,6 +110,9 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
     const magic = getMagic()
     if (!magic) return
     await magic.user.logout()
+    // Scoped to 'magic' so signing out of Magic can never retract a provider
+    // published by another SDK.
+    clearBridgedProvider('magic')
     setState({ status: 'unauthenticated', address: undefined, email: undefined, issuer: undefined })
   }, [])
 

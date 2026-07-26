@@ -7,7 +7,6 @@ pub mod missions;
 pub mod items;
 pub mod decay;
 pub mod rewards;
-pub mod auth;
 pub mod ws;
 pub mod endless;
 pub mod survival;
@@ -144,10 +143,6 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/start", web::post().to(gauntlet::start_run))
                 .route("/submit", web::post().to(gauntlet::submit_run))
                 .route("/leaderboard", web::get().to(gauntlet::leaderboard)),
-        )
-        .service(
-            web::scope("/auth")
-                .route("/token", web::post().to(auth::issue_token)),
         )
         .service(
             web::scope("/admin")
