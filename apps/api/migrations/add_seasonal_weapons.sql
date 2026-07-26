@@ -57,3 +57,12 @@ ON CONFLICT (on_chain_id) DO UPDATE
       rarity      = EXCLUDED.rarity,
       price_g     = EXCLUDED.price_g,
       weapon_stats = EXCLUDED.weapon_stats;
+
+-- ── Season 1 exclusivity ─────────────────────────────────────────────────────
+-- The Ember Halo is the ONLY weapon that leaves the shop when Season 1 closes
+-- (27 Jul 2026 23:59 WAT = 22:59 UTC). Everything else above stays on sale.
+--
+-- Anyone who bought it KEEPS it — this only stops new sales. That is what makes it
+-- worth 10,000 G$: after the season it can't be bought at any price.
+UPDATE items SET sale_ends_at = TIMESTAMPTZ '2026-07-27 22:59:00+00'
+WHERE on_chain_id = 33;
