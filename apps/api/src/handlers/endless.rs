@@ -247,7 +247,13 @@ pub async fn endless_wave(
     };
 
     let week = current_week_key();
-    let mut amount = wave_reward_g(wave);
+    let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    let is_seasonal = season != CAMPAIGN_ENDLESS;
+
+    // SEASONAL pays NOTHING per wave. Its whole prize is the end-of-season top 5, so
+    // paying per wave as well would double the cost of a season and drain the endless
+    // pool over a 24-hour event. Campaign Endless is the mode that pays as you go.
+    let mut amount = if is_seasonal { 0 } else { wave_reward_g(wave) };
 
     // Optional weekly cap (0 = off). Never lowers below zero; the run still continues
     // for score/XP even once a capped player stops earning G$.
@@ -287,7 +293,6 @@ pub async fn endless_wave(
     // so they move on to the next one — and because dying never takes a cleared wave
     // back, this number only ever goes up. GREATEST() keeps it monotonic even if a
     // stale session reports an older wave.
-    let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
     let _ = sqlx::query(
         "INSERT INTO endless_progress (wallet_address, season_id, wave, reached_at, updated_at)
          VALUES ($1, $2, $3, now(), now())
