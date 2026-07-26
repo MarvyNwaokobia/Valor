@@ -25,7 +25,8 @@ const nextConfig: NextConfig = {
     // own monorepo. Alias it to a stub so webpack doesn't fail the build.
     //
     // `@wagmi/connectors`' porto() connector (also unused — Valor only wires up
-    // injected/metaMask/coinbaseWallet/walletConnect) pulls in `porto`, whose
+    // injected(), but the package barrel pulls every connector in) drags in
+    // `porto`, whose
     // internal modules import `zod/mini`, an export path this repo's pinned zod
     // version doesn't expose. Same fix: alias the whole package out.
     config.resolve.alias = {
