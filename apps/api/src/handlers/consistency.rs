@@ -89,22 +89,31 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
     // 2. MONEY OWED BUT NOT SETTLED. A payout row is written before its on-chain
     //    transfer confirms; the reconcile sweep is the only retry. Anything still
     //    unsettled well past that cadence means the retry is not running.
+    //
+    //    'voided' counts as SETTLED, not owed. It is a terminal state applied by
+    //    hand in SQL to cancel a payout (no code path writes it), so a voided row
+    //    never becomes 'paid' and a `status <> 'paid'` filter matches it forever.
+    //    That is not a hypothetical: 23 voided op_play rows kept this check red on
+    //    every 15-minute tick indefinitely, which is exactly how an alarm that
+    //    cries wolf gets ignored — and this one is the only thing watching real
+    //    money. Terminal states belong on this list; retryable ones ('pending',
+    //    'failed') must not be, or genuine neglect goes unreported.
     let stuck = sqlx::query_as::<_, StuckPayout>(
         "SELECT 'first_clear' AS kind, wallet_address, level::text AS reference,
                 amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8 AS minutes_old
          FROM first_clear_bounties
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          UNION ALL
          SELECT 'rank_up', wallet_address, rank, amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
          FROM rank_up_rewards
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          UNION ALL
          SELECT 'op_play', wallet_address, level::text, amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
          FROM op_play_bounties
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          ORDER BY minutes_old DESC
          LIMIT 50",
     )
