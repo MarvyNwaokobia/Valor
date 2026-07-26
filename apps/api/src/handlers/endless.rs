@@ -330,6 +330,8 @@ pub async fn endless_wave(
         true,               // is_bot
         json!({ "mode": "endless", "wave": wave, "result": "wave_cleared" }),
         true,               // on-chain
+        "endless",
+        false,              // a wave is NOT a W/L result — matches count_result below
     ).await;
 
     // Refereed XP for the wave — feeds ranks/prestige (the volume flywheel), but is NOT
@@ -502,6 +504,8 @@ pub async fn record_death(state: web::Data<AppState>, body: web::Json<DeathReque
         true,               // is_bot
         json!({ "mode": "endless", "wave": body.wave, "result": "death" }),
         true,               // record on-chain — Marvy wants losses on chain too
+        "endless",
+        false,              // an Endless death is not a loss on the profile either
     ).await;
 
     let wave = current_wave(&state.db, &wallet, season).await;

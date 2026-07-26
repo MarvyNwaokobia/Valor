@@ -60,17 +60,34 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
     // 1. FROZEN PLAYER ROWS. Battles are recorded by a different statement than the one
     //    that persists xp/wins/rank, so when that save fails the two drift apart. Both
     //    sides of every battle are counted, since PvP awards the opponent too.
+    //
+    //    The win comparison only considers rows that were MEANT to count. Not every
+    //    battle row is a W/L result: Endless persists a row per wave and per death
+    //    through the same helper, with count_result = false, because waves award XP
+    //    and rank but must not each land on the profile as a win. Comparing raw row
+    //    counts therefore reported the only two Endless players in the game as
+    //    corrupt, on every 15-minute tick, forever — their tallies were right and the
+    //    check was wrong. `counts_result` (see add_battle_mode.sql) records that
+    //    intent per row.
+    //
+    //    Rows predating that column are NULL and genuinely ambiguous — an Endless
+    //    wave and a Campaign op are otherwise identical — so a player holding any
+    //    such row is excluded from the comparison rather than judged on a guess.
+    //    Those players are still covered by the staleness clause, which is the
+    //    signal that actually catches a frozen row: battles landing while the
+    //    player's own record stops being written.
     let frozen = sqlx::query_as::<_, FrozenPlayer>(
         "WITH per_player AS (
              SELECT challenger_wallet AS w, created_at,
-                    (winner_wallet = challenger_wallet) AS won
+                    (winner_wallet = challenger_wallet) AS won, counts_result
              FROM battles
              UNION ALL
-             SELECT opponent_wallet, created_at, (winner_wallet = opponent_wallet)
+             SELECT opponent_wallet, created_at, (winner_wallet = opponent_wallet), counts_result
              FROM battles WHERE opponent_wallet <> 'bot'
          ), agg AS (
              SELECT w, max(created_at) AS last_battle,
-                    count(*) FILTER (WHERE won) AS ledger_wins
+                    count(*) FILTER (WHERE won AND counts_result) AS ledger_wins,
+                    bool_or(counts_result IS NULL) AS has_unlabelled
              FROM per_player GROUP BY w
          )
          SELECT p.wallet_address, p.rank, p.xp, p.wins,
@@ -79,7 +96,7 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
          FROM players p
          JOIN agg a ON a.w = p.wallet_address
          WHERE a.last_battle > p.last_active + interval '2 minutes'
-            OR p.wins <> a.ledger_wins
+            OR (NOT a.has_unlabelled AND p.wins <> a.ledger_wins)
          ORDER BY a.last_battle DESC
          LIMIT 50",
     )
@@ -89,22 +106,31 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
     // 2. MONEY OWED BUT NOT SETTLED. A payout row is written before its on-chain
     //    transfer confirms; the reconcile sweep is the only retry. Anything still
     //    unsettled well past that cadence means the retry is not running.
+    //
+    //    'voided' counts as SETTLED, not owed. It is a terminal state applied by
+    //    hand in SQL to cancel a payout (no code path writes it), so a voided row
+    //    never becomes 'paid' and a `status <> 'paid'` filter matches it forever.
+    //    That is not a hypothetical: 23 voided op_play rows kept this check red on
+    //    every 15-minute tick indefinitely, which is exactly how an alarm that
+    //    cries wolf gets ignored — and this one is the only thing watching real
+    //    money. Terminal states belong on this list; retryable ones ('pending',
+    //    'failed') must not be, or genuine neglect goes unreported.
     let stuck = sqlx::query_as::<_, StuckPayout>(
         "SELECT 'first_clear' AS kind, wallet_address, level::text AS reference,
                 amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8 AS minutes_old
          FROM first_clear_bounties
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          UNION ALL
          SELECT 'rank_up', wallet_address, rank, amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
          FROM rank_up_rewards
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          UNION ALL
          SELECT 'op_play', wallet_address, level::text, amount, status,
                 (EXTRACT(EPOCH FROM (now() - created_at)) / 60)::float8
          FROM op_play_bounties
-         WHERE status <> 'paid' AND created_at < now() - ($1 || ' minutes')::interval
+         WHERE status NOT IN ('paid', 'voided') AND created_at < now() - ($1 || ' minutes')::interval
          ORDER BY minutes_old DESC
          LIMIT 50",
     )
