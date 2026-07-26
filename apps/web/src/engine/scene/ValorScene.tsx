@@ -274,6 +274,10 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
 const FLOOR_W = 22, FLOOR_D = 38;
 
+/** One unit cube shared by every wall and cover box in the scene. Walls are scaled
+ *  copies of it, so streaming a room in or out costs no GPU buffer allocation. */
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+
 // ── Endless tuning ───────────────────────────────────────────────────────────
 /** Rooms kept generated AHEAD of the player. Two is enough that the next room's
  *  walls and the one beyond it already exist when you look through a doorway. */
@@ -292,6 +296,13 @@ const ENDLESS_HALF_W = ROOM_W / 2 - 0.3;
  *  a parked rig skips its skeleton update entirely (see OperatorRig). Without this pool
  *  the sim has enemies shooting at you that were never given a body to render. */
 const ENDLESS_ENEMY_POOL = 36;
+/** Draw distance for an ACTIVE (fighting) enemy — effectively never culled, so a
+ *  defender chasing you can't blink out mid-firefight. */
+const ENDLESS_CULL_ACTIVE = 60;
+/** Draw distance for a DORMANT enemy: one asleep in a room you have not breached,
+ *  almost always sealed behind a wall. Rooms are 14-18m deep, so this shows the one
+ *  you are in and drops the rest — where nearly all the saving is. */
+const ENDLESS_CULL_DORMANT = 20;
 /** Depth of the travelling floor plane. Chosen so the ground texture's 20 repeats
  *  divide it into whole 3m tiles (see ENDLESS_RIG_STEP). */
 const ENDLESS_FLOOR_D = 60;
@@ -897,6 +908,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         // cover `aliveTotal`.
         rigsMounted: dummyRefs.current.filter(Boolean).length,
         rigsVisible: dummyRefs.current.filter((g) => g && g.visible).length,
+        // Hardware-independent load proxies: what the GPU is actually asked to do.
+        drawCalls: gl.info.render.calls,
+        triangles: gl.info.render.triangles,
+        programs: gl.info.programs?.length ?? 0,
+        geometries: gl.info.memory.geometries,
+        textures: gl.info.memory.textures,
         z: pos.current.z,
         kills: sim.snapshot().stats.kills,
       };
@@ -1452,7 +1469,20 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // Bodies stay upright and un-squashed: the sim's hitboxes are fixed, so
       // moving the mesh for a crouch would break "what you see is what you hit".
       // A survival slot that's been despawned (deadAt < 0) is hidden entirely.
-      g.visible = e.alive || e.deadAt >= 0;
+      //
+      // ENDLESS also culls by DISTANCE. The live window holds four rooms, so ~24 skinned
+      // characters can exist at once — but the ones two rooms ahead are dormant and
+      // sealed behind a wall you cannot see through. Hiding them skips their draw AND
+      // their skeleton update (OperatorRig bails when hidden), which is the single
+      // biggest cost in the mode. The cull distance is well past the far wall of the
+      // next room, so nothing you could actually see ever pops.
+      // An ACTIVE enemy is fighting you and must never blink out, however far it has
+      // chased you. A DORMANT one is asleep behind an unbreached wall, so it can be
+      // culled close in — that is where nearly all the saving is, since the rooms
+      // ahead are dormant by definition.
+      const shown = e.alive || e.deadAt >= 0;
+      const dz = Math.abs(e.z - pos.current.z);
+      g.visible = shown && (!endless || dz < (e.active ? ENDLESS_CULL_ACTIVE : ENDLESS_CULL_DORMANT));
       g.position.set(e.x, 0, e.z);
       g.rotation.set(0, e.facing, 0); // face the player
       g.scale.set(1, 1, 1);
@@ -2267,24 +2297,27 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           doorway. Keyed this way, the walls that didn't change keep their identity. */}
       {LEVEL_WALLS.map((c, i) => (
         <group key={`w${c.x}_${c.z}_${c.w}_${c.d}`}>
-          <mesh position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
-            <boxGeometry args={[c.w, c.h, c.d]} />
+          {/* Every wall SHARES one unit cube and is scaled to size. Authoring a fresh
+              boxGeometry per wall allocates and frees a GPU buffer per wall — fine for
+              a fixed mission, but endless streams rooms in and out continuously, so it
+              meant churning ~10 GPU buffers every time the player crossed a doorway. */}
+          <mesh geometry={UNIT_BOX} position={[c.x, c.h / 2, c.z]} scale={[c.w, c.h, c.d]} castShadow receiveShadow>
             <meshStandardMaterial {...(i < 3 ? brickMaps : plasterMaps)} color={theme.wallTint} roughness={1} metalness={0} />
           </mesh>
-          {/* The coping is a thin cap on top of a wall that already casts an almost
-              identical shadow. In endless it stops casting: it roughly halves the
-              shadow-map draw calls for a difference you cannot see. */}
-          <mesh position={[c.x, c.h + 0.02, c.z]} castShadow={!endless} receiveShadow>
-            <boxGeometry args={[c.w + 0.14, 0.18, c.d + 0.14]} />
-            <meshStandardMaterial color="#3b3a3e" roughness={0.85} metalness={0} />
-          </mesh>
+          {/* The coping is a decorative cap on top of a wall. Endless drops it entirely:
+              it doubles the wall mesh count and every one of those is a draw call, for a
+              detail you do not read at all in a procedurally generated corridor. */}
+          {!endless && (
+            <mesh geometry={UNIT_BOX} position={[c.x, c.h + 0.02, c.z]} scale={[c.w + 0.14, 0.18, c.d + 0.14]} castShadow receiveShadow>
+              <meshStandardMaterial color="#3b3a3e" roughness={0.85} metalness={0} />
+            </mesh>
+          )}
         </group>
       ))}
 
       {/* cover: scorched planking */}
       {LEVEL_COVER.map((c) => (
-        <mesh key={`c${c.x}_${c.z}_${c.w}_${c.d}`} position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
-          <boxGeometry args={[c.w, c.h, c.d]} />
+        <mesh key={`c${c.x}_${c.z}_${c.w}_${c.d}`} geometry={UNIT_BOX} position={[c.x, c.h / 2, c.z]} scale={[c.w, c.h, c.d]} castShadow receiveShadow>
           <meshStandardMaterial {...plankMaps} color="#6b6055" roughness={0.95} metalness={0.05} />
         </mesh>
       ))}
@@ -2394,7 +2427,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           cheap chromatic edge + vignette that sell the "lens". Used on touch AND on any
           desktop/laptop that can't hold framerate on the full stack (adaptive: see the
           PerformanceMonitor → `degraded` in ValorScene). Capable machines keep the full look. */}
-      {lightFx ? (
+      {/* Endless always takes the LIGHT stack. N8AO runs `enableNormalPass`, which is a
+          second full render of the scene every frame — affordable on an authored op,
+          not on top of a streamed four-room compound and a pool of skinned characters.
+          It also buys least exactly here, on flat generated boxes. */}
+      {(lightFx || endless) ? (
         <EffectComposer multisampling={0}>
           <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
           <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
