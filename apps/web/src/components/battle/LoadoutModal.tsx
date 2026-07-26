@@ -37,8 +37,14 @@ const SLOTS: { slot: AttachmentSlot; label: string }[] = [
 ]
 
 interface Props {
-  opIndex: number
+  /** Campaign op this is for, if any. Endless and Seasonal waves have no op — they
+   *  issue no weapon of their own, so you carry purely what you equipped. */
+  opIndex?: number
   opName: string
+  /** Overrides the "OP n" eyebrow, e.g. "Seasonal · Wave 7". */
+  label?: string
+  /** Wording on the confirm button; waves "enter" rather than "deploy". */
+  cta?: string
   walletAddress?: string
   onClose: () => void
   onDeploy: (kit: KitId[]) => void
@@ -70,7 +76,7 @@ function Row({ selected, onClick, title, sub, accent }: {
   )
 }
 
-export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, onDeploy }: Props) {
+export default function LoadoutModal({ opIndex, opName, label, cta, walletAddress, onClose, onDeploy }: Props) {
   const inventory = usePlayerStore((s) => s.inventory)
   const toggleEquip = usePlayerStore((s) => s.toggleEquip)
 
@@ -139,7 +145,7 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
   // for "I bought a gun and nothing changed": now it changes, and you're told when the
   // op's issued weapon would have been the stronger pick. The starter sidearm is the one
   // exception — picking it deploys the issued weapon (the floor), so no warning there.
-  const issuedGun = CAMPAIGN[opIndex]?.gun ? GUN_CATALOG[CAMPAIGN[opIndex].gun] : null
+  const issuedGun = opIndex !== undefined && CAMPAIGN[opIndex]?.gun ? GUN_CATALOG[CAMPAIGN[opIndex].gun] : null
   const underGunned = gun !== 'sidearm' && issuedGun != null && chosenGun.tier < issuedGun.tier
 
   return (
@@ -157,7 +163,7 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-start justify-between gap-2 p-5 pb-3" style={{ background: '#0a0c12', borderBottom: '1px solid #1c1f28' }}>
           <div>
-            <p className="text-[10px] uppercase tracking-[0.3em] font-bold" style={{ color: '#37d0e0' }}>Loadout · OP {opIndex + 1}</p>
+            <p className="text-[10px] uppercase tracking-[0.3em] font-bold" style={{ color: '#37d0e0' }}>{label ?? `Loadout · OP ${(opIndex ?? 0) + 1}`}</p>
             <h2 className="font-display font-black text-white text-xl leading-tight">{opName}</h2>
           </div>
           {!deploying && (
@@ -266,7 +272,7 @@ export default function LoadoutModal({ opIndex, opName, walletAddress, onClose, 
             className="w-full py-3 rounded-xl font-display font-black text-black text-sm tracking-wide disabled:opacity-60"
             style={{ background: '#37d0e0' }}
           >
-            {deploying ? 'DEPLOYING…' : 'DEPLOY'}
+            {deploying ? 'LOADING OUT…' : (cta ?? 'DEPLOY')}
           </motion.button>
         </div>
       </motion.div>
