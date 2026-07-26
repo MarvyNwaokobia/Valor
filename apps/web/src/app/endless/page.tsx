@@ -1,19 +1,26 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
+import { Rajdhani } from 'next/font/google';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useResolvedAuth } from '@/hooks/useResolvedAuth';
-import { useEndlessRun } from '@/hooks/useEndlessRun';
-import { equippedGunId } from '@/lib/guns';
-import { endlessLevel } from '@/engine/campaign/levels';
+import { useEndlessProgress } from '@/hooks/useEndlessProgress';
+import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
-import Leaderboard from '@/components/battle/Leaderboard';
+import WaveBoard from '@/components/battle/WaveBoard';
 
-const GameScene = dynamic(
-  () => retryImport(() => import('@/engine/scene/GameScene')).then((m) => m.GameScene),
+const tactical = Rajdhani({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-tactical',
+  display: 'swap',
+});
+
+const ValorScene = dynamic(
+  () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
   {
     ssr: false,
     loading: () => (
@@ -24,146 +31,141 @@ const GameScene = dynamic(
   }
 );
 
-type ClassId = 'berserker' | 'sentinel' | 'phantom';
-const CLASS_MAP: Record<string, ClassId> = { Berserker: 'berserker', Sentinel: 'sentinel', Phantom: 'phantom' };
+/** Ops that must be cleared before Endless opens. */
+const UNLOCK_LEVEL = 15;
 
+/**
+ * CAMPAIGN ENDLESS — the generated room chain as a permanent career mode.
+ *
+ * Unlocked by finishing the 15-op campaign. Unlike the Seasonal Campaign this has no
+ * window and no prize: it is one long progression that persists forever. Same rules
+ * otherwise — quitting costs nothing, dying restarts the wave you were on, and the
+ * board ranks waves completed.
+ *
+ * (This route used to host the old 1v1 duel arena, which was never the tactical
+ * gameplay it claimed to be. That is what this replaces.)
+ */
 export default function EndlessPage() {
   const player = usePlayerStore((s) => s.player);
   const inventory = usePlayerStore((s) => s.inventory);
   const { address } = useResolvedAuth();
   const router = useRouter();
-  const { startRun, reportWave, endRun, banked } = useEndlessRun(address);
+  const progress = useEndlessProgress(address); // no season id → Campaign Endless
 
-  const [wave, setWave] = useState(1);
-  const [dead, setDead] = useState(false);
-  const [toast, setToast] = useState<{ key: number; g: number } | null>(null); // +G$ per wave
+  const [playing, setPlaying] = useState(false);
+  const [startWave, setStartWave] = useState(1);
 
-  const playerClass = CLASS_MAP[player?.character_class ?? 'Berserker'] ?? 'berserker';
-  const playerGun = useMemo(() => equippedGunId(inventory), [inventory]);
-  const lvl = useMemo(() => endlessLevel(wave), [wave]);
+  const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
+  const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory]);
+  const equippedMods = useMemo(() => equippedAttachments(inventory), [inventory]);
 
-  // Open a server-authoritative run when the page mounts.
-  useEffect(() => { startRun(); }, [startRun]);
+  // The chain's layout seed. Campaign Endless is a personal career rather than a
+  // contest, so it is seeded PER PLAYER: your compound is yours, and nobody can
+  // memorise someone else's route.
+  const seed = useMemo(() => {
+    const w = (address ?? 'valor').toLowerCase();
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < w.length; i++) { h ^= w.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }, [address]);
 
-  // Auto-dismiss the +G$ toast a beat after it appears.
-  useEffect(() => {
-    if (!toast) return;
-    const id = setTimeout(() => setToast(null), 1400);
-    return () => clearTimeout(id);
-  }, [toast]);
+  const begin = useCallback(async () => {
+    const resume = await progress.start();
+    setStartWave(resume);
+    setPlaying(true);
+  }, [progress]);
 
-  const onBattleEnd = useCallback(
-    async (winner: 'player' | 'enemy') => {
-      if (winner === 'player') {
-        const result = await reportWave(); // server credits the wave + pays G$
-        if (result && result.gAwarded > 0) setToast({ key: Date.now(), g: result.gAwarded });
-        setWave((w) => w + 1);
-      } else {
-        await endRun(); // server writes the leaderboard score from its own count
-        setDead(true);
-      }
-    },
-    [reportWave, endRun]
-  );
-
-  const runAgain = useCallback(() => {
-    setWave(1);
-    setDead(false);
-    startRun();
-  }, [startRun]);
+  const onWaveCleared = useCallback(() => { void progress.clearWave(); }, [progress]);
+  const onDeath = useCallback((wave: number) => { void progress.reportDeath(wave); }, [progress]);
 
   if (!player) {
     router.replace('/');
     return null;
   }
 
-  if (dead) {
-    const wavesCleared = wave - 1;
+  const cleared = player.pve_level ?? 0;
+  const locked = cleared < UNLOCK_LEVEL;
+
+  if (playing) {
     return (
-      <div className="fixed inset-0 z-50 overflow-y-auto flex flex-col items-center px-6 py-10" style={{ background: '#04030c' }}>
-        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-red-400 mb-1">Endless Over</p>
-        <h1 className="font-display font-black text-white" style={{ fontSize: 'clamp(3rem, 12vw, 5rem)' }}>
-          {wavesCleared}
-        </h1>
-        <p className="text-slate-400 text-sm mb-4">waves survived</p>
-
-        {banked > 0 && (
-          <div className="mb-8 px-5 py-2.5 rounded-xl border flex items-center gap-2"
-            style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.3)' }}>
-            <span className="font-display font-black text-amber-400 text-xl">+{banked.toLocaleString()} G$</span>
-            <span className="text-[10px] uppercase tracking-widest text-amber-500/70 font-bold">banked this run</span>
-          </div>
-        )}
-
-        <div className="mb-8">
-          <Leaderboard highlightWallet={address} />
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            onClick={runAgain}
-            className="px-6 py-3 rounded-xl font-display font-black text-black"
-            style={{ background: '#eab308' }}
-          >
-            Run Again
-          </button>
-          <button
-            onClick={() => router.push('/')}
-            className="px-6 py-3 rounded-xl font-display font-black text-white border border-valor-border"
-          >
-            Exit
-          </button>
-        </div>
+      <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
+        <ValorScene
+          endless={{ seed, startWave, onWaveCleared, onDeath }}
+          walletAddress={address}
+          accountRank={player.rank}
+          accountXp={player.xp}
+          equippedGun={equippedGun}
+          equippedAmmo={equippedAmmo}
+          equippedMods={equippedMods}
+          onExit={() => setPlaying(false)}
+        />
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black z-40">
-      <button
-        onClick={() => router.push('/')}
-        className="fixed top-4 left-4 z-50 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/60 text-sm rounded-lg pointer-events-auto"
-      >
-        Exit
-      </button>
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-0.5 pointer-events-none select-none">
-        <span className="font-display font-black text-amber-400 text-lg">WAVE {wave}</span>
-        {banked > 0 && (
-          <span className="text-[11px] font-bold text-amber-500/80 tabular-nums">{banked.toLocaleString()} G$ banked</span>
+    <div className="fixed inset-0 z-50 overflow-y-auto flex flex-col items-center px-6 py-10" style={{ background: '#04030c' }}>
+      <div className="w-full max-w-2xl">
+        <button onClick={() => router.push('/battle')} className="text-slate-400 hover:text-white text-sm mb-6">
+          ← Fight
+        </button>
+
+        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500 mb-1">Campaign Endless</p>
+        <h1 className="font-display font-black text-white text-3xl tracking-wide mb-1">No Exit</h1>
+        <p className="text-slate-500 text-sm mb-6">breach · clear · push forward · it does not end</p>
+
+        {locked ? (
+          <div className="p-6 rounded-2xl border text-center mb-8" style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}>
+            <p className="text-white font-display font-black text-lg mb-1">Locked</p>
+            <p className="text-slate-500 text-sm">
+              Clear all {UNLOCK_LEVEL} campaign operations to open Endless.
+              <br />
+              <span className="text-amber-500/80">{cleared} / {UNLOCK_LEVEL} cleared</span>
+            </p>
+            <button
+              onClick={() => router.push('/fight')}
+              className="mt-4 px-5 py-2.5 rounded-xl font-display font-black text-black"
+              style={{ background: '#eab308' }}
+            >
+              Continue the Campaign
+            </button>
+          </div>
+        ) : (
+          <>
+            {progress.wave > 1 && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                className="mb-6 p-5 rounded-2xl border text-center"
+                style={{ background: 'rgba(234,179,8,0.06)', borderColor: 'rgba(234,179,8,0.3)' }}
+              >
+                <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500 mb-1">Your progress</p>
+                <h2 className="font-display font-black text-white" style={{ fontSize: 'clamp(2.5rem, 10vw, 4rem)' }}>
+                  {progress.wave - 1}
+                </h2>
+                <p className="text-slate-400 text-sm">waves completed · resuming on wave {progress.wave}</p>
+              </motion.div>
+            )}
+
+            <p className="text-slate-600 text-xs mb-6 leading-relaxed">
+              Rooms upon rooms, and no end to them. Leave whenever you like and come back
+              on the wave you left. Dying only sends you to the start of your current wave,
+              never back to the beginning. Every wave cleared pays G$.
+            </p>
+
+            <button
+              onClick={begin}
+              className="w-full px-6 py-4 rounded-xl font-display font-black text-black"
+              style={{ background: '#eab308' }}
+            >
+              {progress.wave > 1 ? `Continue — Wave ${progress.wave}` : 'Begin'}
+            </button>
+          </>
         )}
+
+        <div className="mt-10">
+          <WaveBoard highlightWallet={address} title="Endless · Waves Cleared" />
+        </div>
       </div>
-
-      {/* +G$ banked toast — fires once per paying wave, then auto-dismisses */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            key={toast.key}
-            className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none select-none"
-            initial={{ opacity: 0, y: 10, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -16 }}
-            transition={{ duration: 0.35 }}
-          >
-            <span className="font-display font-black text-2xl px-4 py-1.5 rounded-full"
-              style={{ color: '#04030c', background: '#eab308', boxShadow: '0 0 24px rgba(234,179,8,0.5)' }}>
-              +{toast.g.toLocaleString()} G$
-            </span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <GameScene
-        key={wave}
-        playerClass={playerClass}
-        enemyClass={lvl.enemyClass}
-        enemyName={lvl.name}
-        stageId={lvl.stageId}
-        playerGun={playerGun}
-        enemyGun={lvl.enemyGun}
-        enemyHpMult={lvl.enemyHpMult}
-        difficulty={lvl.difficulty}
-        onBattleEnd={onBattleEnd}
-      />
     </div>
   );
 }

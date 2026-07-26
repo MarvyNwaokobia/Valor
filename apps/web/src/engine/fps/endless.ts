@@ -281,7 +281,10 @@ export function generateRoom(index: number, zNear: number, seed: number): Genera
  *  out of the compound. Punched with no door: the chain only goes forward. */
 export function entryCap(zNear: number): CoverBox[] {
   const outer = ROOM_W / 2 + WALL_T;
-  return [{ x: 0, z: zNear + WALL_T, w: outer * 2, d: WALL_T, h: WALL_H }];
+  // Sits FLUSH against the side walls, which end exactly at zNear. Offsetting it by a
+  // full wall thickness (as it was) left a WALL_T/2 slit at both corners of the very
+  // first room — a thin vertical strip of daylight either side of the entrance.
+  return [{ x: 0, z: zNear + WALL_T / 2, w: outer * 2, d: WALL_T, h: WALL_H }];
 }
 
 /** Where the player stands when a run (or a resume) begins in the room at `zNear`. */

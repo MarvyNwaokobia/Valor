@@ -384,6 +384,47 @@ pub async fn get_progress(state: web::Data<AppState>, q: web::Query<ProgressQuer
     HttpResponse::Ok().json(json!({ "wave": wave, "waves_completed": wave - 1 }))
 }
 
+#[derive(Serialize, FromRow)]
+struct ProgressRow {
+    wallet_address: String,
+    username: Option<String>,
+    waves: i32,
+}
+
+#[derive(Deserialize)]
+pub struct BoardQuery {
+    #[serde(default)]
+    pub season_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+/// GET /endless/board — the wave ladder for a partition.
+///
+/// Ranked by WAVES COMPLETED, ties broken by who reached that wave first so no two
+/// players can share a place. Omit `season_id` for the Campaign Endless all-time
+/// board; pass one for that season's ladder.
+pub async fn get_board(state: web::Data<AppState>, q: web::Query<BoardQuery>) -> HttpResponse {
+    let season = q.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    let limit = q.limit.unwrap_or(25).clamp(1, 100);
+    let rows = sqlx::query_as::<_, ProgressRow>(
+        "SELECT g.wallet_address, p.username, (g.wave - 1) AS waves
+         FROM endless_progress g LEFT JOIN players p ON p.wallet_address = g.wallet_address
+         WHERE g.season_id = $1 AND g.wave > 1
+         ORDER BY g.wave DESC, g.reached_at ASC
+         LIMIT $2",
+    )
+    .bind(season).bind(limit)
+    .fetch_all(&state.db).await.unwrap_or_default();
+
+    let entries: Vec<_> = rows.iter().enumerate().map(|(i, r)| json!({
+        "rank": i + 1,
+        "wallet_address": r.wallet_address,
+        "username": r.username,
+        "waves": r.waves,
+    })).collect();
+    HttpResponse::Ok().json(json!({ "entries": entries }))
+}
+
 #[derive(Deserialize)]
 pub struct DeathRequest {
     pub wallet: String,
