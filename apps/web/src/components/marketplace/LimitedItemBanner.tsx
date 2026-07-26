@@ -11,16 +11,20 @@ import { gunIdFromItemId } from './GunIcons'
 import { ItemArt } from './ItemArt'
 import { gunDps, GUN_CATALOG } from '@/engine/combat/GunStats'
 
-const SALE_END_TIMESTAMP =
-  typeof window !== 'undefined'
-    ? (() => {
-        const stored = localStorage.getItem('valor:limited-sale-end')
-        if (stored) return parseInt(stored)
-        const end = Date.now() + 7 * 24 * 60 * 60 * 1000
-        localStorage.setItem('valor:limited-sale-end', String(end))
-        return end
-      })()
-    : Date.now() + 7 * 24 * 60 * 60 * 1000
+/**
+ * A limited item's sale window comes from the ITEM, not the browser.
+ *
+ * This used to be a localStorage value seeded to "seven days from whenever this
+ * browser first opened the page" — so the countdown was different for every visitor,
+ * ran down on its own, and then declared the sale over for that person while it was
+ * still live for everyone else. An item with no `sale_ends_at` simply has no deadline.
+ */
+function saleEndOf(item: Item): number | null {
+  const raw = (item as Item & { sale_ends_at?: string | null }).sale_ends_at
+  if (!raw) return null
+  const t = new Date(raw).getTime()
+  return Number.isFinite(t) ? t : null
+}
 
 function isUserRejection(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
@@ -35,21 +39,28 @@ interface Props {
 export default function LimitedItemBanner({ item, walletAddress }: Props) {
   const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
   const inventory   = usePlayerStore((s) => s.inventory)
-  const [timeLeft,     setTimeLeft]     = useState(Math.max(0, SALE_END_TIMESTAMP - Date.now()))
+  const saleEnd = saleEndOf(item)
+  const [timeLeft,     setTimeLeft]     = useState(saleEnd === null ? Infinity : Math.max(0, saleEnd - Date.now()))
   const [showConfirm,  setShowConfirm]  = useState(false)
   const [error,        setError]        = useState<string | null>(null)
 
   const alreadyOwned = inventory.some((i) => i.item_id === item.id)
-  const isSoldOut    = (item.remaining_supply ?? 0) <= 0
+  // ONLY an item with a declared supply can sell out. `total_supply === null` means
+  // unlimited — reading a null remaining_supply as 0 marked every unlimited legendary
+  // permanently SOLD OUT, which is what took the Valor Prototype off sale.
+  const isLimited    = item.total_supply !== null && item.total_supply !== undefined
+  const isSoldOut    = isLimited && (item.remaining_supply ?? 0) <= 0
   const isPending    = pendingItemId === item.id
-  const isExpired    = timeLeft <= 0 && isSoldOut
+  // An item with no sale window never expires.
+  const isExpired    = saleEnd !== null && timeLeft <= 0
 
   useEffect(() => {
+    if (saleEnd === null) return
     const interval = setInterval(() => {
-      setTimeLeft(Math.max(0, SALE_END_TIMESTAMP - Date.now()))
+      setTimeLeft(Math.max(0, saleEnd - Date.now()))
     }, 1000)
     return () => clearInterval(interval)
-  }, [])
+  }, [saleEnd])
 
   async function handleConfirm() {
     setError(null)
@@ -132,7 +143,9 @@ export default function LimitedItemBanner({ item, walletAddress }: Props) {
 
           {/* CTA + countdown */}
           <div className="flex flex-col gap-3 items-center shrink-0">
-            {!isSoldOut && timeLeft > 0 && (
+            {/* Only an item with a real deadline shows a clock. Without this an
+                unlimited item counted down from Infinity. */}
+            {saleEnd !== null && !isSoldOut && timeLeft > 0 && (
               <div className="text-center">
                 <p className="text-xs text-slate-500 mb-1">Ends in</p>
                 <p className="font-mono font-bold text-valor-gold text-lg">
