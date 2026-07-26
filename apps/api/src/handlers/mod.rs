@@ -157,6 +157,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/seasons", web::get().to(admin::list_seasons))
                 .route("/seasons", web::post().to(admin::create_season))
                 .route("/seasons/{id}/end", web::post().to(admin::end_season))
+                .route("/seasons/{id}", web::delete().to(admin::delete_season))
+                .route("/seasons/{id}", web::patch().to(admin::update_season))
+                .route("/seasons/{id}/reset-progress", web::post().to(admin::reset_season_progress))
                 .route("/seasons/{id}/fund", web::post().to(seasons::fund))
                 .route("/seasons/{id}/payout", web::post().to(seasons::payout)),
         )
