@@ -47,6 +47,30 @@ pub async fn get_relay_address(state: web::Data<AppState>) -> HttpResponse {
     }
 }
 
+// ── GET /pools ────────────────────────────────────────────────────────────────
+// Which reward pools this server is ACTUALLY using. Contract addresses are public
+// on-chain, so nothing sensitive is exposed — and without this the only way to know
+// whether ENDLESS_REWARD_POOL_CONTRACT is set is to read the host's env vars.
+//
+// `endless_dedicated: false` is the one to watch: it means Endless is falling back to
+// the shared pool and is spending the same G$ that funds season prizes and bounties.
+pub async fn get_pools(state: web::Data<AppState>) -> HttpResponse {
+    let Some(chain) = state.chain.as_ref() else {
+        return HttpResponse::ServiceUnavailable().json(json!({"error": "Chain relay not available"}));
+    };
+    let dedicated = chain.dedicated_endless_pool_address();
+    HttpResponse::Ok().json(json!({
+        "reward_pool":       chain.reward_pool_address().map(|a| format!("{:?}", a)),
+        "endless_pool":      chain.endless_pool_address().map(|a| format!("{:?}", a)),
+        "endless_dedicated": dedicated.is_some(),
+        "note": if dedicated.is_some() {
+            "Endless pays from its own pool."
+        } else {
+            "ENDLESS_REWARD_POOL_CONTRACT is UNSET — Endless is paying from the shared reward pool, which also funds season prizes."
+        },
+    }))
+}
+
 fn wei_to_g(amount: U256) -> Decimal {
     Decimal::from_str(&amount.to_string()).unwrap_or(Decimal::ZERO) / Decimal::from(10u64.pow(18))
 }

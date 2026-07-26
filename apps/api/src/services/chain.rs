@@ -347,6 +347,16 @@ impl ChainWriter {
         self.endless_pool.as_ref().or(self.reward_pool.as_ref()).map(|p| p.address())
     }
 
+    /// The endless pool ONLY if one was configured in its own right — None means
+    /// ENDLESS_REWARD_POOL_CONTRACT is unset and Endless is silently falling back to
+    /// the shared pool, spending the same G$ that funds season prizes and bounties.
+    /// That fallback is deliberate (it keeps Endless working before its pool exists)
+    /// but it is invisible from the outside, which is exactly how a prize pool gets
+    /// quietly drained. This makes it checkable.
+    pub fn dedicated_endless_pool_address(&self) -> Option<Address> {
+        self.endless_pool.as_ref().map(|p| p.address())
+    }
+
     /// Reads the on-chain idempotency flag for a bounty `ref`. `true` means that ref
     /// has already paid out on-chain, so a re-attempt would revert (`RefAlreadyUsed`).
     /// The reconcile job uses this to tell "genuinely never paid" apart from "paid, but
