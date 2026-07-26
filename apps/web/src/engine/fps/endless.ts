@@ -34,9 +34,16 @@ export const WALL_T = 0.6;
 export const WALL_H = 4;
 /** Width of the doorway punched through each dividing wall. */
 export const DOOR_W = 3.2;
-/** Interior depth range of a generated room. */
-export const ROOM_D_MIN = 12;
+/** Interior depth range of a generated room. The floor is set well above the
+ *  doorway-to-defender standoff so breaching always gives you a beat to read the
+ *  room before contact. */
+export const ROOM_D_MIN = 14;
 export const ROOM_D_MAX = 18;
+
+/** Defenders are held to the FAR half of the room. The player always enters at the
+ *  near edge, so this is what guarantees a real standoff on the breach instead of an
+ *  enemy standing three metres inside the door. */
+const ENEMY_ZONE = 0.5;
 
 /** How far a door can sit from the room's centre line (keeps it out of corners). */
 const DOOR_MAX_OFFSET = ROOM_W / 2 - DOOR_W;
@@ -221,12 +228,16 @@ export function generateRoom(index: number, zNear: number, seed: number): Genera
 
   const cover = coverForArchetype(Math.floor(rng() * 5), zMid, depth, rng);
 
-  // Defenders spread through the room, biased to the far half so breaching gives
-  // the player a beat to read the space before contact.
+  // Defenders are confined to the FAR half of the room. The player always breaches at
+  // the near edge, so this is what buys them a beat to read the space before contact
+  // — without it a defender can be standing three metres inside the door and the room
+  // opens as an ambush rather than a breach.
   const blockers = [...walls, ...cover];
   const count = roomEnemyCount(index);
   const hp = Math.max(1, Math.round(100 * roomEnemyHpMult(index)));
   const enemies: EnemySpec[] = [];
+  const zLo = zFar + 1.5;                    // just off the far wall
+  const zHi = zFar + depth * ENEMY_ZONE;     // no closer than half-way in
   for (let i = 0; i < count; i++) {
     let x = 0;
     let z = 0;
@@ -234,7 +245,7 @@ export function generateRoom(index: number, zNear: number, seed: number): Genera
     // buried, so a few tries is enough; this just keeps placements looking placed.
     for (let attempt = 0; attempt < 24; attempt++) {
       x = (rng() * 2 - 1) * (halfW - 1.8);
-      z = zFar + 1.8 + rng() * (depth - 3.6) * 0.75;
+      z = zLo + rng() * (zHi - zLo);
       if (isClear(x, z, blockers)) break;
     }
     enemies.push({ pos: [x, z], hp, room: index + 1 });

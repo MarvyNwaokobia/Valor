@@ -148,6 +148,28 @@ describe('enemy placement', () => {
     }
   });
 
+  it('holds defenders to the far half, so a breach is never an ambush', () => {
+    // The player always enters at the near edge. A defender parked just inside the
+    // door turns the breach into an instant point-blank fight, which is what this
+    // guards against.
+    for (const r of chain) {
+      const depth = r.zNear - r.zFar;
+      const halfway = r.zFar + depth / 2;
+      for (const e of r.enemies) {
+        expect(e.pos[1]).toBeLessThanOrEqual(halfway + 1e-9);
+      }
+    }
+  });
+
+  it('gives the breacher at least 5m of standoff on entry', () => {
+    for (const r of chain) {
+      // Where the player stands on entering this room (just past the near wall).
+      const entryZ = r.zNear - 1.5;
+      const nearest = Math.max(...r.enemies.map((e) => e.pos[1]));
+      expect(entryZ - nearest).toBeGreaterThan(5);
+    }
+  });
+
   it('keeps every enemy inside its own room', () => {
     for (const r of chain) {
       for (const e of r.enemies) {
