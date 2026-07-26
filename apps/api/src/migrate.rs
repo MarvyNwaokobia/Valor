@@ -30,6 +30,7 @@ use sqlx::PgPool;
 /// Add new migrations at the end (or anywhere after init if order-independent).
 const MIGRATIONS: &[(&str, &str)] = &[
     ("init.sql",                  include_str!("../migrations/init.sql")),
+    ("add_battle_mode.sql",       include_str!("../migrations/add_battle_mode.sql")),
     ("add_chain_tx_columns.sql",  include_str!("../migrations/add_chain_tx_columns.sql")),
     ("add_character_confirmed.sql", include_str!("../migrations/add_character_confirmed.sql")),
     ("add_endless_progress.sql",  include_str!("../migrations/add_endless_progress.sql")),
