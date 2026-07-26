@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useSeasonalRun } from '@/hooks/useSeasonalRun';
+import { useEndlessProgress } from '@/hooks/useEndlessProgress';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
 import { Rajdhani } from 'next/font/google';
@@ -46,12 +47,14 @@ export default function SeasonalPage() {
   const inventory = usePlayerStore((s) => s.inventory);
   const { address } = useResolvedAuth();
   const router = useRouter();
-  const { season, board, loading, startRun, submitRun } = useSeasonalRun(address);
+  const { season, board, loading, refresh } = useSeasonalRun(address);
+  const progress = useEndlessProgress(address, season?.id);
 
-  // 'lobby' → the season card + board. 'run' → the actual fight. 'result' → the score.
-  const [phase, setPhase] = useState<'lobby' | 'run' | 'result'>('lobby');
+  // 'lobby' → the season card + board. 'run' → the fight. There is no result screen:
+  // dying no longer ends anything, it puts you back at the start of your wave.
+  const [phase, setPhase] = useState<'lobby' | 'run'>('lobby');
   const [seed, setSeed] = useState<number | null>(null);
-  const [result, setResult] = useState<{ wave: number; kills: number; best: number } | null>(null);
+  const [startWave, setStartWave] = useState(1);
   const [, setTick] = useState(0); // drives the once-a-second countdown re-render
 
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
@@ -65,25 +68,26 @@ export default function SeasonalPage() {
     return () => clearInterval(id);
   }, []);
 
+  // Enter the season. The server hands back the shared layout seed and the wave this
+  // player resumes on — quitting never costs progress, so this is usually not 1.
   const begin = useCallback(async () => {
-    const s = await startRun();
-    if (s === null) return; // the server said no season is live — stay in the lobby
-    setSeed(s);
-    setResult(null);
+    if (!season?.active || season.seed == null) return;
+    const resume = await progress.start();
+    setSeed(season.seed);
+    setStartWave(resume);
     setPhase('run');
-  }, [startRun]);
+  }, [season, progress]);
 
-  // The run ended. Seasonal never resumes, so this is the whole score: submit it and
-  // show where it landed.
-  const onRunEnd = useCallback(
-    async (wave: number, stats: { kills: number; headshots: number }) => {
-      const waves = Math.max(0, wave - 1); // the wave they died ON was not cleared
-      setPhase('result');
-      const res = await submitRun(waves, stats.kills);
-      setResult({ wave: waves, kills: stats.kills, best: res?.seasonBest ?? waves });
-    },
-    [submitRun]
-  );
+  // A wave was cleared: the server credits it, pays the G$ and records the win.
+  const onWaveCleared = useCallback(() => { void progress.clearWave(); }, [progress]);
+
+  // Death records the loss on chain. It does NOT end the run — the scene puts the
+  // player back at the start of the wave they were on.
+  const onDeath = useCallback((wave: number) => { void progress.reportDeath(wave); }, [progress]);
+
+  // Leaving banks nothing extra: every cleared wave was already saved as it happened,
+  // so the board is up to date the moment they walk away.
+  const leave = useCallback(() => { setPhase('lobby'); void refresh(); }, [refresh]);
 
   if (!player) {
     router.replace('/');
@@ -95,14 +99,14 @@ export default function SeasonalPage() {
       <div className={tactical.variable} style={{ position: 'fixed', inset: 0 }}>
         <ValorScene
           seasonal
-          endless={{ seed, startWave: 1, onRunEnd }}
+          endless={{ seed, startWave, onWaveCleared, onDeath }}
           walletAddress={address}
           accountRank={player.rank}
           accountXp={player.xp}
           equippedGun={equippedGun}
           equippedAmmo={equippedAmmo}
           equippedMods={equippedMods}
-          onExit={() => setPhase('lobby')}
+          onExit={leave}
         />
       </div>
     );
@@ -118,19 +122,19 @@ export default function SeasonalPage() {
           ← Fight
         </button>
 
-        {/* ── Result of the run just played ── */}
-        {phase === 'result' && result && (
+        {/* Where this player stands. Progress persists, so this is their live
+            position in the season rather than the score of a finished run. */}
+        {progress.wave > 1 && (
           <motion.div
             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-            className="mb-8 p-6 rounded-2xl border text-center"
+            className="mb-8 p-5 rounded-2xl border text-center"
             style={{ background: 'rgba(234,179,8,0.06)', borderColor: 'rgba(234,179,8,0.3)' }}
           >
-            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-red-400 mb-1">Run Over</p>
+            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500 mb-1">Your progress</p>
             <h2 className="font-display font-black text-white" style={{ fontSize: 'clamp(2.5rem, 10vw, 4rem)' }}>
-              {result.wave}
+              {progress.wave - 1}
             </h2>
-            <p className="text-slate-400 text-sm">waves cleared · {result.kills} down</p>
-            <p className="text-amber-400 text-sm font-bold mt-2">season best: {result.best}</p>
+            <p className="text-slate-400 text-sm">waves completed · resuming on wave {progress.wave}</p>
           </motion.div>
         )}
 
@@ -170,9 +174,10 @@ export default function SeasonalPage() {
                 because "why did they get an easier run" is the first thing a
                 competitive player asks. */}
             <p className="text-slate-600 text-xs mb-6 leading-relaxed">
-              Every player runs the same generated compound, from wave 1, with no resume.
-              Your BEST single run takes your place on the board. Top 5 are paid when the
-              season closes.
+              Every player runs the same generated compound. Leave whenever you like and
+              come back on the wave you left — dying only sends you to the start of your
+              current wave, never back to the beginning. The board ranks WAVES COMPLETED.
+              Top 5 are paid when the season closes.
             </p>
 
             <button
@@ -181,7 +186,7 @@ export default function SeasonalPage() {
               className="w-full px-6 py-4 rounded-xl font-display font-black text-black disabled:opacity-30 disabled:cursor-not-allowed transition-opacity"
               style={{ background: '#eab308' }}
             >
-              {live ? (phase === 'result' ? 'Run Again' : 'Enter the Season') : season.upcoming ? 'Locked until it opens' : 'Season closed'}
+              {live ? (progress.wave > 1 ? `Continue — Wave ${progress.wave}` : 'Enter the Season') : season.upcoming ? 'Locked until it opens' : 'Season closed'}
             </button>
           </>
         )}

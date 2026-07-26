@@ -1050,6 +1050,13 @@ export class FpsSim {
     }
   }
 
+  /** Debug: kill the PLAYER outright (probe hook for headless verification of the
+   *  death path — waiting to be shot down takes minutes under software rendering). */
+  debugKillPlayer(): void {
+    this.playerHp = 0;
+    this.playerAlive = false;
+  }
+
   /** Debug: drop every enemy now (probe hook for headless verification). */
   debugKillAll(): void {
     for (const e of this.enemies) {

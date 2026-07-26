@@ -126,6 +126,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/start", web::post().to(endless::start_endless))
                 .route("/wave", web::post().to(endless::endless_wave))
                 .route("/end", web::post().to(endless::end_endless))
+                .route("/progress", web::get().to(endless::get_progress))
+                .route("/death", web::post().to(endless::record_death))
                 .route("/score", web::post().to(endless::submit_score))
                 .route("/leaderboard", web::get().to(endless::get_leaderboard)),
         )

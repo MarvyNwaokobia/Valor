@@ -166,6 +166,9 @@ pub async fn get_leaderboard(
 #[derive(Deserialize)]
 pub struct StartEndlessRequest {
     pub wallet: String,
+    /// Season this run belongs to; omitted for Campaign Endless.
+    #[serde(default)]
+    pub season_id: Option<Uuid>,
 }
 
 /// Open a server-authoritative Endless run and return its session id. The client hands
@@ -187,18 +190,33 @@ pub async fn start_endless(
     // Sweep abandoned sessions opportunistically — no background task needed.
     state.endless_sessions.retain(|_, s| s.created_at.elapsed() < Duration::from_secs(ENDLESS_TTL_SECS));
 
+    // Resume where they left off. Quitting never costs progress, so a session opens
+    // on the player's stored wave rather than at 1 — and the session's own counter
+    // starts there too, so the min-seconds-per-wave floor stays honest.
+    let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    let resume = current_wave(&state.db, &wallet, season).await;
+
     let session_id = Uuid::new_v4();
     state.endless_sessions.insert(session_id, EndlessSession {
         wallet,
-        wave: 0,
+        wave: resume - 1, // the session credits wave N by incrementing to it
+        base_wave: resume - 1,
         created_at: Instant::now(),
     });
-    HttpResponse::Ok().json(json!({ "session_id": session_id }))
+    HttpResponse::Ok().json(json!({
+        "session_id": session_id,
+        "wave": resume,
+        "waves_completed": resume - 1,
+    }))
 }
 
 #[derive(Deserialize)]
 pub struct EndlessWaveRequest {
     pub session_id: Uuid,
+    /// Which partition this wave belongs to: a season id for a Seasonal Campaign run,
+    /// omitted for Campaign Endless.
+    #[serde(default)]
+    pub season_id: Option<Uuid>,
 }
 
 /// Credit ONE cleared wave. The server increments its own counter (so the wave number
@@ -217,8 +235,10 @@ pub async fn endless_wave(
             return HttpResponse::NotFound().json(json!({"error": "Run expired", "expired": true}));
         }
         let next_wave = session.wave + 1;
-        // Anti-script floor: wave N cannot be reported before N × min_secs since start.
-        let required = next_wave as f64 * min_secs_per_wave();
+        // Anti-script floor: measured from where this session RESUMED, so it scales
+        // with waves actually played now rather than the absolute wave number.
+        let played = (next_wave - session.base_wave).max(1);
+        let required = played as f64 * min_secs_per_wave();
         if session.created_at.elapsed().as_secs_f64() < required {
             return HttpResponse::TooManyRequests().json(json!({"error": "Too fast", "too_fast": true}));
         }
@@ -263,6 +283,38 @@ pub async fn endless_wave(
         }
     }
 
+    // Advance the player's PERSISTENT progress. `wave` here is the wave just cleared,
+    // so they move on to the next one — and because dying never takes a cleared wave
+    // back, this number only ever goes up. GREATEST() keeps it monotonic even if a
+    // stale session reports an older wave.
+    let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    let _ = sqlx::query(
+        "INSERT INTO endless_progress (wallet_address, season_id, wave, reached_at, updated_at)
+         VALUES ($1, $2, $3, now(), now())
+         ON CONFLICT (wallet_address, season_id) DO UPDATE
+           SET wave       = GREATEST(endless_progress.wave, EXCLUDED.wave),
+               reached_at = CASE WHEN EXCLUDED.wave > endless_progress.wave
+                                 THEN now() ELSE endless_progress.reached_at END,
+               updated_at = now()",
+    )
+    .bind(&wallet).bind(season).bind(wave + 1)
+    .execute(&state.db).await;
+
+    // Record the cleared wave as a WIN on-chain, through the same recordBattle path
+    // the campaign uses. One write per wave: this is the biggest single source of
+    // on-chain volume in the game, which is the point.
+    crate::handlers::battles::persist_battle(
+        &state,
+        Uuid::new_v4(),
+        &wallet,
+        "bot",
+        &wallet,            // the player won this wave
+        ENDLESS_WAVE_XP, 0,
+        true,               // is_bot
+        json!({ "mode": "endless", "wave": wave, "result": "wave_cleared" }),
+        true,               // on-chain
+    ).await;
+
     // Refereed XP for the wave — feeds ranks/prestige (the volume flywheel), but is NOT
     // counted as a win on the W/L record (count_result = false).
     let award = crate::handlers::battles::award_player(&state, &wallet, true, ENDLESS_WAVE_XP, 1, true, false).await;
@@ -291,6 +343,95 @@ pub struct EndEndlessRequest {
 
 /// End a run: write the leaderboard score from the SERVER's wave count (never the
 /// client's) and drop the session.
+// ── Persistent progress ────────────────────────────────────────────────────────
+//
+// The rules, decided with Marvy:
+//   • Quitting never costs progress — you resume on the wave you left.
+//   • DYING drops you to the START of your current wave, not to wave 1. So the
+//     stored wave does NOT move on death; the client just re-runs its rooms.
+//   • The board ranks WAVES COMPLETED, which (because death never takes a cleared
+//     wave away) is monotonic: `wave - 1`.
+//
+// The nil UUID is the Campaign Endless partition — one long career outside any
+// season. A real season id partitions a Seasonal Campaign, which starts everyone
+// from scratch.
+pub const CAMPAIGN_ENDLESS: Uuid = Uuid::nil();
+
+/// The wave this wallet is currently ON for this partition (1 if they've never played).
+async fn current_wave(db: &sqlx::PgPool, wallet: &str, season: Uuid) -> i32 {
+    sqlx::query_scalar::<_, i32>(
+        "SELECT wave FROM endless_progress WHERE wallet_address = $1 AND season_id = $2",
+    )
+    .bind(wallet).bind(season)
+    .fetch_optional(db).await.ok().flatten().unwrap_or(1)
+}
+
+#[derive(Deserialize)]
+pub struct ProgressQuery {
+    pub wallet: String,
+    #[serde(default)]
+    pub season_id: Option<Uuid>,
+}
+
+/// GET /endless/progress — where this player resumes, and what they've completed.
+pub async fn get_progress(state: web::Data<AppState>, q: web::Query<ProgressQuery>) -> HttpResponse {
+    if !is_valid_wallet(&q.wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    let wallet = normalize_wallet(&q.wallet);
+    let season = q.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+    let wave = current_wave(&state.db, &wallet, season).await;
+    HttpResponse::Ok().json(json!({ "wave": wave, "waves_completed": wave - 1 }))
+}
+
+#[derive(Deserialize)]
+pub struct DeathRequest {
+    pub wallet: String,
+    #[serde(default)]
+    pub season_id: Option<Uuid>,
+    /// The wave they died on, for the battle record. The SERVER's stored wave is the
+    /// authority on where they resume; this is only what gets written to history.
+    #[serde(default)]
+    pub wave: i32,
+}
+
+/// POST /endless/death — the player was killed.
+///
+/// Records the loss on-chain through the same `recordBattle` path the campaign uses,
+/// so an endless death shows up in a player's record exactly like a PvE death. The
+/// stored wave is deliberately UNCHANGED: dying costs you the rooms you had cleared
+/// inside the current wave, nothing more.
+pub async fn record_death(state: web::Data<AppState>, body: web::Json<DeathRequest>) -> HttpResponse {
+    if !is_valid_wallet(&body.wallet) {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    }
+    let wallet = normalize_wallet(&body.wallet);
+    let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
+
+    let _ = sqlx::query(
+        "UPDATE endless_progress SET deaths = deaths + 1, updated_at = now()
+         WHERE wallet_address = $1 AND season_id = $2",
+    )
+    .bind(&wallet).bind(season)
+    .execute(&state.db).await;
+
+    // The player is the LOSER against the house, mirroring how PvE deaths are recorded.
+    crate::handlers::battles::persist_battle(
+        &state,
+        Uuid::new_v4(),
+        &wallet,
+        "bot",
+        "bot",              // the bot "won"
+        0, 0,
+        true,               // is_bot
+        json!({ "mode": "endless", "wave": body.wave, "result": "death" }),
+        true,               // record on-chain — Marvy wants losses on chain too
+    ).await;
+
+    let wave = current_wave(&state.db, &wallet, season).await;
+    HttpResponse::Ok().json(json!({ "ok": true, "wave": wave, "waves_completed": wave - 1 }))
+}
+
 pub async fn end_endless(
     state: web::Data<AppState>,
     body: web::Json<EndEndlessRequest>,
