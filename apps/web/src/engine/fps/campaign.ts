@@ -47,6 +47,11 @@ export interface Mission {
   boss?: boolean;
   survival?: boolean; // endless-wave arena instead of a doorkicker (no objectives)
   gauntlet?: boolean; // the PRESTIGE survival tier: steeper curve, ranked (B2)
+  /** ENDLESS: the generated room chain (fps/endless.ts) instead of authored rooms.
+   *  Same doorkicker gameplay, but rooms are streamed in ahead of the player and
+   *  never run out, so a run is one continuous session with no mission list. Drives
+   *  both Campaign Endless and the Seasonal Campaign. */
+  endless?: boolean;
 }
 
 /** Survival escalation: how many attackers and how tough, by 1-based wave. */
@@ -426,6 +431,30 @@ export const GAUNTLET_MISSION: Mission = {
   brief: 'ranked · every wave harder · your best run climbs the season board',
   gun: AR, secondary: SMG, survival: true, gauntlet: true,
   start: [0, 0], walls: SURV_WALLS, cover: SURV_COVER, enemies: GAUNTLET_ENEMIES, objectives: [],
+};
+
+// ── ENDLESS · the generated room chain ───────────────────────────────────────
+// Geometry, enemies and the player's start are all produced at runtime by
+// fps/endless.ts, so this mission carries none of them: the scene seeds the chain
+// from the run's seed and streams rooms in as the player pushes forward. Both the
+// Campaign Endless unlock and the Seasonal Campaign run on this one mission.
+
+// ASHFALL (daylight), deliberately — the Rift's night theme renders the generated
+// compound almost pitch black, and a mode people compete in for money has to be
+// readable. Endless has no authored set dressing or practicals to light it either.
+export const ENDLESS_MISSION: Mission = {
+  id: 'endless', zone: 'ASHFALL', op: 'ENDLESS', name: 'NO EXIT',
+  brief: 'breach · clear · push forward · it does not end',
+  gun: AR, secondary: SMG, endless: true,
+  start: [0, -1.5], walls: [], cover: [], enemies: [], objectives: [],
+};
+
+/** The Seasonal Campaign: the same chain, but every run starts at wave 1 and the
+ *  score goes to the season ladder. Named per season by the page. */
+export const SEASONAL_MISSION: Mission = {
+  ...ENDLESS_MISSION,
+  id: 'seasonal', op: 'SEASONAL CAMPAIGN', name: 'THE CLIMB',
+  brief: 'one shot · no resume · your best run takes the season',
 };
 
 // ── A1 · the day→evening→night arc ──────────────────────────────────────────

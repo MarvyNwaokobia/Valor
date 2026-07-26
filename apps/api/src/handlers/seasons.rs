@@ -21,9 +21,16 @@ const PAYOUT_BPS: &[u64] = &[
 
 /// Whole-G$ prize for each of `n` winners from a `pool_g` pool. Rank i (0-based)
 /// gets floor(pool * bps[i] / 10000); ranks beyond the table get 0.
-fn payout_split(pool_g: u64, n: usize) -> Vec<u64> {
+///
+/// `custom` is the season's own split when it has one (e.g. Season 1's flat top 5,
+/// which the long-tail default can't express); otherwise the default table applies.
+fn payout_split(pool_g: u64, n: usize, custom: Option<&[i32]>) -> Vec<u64> {
+    let table: Vec<u64> = match custom {
+        Some(bps) if !bps.is_empty() => bps.iter().map(|b| (*b).max(0) as u64).collect(),
+        _ => PAYOUT_BPS.to_vec(),
+    };
     (0..n)
-        .map(|i| PAYOUT_BPS.get(i).map_or(0, |bps| pool_g.saturating_mul(*bps) / 10_000))
+        .map(|i| table.get(i).map_or(0, |bps| pool_g.saturating_mul(*bps) / 10_000))
         .collect()
 }
 
@@ -35,6 +42,10 @@ struct SeasonMeta {
     ends_at: Option<DateTime<Utc>>,
     prize_pool_g: i64,
     payout_status: String,
+    /// Shared layout seed — every player in the season walks the same room chain.
+    seed: i64,
+    /// This season's own prize split in basis points by rank; None = the default table.
+    payout_bps: Option<Vec<i32>>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -44,20 +55,25 @@ struct BoardEntry {
     best: i32,
 }
 
-/// Best Gauntlet run per wallet WITHIN a season's window (submitted between its start
-/// and end, or now if still open), ranked. The seasonal ladder that payouts settle.
+/// Best SEASONAL run per wallet in this season, ranked. The ladder payouts settle on.
+///
+/// Scored on a player's BEST SINGLE RUN, not their total: a season should reward how
+/// deep you can push, not how many hours you had spare. Ties break on who got there
+/// first, so no two places can ever share a rank (which matters when each place is a
+/// separate cash prize).
+///
+/// Filtered by `season_id`, so only runs actually started as Seasonal Campaign runs
+/// count — practice Gauntlet runs during the window never leak onto the board.
 async fn season_board(db: &sqlx::PgPool, s: &SeasonMeta, limit: i64) -> Vec<BoardEntry> {
     sqlx::query_as::<_, BoardEntry>(
         "SELECT r.wallet_address, p.username, MAX(r.waves) AS best
          FROM survival_runs r LEFT JOIN players p ON p.wallet_address = r.wallet_address
-         WHERE r.status = 'submitted'
-           AND r.submitted_at >= $1
-           AND ($2::timestamptz IS NULL OR r.submitted_at <= $2)
+         WHERE r.status = 'submitted' AND r.season_id = $1
          GROUP BY r.wallet_address, p.username
          ORDER BY best DESC, MIN(r.submitted_at) ASC
-         LIMIT $3",
+         LIMIT $2",
     )
-    .bind(s.starts_at).bind(s.ends_at).bind(limit)
+    .bind(s.id).bind(limit)
     .fetch_all(db).await.unwrap_or_default()
 }
 
@@ -66,10 +82,15 @@ async fn season_board(db: &sqlx::PgPool, s: &SeasonMeta, limit: i64) -> Vec<Boar
 // the estimated payout each rank would earn if the season closed now. This is what
 // makes the competition legible ("play the Gauntlet, here's what's on the line").
 pub async fn current(state: web::Data<AppState>) -> HttpResponse {
-    // The active season (ends_at NULL), else the most recent.
+    // Prefer a season that is live RIGHT NOW (a season carries a scheduled window, so
+    // "live" is a time comparison, not just an open-ended ends_at). Otherwise show the
+    // most recent one, so a finished season keeps displaying its final board.
     let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
-        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status
-         FROM seasons ORDER BY (ends_at IS NULL) DESC, starts_at DESC LIMIT 1",
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps
+         FROM seasons
+         ORDER BY (starts_at <= now() AND (ends_at IS NULL OR ends_at >= now())) DESC,
+                  starts_at DESC
+         LIMIT 1",
     )
     .fetch_optional(&state.db).await.ok().flatten();
 
@@ -78,7 +99,7 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
     };
 
     let board = season_board(&state.db, &season, 25).await;
-    let split = payout_split(season.prize_pool_g.max(0) as u64, board.len());
+    let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
     let entries: Vec<_> = board.iter().enumerate().map(|(i, e)| json!({
         "rank": i + 1,
         "wallet_address": e.wallet_address,
@@ -87,13 +108,22 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
         "est_payout_g": split.get(i).copied().unwrap_or(0),
     })).collect();
 
+    let now = Utc::now();
+    let started = season.starts_at <= now;
+    let ended = season.ends_at.map(|e| e < now).unwrap_or(false);
+
     HttpResponse::Ok().json(json!({
         "season": {
             "id": season.id,
             "name": season.name,
             "starts_at": season.starts_at.to_rfc3339(),
             "ends_at": season.ends_at.map(|d| d.to_rfc3339()),
-            "active": season.ends_at.is_none(),
+            // Live now — the flag the Seasonal Campaign entry unlocks on.
+            "active": started && !ended,
+            // Scheduled but not open yet, so the UI can count down to it.
+            "upcoming": !started,
+            "ended": ended,
+            "seed": season.seed,
             "prize_pool_g": season.prize_pool_g,
             "payout_status": season.payout_status,
         },
@@ -132,7 +162,7 @@ pub async fn payout(req: HttpRequest, state: web::Data<AppState>, path: web::Pat
     let season_id = path.into_inner();
 
     let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
-        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status FROM seasons WHERE id = $1",
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps FROM seasons WHERE id = $1",
     )
     .bind(season_id).fetch_optional(&state.db).await.ok().flatten();
     let Some(season) = season else {
@@ -150,7 +180,7 @@ pub async fn payout(req: HttpRequest, state: web::Data<AppState>, path: web::Pat
         .bind(season_id).fetch_one(&state.db).await.unwrap_or(0);
     if already == 0 {
         let board = season_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
-        let split = payout_split(season.prize_pool_g.max(0) as u64, board.len());
+        let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
         for (i, e) in board.iter().enumerate() {
             let amount = split.get(i).copied().unwrap_or(0);
             if amount == 0 { continue; } // no dust rows
@@ -202,14 +232,52 @@ async fn settle_season_payout(
     amount: u64,
 ) -> bool {
     let Ok(addr) = wallet.parse::<Address>() else { return false; };
-    let reference = ethers::utils::keccak256(format!("season_payout:{}:{}", season_id, wallet).as_bytes());
-    let already = chain.reward_ref_used(reference).await.unwrap_or(false);
-    // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
-    let result = if already {
-        Ok(Some(None))
-    } else {
-        chain.distribute_reward(addr, amount, reference).await.map(|r| r.map(Some))
-    };
+
+    // ValorRewardPool.MAX_REWARD caps a SINGLE distributeReward at 10,000 G$ and
+    // reverts anything larger, so a season prize (Season 1 pays ~85,500 G$ a head)
+    // has to go out as a series of transfers. Each chunk carries its OWN on-chain
+    // reference, which is what makes the whole payout resumable: re-running after a
+    // partial failure skips the chunks that already landed and retries only the rest.
+    const MAX_CHUNK_G: u64 = 10_000; // mirrors ValorRewardPool.MAX_REWARD
+
+    let mut chunks: Vec<u64> = Vec::new();
+    let mut left = amount;
+    while left > 0 {
+        let take = left.min(MAX_CHUNK_G);
+        chunks.push(take);
+        left -= take;
+    }
+
+    let mut last_hash: Option<String> = None;
+    let mut all_ok = true;
+    for (i, chunk) in chunks.iter().enumerate() {
+        let reference = ethers::utils::keccak256(
+            format!("season_payout:{}:{}:{}", season_id, wallet, i).as_bytes(),
+        );
+        let already = chain.reward_ref_used(reference).await.unwrap_or(false);
+        // Some(hash) = paid by THIS settle; None = landed in an earlier tx we no longer know.
+        let result = if already {
+            Ok(Some(None))
+        } else {
+            chain.distribute_reward(addr, *chunk, reference).await.map(|r| r.map(Some))
+        };
+        match result {
+            Ok(Some(h)) => { if h.is_some() { last_hash = h; } }
+            Ok(None) | Err(_) => {
+                tracing::error!(
+                    "season payout chunk {}/{} FAILED for {} ({} G$) — re-run the payout to resume",
+                    i + 1, chunks.len(), wallet, chunk,
+                );
+                all_ok = false;
+                break; // stop on the first failure; the rest stay unpaid and retryable
+            }
+        }
+    }
+
+    // Only a fully-delivered prize counts as paid. A partial one stays 'failed' so
+    // re-running the payout picks it back up where it stopped.
+    let result: Result<Option<Option<String>>, ()> = if all_ok { Ok(Some(last_hash)) } else { Ok(None) };
+
     match result {
         Ok(Some(tx_hash)) => {
             let _ = sqlx::query("UPDATE season_payouts SET status = 'paid', tx_hash = COALESCE($3, tx_hash) WHERE season_id = $1 AND wallet_address = $2")
@@ -222,7 +290,7 @@ async fn settle_season_payout(
             crate::handlers::ledger::insert_ledger_entry(
                 db, wallet, "season_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
             ).await;
-            tracing::info!("season payout paid: {} +{} G${}", wallet, amount, if already { " (reconciled)" } else { "" });
+            tracing::info!("season payout paid: {} +{} G$ in {} tx", wallet, amount, chunks.len());
             true
         }
         Ok(None) | Err(_) => {
@@ -239,7 +307,7 @@ mod tests {
 
     #[test]
     fn split_is_top_heavy_and_within_pool() {
-        let s = payout_split(1000, 20);
+        let s = payout_split(1000, 20, None);
         assert_eq!(s[0], 300); // 30%
         assert_eq!(s[1], 180); // 18%
         assert!(s[0] > s[1] && s[1] > s[2]);           // strictly top-heavy
@@ -249,20 +317,20 @@ mod tests {
 
     #[test]
     fn fewer_winners_leave_the_rest_in_pool() {
-        let s = payout_split(1000, 3);
+        let s = payout_split(1000, 3, None);
         assert_eq!(s, vec![300, 180, 120]);
         assert!(s.iter().sum::<u64>() < 1000); // unclaimed stays in pool
     }
 
     #[test]
     fn empty_and_zero_are_safe() {
-        assert!(payout_split(1000, 0).is_empty());
-        assert_eq!(payout_split(0, 5), vec![0, 0, 0, 0, 0]);
+        assert!(payout_split(1000, 0, None).is_empty());
+        assert_eq!(payout_split(0, 5, None), vec![0, 0, 0, 0, 0]);
     }
 
     #[test]
     fn winners_past_the_table_get_nothing() {
-        let s = payout_split(1_000_000, 25);
+        let s = payout_split(1_000_000, 25, None);
         assert_eq!(s.len(), 25);
         assert_eq!(s[20], 0); // rank 21 → beyond the 20-deep table
     }

@@ -20,7 +20,11 @@ import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
 import { useGunPrototypes, GUN_IDS } from './gunModels';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
-import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
+import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, ENDLESS_MISSION, SEASONAL_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
+import {
+  buildChain, generateRoom, entryCap, spawnPointFor, zForWaveStart, firstRoomOfWave, ROOM_W,
+  type GeneratedRoom,
+} from '../fps/endless';
 import { dressingFor, type PropSpec } from './setDressing';
 import { useSurvivalRearm, NeedArmError, type RearmAction } from '@/hooks/useSurvivalRearm';
 import { useGauntlet, type GauntletBoardRow, type SeasonInfo } from '@/hooks/useGauntlet';
@@ -269,6 +273,32 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
 const FLOOR_W = 22, FLOOR_D = 38;
+
+// ── Endless tuning ───────────────────────────────────────────────────────────
+/** Rooms kept generated AHEAD of the player. Two is enough that the next room's
+ *  walls and the one beyond it already exist when you look through a doorway. */
+const ENDLESS_LOOKAHEAD = 3;
+/** Rooms kept behind the player before they're pruned. Keeping one lets you back
+ *  into the doorway you came through mid-firefight without falling out of the world. */
+const ENDLESS_TRAIL = 1;
+/** Lateral bound inside a generated room — the interior half-width, less a margin so
+ *  the player is stopped just shy of the side walls rather than inside them. */
+const ENDLESS_HALF_W = ROOM_W / 2 - 0.3;
+
+/** The parameters and callbacks for a generated-chain run. */
+export interface EndlessOpts {
+  /** Layout seed. Everyone in a season shares one, so nobody gets an easier draw. */
+  seed: number;
+  /** Wave the run begins on. Always 1 for Seasonal; the saved checkpoint for
+   *  Campaign Endless. */
+  startWave: number;
+  /** Fired the moment the last enemy of a wave's final room drops. The page turns
+   *  this into the server call that banks the wave (and pays it, once, in Campaign
+   *  Endless). Never fires twice for the same wave. */
+  onWaveCleared?: (wave: number) => void;
+  /** The run is over (the player died). `wave` is the one they died on. */
+  onRunEnd?: (wave: number, stats: { kills: number; headshots: number }) => void;
+}
 const REACH_RADIUS = 3.5;
 // A defend hold banks time within a WIDER ring than a reach touch, so you can pull
 // back to adjacent cover to recover and still be "holding the point" — the hold no
@@ -368,7 +398,7 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, endlessOpts }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
@@ -396,15 +426,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   equippedMods?: Partial<Record<AttachmentSlot, AttachmentId>>;
   // Standard-issue field kit (flashlight / NVG / laser) chosen on the Loadout.
   fieldKit?: Attachment[];
+  // ENDLESS: the run's parameters and its two callbacks. Present only for the
+  // generated-chain modes (Campaign Endless / Seasonal Campaign).
+  endlessOpts?: EndlessOpts;
 }) {
   const { camera, gl, scene } = useThree();
 
   // The one mission this mount runs. The scene remounts (key=missionIndex) to
   // switch, so treating these as constants is safe. Aliased to the old names so
   // the rest of the world reads unchanged.
-  const START = mission.start;
-  const LEVEL_WALLS = mission.walls;
-  const LEVEL_COVER = mission.cover;
   const ENEMIES = mission.enemies;
   const OBJECTIVES = mission.objectives;
   // Your equipped gun overrides the op's issued primary when it's the stronger
@@ -419,19 +449,82 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const PRIMARY: GunId = hasChosenGun ? equippedGun! : mission.gun;
   const GUN = PRIMARY;
   const LOADOUT = useMemo<GunId[]>(() => [PRIMARY, mission.secondary ?? 'sidearm'], [PRIMARY, mission.secondary]);
+  const endless = !!mission.endless;
+  // In endless the collider set is LIVE: rooms are appended ahead of the player and
+  // pruned behind them, so this array is mutated in place rather than rebuilt. Every
+  // per-frame loop below already re-reads it, so they pick up new geometry for free.
   const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
   const theme = themeForMission(mission);
-  const isFinale = mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
+  const isFinale = !endless && mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
   const survival = !!mission.survival;
   const blackout = !!mission.blackout; // the Rift with NVG jammed — fight by muzzle-flash
+
+  // ── Endless chain state ──
+  // `rooms` holds only the live window (a few either side of the player); `cursor` is
+  // the room they are standing in. Everything is regenerable from the seed, so the
+  // window can be pruned without losing anything.
+  const chain = useRef<{
+    rooms: GeneratedRoom[];
+    cursor: number;      // chain index of the room the player is in
+    nextIndex: number;   // next chain index to generate
+    nextZ: number;       // z the next generated room starts at
+    wave: number;        // the wave currently being fought
+    bankedThrough: number; // highest wave already reported cleared (no double-pay)
+    over: boolean;
+  }>({ rooms: [], cursor: 0, nextIndex: 0, nextZ: 0, wave: 1, bankedThrough: 0, over: false });
+  // Bumped whenever geometry is appended or pruned, purely to re-render the meshes.
+  const [geoTick, setGeoTick] = useState(0);
+  const floorRef = useRef<THREE.Mesh>(null);
+  const endlessTicks = useRef(0);
+
+  const START = useMemo<[number, number]>(() => {
+    if (!endless) return mission.start;
+    const wave = endlessOpts?.startWave ?? 1;
+    return spawnPointFor(zForWaveStart(wave, endlessOpts?.seed ?? 1));
+  }, [endless, mission.start, endlessOpts?.startWave, endlessOpts?.seed]);
 
   const sim = useMemo(() => {
     // The op's issued kit (e.g. NVG in the Rift) plus the player's chosen field kit.
     const attachments = [...new Set([...(mission.attachments ?? []), ...(fieldKit ?? [])])];
     const s = new FpsSim({ loadout: LOADOUT, attachments, ammoId: equippedAmmo, gunMods: equippedMods, enemies: ENEMIES, cover: COLLIDERS, hostage: mission.hostage, respawnEnabled: false });
     s.setAllActive(false); // rooms start dormant; breaching each one wakes it
+    if (endless) {
+      const seed = endlessOpts?.seed ?? 1;
+      const wave = endlessOpts?.startWave ?? 1;
+      const first = firstRoomOfWave(wave);
+      const startZ = zForWaveStart(wave, seed);
+      // Lay the opening window: the room you start in plus a lookahead, so the next
+      // room's walls are already there to shoot through the doorway at.
+      const rooms = buildChain(first, ENDLESS_LOOKAHEAD, startZ, seed);
+      s.appendCover(entryCap(startZ)); // seal the way back — the chain is one-way
+      for (const r of rooms) {
+        s.appendCover([...r.walls, ...r.cover]);
+        s.appendEnemies(r.enemies);
+      }
+      s.setRoomActive(first + 1, true); // the room you start in is live immediately
+      const last = rooms[rooms.length - 1];
+      chain.current = {
+        rooms, cursor: first, nextIndex: first + rooms.length, nextZ: last.zFar,
+        wave, bankedThrough: wave - 1, over: false,
+      };
+    }
     return s;
   }, []);
+
+  // What actually gets drawn. Authored missions are static; an endless run redraws
+  // from the live chain window each time geometry is streamed in or out (geoTick).
+  const LEVEL_WALLS = useMemo(() => {
+    if (!endless) return mission.walls;
+    const out = [...entryCap(zForWaveStart(endlessOpts?.startWave ?? 1, endlessOpts?.seed ?? 1))];
+    for (const r of chain.current.rooms) out.push(...r.walls);
+    return out;
+  }, [endless, mission.walls, geoTick, endlessOpts?.startWave, endlessOpts?.seed]);
+  const LEVEL_COVER = useMemo(() => {
+    if (!endless) return mission.cover;
+    const out: typeof mission.cover = [];
+    for (const r of chain.current.rooms) out.push(...r.cover);
+    return out;
+  }, [endless, mission.cover, geoTick]);
 
   // ── Player look / motion state (imperative — no React churn per frame) ──
   const yaw = useRef(0);
@@ -675,9 +768,32 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     w.__valorState = () => sim.snapshot();
     w.__valorProps = () => dressingFor(mission); // set-dressing placements (headless visual check)
     w.__valorKillAll = () => sim.debugKillAll();
+    // Endless probe: clear ONLY the room the player is standing in, leaving the
+    // dormant rooms ahead intact so a breach still has something to wake.
+    w.__valorKillRoom = () => sim.debugKillRoom(chain.current.cursor + 1);
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
     w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills });
+    // Endless chain state, for headless verification of the streamed room chain:
+    // which room the player is in, how many are live, and whether the room is clear.
+    w.__valorEndless = () => {
+      const c = chain.current;
+      const cur = c.rooms.find((r) => r.index === c.cursor);
+      return {
+        endless, cursor: c.cursor, wave: c.wave, bankedThrough: c.bankedThrough,
+        roomsLive: c.rooms.length, nextIndex: c.nextIndex, over: c.over,
+        aliveInRoom: cur ? sim.roomAlive(cur.index + 1) : 0,
+        aliveTotal: sim.aliveCount(),
+        colliders: sim.getCover().length,
+        exit: cur ? cur.exitPos : null,
+        curZFar: cur ? cur.zFar : null,
+        curWavesEnd: cur ? cur.wavesEnd : null,
+        indices: c.rooms.map((r) => r.index),
+        ticks: endlessTicks.current,
+        z: pos.current.z,
+        kills: sim.snapshot().stats.kills,
+      };
+    };
     w.__valorWarp = (x: number, z: number) => { pos.current.set(x, EYE_STAND, z); };
     w.__valorSkipBriefing = () => { briefingUntil.current = 0; };
     w.__valorXp = () => ({ careerXp: careerXp.current, rank: rankForXp(careerXp.current), intoRank: xpIntoRank(careerXp.current) });
@@ -733,8 +849,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       return true;
     };
     return () => {
-      delete w.__valorState; delete w.__valorKillAll; delete w.__valorAim; delete w.__valorAudio;
-      delete w.__valorMission; delete w.__valorWarp; delete w.__valorSkipBriefing;
+      delete w.__valorState; delete w.__valorKillAll; delete w.__valorKillRoom; delete w.__valorAim; delete w.__valorAudio;
+      delete w.__valorMission; delete w.__valorEndless; delete w.__valorWarp; delete w.__valorSkipBriefing;
       delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorFire; delete w.__valorToggle;
       delete w.__valorRevive; delete w.__valorResupply; delete w.__valorWaveSkip; delete w.__valorPerf;
     };
@@ -1319,6 +1435,90 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       return;
     }
 
+    // ── Endless flow: clear the room → push through the door → the next one wakes ──
+    //
+    // No objective list and no extract. The loop is: the room you're in is live, you
+    // clear it, the doorway ahead opens onto a room that is already built but asleep,
+    // and crossing its threshold wakes it. Meanwhile the chain is extended ahead and
+    // pruned behind, so the world stays a constant size however deep you get.
+    if (endless) {
+      endlessTicks.current++;
+      const c = chain.current;
+      const roomAt = (i: number) => c.rooms.find((r) => r.index === i);
+
+      // The floor is a fixed-size plane; in endless it rides along under the player
+      // so the chain can run to -Z forever without needing an enormous one.
+      if (floorRef.current) floorRef.current.position.z = pos.current.z;
+
+      if (snap.playerAlive && !c.over) {
+        const cur = roomAt(c.cursor);
+
+        // A wave banks the instant its LAST room is emptied — that's the beat the
+        // "+G$ / WAVE N CLEARED" moment hangs on, not the walk to the next door.
+        if (cur && cur.wavesEnd && cur.wave > c.bankedThrough && sim.roomAlive(cur.index + 1) === 0) {
+          c.bankedThrough = cur.wave;
+          endlessOpts?.onWaveCleared?.(cur.wave);
+          say('missionCleared');
+        }
+
+        // Crossing the far wall puts the player in the next room: wake it, build one
+        // more room ahead, and drop the one that's now well behind.
+        if (cur && pos.current.z < cur.zFar) {
+          c.cursor = cur.index + 1;
+          sim.setRoomActive(c.cursor + 1, true);
+          c.wave = roomAt(c.cursor)?.wave ?? c.wave;
+          if (c.cursor === firstRoomOfWave(c.wave)) say('opBreach');
+
+          const built = generateRoom(c.nextIndex, c.nextZ, endlessOpts?.seed ?? 1);
+          sim.appendCover([...built.walls, ...built.cover]);
+          sim.appendEnemies(built.enemies);
+          c.rooms.push(built);
+          c.nextIndex += 1;
+          c.nextZ = built.zFar;
+
+          // Prune behind. Everything dropped here is regenerable from the seed, so
+          // this costs nothing but the memory it frees.
+          const keepFrom = c.cursor - ENDLESS_TRAIL;
+          const trailRoom = roomAt(keepFrom);
+          if (trailRoom) {
+            sim.pruneBehind(keepFrom + 1, trailRoom.zNear);
+            c.rooms = c.rooms.filter((r) => r.index >= keepFrom);
+          }
+          setGeoTick((t) => t + 1);
+        }
+      }
+
+      // Death ends the run outright — no auto-restart. The page decides what happens
+      // next (Seasonal submits the score; Campaign Endless saves the checkpoint).
+      if (!snap.playerAlive && !c.over) {
+        c.over = true;
+        const st = sim.snapshot().stats;
+        endlessOpts?.onRunEnd?.(c.wave, { kills: st.kills, headshots: st.headshots });
+      }
+
+      // Waypoint: point at the doorway once the room is clear, so "push forward" is
+      // always legible. While enemies are up, the fight is the objective.
+      if (waypointRef.current) {
+        const cur = roomAt(c.cursor);
+        const clear = cur ? sim.roomAlive(cur.index + 1) === 0 : false;
+        if (cur && clear && !c.over) {
+          waypointRef.current.visible = true;
+          waypointRef.current.position.set(cur.exitPos[0], 0, cur.exitPos[1]);
+          const beacon = waypointRef.current.children[0] as THREE.Mesh | undefined;
+          if (beacon) beacon.rotation.y += dt * 2;
+        } else {
+          waypointRef.current.visible = false;
+        }
+      }
+
+      if (now > briefingUntil.current) say('opStart');
+      if (snap.playerAlive && snap.playerHp < 35) say('lowHp');
+      if (!snap.playerAlive) say('opHeroDown');
+      pumpStory(now);
+      updateHud(snap);
+      return;
+    }
+
     // ── Mission flow (slice 4 + A2 verbs): breach → clear/defend/rescue → extract ──
     const obj = OBJECTIVES[objective.current];
     if (obj && snap.playerAlive && completeAt.current < 0 && now > briefingUntil.current) {
@@ -1453,9 +1653,21 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   function clampAndSlide(ox: number, oz: number, x: number, z: number): { x: number; z: number } {
     // Swept slide against every wall + crate — solid, no tunnelling on a slow frame.
     let [cx, cz] = slideMove(ox, oz, x, z, PLAYER_R, COLLIDERS);
-    // Arena bounds.
-    cx = Math.max(-9.4, Math.min(9.4, cx));
-    cz = Math.max(-17.6, Math.min(17.4, cz));
+    if (endless) {
+      // The endless chain runs toward -Z without end, so the authored arena box below
+      // would pin the player at z = -17.6 and stall them in room 1. Bound them to the
+      // LIVE chain window instead: they can always push forward into generated rooms,
+      // never back out through the entry, and never past the last room built so far.
+      const rooms = chain.current.rooms;
+      const back = rooms.length ? rooms[0].zNear : 0;
+      const front = rooms.length ? rooms[rooms.length - 1].zFar : -1;
+      cx = Math.max(-ENDLESS_HALF_W, Math.min(ENDLESS_HALF_W, cx));
+      cz = Math.max(front + 0.5, Math.min(back - 0.2, cz));
+    } else {
+      // Arena bounds.
+      cx = Math.max(-9.4, Math.min(9.4, cx));
+      cz = Math.max(-17.6, Math.min(17.4, cz));
+    }
 
     // You cannot walk through people either.
     const rr = PLAYER_R + 0.35;
@@ -1822,8 +2034,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       <pointLight position={[-3, 2.6, -13]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
 
       {/* burned ground */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[FLOOR_W, FLOOR_D]} />
+      {/* endless rides this plane along under the player (see the endless flow), so
+          the chain can run to -Z forever without an enormous floor */}
+      <mesh ref={floorRef} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[FLOOR_W, endless ? FLOOR_D * 1.6 : FLOOR_D]} />
         <meshStandardMaterial {...floorMaps} color={theme.floorTint} roughness={1} metalness={0} />
       </mesh>
 
@@ -1852,7 +2066,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
       {/* set dressing: barrels, crates, sandbags, rubble hugging the walls.
           Dropped on `minimal` (struggling desktop/laptop) to cut draw calls. */}
-      {!survival && !minimal && <SetDressing mission={mission} />}
+      {!survival && !endless && !minimal && <SetDressing mission={mission} />}
 
       {/* waypoint beacon at the current objective */}
       <group ref={waypointRef}>
@@ -2366,7 +2580,15 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit }: {
+export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit, endless, seasonal }: {
+  /** Boot straight into an ENDLESS run on the generated room chain, bypassing the
+   *  campaign entirely. Present for Campaign Endless and the Seasonal Campaign;
+   *  absent everywhere else. */
+  endless?: EndlessOpts;
+  /** Label the run as the Seasonal Campaign rather than Campaign Endless. Cosmetic
+   *  only — the rules difference lives in what the page passes as `endless`
+   *  (seasonal always starts at wave 1 and never resumes). */
+  seasonal?: boolean;
   /** Leave the fight entirely and return to the mode-select page (Campaign /
    *  Live PvP / Challenge). `/fight` wires this to router.push('/battle'). In a
    *  standalone PWA there is NO browser back button, so this is the only way out —
@@ -2461,7 +2683,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     menuOpenRef.current = v; setSelectOpen(v);
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }
   };
-  const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet'>('campaign');
+  const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet' | 'endless'>(endless ? 'endless' : 'campaign');
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
   const [lastReward, setLastReward] = useState<OpReward | null>(null); // real server reward for the debrief
   const missionStartWall = useRef(performance.now()); // for the op's clear time
@@ -2508,7 +2730,10 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     return () => { cancelled = true; };
   }, [missionIndex, runNonce, mode]);
   const retryConnect = () => gateConnectRef.current?.();
-  const mission = mode === 'gauntlet' ? GAUNTLET_MISSION : mode === 'survival' ? SURVIVAL_MISSION : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
+  const mission = mode === 'endless' ? (seasonal ? SEASONAL_MISSION : ENDLESS_MISSION)
+    : mode === 'gauntlet' ? GAUNTLET_MISSION
+    : mode === 'survival' ? SURVIVAL_MISSION
+    : CAMPAIGN[Math.min(missionIndex, CAMPAIGN.length - 1)];
   // The Gauntlet is a prestige tier — earned by finishing the campaign.
   const gauntletUnlocked = progress >= CAMPAIGN.length;
 
@@ -2889,7 +3114,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} endlessOpts={mode === 'endless' ? endless : undefined} />
         </Suspense>
       </Canvas>
 
@@ -3037,9 +3262,9 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ position: 'absolute', inset: 0, zIndex: 46, background: 'rgba(3,6,10,.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: UI_FONT, color: '#e9edf2', pointerEvents: 'auto', cursor: 'auto' }}>
             <div style={{ fontSize: 12, letterSpacing: 8, color: '#37d0e0' }}>PAUSED</div>
             <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 3, margin: '10px 0 4px' }}>
-              {mode === 'gauntlet' ? 'THE GAUNTLET' : mode === 'survival' ? 'THE KILL-HOUSE' : mission.name}
+              {mode === 'endless' ? mission.name : mode === 'gauntlet' ? 'THE GAUNTLET' : mode === 'survival' ? 'THE KILL-HOUSE' : mission.name}
             </div>
-            <div style={{ fontSize: 12, color: '#6f7d8c', letterSpacing: 1 }}>{mode === 'campaign' ? `OP ${missionIndex + 1} / ${CAMPAIGN.length}` : mode === 'gauntlet' ? 'RANKED' : 'ENDLESS'}</div>
+            <div style={{ fontSize: 12, color: '#6f7d8c', letterSpacing: 1 }}>{mode === 'campaign' ? `OP ${missionIndex + 1} / ${CAMPAIGN.length}` : mode === 'endless' ? (seasonal ? 'SEASONAL' : 'ENDLESS') : mode === 'gauntlet' ? 'RANKED' : 'ENDLESS'}</div>
             <div style={{ display: 'flex', gap: 12, marginTop: 26, flexWrap: 'wrap', justifyContent: 'center' }}>
               <button onClick={resume} style={{ ...btnC4('#37d0e0'), background: 'rgba(55,208,224,.12)', fontWeight: 700 }}>{iconRow('play', 'RESUME', 13)}</button>
               <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
@@ -3087,7 +3312,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         {/* zone / op label (operations are chosen outside the game now). On touch it
             shifts right to clear the top-left EXIT button. */}
         <div style={{ position: 'absolute', left: isTouch ? 90 : 26, top: 20 }}>
-          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'gauntlet' ? 'Valor · GAUNTLET · RANKED' : mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
+          <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'endless' ? `Valor · ${seasonal ? 'SEASONAL CAMPAIGN' : 'ENDLESS'} · ${mission.name}` : mode === 'gauntlet' ? 'Valor · GAUNTLET · RANKED' : mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>

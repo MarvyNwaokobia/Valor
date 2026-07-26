@@ -936,6 +936,51 @@ export class FpsSim {
     return n;
   }
 
+  // ── Endless mode: a chain of rooms streamed in and out at runtime ─────────────
+  //
+  // Campaign missions are fixed: all geometry and every enemy exist from the first
+  // frame. Endless can't work that way — the compound has no end, so it is appended
+  // ahead of the player and dropped behind them. These three methods are the whole
+  // streaming contract, and they keep `enemies` and `spawns` index-aligned (which
+  // reinforce/resetEncounter/startWave all depend on).
+
+  /** Add geometry to the live collision set. The array returned by `getCover()` is
+   *  mutated in place, so anything already holding that reference (the scene's
+   *  raycasts and movement) picks the new walls up on the very next frame. */
+  appendCover(boxes: readonly CoverBox[]): void {
+    for (const b of boxes) this.cover.push(b);
+  }
+
+  /** Spawn a room's defenders mid-run. They come in DORMANT (`active: false`) so a
+   *  room stays quiet until the player actually breaches it — the same contract as
+   *  authored mission rooms, which `setRoomActive` then wakes. */
+  appendEnemies(specs: readonly EnemySpec[], active = false): number[] {
+    const ids: number[] = [];
+    for (const spec of specs) {
+      const e = this.addEnemy(spec);
+      e.active = active;
+      ids.push(e.id);
+    }
+    return ids;
+  }
+
+  /** Drop everything from rooms strictly BEFORE `room`, and any cover box lying
+   *  entirely behind `zBehind` (i.e. at greater Z, since the chain runs toward -Z).
+   *  Without this an endless run grows both arrays without bound and the per-frame
+   *  cover loops get slower the deeper you go. */
+  pruneBehind(room: number, zBehind: number): void {
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      if (this.enemies[i].room < room) {
+        this.enemies.splice(i, 1);
+        this.spawns.splice(i, 1); // parallel array — must stay index-aligned
+      }
+    }
+    for (let i = this.cover.length - 1; i >= 0; i--) {
+      const c = this.cover[i];
+      if (c.z - c.d / 2 > zBehind) this.cover.splice(i, 1);
+    }
+  }
+
   /** Survival re-arm · REVIVE: bring the player back from death at full health
    *  with a longer mercy window, and clear the swarm that downed them so the
    *  restart is fair. The scene resumes the wave loop from here. No-op if alive. */
@@ -955,6 +1000,21 @@ export class FpsSim {
     this.playerHp = FPS_TUNING.PLAYER_HP;
     this.reloading = false;
     this.ammoBySlot = this.loadout.map((id) => this.resolveGun(id).magazine);
+  }
+
+  /** Debug: drop every enemy in ONE room (probe hook for headless verification of
+   *  the endless chain, where killing the whole sim would also wipe the dormant
+   *  rooms ahead and hide whether breaching actually wakes them). */
+  debugKillRoom(room: number): void {
+    for (const e of this.enemies) {
+      if (e.alive && e.room === room) {
+        e.alive = false;
+        e.hp = 0;
+        e.deadAt = this.time;
+        this.kills++;
+        this.events.push({ kind: 'kill', enemyId: e.id });
+      }
+    }
   }
 
   /** Debug: drop every enemy now (probe hook for headless verification). */

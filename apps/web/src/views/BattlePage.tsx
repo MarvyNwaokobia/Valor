@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Target, Users, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -117,34 +117,14 @@ export default function BattlePage() {
         </div>
       </motion.button>
 
-      {/* Live PvP */}
-      <motion.button
-        onClick={() => setView('pvp')}
-        className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
-        style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
-        whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
-        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-      >
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(59,130,246,0.08), transparent)' }} />
-        <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: '#3b82f6' }} />
-        <div className="flex items-center gap-5 relative z-10">
-          <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)' }}>
-            <Users size={28} style={{ color: '#3b82f6' }} strokeWidth={1.5} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Live PvP</p>
-            <p className="text-slate-500 text-sm mt-0.5">Real-time · Fight a live player · Winner takes XP</p>
-          </div>
-          <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
-        </div>
-      </motion.button>
+      {/* Live PvP is OFF the menu pending its rebuild as a real-time FPS 1v1 (first
+          kill wins, optionally staked). The BattlePvP component and its `pvp` view
+          are intentionally left in place so it can come straight back. */}
 
-      {/* Endless — survival kill-house that pays G$ per wave */}
+      {/* Seasonal Campaign — the competitive room-wave mode. Live only inside a
+          scheduled season window; the page itself shows the countdown when it isn't. */}
       <motion.button
-        onClick={() => router.push('/endless')}
+        onClick={() => router.push('/seasonal')}
         className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
         style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(234,179,8,0.35)' }}
         whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -160,8 +140,8 @@ export default function BattlePage() {
             <InfinityIcon size={28} style={{ color: '#eab308' }} strokeWidth={1.5} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Endless</p>
-            <p className="text-slate-500 text-sm mt-0.5">Survive the kill-house · Every wave pays G$ · Climb the weekly board</p>
+            <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Seasonal Campaign</p>
+            <p className="text-slate-500 text-sm mt-0.5">Everyone starts at wave 1 · Same compound for all · Top 5 take the pool</p>
           </div>
           <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
         </div>

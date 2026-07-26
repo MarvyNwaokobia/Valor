@@ -324,6 +324,21 @@ pub async fn list_seasons(req: HttpRequest, state: web::Data<AppState>) -> HttpR
 #[derive(Deserialize)]
 pub struct CreateSeasonRequest {
     pub name: String,
+    /// When the season OPENS. Omit to start immediately. A season can be scheduled
+    /// ahead of time and stays locked until this moment, which is how Season 1 is
+    /// announced before it is playable.
+    #[serde(default)]
+    pub starts_at: Option<DateTime<Utc>>,
+    /// When it CLOSES. Omit for an open-ended season closed by hand later.
+    #[serde(default)]
+    pub ends_at: Option<DateTime<Utc>>,
+    /// Shared layout seed. Omit and one is generated. Every player in the season
+    /// walks the same generated compound, so the board compares like with like.
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// The G$ prize pool. Can also be set later with /admin/seasons/:id/fund.
+    #[serde(default)]
+    pub prize_pool_g: Option<i64>,
 }
 
 pub async fn create_season(
@@ -338,15 +353,33 @@ pub async fn create_season(
         return HttpResponse::BadRequest().json(json!({"error": "Season name required"}));
     }
 
-    // Only one season is ever open at a time — close whatever's currently running.
+    if let (Some(s), Some(e)) = (body.starts_at, body.ends_at) {
+        if e <= s {
+            return HttpResponse::BadRequest().json(json!({"error": "Season must end after it starts"}));
+        }
+    }
+
+    // Only one season is ever open-ended at a time — close whatever's still running
+    // without a scheduled end. A season that already carries an ends_at is a booked
+    // window and is left alone, so scheduling next season never truncates this one.
     let _ = sqlx::query("UPDATE seasons SET ends_at = now() WHERE ends_at IS NULL")
         .execute(&state.db)
         .await;
 
+    // A seed nobody can predict before the season opens, so no one can practise the
+    // exact layout in advance.
+    let seed = body.seed.unwrap_or_else(|| (Uuid::new_v4().as_u128() as i64).abs());
+
     let row = sqlx::query_as::<_, SeasonRow>(
-        "INSERT INTO seasons (name, starts_at) VALUES ($1, now()) RETURNING id, name, starts_at, ends_at",
+        "INSERT INTO seasons (name, starts_at, ends_at, seed, prize_pool_g)
+         VALUES ($1, COALESCE($2, now()), $3, $4, COALESCE($5, 0))
+         RETURNING id, name, starts_at, ends_at",
     )
     .bind(body.name.trim())
+    .bind(body.starts_at)
+    .bind(body.ends_at)
+    .bind(seed)
+    .bind(body.prize_pool_g)
     .fetch_one(&state.db)
     .await;
 

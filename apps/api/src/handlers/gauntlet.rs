@@ -52,6 +52,11 @@ fn validate_run(waves: i32, kills: i32, elapsed_secs: f64) -> Result<(), &'stati
 #[derive(Deserialize)]
 pub struct StartRequest {
     pub wallet: String,
+    /// A SEASONAL CAMPAIGN run rather than a practice Gauntlet run. Seasonal is open
+    /// to every player (no campaign gate — new players are exactly who a season is
+    /// meant to pull in), but it requires a season to actually be live right now.
+    #[serde(default)]
+    pub seasonal: bool,
 }
 
 pub async fn start_run(state: web::Data<AppState>, req: HttpRequest, body: web::Json<StartRequest>) -> HttpResponse {
@@ -64,34 +69,62 @@ pub async fn start_run(state: web::Data<AppState>, req: HttpRequest, body: web::
     }
     let wallet = normalize_wallet(&body.wallet);
 
-    // Unlock gate — the Gauntlet is a prestige mode earned by finishing the campaign.
-    let pve_level: Option<i32> = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
-        .bind(&wallet)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let Some(level) = pve_level else {
-        return HttpResponse::NotFound().json(json!({"error": "Player not found"}));
-    };
-    if level < GAUNTLET_UNLOCK_LEVEL {
-        return HttpResponse::Forbidden().json(json!({
-            "error": "Finish the campaign to unlock the Gauntlet",
-            "locked": true, "need_level": GAUNTLET_UNLOCK_LEVEL, "have_level": level,
-        }));
+    // Seasonal is open to everyone, so it skips the campaign gate — but it only runs
+    // while a season is actually live, and the run is stamped with that season's id so
+    // it can never drift onto another season's board.
+    let mut season_id: Option<Uuid> = None;
+    let mut season_seed: Option<i64> = None;
+    if body.seasonal {
+        let live: Option<(Uuid, i64)> = sqlx::query_as(
+            "SELECT id, seed FROM seasons
+             WHERE starts_at <= now() AND (ends_at IS NULL OR ends_at >= now())
+             ORDER BY starts_at DESC LIMIT 1",
+        )
+        .fetch_optional(&state.db).await.ok().flatten();
+        let Some((id, seed)) = live else {
+            return HttpResponse::Forbidden().json(json!({
+                "error": "No season is running right now",
+                "locked": true, "reason": "no_active_season",
+            }));
+        };
+        season_id = Some(id);
+        season_seed = Some(seed);
+    } else {
+        // Unlock gate — the Gauntlet is a prestige mode earned by finishing the campaign.
+        let pve_level: Option<i32> = sqlx::query_scalar("SELECT pve_level FROM players WHERE wallet_address = $1")
+            .bind(&wallet)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+        let Some(level) = pve_level else {
+            return HttpResponse::NotFound().json(json!({"error": "Player not found"}));
+        };
+        if level < GAUNTLET_UNLOCK_LEVEL {
+            return HttpResponse::Forbidden().json(json!({
+                "error": "Finish the campaign to unlock the Gauntlet",
+                "locked": true, "need_level": GAUNTLET_UNLOCK_LEVEL, "have_level": level,
+            }));
+        }
     }
 
     let token = Uuid::new_v4().to_string();
     let now = Utc::now();
     let res = sqlx::query(
-        "INSERT INTO survival_runs (wallet_address, run_token, started_at, status)
-         VALUES ($1, $2, $3, 'open')",
+        "INSERT INTO survival_runs (wallet_address, run_token, started_at, status, season_id)
+         VALUES ($1, $2, $3, 'open', $4)",
     )
-    .bind(&wallet).bind(&token).bind(now)
+    .bind(&wallet).bind(&token).bind(now).bind(season_id)
     .execute(&state.db).await;
 
     match res {
-        Ok(_) => HttpResponse::Ok().json(json!({ "run_token": token, "started_at": now.to_rfc3339() })),
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "run_token": token,
+            "started_at": now.to_rfc3339(),
+            // The shared layout seed: everyone in a season walks the same compound.
+            "seed": season_seed,
+            "season_id": season_id,
+        })),
         Err(e) => {
             tracing::error!("gauntlet start insert failed for {}: {}", wallet, e);
             HttpResponse::InternalServerError().json(json!({"error": "Could not start run"}))
