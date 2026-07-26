@@ -1,0 +1,56 @@
+'use client';
+
+import { Suspense, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { useSearchParams } from 'next/navigation';
+import { Environment } from '@react-three/drei';
+import { buildProceduralGun, type ProceduralGunId } from '@/engine/scene/proceduralGuns';
+
+/**
+ * Single-gun render target for BAKING catalogue art.
+ *
+ * The marketplace shows baked PNGs, not live 3D — one image request per card instead
+ * of a WebGL context per card, which is what keeps the shop cheap. The procedural
+ * seasonal weapons have no GLB to bake from the usual tool, so this renders one at a
+ * time on a transparent background for a headless screenshot to capture.
+ *
+ * /dev/bake-gun?id=ember_halo
+ */
+const LEN: Record<string, number> = {
+  ashfall_carbine: 0.72, warden_repeater: 1.06, rift_lance: 1.16, seraph_lmg: 1.02, ember_halo: 0.9,
+};
+
+function Gun({ id }: { id: ProceduralGunId }) {
+  const model = useMemo(() => {
+    const g = buildProceduralGun(id, LEN[id]);
+    g.scale.setScalar(1 / LEN[id]); // normalise so every gun frames identically
+    return g;
+  }, [id]);
+  // The three-quarter hero angle the existing catalogue art uses.
+  return <group rotation={[0.26, -0.72, 0.06]}><primitive object={model} /></group>;
+}
+
+export default function BakeGun() {
+  const id = (useSearchParams().get('id') ?? 'ember_halo') as ProceduralGunId;
+  return (
+    <div style={{ width: 1040, height: 520, background: 'transparent' }}>
+      <Canvas
+        camera={{ position: [0, 0.14, 1.05], fov: 32 }}
+        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+        dpr={2}
+        style={{ width: 1040, height: 520, background: 'transparent' }}
+      >
+        <hemisphereLight args={['#c3d2e2', '#15161c', 0.75]} />
+        <directionalLight position={[2.5, 3.5, 2]} intensity={3.0} color="#fff4e6" />
+        <directionalLight position={[-2.5, 0.8, -1.5]} intensity={1.5} color="#84b4ff" />
+        <directionalLight position={[0, -2, 1]} intensity={0.5} color="#ffffff" />
+        <Suspense fallback={null}>
+          <Gun id={id} />
+          {/* Metal is 0.9 metalness: with nothing to reflect it renders black however
+              many lights you add. An environment is what actually makes it read. */}
+          <Environment preset="warehouse" />
+        </Suspense>
+      </Canvas>
+    </div>
+  );
+}
