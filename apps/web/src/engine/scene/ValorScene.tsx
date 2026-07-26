@@ -284,6 +284,13 @@ const ENDLESS_TRAIL = 1;
 /** Lateral bound inside a generated room — the interior half-width, less a margin so
  *  the player is stopped just shy of the side walls rather than inside them. */
 const ENDLESS_HALF_W = ROOM_W / 2 - 0.3;
+/** Depth of the travelling floor plane. Chosen so the ground texture's 20 repeats
+ *  divide it into whole 3m tiles (see ENDLESS_RIG_STEP). */
+const ENDLESS_FLOOR_D = 60;
+/** Grid the travelling floor + sun snap to. It is exactly one floor texture tile
+ *  (60 / 20 repeats), so when the floor jumps a cell the texture lands back on
+ *  itself and the ground reads as static instead of sliding along with you. */
+const ENDLESS_RIG_STEP = ENDLESS_FLOOR_D / 20;
 
 /** The parameters and callbacks for a generated-chain run. */
 export interface EndlessOpts {
@@ -476,7 +483,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // Bumped whenever geometry is appended or pruned, purely to re-render the meshes.
   const [geoTick, setGeoTick] = useState(0);
   const floorRef = useRef<THREE.Mesh>(null);
+  const sunRef = useRef<THREE.DirectionalLight>(null);
+  const sunTargetRef = useRef<THREE.Object3D>(null);
   const endlessTicks = useRef(0);
+  /** Last grid cell the sun + floor were snapped to, so they only move when the
+   *  player actually crosses a cell rather than every single frame. */
+  const rigCell = useRef({ x: NaN, z: NaN });
 
   const START = useMemo<[number, number]>(() => {
     if (!endless) return mission.start;
@@ -762,6 +774,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     }
     if (hud.current.survEnd) hud.current.survEnd.style.pointerEvents = 'none';
   }, [hud]);
+
+  // A directional light aims at its `target` object, which three.js defaults to a
+  // detached one at the origin — so the aim point can only be moved by assigning our
+  // own. Endless needs that to walk the shadow frustum along with the player; every
+  // other mode keeps the default origin aim, which is what the authored ops expect.
+  useEffect(() => {
+    if (!endless || !sunRef.current || !sunTargetRef.current) return;
+    sunRef.current.target = sunTargetRef.current;
+    sunRef.current.updateMatrixWorld();
+  }, [endless]);
 
   // Load this op's ambience bed (retunes the room tone + zone drone; the mission
   // remounts per op, so this fires whenever the zone changes).
@@ -1451,9 +1473,34 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       const c = chain.current;
       const roomAt = (i: number) => c.rooms.find((r) => r.index === i);
 
-      // The floor is a fixed-size plane; in endless it rides along under the player
-      // so the chain can run to -Z forever without needing an enormous one.
-      if (floorRef.current) floorRef.current.position.z = pos.current.z;
+      // ── The travelling rig: floor + sun follow the player ──
+      //
+      // The floor is a fixed-size plane and the sun's shadow camera only covers ±22
+      // around wherever it points. An endless run leaves both behind within two rooms,
+      // so they ride along. Two things matter here:
+      //
+      //  • SNAP, don't slide. Moving them every frame re-renders the shadow map every
+      //    frame and drags the ground texture along with the mesh, which reads as the
+      //    whole world sliding under you. Snapping to a grid means they only move when
+      //    you cross a cell, and the floor's texture lands back on itself so the ground
+      //    looks nailed down.
+      //  • The grid step must divide the floor's texture tile exactly, or the snap
+      //    itself becomes the visible jump.
+      const cellX = Math.round(pos.current.x / ENDLESS_RIG_STEP) * ENDLESS_RIG_STEP;
+      const cellZ = Math.round(pos.current.z / ENDLESS_RIG_STEP) * ENDLESS_RIG_STEP;
+      if (cellX !== rigCell.current.x || cellZ !== rigCell.current.z) {
+        rigCell.current.x = cellX;
+        rigCell.current.z = cellZ;
+        if (floorRef.current) floorRef.current.position.z = cellZ;
+        // Keep the sun's DIRECTION fixed by moving the light and its aim point by the
+        // same delta — only the shadow frustum travels, the light angle never changes.
+        if (sunRef.current && sunTargetRef.current) {
+          sunTargetRef.current.position.set(cellX, 0, cellZ);
+          sunTargetRef.current.updateMatrixWorld();
+          sunRef.current.position.set(cellX + 9, 16, cellZ + 10);
+          sunRef.current.updateMatrixWorld();
+        }
+      }
 
       if (snap.playerAlive && !c.over) {
         const cur = roomAt(c.cursor);
@@ -2037,12 +2084,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           shape. Point-light intensity is in physical units: single digits, not tens. */}
       <hemisphereLight args={theme.hemi} />
       <directionalLight
+        ref={sunRef}
         position={[9, 16, 10]} intensity={theme.sun.intensity} color={theme.sun.color} castShadow={!minimal}
         shadow-mapSize={[lightFx ? 1024 : 2048, lightFx ? 1024 : 2048]}
         shadow-camera-left={-22} shadow-camera-right={22}
         shadow-camera-top={22} shadow-camera-bottom={-22}
         shadow-camera-far={70} shadow-bias={-0.0008}
       />
+      {/* The sun's aim point. Authored ops all fit inside the shadow camera's ±22
+          box around the origin, but an endless run walks hundreds of metres past it,
+          so in endless both the light and this target ride along with the player. */}
+      <object3D ref={sunTargetRef} />
       <directionalLight position={[-10, 7, -12]} intensity={theme.fill.intensity} color={theme.fill.color} />
       <ambientLight intensity={theme.ambient} />
       {/* practicals are ACCENTS, not floodlights: they shape darkness, not expose it */}
@@ -2055,19 +2107,26 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       {/* endless rides this plane along under the player (see the endless flow), so
           the chain can run to -Z forever without an enormous floor */}
       <mesh ref={floorRef} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[FLOOR_W, endless ? FLOOR_D * 1.6 : FLOOR_D]} />
+        <planeGeometry args={[FLOOR_W, endless ? ENDLESS_FLOOR_D : FLOOR_D]} />
         <meshStandardMaterial {...floorMaps} color={theme.floorTint} roughness={1} metalness={0} />
       </mesh>
 
       {/* compound walls: brick perimeter, plastered interior dividers, each capped
           with a concrete coping so the tops read as built, not sliced graybox */}
+      {/* Keys are the box's own geometry, not its array index. Endless prunes rooms
+          off the FRONT of this list, which shifts every later index and would make
+          React re-render every wall in the world on each room advance — a hitch per
+          doorway. Keyed this way, the walls that didn't change keep their identity. */}
       {LEVEL_WALLS.map((c, i) => (
-        <group key={`w${i}`}>
+        <group key={`w${c.x}_${c.z}_${c.w}_${c.d}`}>
           <mesh position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
             <boxGeometry args={[c.w, c.h, c.d]} />
             <meshStandardMaterial {...(i < 3 ? brickMaps : plasterMaps)} color={theme.wallTint} roughness={1} metalness={0} />
           </mesh>
-          <mesh position={[c.x, c.h + 0.02, c.z]} castShadow receiveShadow>
+          {/* The coping is a thin cap on top of a wall that already casts an almost
+              identical shadow. In endless it stops casting: it roughly halves the
+              shadow-map draw calls for a difference you cannot see. */}
+          <mesh position={[c.x, c.h + 0.02, c.z]} castShadow={!endless} receiveShadow>
             <boxGeometry args={[c.w + 0.14, 0.18, c.d + 0.14]} />
             <meshStandardMaterial color="#3b3a3e" roughness={0.85} metalness={0} />
           </mesh>
@@ -2075,8 +2134,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       ))}
 
       {/* cover: scorched planking */}
-      {LEVEL_COVER.map((c, i) => (
-        <mesh key={`c${i}`} position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
+      {LEVEL_COVER.map((c) => (
+        <mesh key={`c${c.x}_${c.z}_${c.w}_${c.d}`} position={[c.x, c.h / 2, c.z]} castShadow receiveShadow>
           <boxGeometry args={[c.w, c.h, c.d]} />
           <meshStandardMaterial {...plankMaps} color="#6b6055" roughness={0.95} metalness={0.05} />
         </mesh>
