@@ -67,10 +67,14 @@ export const GUN_CATALOG: Record<GunId, GunStats> = {
     damage: 18, fireRate: 360, accuracy: 0.72, projectileSpeed: 30, range: 10,
     critChance: 0.08, critMult: 1.6, magazine: 24, reloadTime: 2.2,
   },
+  /** Tier 4. Deliberately still slow and per-shot heavy — but it used to sit BELOW
+   *  the tier-3 Assault Rifle on sustained damage while costing 2.25x as much, which
+   *  in a ranked shop list reads as simply broken. A bigger magazine and a faster
+   *  reload lift it above the rifle without touching what makes it a marksman. */
   marksman: {
     id: 'marksman', name: 'Marksman Rifle', tier: 4,
-    damage: 45, fireRate: 90, accuracy: 0.90, projectileSpeed: 40, range: 14,
-    critChance: 0.15, critMult: 2.0, magazine: 8, reloadTime: 2.4,
+    damage: 52, fireRate: 90, accuracy: 0.90, projectileSpeed: 40, range: 14,
+    critChance: 0.15, critMult: 2.0, magazine: 10, reloadTime: 2.2,
   },
   legendary: {
     id: 'legendary', name: 'Valor Prototype', tier: 5,
