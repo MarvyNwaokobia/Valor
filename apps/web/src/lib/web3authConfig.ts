@@ -18,8 +18,16 @@ import { CELO_CHAIN_ID } from '@/lib/magic'
 // behind the GoodDollar one-face dedup that un-whitelisted ~44% of our wallets
 // (see apps/api/migrations/add_magic_identity.sql). An external wallet has no
 // such problem: the address belongs to the player already and we only ever read
-// it. So every auth connection below is hidden, leaving only wallet discovery.
-const HIDDEN = { showOnModal: false } as const
+// it. So the whole `auth` connector is switched off, leaving wallet discovery.
+//
+// This is one connector-level flag rather than a list of hidden login methods
+// on purpose. Enumerating them means naming every provider the SDK supports,
+// and the modal THROWS on a name it doesn't recognise ("Invalid auth
+// connection: farcaster") — which aborts init and silently disables the connect
+// button. Its accepted list also differs from the one the SDK exports and is
+// not public (it lives in @web3auth/modal .../modal/src/ui/config.js), so any
+// hardcoded list is a version-coupled trap. Switching the connector off needs
+// no names at all.
 
 export const web3AuthContextConfig: Web3AuthContextConfig = {
   web3AuthOptions: {
@@ -42,32 +50,7 @@ export const web3AuthContextConfig: Web3AuthContextConfig = {
     defaultChainId: `0x${CELO_CHAIN_ID.toString(16)}`,
     modalConfig: {
       connectors: {
-        auth: {
-          label: 'auth',
-          // Every social/passwordless method Web3Auth offers, all off. If the
-          // SDK adds a new one later it would appear by default, so this list
-          // is worth re-checking on upgrade.
-          loginMethods: {
-            google: HIDDEN,
-            twitter: HIDDEN,
-            facebook: HIDDEN,
-            discord: HIDDEN,
-            farcaster: HIDDEN,
-            apple: HIDDEN,
-            github: HIDDEN,
-            reddit: HIDDEN,
-            line: HIDDEN,
-            kakao: HIDDEN,
-            linkedin: HIDDEN,
-            twitch: HIDDEN,
-            telegram: HIDDEN,
-            wechat: HIDDEN,
-            email_passwordless: HIDDEN,
-            sms_passwordless: HIDDEN,
-            passkeys: HIDDEN,
-            authenticator: HIDDEN,
-          },
-        },
+        auth: { label: 'auth', showOnModal: false },
       },
     },
   },
