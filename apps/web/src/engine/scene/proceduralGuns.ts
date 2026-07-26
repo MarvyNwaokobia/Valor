@@ -235,8 +235,10 @@ function wardenRepeater(): THREE.Group {
  */
 function riftLance(): THREE.Group {
   const g = new THREE.Group();
-  const frame = MAT.alloy(0x2b3038);
-  const dark = MAT.polymer(0x1a1d22);
+  // Light enough to read against a dark card and a night compound. At 0x2b3038 the
+  // whole weapon vanished into the background and only the coil was visible.
+  const frame = MAT.alloy(0x5a6675);
+  const dark = MAT.polymer(0x2e343d);
   const glow = MAT.glow(0x37d0e0, 2.6);
   const cut = MAT.cut();
 
@@ -271,8 +273,8 @@ function riftLance(): THREE.Group {
  */
 function seraphLmg(): THREE.Group {
   const g = new THREE.Group();
-  const shell = MAT.polymer(0x24262b);
-  const metal = MAT.alloy(0x53575e);
+  const shell = MAT.polymer(0x3a3e46);
+  const metal = MAT.alloy(0x717884);
   const barrel = MAT.steel(0x141518);
   const cut = MAT.cut();
 
