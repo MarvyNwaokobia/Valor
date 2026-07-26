@@ -470,8 +470,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     nextZ: number;       // z the next generated room starts at
     wave: number;        // the wave currently being fought
     bankedThrough: number; // highest wave already reported cleared (no double-pay)
+    armed: boolean;      // has the FIRST room been woken? (see the arming beat below)
     over: boolean;
-  }>({ rooms: [], cursor: 0, nextIndex: 0, nextZ: 0, wave: 1, bankedThrough: 0, over: false });
+  }>({ rooms: [], cursor: 0, nextIndex: 0, nextZ: 0, wave: 1, bankedThrough: 0, armed: false, over: false });
   // Bumped whenever geometry is appended or pruned, purely to re-render the meshes.
   const [geoTick, setGeoTick] = useState(0);
   const floorRef = useRef<THREE.Mesh>(null);
@@ -501,11 +502,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         s.appendCover([...r.walls, ...r.cover]);
         s.appendEnemies(r.enemies);
       }
-      s.setRoomActive(first + 1, true); // the room you start in is live immediately
+      // The first room stays DORMANT. Every other room in the chain is woken by the
+      // player breaching it; spawning into a live firefight was the one place that
+      // rule didn't hold, and it made the opening seconds unfair. It arms on the
+      // player's first step instead (see the endless flow), so the run starts on
+      // their move rather than shooting at them before they've read the room.
       const last = rooms[rooms.length - 1];
       chain.current = {
         rooms, cursor: first, nextIndex: first + rooms.length, nextZ: last.zFar,
-        wave, bankedThrough: wave - 1, over: false,
+        wave, bankedThrough: wave - 1, armed: false, over: false,
       };
     }
     return s;
@@ -780,7 +785,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       const c = chain.current;
       const cur = c.rooms.find((r) => r.index === c.cursor);
       return {
-        endless, cursor: c.cursor, wave: c.wave, bankedThrough: c.bankedThrough,
+        endless, cursor: c.cursor, wave: c.wave, bankedThrough: c.bankedThrough, armed: c.armed,
         roomsLive: c.rooms.length, nextIndex: c.nextIndex, over: c.over,
         aliveInRoom: cur ? sim.roomAlive(cur.index + 1) : 0,
         aliveTotal: sim.aliveCount(),
@@ -1452,6 +1457,19 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
       if (snap.playerAlive && !c.over) {
         const cur = roomAt(c.cursor);
+
+        // ARMING BEAT: the room you spawn in holds its fire until you move. Step off
+        // the mark (or shoot) and it wakes. This gives the run the same breach rhythm
+        // as every later room instead of opening mid-gunfight, and it costs nothing
+        // to a player who just walks in shooting.
+        if (!c.armed) {
+          const moved = Math.hypot(pos.current.x - START[0], pos.current.z - START[1]) > 1.2;
+          if (moved || snap.stats.shotsFired > 0) {
+            sim.setRoomActive(c.cursor + 1, true);
+            c.armed = true;
+            say('opBreach');
+          }
+        }
 
         // A wave banks the instant its LAST room is emptied — that's the beat the
         // "+G$ / WAVE N CLEARED" moment hangs on, not the walk to the next door.
