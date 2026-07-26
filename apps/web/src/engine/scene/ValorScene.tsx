@@ -299,6 +299,11 @@ const ENDLESS_FLOOR_D = 60;
  *  (60 / 20 repeats), so when the floor jumps a cell the texture lands back on
  *  itself and the ground reads as static instead of sliding along with you. */
 const ENDLESS_RIG_STEP = ENDLESS_FLOOR_D / 20;
+/** One shadow-map texel in world units: the sun's shadow camera spans 44 units across
+ *  a 2048 map. The travelling sun snaps to THIS, not the floor's 3m tile — a coarse
+ *  step makes every shadow in the compound jump at once, which looks like the building
+ *  juddering, while a texel-sized step keeps shadow edges stable against the world. */
+const ENDLESS_SHADOW_TEXEL = 44 / 2048;
 
 /** The parameters and callbacks for a generated-chain run. */
 export interface EndlessOpts {
@@ -496,7 +501,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const endlessTicks = useRef(0);
   /** Last grid cell the sun + floor were snapped to, so they only move when the
    *  player actually crosses a cell rather than every single frame. */
-  const rigCell = useRef({ x: NaN, z: NaN });
+  const rigCell = useRef({ x: NaN, z: NaN, sunZ: NaN });
 
   const START = useMemo<[number, number]>(() => {
     if (!endless) return mission.start;
@@ -1520,18 +1525,28 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       //    looks nailed down.
       //  • The grid step must divide the floor's texture tile exactly, or the snap
       //    itself becomes the visible jump.
-      const cellX = Math.round(pos.current.x / ENDLESS_RIG_STEP) * ENDLESS_RIG_STEP;
-      const cellZ = Math.round(pos.current.z / ENDLESS_RIG_STEP) * ENDLESS_RIG_STEP;
-      if (cellX !== rigCell.current.x || cellZ !== rigCell.current.z) {
-        rigCell.current.x = cellX;
-        rigCell.current.z = cellZ;
-        if (floorRef.current) floorRef.current.position.z = cellZ;
-        // Keep the sun's DIRECTION fixed by moving the light and its aim point by the
-        // same delta — only the shadow frustum travels, the light angle never changes.
+      // The FLOOR snaps to a whole texture tile so its pattern lands back on itself.
+      const floorZ = Math.round(pos.current.z / ENDLESS_RIG_STEP) * ENDLESS_RIG_STEP;
+      if (floorZ !== rigCell.current.z) {
+        rigCell.current.z = floorZ;
+        if (floorRef.current) floorRef.current.position.z = floorZ;
+      }
+      // The SUN snaps to its own, far finer grid: one shadow-map texel. Sharing the
+      // floor's 3m step meant the shadow frustum jumped ~140 texels at a time and every
+      // shadow in the compound leapt with it, which reads as the building juddering.
+      // A texel-sized step keeps shadow edges pinned to the world while still avoiding
+      // the shimmer a continuously-sliding frustum produces.
+      const sunX = Math.round(pos.current.x / ENDLESS_SHADOW_TEXEL) * ENDLESS_SHADOW_TEXEL;
+      const sunZ = Math.round(pos.current.z / ENDLESS_SHADOW_TEXEL) * ENDLESS_SHADOW_TEXEL;
+      if (sunX !== rigCell.current.x || sunZ !== rigCell.current.sunZ) {
+        rigCell.current.x = sunX;
+        rigCell.current.sunZ = sunZ;
+        // Move the light and its aim point by the SAME delta, so only the shadow
+        // frustum travels and the sun's angle never changes.
         if (sunRef.current && sunTargetRef.current) {
-          sunTargetRef.current.position.set(cellX, 0, cellZ);
+          sunTargetRef.current.position.set(sunX, 0, sunZ);
           sunTargetRef.current.updateMatrixWorld();
-          sunRef.current.position.set(cellX + 9, 16, cellZ + 10);
+          sunRef.current.position.set(sunX + 9, 16, sunZ + 10);
           sunRef.current.updateMatrixWorld();
         }
       }

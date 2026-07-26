@@ -124,6 +124,24 @@ describe('room geometry', () => {
     }
   });
 
+  it('neighbouring rooms never overlap coplanar wall faces', () => {
+    // Two identical surfaces occupying the same space z-fight: the renderer flickers
+    // between them as the camera moves, which in game reads as the building shaking.
+    // Side walls used to extend a wall-thickness past each end to seal the corners,
+    // which made every junction share 1.2m of duplicated surface.
+    for (let i = 0; i < chain.length - 1; i++) {
+      const sidesOf = (r: typeof chain[number]) =>
+        r.walls.filter((w) => Math.abs(Math.abs(w.x) - (ROOM_W / 2 + WALL_T / 2)) < 1e-9);
+      for (const a of sidesOf(chain[i])) {
+        for (const b of sidesOf(chain[i + 1])) {
+          if (Math.abs(a.x - b.x) > 1e-9) continue; // different side of the corridor
+          const overlap = Math.min(a.z + a.d / 2, b.z + b.d / 2) - Math.max(a.z - a.d / 2, b.z - b.d / 2);
+          expect(overlap).toBeLessThanOrEqual(1e-9);
+        }
+      }
+    }
+  });
+
   it('the doorway is never jammed into a corner', () => {
     for (const r of chain) {
       expect(Math.abs(r.exitX) + DOOR_W / 2).toBeLessThan(ROOM_W / 2);
