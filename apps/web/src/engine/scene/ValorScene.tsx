@@ -22,7 +22,7 @@ import { useGunPrototypes, GUN_IDS } from './gunModels';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, ENDLESS_MISSION, SEASONAL_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import {
-  buildChain, generateRoom, entryCap, spawnPointFor, zForWaveStart, firstRoomOfWave, ROOM_W,
+  buildChain, generateRoom, entryCap, spawnPointFor, zForWaveStart, firstRoomOfWave, roomsForWave, ROOM_W,
   type GeneratedRoom,
 } from '../fps/endless';
 import { dressingFor, type PropSpec } from './setDressing';
@@ -357,6 +357,13 @@ interface Hud {
   objText: HTMLDivElement | null;
   survEnd: HTMLDivElement | null;
   survEndText: HTMLDivElement | null;
+  // ENDLESS: the standing wave readout + the wave-cleared beat.
+  waveHud: HTMLDivElement | null;
+  waveLabel: HTMLDivElement | null;
+  waveRooms: HTMLDivElement | null;
+  waveDone: HTMLDivElement | null;
+  waveDoneText: HTMLDivElement | null;
+  waveDoneSub: HTMLDivElement | null;
   objArrow: HTMLDivElement | null;
   briefing: HTMLDivElement | null;
   complete: HTMLDivElement | null;
@@ -499,6 +506,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const sunRef = useRef<THREE.DirectionalLight>(null);
   const sunTargetRef = useRef<THREE.Object3D>(null);
   const endlessTicks = useRef(0);
+  /** Wall-clock deadline for the wave-cleared banner, 0 when it isn't showing. */
+  const waveDoneUntil = useRef(0);
   /** Last grid cell the sun + floor were snapped to, so they only move when the
    *  player actually crosses a cell rather than every single frame. */
   const rigCell = useRef({ x: NaN, z: NaN, sunZ: NaN });
@@ -795,7 +804,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // A fresh mount (new mission / retry) must start with no stale overlays from
   // the previous run showing through (the "MISSION COMPLETE stuck on" bug).
   useEffect(() => {
-    for (const el of [hud.current.complete, hud.current.survEnd, hud.current.down]) {
+    for (const el of [hud.current.complete, hud.current.survEnd, hud.current.down, hud.current.waveDone]) {
       if (el) el.style.opacity = '0';
     }
     if (hud.current.survEnd) hud.current.survEnd.style.pointerEvents = 'none';
@@ -1573,6 +1582,35 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           c.bankedThrough = cur.wave;
           endlessOpts?.onWaveCleared?.(cur.wave);
           say('missionCleared');
+          // The wave-cleared beat. This is the payoff moment of the whole mode, and
+          // without it a wave banks in total silence — the player has no way to know
+          // they finished one. It does NOT pause the run; they read it while moving.
+          if (hud.current.waveDoneText) hud.current.waveDoneText.textContent = `WAVE ${cur.wave} CLEAR`;
+          if (hud.current.waveDoneSub) hud.current.waveDoneSub.textContent = `WAVE ${cur.wave + 1} — PUSH FORWARD`;
+          if (hud.current.waveDone) hud.current.waveDone.style.opacity = '1';
+          waveDoneUntil.current = performance.now() + 2200;
+        }
+
+        // Fade the beat once it has had its moment.
+        if (waveDoneUntil.current > 0 && performance.now() > waveDoneUntil.current) {
+          waveDoneUntil.current = 0;
+          if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
+        }
+
+        // Standing readout: which wave, and how far through it. Rooms are the unit of
+        // progress inside a wave, so "ROOM 2 / 3" is what tells the player how close
+        // the next clear is.
+        if (cur) {
+          const first = firstRoomOfWave(cur.wave);
+          const roomInWave = cur.index - first + 1;
+          const ofWave = roomsForWave(cur.wave);
+          if (hud.current.waveLabel) hud.current.waveLabel.textContent = `WAVE ${cur.wave}`;
+          if (hud.current.waveRooms) {
+            const left = sim.roomAlive(cur.index + 1);
+            hud.current.waveRooms.textContent = left > 0
+              ? `ROOM ${roomInWave} / ${ofWave} · ${left} LEFT`
+              : `ROOM ${roomInWave} / ${ofWave} · CLEAR — MOVE UP`;
+          }
         }
 
         // Crossing the far wall puts the player in the next room: wake it, build one
@@ -1608,6 +1646,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // next (Seasonal submits the score; Campaign Endless saves the checkpoint).
       if (!snap.playerAlive && !c.over) {
         c.over = true;
+        waveDoneUntil.current = 0;
+        if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
         const st = sim.snapshot().stats;
         endlessOpts?.onRunEnd?.(c.wave, { kills: st.kills, headshots: st.headshots });
       }
@@ -2776,7 +2816,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
-    objText: null, survEnd: null, survEndText: null, objArrow: null, briefing: null, complete: null, perf: null,
+    objText: null, survEnd: null, survEndText: null, waveHud: null, waveLabel: null, waveRooms: null, waveDone: null, waveDoneText: null, waveDoneSub: null, objArrow: null, briefing: null, complete: null, perf: null,
     lockReticle: null,
     attachChips: {},
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
@@ -3372,6 +3412,23 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ fontSize: 13, letterSpacing: 6, color: '#37d0e0' }}>{mission.op}</div>
           <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 3, margin: '10px 0' }}>{mission.name}</div>
           <div style={{ fontSize: 13, color: '#9fb4c8', letterSpacing: 1 }}>{mission.brief}</div>
+        </div>
+
+        {/* ENDLESS · standing wave readout. There is no mission list out here, so this
+            is the ONLY thing telling the player where they are in the run: which wave,
+            and how much of it is left. Always on, top-centre, under the crosshair line. */}
+        <div ref={(r) => { hud.current.waveHud = r; }} style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', display: endless ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', gap: 2, pointerEvents: 'none', userSelect: 'none' }}>
+          <div ref={(r) => { hud.current.waveLabel = r; }} style={{ fontSize: 15, fontWeight: 800, letterSpacing: 4, color: '#eab308' }}>WAVE 1</div>
+          <div ref={(r) => { hud.current.waveRooms = r; }} style={{ fontSize: 11, letterSpacing: 2, color: '#9fb4c8' }}>ROOM 1 / 2</div>
+        </div>
+
+        {/* ENDLESS · the wave-cleared beat. Fires the moment the last defender of a
+            wave's final room drops, holds for a breath, then fades as the player pushes
+            on. Deliberately NOT a blocking screen — the run never stops, so neither
+            does the player; they read it on the move. */}
+        <div ref={(r) => { hud.current.waveDone = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', transition: 'opacity .45s', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, textAlign: 'center' }}>
+          <div ref={(r) => { hud.current.waveDoneText = r; }} style={{ fontSize: 44, fontWeight: 800, letterSpacing: 8, color: '#eab308', textShadow: '0 0 28px rgba(234,179,8,.55)' }}>WAVE 1 CLEAR</div>
+          <div ref={(r) => { hud.current.waveDoneSub = r; }} style={{ fontSize: 13, letterSpacing: 5, color: '#9fb4c8' }}>PUSH FORWARD</div>
         </div>
 
         {/* mission complete */}
