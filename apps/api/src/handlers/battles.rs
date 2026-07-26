@@ -419,13 +419,22 @@ pub(crate) async fn persist_battle(
     // Whether to also record this result on-chain (ValorGameRecord). PvE losses
     // skip the chain to save gas — the DB row still shows in battle history.
     record_on_chain: bool,
+    // Which mode produced this row: "campaign" | "bot" | "pvp" | "endless".
+    mode: &str,
+    // Did this battle increment players.wins/losses? MUST match the `count_result`
+    // passed to award_player for the same fight. Every mode lands here as a
+    // structurally identical row, so without this the ledger cannot say whether a
+    // row was meant to count, and readers are forced to assume it did — which is
+    // what made the consistency check flag Endless players as corrupt.
+    counts_result: bool,
 ) {
     let now = Utc::now();
     let _ = sqlx::query(
         "INSERT INTO battles
            (id, challenger_wallet, opponent_wallet, winner_wallet,
-            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            rounds_data, xp_awarded_challenger, xp_awarded_opponent, is_bot, created_at,
+            mode, counts_result)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(battle_id)
     .bind(challenger)
@@ -436,6 +445,8 @@ pub(crate) async fn persist_battle(
     .bind(xp_opponent)
     .bind(is_bot)
     .bind(now)
+    .bind(mode)
+    .bind(counts_result)
     .execute(&state.db)
     .await;
 
@@ -472,11 +483,16 @@ async fn finalize_fight(
     // Is this a server-verified (refereed) fight? Bot fights are; a live fight is
     // only when it's session-backed (Campaign). Gates the rank-up G$ bonus.
     reward_eligible: bool,
+    // "campaign" or "bot" — recorded on the row so the ledger is self-describing.
+    mode: &str,
 ) -> Result<FightOutcome, HttpResponse> {
-    let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible, true).await?;
+    // count_result and the row's counts_result are the SAME decision; keep them on
+    // one binding so they can never drift apart.
+    const COUNTS: bool = true;
+    let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible, COUNTS).await?;
     let battle_id = Uuid::new_v4();
     let winner = if won { wallet } else { "bot" };
-    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain).await;
+    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain, mode, COUNTS).await;
     Ok(FightOutcome {
         won,
         xp_earned: award.xp_earned,
@@ -644,6 +660,7 @@ pub async fn bot_fight_round(
         rounds_json,
         true, // bot fights record on-chain as before
         true, // bot fights are fully server-simulated — refereed, so bonus-eligible
+        "bot",
     )
     .await
     {
@@ -876,7 +893,7 @@ pub async fn complete_live_fight(
     let record_on_chain = true;
     // Refereed (bonus-eligible) only when session-backed — the flat/Endless path is not.
     let reward_eligible = body.session_id.is_some();
-    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain, reward_eligible).await {
+    let outcome = match finalize_fight(&state, &wallet, body.won, base_xp, xp_multiplier, rounds, record_on_chain, reward_eligible, "campaign").await {
         Ok(o) => o,
         Err(resp) => return resp,
     };
@@ -1353,7 +1370,7 @@ pub async fn complete_pvp_match(
     };
 
     let battle_id = Uuid::new_v4();
-    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([]), true).await;
+    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([]), true, "pvp", true).await;
 
     let side = |w: &str, a: &PlayerAward| json!({
         "wallet": w, "xp_awarded": a.xp_earned, "new_xp": a.new_xp,
