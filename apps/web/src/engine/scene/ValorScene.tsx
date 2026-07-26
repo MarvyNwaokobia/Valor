@@ -284,6 +284,14 @@ const ENDLESS_TRAIL = 1;
 /** Lateral bound inside a generated room — the interior half-width, less a margin so
  *  the player is stopped just shy of the side walls rather than inside them. */
 const ENDLESS_HALF_W = ROOM_W / 2 - 0.3;
+/** How many enemy rigs endless keeps mounted. Authored missions size this pool from
+ *  their own enemy list, but an endless mission carries NO enemies — they are streamed
+ *  in per room — so it needs a standing pool instead. The live window holds 4 rooms
+ *  (one trailing, the current, two ahead) and a room caps at 8 defenders, so 32 is the
+ *  real ceiling; this leaves a little headroom. Unused slots are parked invisible, and
+ *  a parked rig skips its skeleton update entirely (see OperatorRig). Without this pool
+ *  the sim has enemies shooting at you that were never given a body to render. */
+const ENDLESS_ENEMY_POOL = 36;
 /** Depth of the travelling floor plane. Chosen so the ground texture's 20 repeats
  *  divide it into whole 3m tiles (see ENDLESS_RIG_STEP). */
 const ENDLESS_FLOOR_D = 60;
@@ -640,8 +648,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const flashRef = useRef<THREE.Mesh>(null);
   const flashUntil = useRef(0);
 
+  // The mounted enemy rigs. An authored mission has one per enemy it declares; endless
+  // declares none (they stream in per room) and gets a standing pool instead, which the
+  // frame loop maps live sim enemies onto by index.
+  const ENEMY_SLOTS = useMemo(
+    () => (endless
+      ? Array.from({ length: ENDLESS_ENEMY_POOL }, () => ({ pos: [0, 0] as [number, number] }))
+      : ENEMIES),
+    [endless, ENEMIES],
+  );
   const dummyRefs = useRef<Array<THREE.Group | null>>([]);
-  const dummyFlash = useRef<number[]>(ENEMIES.map(() => 0));
+  const dummyFlash = useRef<number[]>(ENEMY_SLOTS.map(() => 0));
   const rigApis = useRef<Array<OperatorApi | null>>([]);
 
   // Rounds you can SEE. Slow enough to read (a real bullet would be invisible),
@@ -821,6 +838,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         curWavesEnd: cur ? cur.wavesEnd : null,
         indices: c.rooms.map((r) => r.index),
         ticks: endlessTicks.current,
+        // Rig-pool health. An endless mission declares no enemies, so if the pool were
+        // ever sized from the mission (as it originally was) the sim would have enemies
+        // shooting the player with no body rendered anywhere. `rigsMounted` must always
+        // cover `aliveTotal`.
+        rigsMounted: dummyRefs.current.filter(Boolean).length,
+        rigsVisible: dummyRefs.current.filter((g) => g && g.visible).length,
         z: pos.current.z,
         kills: sim.snapshot().stats.kills,
       };
@@ -1362,6 +1385,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
     // ── Dummies: pose from snapshot (upright / falling), hit flash ──
     const snap = sim.snapshot();
+    // Endless maps a live, changing enemy list onto a fixed rig pool, so any slot past
+    // the current count is parked out of sight — otherwise a pruned room's bodies stay
+    // frozen on screen as ghosts.
+    for (let i = snap.enemies.length; i < dummyRefs.current.length; i++) {
+      const g = dummyRefs.current[i];
+      if (g) g.visible = false;
+    }
     for (let i = 0; i < snap.enemies.length; i++) {
       const e = snap.enemies[i];
       const g = dummyRefs.current[i];
@@ -2189,7 +2219,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
       {/* enemies: rifle-carrying operator rigs. Placeholder body, real animation —
           the mesh swaps out without touching clip names or the skeleton. */}
-      {ENEMIES.map((e, i) => (
+      {ENEMY_SLOTS.map((e, i) => (
         <group key={i} ref={(g) => { dummyRefs.current[i] = g; }} position={[e.pos[0], 0, e.pos[1]]}>
           <OperatorRig ref={(a) => { rigApis.current[i] = a; }} modelPath={OPERATOR_GLB} />
         </group>

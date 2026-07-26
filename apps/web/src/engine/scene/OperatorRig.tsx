@@ -234,6 +234,17 @@ export const OperatorRig = forwardRef<OperatorApi, { modelPath: string }>(functi
   const tmpV = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((_, dt) => {
+    // Skip everything for a rig nobody can see. three.js won't DRAW a hidden object,
+    // but this frame callback runs regardless, so an off-duty rig would still pay for
+    // a full skeleton update every frame. That matters most in endless, which keeps a
+    // standing pool of rigs and parks the unused ones, but it also covers despawned
+    // survival slots and any corpse culled from view.
+    let node: THREE.Object3D | null = groupRef.current;
+    while (node) {
+      if (!node.visible) return;
+      node = node.parent;
+    }
+
     mixerRef.current?.update(Math.min(dt, 1 / 20));
 
     // Align the rifle ONCE, after the idle clip has actually posed the skeleton.
