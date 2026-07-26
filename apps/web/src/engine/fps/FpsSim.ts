@@ -276,6 +276,16 @@ export class FpsSim {
   private enemies: FpsEnemy[] = [];
   private spawns: [number, number][] = [];
   private cover: CoverBox[];
+  /** Outer safety box for enemy movement. Walls do the real containment; this only
+   *  stops a confused seeker wandering off the map. It defaults to a fixed box around
+   *  the ORIGIN, which every authored mission sits inside — but the endless chain runs
+   *  hundreds of metres out, and an enemy clamped back to the origin box teleports into
+   *  the geometry near the start of the chain and shoots the player from inside a wall.
+   *  Endless replaces these bounds with the live chain window as it travels. */
+  private bounds: { minX: number; maxX: number; minZ: number; maxZ: number } = {
+    minX: -FPS_TUNING.ENEMY.WORLD_CLAMP, maxX: FPS_TUNING.ENEMY.WORLD_CLAMP,
+    minZ: -FPS_TUNING.ENEMY.WORLD_CLAMP, maxZ: FPS_TUNING.ENEMY.WORLD_CLAMP,
+  };
   private rng: () => number;
   private respawnEnabled: boolean;
   /** The rescue objective's hostage, or null on ordinary ops. */
@@ -867,7 +877,6 @@ export class FpsSim {
   }
 
   private moveToward(e: FpsEnemy, px: number, pz: number, dt: number, speedMult = 1): void {
-    const C = FPS_TUNING.ENEMY.WORLD_CLAMP;
     const R = FPS_TUNING.ENEMY.BODY_R;
     const dx = px - e.x, dz = pz - e.z;
     const len = Math.hypot(dx, dz) || 1;
@@ -875,8 +884,9 @@ export class FpsSim {
     // Slide toward the target instead of "step then eject": walls become solid, and an
     // enemy pressing into one now hugs it rather than popping through to the far side.
     const [nx, nz] = slideMove(e.x, e.z, e.x + (dx / len) * step, e.z + (dz / len) * step, R, this.cover);
-    e.x = Math.max(-C, Math.min(C, nx));
-    e.z = Math.max(-C, Math.min(C, nz));
+    const b = this.bounds;
+    e.x = Math.max(b.minX, Math.min(b.maxX, nx));
+    e.z = Math.max(b.minZ, Math.min(b.maxZ, nz));
   }
 
   /** Reset the encounter (player + enemies) — the scene calls this after a DOWN beat. */
@@ -962,6 +972,12 @@ export class FpsSim {
       ids.push(e.id);
     }
     return ids;
+  }
+
+  /** Move the enemy safety box to follow a travelling world. Endless calls this with
+   *  the live chain window; authored missions never call it and keep the origin box. */
+  setBounds(minX: number, maxX: number, minZ: number, maxZ: number): void {
+    this.bounds = { minX, maxX, minZ, maxZ };
   }
 
   /** Drop everything from rooms strictly BEFORE `room`, and any cover box lying
