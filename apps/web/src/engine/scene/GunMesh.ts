@@ -45,6 +45,11 @@ const ACCENTS: Record<GunId, { color: number; glow: number }> = {
   assault_rifle: { color: 0x5c7f63, glow: 0.06 }, // field green
   marksman:      { color: 0x6d8aa8, glow: 0.08 }, // steel blue
   legendary:     { color: 0x8f6fc4, glow: 0.75 }, // exotic violet — still glows
+  ashfall_carbine: { color: 0xb08a4a, glow: 0.10 }, // brass
+  warden_repeater: { color: 0x7a6350, glow: 0.06 }, // walnut + steel
+  rift_lance:      { color: 0x37d0e0, glow: 0.85 }, // rift cyan — an energy weapon
+  seraph_lmg:      { color: 0x8e949c, glow: 0.08 }, // gunmetal
+  ember_halo:      { color: 0xff8a3a, glow: 0.9 },  // ember — the exotic
 };
 
 /** Molded-polymer furniture: matte with a faint clearcoat sheen, not shiny. */
@@ -310,6 +315,13 @@ const BUILDERS: Record<GunId, () => THREE.Group> = {
   assault_rifle: buildAssaultRifle,
   marksman: buildMarksman,
   legendary: buildLegendary,
+  // The seasonal weapons reuse the closest silhouette for the low-poly crate icon;
+  // their real, fully-detailed models live in scene/proceduralGuns.ts.
+  ashfall_carbine: buildAssaultRifle,
+  warden_repeater: buildMarksman,
+  rift_lance: buildLegendary,
+  seraph_lmg: buildAssaultRifle,
+  ember_halo: buildLegendary,
 };
 
 /** Build the real model for a gun tier, with a `muzzle` anchor at the barrel tip. */

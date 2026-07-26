@@ -2,6 +2,7 @@
 
 import type { ReactElement } from 'react'
 import type { GunId } from '@/engine/combat/GunStats'
+import { gunFromItemId } from '@/lib/guns'
 
 interface GunIconProps {
   size?: number
@@ -278,6 +279,13 @@ const GUN_ICON_MAP: Record<GunId, (props: GunIconProps) => ReactElement> = {
   assault_rifle: AssaultRifle,
   marksman: Marksman,
   legendary: Legendary,
+  // Seasonal weapons take the nearest existing silhouette for the small 2D card
+  // icon; the card's 3D crate preview shows their real model.
+  ashfall_carbine: AssaultRifle,
+  warden_repeater: Marksman,
+  rift_lance: Legendary,
+  seraph_lmg: AssaultRifle,
+  ember_halo: Legendary,
 }
 
 export function GunIcon({ gunId, ...props }: GunIconProps & { gunId: GunId }) {
@@ -285,12 +293,13 @@ export function GunIcon({ gunId, ...props }: GunIconProps & { gunId: GunId }) {
   return <Icon {...props} />
 }
 
+/**
+ * Which gun a marketplace item is, if any.
+ *
+ * This used to hand-copy the UUID table from lib/guns.ts, so a newly added weapon
+ * showed up in the shop with no icon until someone remembered to update the copy.
+ * It now derives from the single source of truth.
+ */
 export function gunIdFromItemId(itemId: string): GunId | null {
-  const map: Record<string, GunId> = {
-    '22222222-2222-4222-8222-222222222222': 'smg',
-    '33333333-3333-4333-8333-333333333333': 'assault_rifle',
-    '44444444-4444-4444-8444-444444444444': 'marksman',
-    '55555555-5555-4555-8555-555555555555': 'legendary',
-  }
-  return map[itemId] ?? null
+  return gunFromItemId(itemId)
 }

@@ -20,4 +20,7 @@ pub struct Item {
     pub total_supply: Option<i32>,
     pub remaining_supply: Option<i32>,
     pub weapon_stats: Option<serde_json::Value>,
+    /// When this item stops being purchasable. NULL = on sale indefinitely. Used for
+    /// season-limited weapons; the marketplace shows a countdown only when it is set.
+    pub sale_ends_at: Option<chrono::DateTime<chrono::Utc>>,
 }

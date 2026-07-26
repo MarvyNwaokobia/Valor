@@ -126,6 +126,12 @@ export const GUN_FIRE_MODES: Record<GunId, FireMode[]> = {
   assault_rifle: ['auto', 'burst', 'semi'],
   marksman: ['semi'],
   legendary: ['auto', 'burst'],
+  // Seasonal weapons — fire modes chosen to match how each one wants to be used.
+  ashfall_carbine: ['auto', 'burst', 'semi'],
+  warden_repeater: ['semi', 'burst'],
+  rift_lance:      ['semi'],
+  seraph_lmg:      ['auto'],
+  ember_halo:      ['auto', 'burst', 'semi'],
 };
 
 export interface EnemySpec {

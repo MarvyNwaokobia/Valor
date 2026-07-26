@@ -20,6 +20,14 @@ export const GUN_ITEM_ID: Record<Exclude<GunId, 'sidearm'>, string> = {
   assault_rifle: '33333333-3333-4333-8333-333333333333',
   marksman:      '44444444-4444-4444-8444-444444444444',
   legendary:     '55555555-5555-4555-8555-555555555555',
+  // ── Seasonal weapons ──
+  // Fixed UUIDs, mirrored by the items seed (add_seasonal_weapons.sql) and by the
+  // on-chain registration script, so one row means the same gun everywhere.
+  ashfall_carbine: '66666666-6666-4666-8666-666666666666',
+  warden_repeater: '77777777-7777-4777-8777-777777777777',
+  rift_lance:      '88888888-8888-4888-8888-888888888888',
+  seraph_lmg:      '99999999-9999-4999-8999-999999999999',
+  ember_halo:      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 }
 
 const ITEM_ID_TO_GUN: Record<string, GunId> = Object.fromEntries(
@@ -27,6 +35,11 @@ const ITEM_ID_TO_GUN: Record<string, GunId> = Object.fromEntries(
 )
 
 /** True if a marketplace item is one of the gun tiers. */
+/** Which gun a marketplace item is, or null if it isn't a weapon. */
+export function gunFromItemId(itemId: string): GunId | null {
+  return ITEM_ID_TO_GUN[itemId] ?? null
+}
+
 export function isGunItem(itemId: string): boolean {
   return itemId in ITEM_ID_TO_GUN
 }
