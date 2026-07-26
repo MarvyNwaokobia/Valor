@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { GunId } from '../combat/GunStats';
+import { buildProceduralGun, type ProceduralGunId } from './proceduralGuns';
 
 /**
  * The five real weapon models, one per gun tier, for the first-person viewmodel.
@@ -15,7 +16,23 @@ import type { GunId } from '../combat/GunStats';
  * any of them off the camera identically and swap on a weapon switch.
  */
 
-export const GUN_MODEL_URL: Record<GunId, string> = {
+/**
+ * The SEASONAL weapons have no GLB — they are assembled from primitives at runtime
+ * (scene/proceduralGuns.ts). Keeping them out of the GLB map means the loader never
+ * tries to fetch a file that doesn't exist, and a new weapon costs a function
+ * instead of a modelling pipeline.
+ */
+const PROCEDURAL_LEN: Record<ProceduralGunId, number> = {
+  ashfall_carbine: 0.72,  // bullpup — short for its power
+  warden_repeater: 1.06,  // long battle rifle
+  rift_lance:      1.16,  // longest in the set
+  seraph_lmg:      1.02,  // heavy, bulky rather than long
+  ember_halo:      0.9,
+};
+
+const PROCEDURAL_IDS = Object.keys(PROCEDURAL_LEN) as ProceduralGunId[];
+
+export const GUN_MODEL_URL: Record<Exclude<GunId, ProceduralGunId>, string> = {
   sidearm: '/models/guns/sidearm.glb',
   smg: '/models/guns/smg.glb',
   assault_rifle: '/models/guns/rifle.glb',
@@ -24,7 +41,7 @@ export const GUN_MODEL_URL: Record<GunId, string> = {
 };
 
 /** Real-ish weapon length (metres) each model is scaled to — sets relative size. */
-const GUN_LEN: Record<GunId, number> = {
+const GUN_LEN: Record<Exclude<GunId, ProceduralGunId>, string | number> = {
   sidearm: 0.26,
   smg: 0.52,
   assault_rifle: 0.88,
@@ -38,7 +55,7 @@ const GUN_LEN: Record<GunId, number> = {
  * end, and extra yaw/roll square up ones that lifted at an angle. Tuned by eye
  * against the viewmodel.
  */
-const GUN_FIX: Record<GunId, { flipY: boolean; yaw?: number; pitch?: number; roll?: number }> = {
+const GUN_FIX: Record<Exclude<GunId, ProceduralGunId>, { flipY: boolean; yaw?: number; pitch?: number; roll?: number }> = {
   sidearm:       { flipY: true },
   smg:           { flipY: true },
   assault_rifle: { flipY: true },  // matches the old rifle.ts FLIP
@@ -86,7 +103,8 @@ function buildPrototype(src: THREE.Object3D, gunId: GunId): THREE.Group {
   return group;
 }
 
-export const GUN_IDS = Object.keys(GUN_MODEL_URL) as GunId[];
+/** Only the GLB-backed guns; the procedural ones are built, not fetched. */
+export const GUN_IDS = Object.keys(GUN_MODEL_URL) as Exclude<GunId, ProceduralGunId>[];
 
 /** Load + normalise every gun model. Returns one prototype per tier; clone before
  *  mutating. Suspends while the GLBs load, so mount under a <Suspense>. */
@@ -95,6 +113,9 @@ export function useGunPrototypes(): Record<GunId, THREE.Group> {
   return useMemo(() => {
     const out = {} as Record<GunId, THREE.Group>;
     GUN_IDS.forEach((id, i) => { out[id] = buildPrototype(gltfs[i].scene, id); });
+    // Seasonal weapons are assembled here rather than loaded, so they cost no
+    // network fetch and are ready on the same frame as the rest.
+    for (const id of PROCEDURAL_IDS) out[id] = buildProceduralGun(id, PROCEDURAL_LEN[id]);
     return out;
   }, [gltfs]);
 }

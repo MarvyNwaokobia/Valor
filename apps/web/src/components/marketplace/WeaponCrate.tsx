@@ -8,6 +8,8 @@ import { GUN_CATALOG, type GunId } from '@/engine/combat/GunStats'
 // Short tactical designation stencilled onto the crate.
 const GUN_TYPE: Record<GunId, string> = {
   sidearm: 'SIDEARM', smg: 'SMG', assault_rifle: 'RIFLE', marksman: 'DMR', legendary: 'PROTOTYPE',
+  ashfall_carbine: 'CARBINE', warden_repeater: 'BATTLE RIFLE', rift_lance: 'LANCE',
+  seraph_lmg: 'LMG', ember_halo: 'EXOTIC',
 }
 
 /** The stencil designation for an item's crate, e.g. "T3 · RIFLE", "OPTIC · MOD". */

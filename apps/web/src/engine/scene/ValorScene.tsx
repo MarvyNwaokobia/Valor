@@ -268,6 +268,12 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
   assault_rifle: { scale: 1.0, z: 0, y: 0 },  // the baseline
   marksman: { scale: 1.0, z: -0.05, y: 0.01 },// long — pushed out front
   legendary: { scale: 1.0, z: 0, y: 0 },      // the Valor Prototype
+  // Seasonal weapons: longer bodies are pushed further out so the muzzle clears frame.
+  ashfall_carbine: { scale: 1.0, z: 0.04, y: -0.005 },
+  warden_repeater: { scale: 1.0, z: -0.06, y: 0.01 },
+  rift_lance:      { scale: 1.0, z: -0.07, y: 0.012 },
+  seraph_lmg:      { scale: 1.0, z: -0.03, y: 0.005 },
+  ember_halo:      { scale: 1.0, z: -0.02, y: 0.008 },
 };
 
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
