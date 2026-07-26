@@ -8,6 +8,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore';
 import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useSeasonalRun } from '@/hooks/useSeasonalRun';
 import { useEndlessProgress } from '@/hooks/useEndlessProgress';
+import WaveBoard from '@/components/battle/WaveBoard';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
 import { Rajdhani } from 'next/font/google';
@@ -191,39 +192,13 @@ export default function SeasonalPage() {
           </>
         )}
 
-        {/* ── The ladder ── */}
-        {board.length > 0 && (
-          <div className="mt-10">
-            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 mb-3">Leaderboard</p>
-            <div className="flex flex-col gap-1.5">
-              {board.map((e) => {
-                const mine = e.wallet_address.toLowerCase() === (address ?? '').toLowerCase();
-                const paid = e.est_payout_g > 0;
-                return (
-                  <div
-                    key={e.wallet_address}
-                    className="flex items-center gap-3 px-4 py-2.5 rounded-xl border"
-                    style={{
-                      background: mine ? 'rgba(234,179,8,0.08)' : 'rgba(8,8,14,0.9)',
-                      borderColor: mine ? 'rgba(234,179,8,0.4)' : 'rgba(42,42,58,0.8)',
-                    }}
-                  >
-                    <span className="font-display font-black text-slate-500 w-6 tabular-nums">{e.rank}</span>
-                    <span className="flex-1 min-w-0 truncate text-white text-sm">
-                      {e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`}
-                    </span>
-                    <span className="text-white font-bold tabular-nums text-sm">{e.best}</span>
-                    {paid && (
-                      <span className="text-amber-400 text-xs font-bold tabular-nums">
-                        {e.est_payout_g.toLocaleString()} G$
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* The ladder. Same component and same ranking as Campaign Endless — waves
+            completed, ties to whoever got there first — with this season's payouts
+            layered on by the season card above. */}
+        <div className="mt-10">
+          <WaveBoard seasonId={season?.id} highlightWallet={address} title="Season · Waves Completed" />
+        </div>
+
       </div>
     </div>
   );
