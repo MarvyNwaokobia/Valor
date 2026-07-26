@@ -39,9 +39,20 @@ describe('wave shape', () => {
 
 describe('escalation', () => {
   it('enemy count grows and caps at 8', () => {
-    expect(roomEnemyCount(0)).toBe(3);
-    expect(roomEnemyCount(10)).toBe(8);
+    expect(roomEnemyCount(0)).toBe(2);
+    expect(roomEnemyCount(12)).toBe(8);
     expect(roomEnemyCount(200)).toBe(8);
+    // Never decreasing — a later room must never be softer than an earlier one.
+    for (let i = 1; i < 40; i++) {
+      expect(roomEnemyCount(i)).toBeGreaterThanOrEqual(roomEnemyCount(i - 1));
+    }
+  });
+
+  it('the opening room stays under the sim\'s simultaneous-attacker budget', () => {
+    // FPS_TUNING.ENEMY.MAX_ATTACKERS is 3. A first room of exactly 3 means every
+    // defender in it can be shooting at once, which made the run's opening seconds
+    // its hardest moment.
+    expect(roomEnemyCount(0)).toBeLessThan(3);
   });
 
   it('hp multiplier grows and caps at 3x', () => {
@@ -215,6 +226,28 @@ describe('streaming into a live sim', () => {
     sim.setRoomActive(1, true);
     expect(sim.roomAlive(1)).toBe(roomEnemyCount(0));
     expect(sim.getEnemies().filter((e) => e.active)).toHaveLength(roomEnemyCount(0));
+  });
+
+  it('breaching a room staggers its defenders instead of waking them in lockstep', () => {
+    // Every streamed-in enemy spawns with aiUntil 0, so before this they all cleared
+    // the "may I peek" gate on the same frame: they took aggression tokens together,
+    // telegraphed together and fired as one volley, then stayed in lockstep because
+    // their timers were identical. Waking must spread that first peek.
+    const rooms = buildChain(0, 3, CHAIN_START_Z, seedFromString('stagger'));
+    const sim = new FpsSim({ loadout: ['assault_rifle'], enemies: [], cover: [], respawnEnabled: false });
+    for (const r of rooms) {
+      sim.appendCover([...r.walls, ...r.cover]);
+      sim.appendEnemies(r.enemies);
+    }
+
+    sim.setRoomActive(1, true);
+    const woken = sim.getEnemies().filter((e) => e.room === 1);
+    expect(woken.length).toBeGreaterThan(1);
+
+    const times = woken.map((e) => e.aiUntil);
+    // None may be ready instantly, and they must not share one deadline.
+    for (const t of times) expect(t).toBeGreaterThan(0);
+    expect(new Set(times).size).toBe(times.length);
   });
 
   it('appendCover grows the live collision set in place', () => {

@@ -208,6 +208,10 @@ export const FPS_TUNING = {
     AIM_MS: 0.6,          // telegraph before the shot — the reaction window
     RECOVER_MS: 0.6,      // ducked cooldown after firing
     HIDE_MS: 0.7,         // min time hidden before peeking again
+    // Spread of the FIRST peek after a room is breached. Wider than HIDE_MS on
+    // purpose: a room should come alive over a beat or two as defenders react at
+    // their own pace, not answer the door as one synchronised volley.
+    WAKE_STAGGER: 1.8,
     BASE_ACC: 0.45,       // point-blank hit chance
     NEAR: 6, FAR: 26,     // accuracy falls off linearly across this range
     DMG: 10,              // damage per hit
@@ -422,9 +426,22 @@ export class FpsSim {
     for (const e of this.enemies) if (e.alive && e.room === room) n++;
     return n;
   }
-  /** Wake or sleep a room's enemies (the player breaching triggers this). */
+  /** Wake or sleep a room's enemies (the player breaching triggers this).
+   *
+   *  Waking STAGGERS each enemy's next peek. Without it every defender in the room
+   *  clears the `time >= aiUntil` gate on the same frame — they were all spawned with
+   *  aiUntil 0 — so they take aggression tokens together, telegraph together and fire
+   *  in one volley, then stay in lockstep because their timers are identical. Spreading
+   *  the first peek makes them trade turns instead, which is what the token budget was
+   *  always meant to produce. (startWave, reinforce and resetEncounter already do this;
+   *  this was the one wake path that didn't.) It can only ever DELAY a first shot, never
+   *  bring one forward. */
   setRoomActive(room: number, active: boolean): void {
-    for (const e of this.enemies) if (e.room === room) e.active = active;
+    for (const e of this.enemies) {
+      if (e.room !== room) continue;
+      if (active && !e.active) e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.WAKE_STAGGER;
+      e.active = active;
+    }
   }
   setAllActive(active: boolean): void {
     for (const e of this.enemies) e.active = active;

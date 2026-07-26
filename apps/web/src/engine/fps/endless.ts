@@ -103,9 +103,14 @@ export function waveOfRoom(index: number): number {
 // ── Escalation ─────────────────────────────────────────────────────────────────
 
 /** Defenders in the room at chain position `index` (0-based). Grows slowly and
- *  caps, so difficulty comes from tougher enemies rather than an unfightable mob. */
+ *  caps, so difficulty comes from tougher enemies rather than an unfightable mob.
+ *
+ *  The FIRST room fields 2. It used to open on 3, which is exactly the sim's
+ *  MAX_ATTACKERS budget — so every defender in the room could engage at once and the
+ *  run's opening seconds were its hardest. Wave 1 is the on-ramp; the curve still
+ *  reaches the 8 cap, just a couple of rooms later. */
 export function roomEnemyCount(index: number): number {
-  return Math.min(3 + Math.floor(index / 2), 8);
+  return Math.min(2 + Math.ceil(index / 2), 8);
 }
 
 /** Enemy health multiplier at chain position `index`. Caps at 3x so a deep run is
