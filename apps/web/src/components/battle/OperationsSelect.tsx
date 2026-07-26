@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, Lock, Skull, Check, ChevronRight } from 'lucide-react'
+import { ChevronLeft, Lock, Skull, Check, ChevronRight, Infinity as InfinityIcon } from 'lucide-react'
 import type { Player } from '@/types'
 import { CAMPAIGN } from '@/engine/fps/campaign'
 import { tryFullscreen } from '@/lib/fullscreen'
@@ -29,6 +29,7 @@ const ZONE_ACCENT: Record<string, string> = {
 export default function OperationsSelect({ player, onBack }: Props) {
   const router = useRouter()
   const cleared = player.pve_level ?? 0 // number of ops cleared
+  const endlessUnlocked = cleared >= CAMPAIGN.length
 
   // The player is on the Operations board — a fight is imminent. Warm the heavy
   // scene chunk now (on idle) so Deploy hits a warm cache, while they still have
@@ -120,6 +121,51 @@ export default function OperationsSelect({ player, onBack }: Props) {
             </div>
           )
         })}
+        {/* ── After the last operation ──
+            Endless is the campaign's continuation, not a sibling of it: same rooms,
+            same doorkicker, simply no extraction. It belongs at the bottom of this
+            list where a player finishing op 15 will actually find it. */}
+        <div className="mb-5">
+          <p className="text-[11px] uppercase tracking-[0.28em] font-bold mb-2.5" style={{ color: '#eab308' }}>
+            After the Campaign
+          </p>
+          <motion.button
+            onClick={() => endlessUnlocked && router.push('/endless')}
+            disabled={!endlessUnlocked}
+            whileHover={endlessUnlocked ? { scale: 1.01 } : undefined}
+            whileTap={endlessUnlocked ? { scale: 0.99 } : undefined}
+            className="w-full group relative overflow-hidden p-4 rounded-xl border text-left transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              background: 'rgba(8,10,16,0.9)',
+              borderColor: endlessUnlocked ? 'rgba(234,179,8,0.5)' : 'rgba(42,42,58,0.8)',
+            }}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: 'rgba(234,179,8,0.1)', color: '#eab308', border: '1px solid rgba(234,179,8,0.27)' }}
+              >
+                {endlessUnlocked ? <InfinityIcon size={20} /> : <Lock size={18} />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold tracking-wider text-slate-600">ENDLESS</span>
+                  <p className="font-display font-black text-white text-base truncate">No Exit</p>
+                </div>
+                <p className="text-slate-500 text-xs mt-0.5">
+                  {endlessUnlocked
+                    ? 'The rooms keep coming · resume anytime · every wave pays G$'
+                    : `Clear all ${CAMPAIGN.length} operations to unlock (${cleared} / ${CAMPAIGN.length})`}
+                </p>
+              </div>
+              {endlessUnlocked && (
+                <span className="text-[10px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1" style={{ color: '#eab308' }}>
+                  Enter <ChevronRight size={13} />
+                </span>
+              )}
+            </div>
+          </motion.button>
+        </div>
       </div>
 
       <AnimatePresence>

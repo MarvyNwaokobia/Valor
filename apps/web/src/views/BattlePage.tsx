@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Target, Crosshair, Infinity as InfinityIcon, Swords, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -31,10 +31,6 @@ export default function BattlePage() {
   if (!player) { router.replace('/'); return null }
 
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
-  // Endless opens once the whole 15-op campaign is cleared. Shown either way so the
-  // mode is discoverable and the unlock is something to play toward.
-  const pveLevel = player.pve_level ?? 0
-  const endlessUnlocked = pveLevel >= 15
 
   if (view === 'operations') {
     return <OperationsSelect player={player} onBack={() => setView('menu')} />
@@ -151,33 +147,6 @@ export default function BattlePage() {
         </div>
       </motion.button>
 
-      {/* Campaign Endless — the same room chain as a permanent career, unlocked by
-          finishing the 15-op campaign. No window, no prize: pure progression. */}
-      <motion.button
-        onClick={() => router.push('/endless')}
-        className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
-        style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
-        whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
-        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }}
-      >
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(139,92,246,0.08), transparent)' }} />
-        <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: '#8b5cf6' }} />
-        <div className="flex items-center gap-5 relative z-10">
-          <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)' }}>
-            <Swords size={28} style={{ color: '#8b5cf6' }} strokeWidth={1.5} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Campaign Endless</p>
-            <p className="text-slate-500 text-sm mt-0.5">
-              {endlessUnlocked ? 'Rooms without end · Resume anytime · Every wave pays G$' : `Locked · clear all 15 operations (${pveLevel} / 15)`}
-            </p>
-          </div>
-          <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
-        </div>
-      </motion.button>
     </div>
   )
 }
