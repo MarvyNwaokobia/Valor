@@ -133,6 +133,7 @@ export default function AdminPage() {
   const [seasonWinners, setSeasonWinners] = useState(10)
   const [seasonPerWinner, setSeasonPerWinner] = useState(50000)
   const [busy, setBusy] = useState(false)
+  const [showScheduler, setShowScheduler] = useState(false)
 
   useEffect(() => { setSession(loadSession()) }, [])
 
@@ -206,6 +207,51 @@ export default function AdminPage() {
   // up sharing a place and the table is always unambiguous.
   const seasonPool = seasonWinners * seasonPerWinner
   const seasonBps = Array.from({ length: seasonWinners }, () => Math.floor(10000 / seasonWinners))
+
+  async function handleDeleteSeason(sn: Season) {
+    if (!window.confirm(`Delete "${sn.name}" permanently?\n\nThis removes the season and any progress in it. A season that has already paid a winner cannot be deleted.`)) return
+    setBusy(true)
+    try {
+      const res = await authedFetch(`/admin/seasons/${sn.id}`, { method: 'DELETE' })
+      if (res.ok) await refreshSeasons()
+      else window.alert(`Could not delete: ${await res.text()}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Open a scheduled season EARLY so it can be played through before it goes live,
+  // then put its real start time back. Progress made while testing must be wiped
+  // afterwards (see handleResetProgress) or the tester starts the season ahead.
+  async function handleReschedule(sn: Season, startsAt: string, endsAt?: string) {
+    setBusy(true)
+    try {
+      const res = await authedFetch(`/admin/seasons/${sn.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
+      })
+      if (res.ok) await refreshSeasons()
+      else window.alert(`Could not reschedule: ${await res.text()}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleResetProgress(sn: Season) {
+    if (!window.confirm(`Wipe ALL player progress in "${sn.name}"?\n\nEveryone goes back to wave 1. Do this after a test run so nobody starts the season with a head start.`)) return
+    setBusy(true)
+    try {
+      const res = await authedFetch(`/admin/seasons/${sn.id}/reset-progress`, { method: 'POST' })
+      if (res.ok) {
+        const d = await res.json()
+        window.alert(`Progress cleared (${d.cleared} player row(s)).`)
+        await refreshSeasons()
+      } else window.alert(`Could not reset: ${await res.text()}`)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function handleCreateSeason() {
     if (!newSeasonName.trim()) return
@@ -353,8 +399,82 @@ export default function AdminPage() {
           ))}
         </div>
 
+        {/* Controls for whichever season is selected. Open-early + reset-progress are
+            what make it safe to play a season through BEFORE it goes live: progress
+            persists, so a test run has to be wiped or the tester starts ahead. */}
+        {selectedSeason !== 'all' && (() => {
+          const sn = seasons.find((x) => x.id === selectedSeason)
+          if (!sn) return null
+          const now = Date.now()
+          const opensAt = new Date(sn.starts_at).getTime()
+          const closesAt = sn.ends_at ? new Date(sn.ends_at).getTime() : null
+          const live = opensAt <= now && (closesAt === null || closesAt >= now)
+          const upcoming = opensAt > now
+          return (
+            <div className="flex flex-col gap-2 mb-3 p-3 rounded-xl border" style={{ borderColor: 'rgba(42,42,58,0.8)', background: 'rgba(0,0,0,0.25)' }}>
+              <p className="text-xs text-slate-400">
+                <span className="text-white font-bold">{sn.name}</span>
+                {' · '}
+                {live ? <span className="text-emerald-400">LIVE now</span>
+                  : upcoming ? <span className="text-amber-400">opens {new Date(sn.starts_at).toLocaleString()}</span>
+                  : <span className="text-slate-500">closed</span>}
+                {closesAt && <> · closes {new Date(sn.ends_at as string).toLocaleString()}</>}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {upcoming && (
+                  <button
+                    onClick={() => handleReschedule(sn, new Date(Date.now() - 60_000).toISOString())}
+                    disabled={busy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-black disabled:opacity-50"
+                    style={{ background: '#34d399' }}
+                  >
+                    Open now (for testing)
+                  </button>
+                )}
+                {live && (
+                  <button
+                    onClick={() => {
+                      const back = window.prompt('Set the real opening time (your local time, e.g. 2026-07-27T00:00)', '2026-07-27T00:00')
+                      if (back) handleReschedule(sn, new Date(back).toISOString())
+                    }}
+                    disabled={busy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 border disabled:opacity-50"
+                    style={{ borderColor: '#2a2a3a' }}
+                  >
+                    Close back to scheduled start
+                  </button>
+                )}
+                <button
+                  onClick={() => handleResetProgress(sn)}
+                  disabled={busy}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-300 border disabled:opacity-50"
+                  style={{ borderColor: 'rgba(234,179,8,0.4)' }}
+                >
+                  Wipe test progress
+                </button>
+                <button
+                  onClick={() => handleDeleteSeason(sn)}
+                  disabled={busy}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-red-300 border disabled:opacity-50"
+                  style={{ borderColor: 'rgba(248,113,113,0.35)' }}
+                >
+                  Delete season
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+        <div className="hidden">
+        </div>
+
         <div className="flex flex-col gap-2 pt-3 border-t" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
-          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500">Schedule a season</p>
+          <button
+            onClick={() => setShowScheduler((v) => !v)}
+            className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 hover:text-slate-300 text-left"
+          >
+            {showScheduler ? '▾ Schedule a season' : '▸ Schedule a season'}
+          </button>
+          {showScheduler && (<>
           <input
             type="text"
             value={newSeasonName}
@@ -413,6 +533,7 @@ export default function AdminPage() {
               </button>
             )}
           </div>
+          </>)}
         </div>
       </div>
 

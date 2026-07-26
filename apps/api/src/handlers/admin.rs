@@ -417,3 +417,142 @@ pub async fn end_season(
         }
     }
 }
+
+// ── DELETE /admin/seasons/:id ─────────────────────────────────────────────────
+// Removes a season outright. Guarded: a season that has already PAID anything can
+// never be deleted, because the payout ledger is the record of real money leaving
+// the pool and must stay auditable. Anything else (a duplicate created by mistake,
+// a mis-scheduled window) is fair game, and its progress rows go with it.
+pub async fn delete_season(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+    let id = path.into_inner();
+
+    let paid: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM season_payouts WHERE season_id = $1 AND status = 'paid'",
+    )
+    .bind(id).fetch_one(&state.db).await.unwrap_or(0);
+    if paid > 0 {
+        return HttpResponse::Conflict().json(json!({
+            "error": format!("This season has already paid {} winner(s) — it can't be deleted", paid),
+        }));
+    }
+
+    // Clear what references it first: progress rows, any unpaid payout rows, and the
+    // season stamp on survival runs (which is a real FK and would block the delete).
+    let mut tx = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("delete season: begin failed: {}", e);
+            return HttpResponse::InternalServerError().json(json!({"error": "Database error"}));
+        }
+    };
+    let _ = sqlx::query("DELETE FROM endless_progress WHERE season_id = $1").bind(id).execute(&mut *tx).await;
+    let _ = sqlx::query("DELETE FROM season_payouts WHERE season_id = $1").bind(id).execute(&mut *tx).await;
+    let _ = sqlx::query("UPDATE survival_runs SET season_id = NULL WHERE season_id = $1").bind(id).execute(&mut *tx).await;
+    let deleted = sqlx::query("DELETE FROM seasons WHERE id = $1").bind(id).execute(&mut *tx).await;
+
+    match deleted {
+        Ok(r) if r.rows_affected() == 1 => {
+            if let Err(e) = tx.commit().await {
+                tracing::error!("delete season commit failed: {}", e);
+                return HttpResponse::InternalServerError().json(json!({"error": "Database error"}));
+            }
+            tracing::info!("season {} deleted by admin", id);
+            HttpResponse::Ok().json(json!({"ok": true}))
+        }
+        Ok(_) => HttpResponse::NotFound().json(json!({"error": "Season not found"})),
+        Err(e) => {
+            tracing::error!("delete season failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── PATCH /admin/seasons/:id ──────────────────────────────────────────────────
+// Re-schedule a season's window. This is what lets a season be opened EARLY for a
+// test run and then set back to its real start time.
+#[derive(serde::Deserialize)]
+pub struct UpdateSeasonRequest {
+    #[serde(default)]
+    pub starts_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub ends_at: Option<DateTime<Utc>>,
+}
+
+pub async fn update_season(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    body: web::Json<UpdateSeasonRequest>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+    if let (Some(s), Some(e)) = (body.starts_at, body.ends_at) {
+        if e <= s {
+            return HttpResponse::BadRequest().json(json!({"error": "A season must end after it starts"}));
+        }
+    }
+    let row = sqlx::query_as::<_, SeasonRow>(
+        "UPDATE seasons
+            SET starts_at = COALESCE($2, starts_at),
+                ends_at   = COALESCE($3, ends_at)
+          WHERE id = $1
+      RETURNING id, name, starts_at, ends_at",
+    )
+    .bind(path.into_inner()).bind(body.starts_at).bind(body.ends_at)
+    .fetch_optional(&state.db).await;
+
+    match row {
+        Ok(Some(s)) => HttpResponse::Ok().json(s),
+        Ok(None) => HttpResponse::NotFound().json(json!({"error": "Season not found"})),
+        Err(e) => {
+            tracing::error!("update season failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
+// ── POST /admin/seasons/:id/reset-progress ────────────────────────────────────
+// Wipes every player's progress in a season, putting everyone back to wave 1.
+//
+// This is what makes testing a season BEFORE it opens safe. Progress persists, so a
+// test run would otherwise leave the tester several waves up when the season goes
+// live — a head start nobody else gets. Run this after testing and the field is level.
+pub async fn reset_season_progress(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+    let id = path.into_inner();
+    let paid: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM season_payouts WHERE season_id = $1 AND status = 'paid'",
+    )
+    .bind(id).fetch_one(&state.db).await.unwrap_or(0);
+    if paid > 0 {
+        return HttpResponse::Conflict().json(json!({
+            "error": "This season has already paid out — resetting it now would rewrite settled results",
+        }));
+    }
+    let res = sqlx::query("DELETE FROM endless_progress WHERE season_id = $1")
+        .bind(id).execute(&state.db).await;
+    match res {
+        Ok(r) => {
+            tracing::info!("season {} progress reset by admin ({} rows)", id, r.rows_affected());
+            HttpResponse::Ok().json(json!({"ok": true, "cleared": r.rows_affected()}))
+        }
+        Err(e) => {
+            tracing::error!("reset season progress failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
