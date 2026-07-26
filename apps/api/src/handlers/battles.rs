@@ -406,7 +406,7 @@ pub(crate) async fn award_player(
 /// Persist exactly one battle row and kick the on-chain `record_battle`. The loser
 /// is whichever of challenger/opponent is not the winner; "bot"/invalid wallets map
 /// to the zero address on-chain. Shared by PvE (opponent = "bot", is_bot) and PvP.
-async fn persist_battle(
+pub(crate) async fn persist_battle(
     state: &AppState,
     battle_id: Uuid,
     challenger: &str,

@@ -316,8 +316,10 @@ export interface EndlessOpts {
    *  this into the server call that banks the wave (and pays it, once, in Campaign
    *  Endless). Never fires twice for the same wave. */
   onWaveCleared?: (wave: number) => void;
-  /** The run is over (the player died). `wave` is the one they died on. */
-  onRunEnd?: (wave: number, stats: { kills: number; headshots: number }) => void;
+  /** The player was killed. `wave` is the one they died on. The run does NOT end —
+   *  they are put back at the start of that wave — so this is for recording the loss,
+   *  not for tearing the session down. */
+  onDeath?: (wave: number, stats: { kills: number; headshots: number }) => void;
 }
 const REACH_RADIUS = 3.5;
 // A defend hold banks time within a WIDER ring than a reach touch, so you can pull
@@ -498,8 +500,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     wave: number;        // the wave currently being fought
     bankedThrough: number; // highest wave already reported cleared (no double-pay)
     armed: boolean;      // has the FIRST room been woken? (see the arming beat below)
+    dying: boolean;      // dead, waiting to be put back at the start of this wave
     over: boolean;
-  }>({ rooms: [], cursor: 0, nextIndex: 0, nextZ: 0, wave: 1, bankedThrough: 0, armed: false, over: false });
+  }>({ rooms: [], cursor: 0, nextIndex: 0, nextZ: 0, wave: 1, bankedThrough: 0, armed: false, dying: false, over: false });
   // Bumped whenever geometry is appended or pruned, purely to re-render the meshes.
   const [geoTick, setGeoTick] = useState(0);
   const floorRef = useRef<THREE.Mesh>(null);
@@ -508,6 +511,41 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const endlessTicks = useRef(0);
   /** Wall-clock deadline for the wave-cleared banner, 0 when it isn't showing. */
   const waveDoneUntil = useRef(0);
+  /** Wall-clock moment a dead endless player is put back at the start of their wave. */
+  const respawnAt = useRef(0);
+
+  /**
+   * Rebuild the chain at the first room of `wave` and drop the player in there.
+   * Used when an endless player dies: they restart the WAVE they were on, so the
+   * rooms they had cleared inside it are re-run but every earlier wave stands.
+   */
+  function restartWave(wave: number) {
+    const seed = endlessOpts?.seed ?? 1;
+    const first = firstRoomOfWave(wave);
+    const startZ = zForWaveStart(wave, seed);
+
+    // Drop every enemy and every wall, then lay the wave's opening window fresh.
+    sim.pruneBehind(Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY);
+    sim.resetEncounter();
+    sim.appendCover(entryCap(startZ));
+    const rooms = buildChain(first, ENDLESS_LOOKAHEAD, startZ, seed);
+    for (const r of rooms) {
+      sim.appendCover([...r.walls, ...r.cover]);
+      sim.appendEnemies(r.enemies);
+    }
+    const last = rooms[rooms.length - 1];
+    sim.setBounds(-ENDLESS_HALF_W, ENDLESS_HALF_W, last.zFar, rooms[0].zNear);
+    chain.current = {
+      rooms, cursor: first, nextIndex: first + rooms.length, nextZ: last.zFar,
+      wave, bankedThrough: wave - 1, armed: false, dying: false, over: false,
+    };
+
+    const [sx, sz] = spawnPointFor(startZ);
+    pos.current.set(sx, EYE_STAND, sz);
+    yaw.current = 0; pitch.current = 0;
+    rigCell.current = { x: NaN, z: NaN, sunZ: NaN }; // force the travelling rig to re-seat
+    setGeoTick((t) => t + 1);
+  }
   /** Last grid cell the sun + floor were snapped to, so they only move when the
    *  player actually crosses a cell rather than every single frame. */
   const rigCell = useRef({ x: NaN, z: NaN, sunZ: NaN });
@@ -548,7 +586,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       s.setBounds(-ENDLESS_HALF_W, ENDLESS_HALF_W, last.zFar, rooms[0].zNear);
       chain.current = {
         rooms, cursor: first, nextIndex: first + rooms.length, nextZ: last.zFar,
-        wave, bankedThrough: wave - 1, armed: false, over: false,
+        wave, bankedThrough: wave - 1, armed: false, dying: false, over: false,
       };
     }
     return s;
@@ -833,6 +871,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // Endless probe: clear ONLY the room the player is standing in, leaving the
     // dormant rooms ahead intact so a breach still has something to wake.
     w.__valorKillRoom = () => sim.debugKillRoom(chain.current.cursor + 1);
+    w.__valorKillPlayer = () => sim.debugKillPlayer();
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
     w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills });
@@ -917,7 +956,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       return true;
     };
     return () => {
-      delete w.__valorState; delete w.__valorKillAll; delete w.__valorKillRoom; delete w.__valorAim; delete w.__valorAudio;
+      delete w.__valorState; delete w.__valorKillAll; delete w.__valorKillRoom; delete w.__valorKillPlayer; delete w.__valorAim; delete w.__valorAudio;
       delete w.__valorMission; delete w.__valorEndless; delete w.__valorWarp; delete w.__valorSkipBriefing;
       delete w.__valorXp; delete w.__valorSetXp; delete w.__valorStory; delete w.__valorVo; delete w.__valorRig; delete w.__valorPlayer; delete w.__valorColliders; delete w.__valorCam; delete w.__valorStagger; delete w.__valorHurtBoss; delete w.__valorWakeRoom; delete w.__valorSwitch; delete w.__valorFire; delete w.__valorToggle;
       delete w.__valorRevive; delete w.__valorResupply; delete w.__valorWaveSkip; delete w.__valorPerf;
@@ -1644,12 +1683,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
       // Death ends the run outright — no auto-restart. The page decides what happens
       // next (Seasonal submits the score; Campaign Endless saves the checkpoint).
-      if (!snap.playerAlive && !c.over) {
-        c.over = true;
+      // DEATH: you drop back to the START of the wave you were on, never to wave 1 and
+      // never further. You lose the rooms you had cleared inside this wave and nothing
+      // else, so a death costs real ground without undoing a session's work. The run
+      // itself continues — there is no run-over screen out here.
+      if (!snap.playerAlive && !c.dying) {
+        c.dying = true;
         waveDoneUntil.current = 0;
         if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
         const st = sim.snapshot().stats;
-        endlessOpts?.onRunEnd?.(c.wave, { kills: st.kills, headshots: st.headshots });
+        endlessOpts?.onDeath?.(c.wave, { kills: st.kills, headshots: st.headshots });
+        respawnAt.current = performance.now() + 2400;
+        if (hud.current.down) hud.current.down.style.opacity = '1';
+      }
+      if (c.dying && performance.now() >= respawnAt.current) {
+        c.dying = false;
+        respawnAt.current = 0;
+        if (hud.current.down) hud.current.down.style.opacity = '0';
+        restartWave(c.wave);
       }
 
       // Waypoint: point at the doorway once the room is clear, so "push forward" is

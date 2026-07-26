@@ -250,6 +250,11 @@ pub struct LiveFightSession {
 pub struct EndlessSession {
     pub wallet:       String,
     pub wave:         i32,      // highest wave the SERVER has credited (0 at start)
+    /// The wave this session RESUMED at. The min-time-per-wave floor is measured from
+    /// here, not from wave 1 — a player resuming at wave 50 has not been playing for
+    /// 50 waves this session, and anchoring the floor absolutely would lock them out
+    /// for minutes before their first credit.
+    pub base_wave:    i32,
     pub created_at:   Instant,  // run start — anchors the min-time-per-wave check
 }
 

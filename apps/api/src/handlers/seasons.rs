@@ -55,22 +55,21 @@ struct BoardEntry {
     best: i32,
 }
 
-/// Best SEASONAL run per wallet in this season, ranked. The ladder payouts settle on.
+/// The season ladder, ranked by WAVES COMPLETED.
 ///
-/// Scored on a player's BEST SINGLE RUN, not their total: a season should reward how
-/// deep you can push, not how many hours you had spare. Ties break on who got there
-/// first, so no two places can ever share a rank (which matters when each place is a
-/// separate cash prize).
+/// Not best-run and not time-played: a player's score is simply how far through the
+/// chain they have got. Quitting never costs progress and dying only sends them back
+/// to the start of their current wave, so this number is monotonic — which is exactly
+/// what makes it a fair single measure of "who got furthest".
 ///
-/// Filtered by `season_id`, so only runs actually started as Seasonal Campaign runs
-/// count — practice Gauntlet runs during the window never leak onto the board.
+/// Ties break on who reached that wave FIRST, so no two places can ever share a rank
+/// (which matters when each place is a separate cash prize).
 async fn season_board(db: &sqlx::PgPool, s: &SeasonMeta, limit: i64) -> Vec<BoardEntry> {
     sqlx::query_as::<_, BoardEntry>(
-        "SELECT r.wallet_address, p.username, MAX(r.waves) AS best
-         FROM survival_runs r LEFT JOIN players p ON p.wallet_address = r.wallet_address
-         WHERE r.status = 'submitted' AND r.season_id = $1
-         GROUP BY r.wallet_address, p.username
-         ORDER BY best DESC, MIN(r.submitted_at) ASC
+        "SELECT g.wallet_address, p.username, (g.wave - 1) AS best
+         FROM endless_progress g LEFT JOIN players p ON p.wallet_address = g.wallet_address
+         WHERE g.season_id = $1 AND g.wave > 1
+         ORDER BY g.wave DESC, g.reached_at ASC
          LIMIT $2",
     )
     .bind(s.id).bind(limit)

@@ -44,8 +44,8 @@ function DevEndlessInner() {
             // Probe hook: the headless check reads these off the console.
             console.log(`[endless] wave cleared: ${w}`);
           },
-          onRunEnd: (w, stats) => {
-            console.log(`[endless] run ended on wave ${w} · ${stats.kills} kills`);
+          onDeath: (w, stats) => {
+            console.log(`[endless] died on wave ${w} · ${stats.kills} kills — restarting that wave`);
           },
         }}
       />
