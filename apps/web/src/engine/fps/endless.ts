@@ -220,11 +220,15 @@ export function generateRoom(index: number, zNear: number, seed: number): Genera
   const halfW = ROOM_W / 2;
   const outer = halfW + WALL_T;
 
-  // Side walls run the full depth, overlapping the wall thickness at both ends so
-  // corners are sealed.
+  // Side walls run EXACTLY the room's depth, so consecutive rooms meet flush at the
+  // junction rather than overlapping. They used to extend a wall-thickness past each
+  // end to "seal" the corners, which made every neighbouring pair share a 1.2m stretch
+  // of identical coplanar surface — two walls fighting for the same pixels, which reads
+  // in-game as the building shaking. The far wall is perpendicular and thick enough to
+  // close the corner on its own.
   const walls: CoverBox[] = [
-    { x: -(halfW + WALL_T / 2), z: zMid, w: WALL_T, d: depth + WALL_T * 2, h: WALL_H },
-    { x: halfW + WALL_T / 2, z: zMid, w: WALL_T, d: depth + WALL_T * 2, h: WALL_H },
+    { x: -(halfW + WALL_T / 2), z: zMid, w: WALL_T, d: depth, h: WALL_H },
+    { x: halfW + WALL_T / 2, z: zMid, w: WALL_T, d: depth, h: WALL_H },
     // Far wall, split around the exit doorway. This doubles as the NEXT room's
     // near wall, which is why every room only ever authors its far side.
     wallSegment(-outer, exitX - DOOR_W / 2, zFar),
