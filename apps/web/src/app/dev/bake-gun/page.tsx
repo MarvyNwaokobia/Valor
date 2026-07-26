@@ -26,8 +26,18 @@ function Gun({ id }: { id: ProceduralGunId }) {
     g.scale.setScalar(1 / LEN[id]); // normalise so every gun frames identically
     return g;
   }, [id]);
-  // The three-quarter hero angle the existing catalogue art uses.
-  return <group rotation={[0.26, -0.72, 0.06]}><primitive object={model} /></group>;
+  // EXACTLY the pose the existing catalogue art is baked at (see dev/bake-items):
+  // the GLB path flips the muzzle to -Z and then poses the holder at
+  // (0.08, PI/2 - 0.42, 0). These models are authored barrel-along-+Z, so the inner
+  // PI yaw puts them in the same convention before the identical hero angle is
+  // applied — otherwise the new guns face the opposite way to every old one.
+  return (
+    <group rotation={[0.08, Math.PI / 2 - 0.42, 0]}>
+      <group rotation={[0, Math.PI, 0]}>
+        <primitive object={model} />
+      </group>
+    </group>
+  );
 }
 
 export default function BakeGun() {
