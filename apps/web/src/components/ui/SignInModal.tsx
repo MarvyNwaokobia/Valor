@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Wallet } from 'lucide-react'
+import { ChevronRight, Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
-import { isMobileBrowser, hasInjectedProvider, MOBILE_WALLETS } from '@/lib/mobileWallets'
 
 interface Props {
   onClose: () => void
@@ -32,15 +31,8 @@ export default function SignInModal({ onClose }: Props) {
   // to the generic one if a legacy (non-EIP-6963) provider is actually
   // present, and hide it entirely once a named one exists.
   const [hasLegacyProvider, setHasLegacyProvider] = useState(false)
-  // Web3Auth's chooser covers mobile, but it reaches most mobile wallets over
-  // WalletConnect, whose relay host is the thing some router/ISP resolvers
-  // sinkhole — the failure that started all of this. Deep-linking into the
-  // wallet's own dApp browser needs no relay at all, so it stays as the escape
-  // hatch when the chooser hangs. Computed client-side to avoid hydration drift.
-  const [showMobileDeepLinks, setShowMobileDeepLinks] = useState(false)
   useEffect(() => {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
-    setShowMobileDeepLinks(isMobileBrowser() && !hasInjectedProvider())
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
   const visibleConnectors = connectors
@@ -179,20 +171,33 @@ export default function SignInModal({ onClose }: Props) {
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
-              <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold">or connect a wallet</span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">or connect a wallet</span>
               <div className="flex-1 h-px bg-valor-border" />
             </div>
 
-            <div className="flex flex-col gap-2">
+            {/* One grouped list rather than two identical floating cards. The
+                rows aren't equivalent — a detected wallet connects in a tap,
+                the chooser opens a picker — so each gets a subtitle saying
+                which it is, and a chevron marks the one that opens more UI. */}
+            <div className="rounded-xl border border-valor-border bg-valor-surface-2/50 overflow-hidden divide-y divide-valor-border">
               {visibleConnectors.map((connector) => (
                 <button
                   key={connector.id}
                   onClick={() => handleConnectWallet(connector.id)}
                   disabled={!!pending}
-                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors disabled:opacity-60"
+                  className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07] disabled:opacity-50 disabled:hover:bg-transparent"
                 >
-                  <Wallet size={16} />
-                  {pending === connector.id ? 'Connecting…' : (CONNECTOR_LABELS[connector.id] ?? connector.name)}
+                  <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
+                    <Wallet size={16} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-white font-bold text-sm truncate">
+                      {CONNECTOR_LABELS[connector.id] ?? connector.name}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 truncate">
+                      {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
+                    </span>
+                  </span>
                 </button>
               ))}
 
@@ -200,42 +205,37 @@ export default function SignInModal({ onClose }: Props) {
                 <button
                   onClick={handleWeb3AuthWallet}
                   disabled={!!pending || !web3authReady}
-                  className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold text-sm hover:border-valor-gold/60 transition-colors disabled:opacity-60"
+                  className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07] disabled:opacity-50 disabled:hover:bg-transparent"
                 >
-                  <Wallet size={16} />
-                  {pending === 'web3auth'
-                    ? 'Opening wallets…'
-                    : visibleConnectors.length > 0
-                      ? 'Other Wallets'
-                      : 'Connect a Wallet'}
+                  <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
+                    <Wallet size={16} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-white font-bold text-sm truncate">
+                      {visibleConnectors.length > 0 ? 'Other Wallets' : 'Connect a Wallet'}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 truncate">
+                      {pending === 'web3auth'
+                        ? 'Opening wallets…'
+                        : !web3authReady
+                          ? 'Loading…'
+                          : visibleConnectors.length > 0
+                            // Don't name a wallet that already has its own row above.
+                            ? 'WalletConnect, Coinbase, Trust and more'
+                            : 'MetaMask, Coinbase, Trust and more'}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    size={16}
+                    className="shrink-0 text-slate-600 transition-colors group-hover:text-valor-gold"
+                    aria-hidden
+                  />
                 </button>
               )}
             </div>
           </>
         )}
 
-        {/* Relay-free escape hatch: open Valor inside the wallet's own browser,
-            where a provider is injected. Kept small — most players never need
-            it, but it's the only path that survives a sinkholed relay host. */}
-        {showMobileDeepLinks && (
-          <details className="text-slate-500">
-            <summary className="text-[11px] cursor-pointer select-none hover:text-slate-300 transition-colors">
-              Wallet stuck on “Connecting…”? Open Valor inside your wallet instead
-            </summary>
-            <div className="flex flex-wrap gap-2 mt-2.5">
-              {MOBILE_WALLETS.map((w) => (
-                <a
-                  key={w.id}
-                  href={w.build()}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-valor-surface-2 border border-valor-border text-white font-semibold text-xs hover:border-valor-gold/60 transition-colors"
-                >
-                  <Wallet size={13} />
-                  {w.name}
-                </a>
-              ))}
-            </div>
-          </details>
-        )}
 
         <AnimatePresence>
           {error && (
