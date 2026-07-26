@@ -61,6 +61,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // Read-only self-audit; the cron fails its job when this reports trouble.
         .route("/health/consistency", web::post().to(consistency::run_consistency_check))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
+        // Which reward pools this server actually loaded — see get_pools.
+        .route("/pools", web::get().to(ledger::get_pools))
         .route("/ws/battle", web::get().to(ws::battle_ws))
         .service(
             web::scope("/identity")
