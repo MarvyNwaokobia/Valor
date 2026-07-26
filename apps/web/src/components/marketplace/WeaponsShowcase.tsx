@@ -6,7 +6,8 @@ import type { Item } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { GUN_CATALOG, gunDps } from '@/engine/combat/GunStats'
-import { gunIdFromItemId, GunIcon } from './GunIcons'
+import { gunIdFromItemId } from './GunIcons'
+import GunTurntable from './GunTurntable'
 
 /**
  * THE ARMOURY — every gun in the game, in one ranked list.
@@ -98,9 +99,10 @@ export default function WeaponsShowcase({ items, walletAddress }: Props) {
             }}
           >
             <div className="flex items-center gap-4">
-              {/* Tier + silhouette */}
-              <div className="shrink-0 w-14 flex flex-col items-center gap-1">
-                <GunIcon gunId={gunId} className="w-12 h-8 text-slate-300" />
+              {/* A turning 3D preview of the real model — a gun only reads once it
+                  moves, and at these prices the shop should show the actual object. */}
+              <div className="shrink-0 flex flex-col items-center gap-1">
+                <GunTurntable gunId={gunId} className="w-24 h-16 sm:w-28 sm:h-20" />
                 <span className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">T{g.tier}</span>
               </div>
 
