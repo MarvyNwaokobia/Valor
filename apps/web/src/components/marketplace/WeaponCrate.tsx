@@ -2,7 +2,6 @@
 
 import type { Item } from '@/types'
 import { ItemArt } from './ItemArt'
-import GunTurntable from './GunTurntable'
 import { gunIdFromItemId } from './GunIcons'
 import { GUN_CATALOG, type GunId } from '@/engine/combat/GunStats'
 
@@ -95,12 +94,7 @@ export function WeaponCrate({
 
       {/* The dramatically-lit asset, grounded by a soft shadow. */}
       <div className="relative flex items-center justify-center px-3 pt-5 pb-4">
-        {/* A gun shows its REAL model, turning — the shape only reads once it
-            moves, and at these prices the case should show the actual object.
-            Everything else keeps its static art. */}
-        {gunIdFromItemId(item.id)
-          ? <GunTurntable gunId={gunIdFromItemId(item.id)!} className="w-full h-full" />
-          : <ItemArt item={item} color={rarityColor} />}
+        <ItemArt item={item} color={rarityColor} />
       </div>
 
       {/* Bottom edge strip in the rarity colour — a thin machined seam. */}
