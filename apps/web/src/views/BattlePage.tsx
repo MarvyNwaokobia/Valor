@@ -182,7 +182,7 @@ export default function BattlePage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Seasonal Campaign</p>
-            <p className="text-slate-500 text-sm mt-0.5">Everyone starts at wave 1 · Same compound for all · Top 5 take the pool</p>
+            <p className="text-slate-500 text-sm mt-0.5">Everyone starts at wave 1 · Same compound for all · Top 10 take the pool</p>
           </div>
           <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
         </div>
