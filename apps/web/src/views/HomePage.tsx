@@ -4,11 +4,10 @@ import Link from 'next/link'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ShoppingBag, Trophy, ChevronRight, Zap, Flame, Swords } from 'lucide-react'
+import { ShoppingBag, Trophy, ChevronRight, Zap, Flame } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
-import { useDuelsAvailable } from '@/hooks/useDuels'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -22,16 +21,7 @@ const CLASS_SOLO: Record<string, string> = {
   Phantom:   '/characters/Phanthom.png',
 }
 
-type Action = { to: string; Icon: LucideIcon; label: string; desc: string; color: string }
-
-/** Duels move real G$, so the card says so on the card itself rather than only
- *  once the player is already inside the flow. */
-const DUELS_ACTION: Action = {
-  to: '/duels', Icon: Swords, label: 'Duels',
-  desc: 'Stake G$ · same map · higher score wins', color: '#a855f7',
-}
-
-const ACTIONS: Action[] = [
+const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [
   { to: '/battle',      Icon: Flame,       label: 'Fight',       desc: 'Campaign · PvP · Challenge a player',       color: '#ff4422' },
   { to: '/marketplace', Icon: ShoppingBag, label: 'Armoury',     desc: 'Guns · Boosters · Player Listings',         color: '#eab308' },
   { to: '/leaderboard', Icon: Trophy,      label: 'War Board',   desc: 'Top 50 warriors ranked by tier',            color: '#3b82f6' },
@@ -43,11 +33,6 @@ export default function HomePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const syncFailed   = usePlayerStore(s => s.syncFailed)
   const router       = useRouter()
-  // Feature-detected rather than hard-coded: the web app and the API deploy
-  // separately, so the card only appears once the API actually serves /duels.
-  // That makes deploy order a non-issue instead of a coordination problem.
-  const duelsAvailable = useDuelsAvailable()
-  const actions = duelsAvailable ? [...ACTIONS, DUELS_ACTION] : ACTIONS
 
   useEffect(() => {
     // Once sync confirms no player exists (and it's not a network failure),
@@ -214,7 +199,7 @@ export default function HomePage() {
 
         {/* Action cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">
-          {actions.map(({ to, Icon, label, desc, color }, i) => (
+          {ACTIONS.map(({ to, Icon, label, desc, color }, i) => (
             <motion.div
               key={to}
               initial={{ opacity: 0, y: 20 }}
