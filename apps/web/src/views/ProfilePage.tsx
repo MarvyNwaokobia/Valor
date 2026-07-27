@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { shareCard } from '@/lib/shareCard'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -40,6 +41,7 @@ export default function ProfilePage() {
   const xpBar      = xpForNextRank(player.rank)
   const xpProgress = (player.xp / xpBar) * 100
   const [showUsernameModal, setShowUsernameModal] = useState(false)
+  const [cardCopied, setCardCopied] = useState(false)
 
   const itemIds = inventory.map(i => i.item_id)
   const { data: items = [] } = useQuery({
@@ -245,6 +247,41 @@ export default function ProfilePage() {
               {player.username ? `@${player.username}` : 'Set username'}
             </span>
           </button>
+        </div>
+
+        {/* Your public card. Previously there was NO way to reach your own card
+            from inside the app — it existed only at /card/<wallet>, linked from
+            the leaderboard (top 50 only) and the challenge screen. */}
+        <div className="rounded-2xl border border-valor-border bg-valor-surface p-5 flex items-center gap-4">
+          <div className="flex-1 min-w-0">
+            <p className="font-display font-black text-white text-sm uppercase tracking-wider">
+              Your player card
+            </p>
+            <p className="text-slate-500 text-xs mt-1 leading-relaxed">
+              A public page with your rank, record and loadout. Sharing it posts a preview
+              of your warrior.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 shrink-0">
+            <Link
+              href={`/card/${address}`}
+              className="px-4 min-h-10 flex items-center justify-center rounded-xl bg-valor-surface-2 border border-valor-border text-slate-200 font-bold text-xs hover:border-valor-gold/60 hover:text-white transition-colors"
+            >
+              View
+            </Link>
+            <button
+              onClick={() => {
+                void shareCard(address, player.username || player.character_name).then((o) => {
+                  if (o !== 'copied') return
+                  setCardCopied(true)
+                  setTimeout(() => setCardCopied(false), 2000)
+                })
+              }}
+              className="px-4 min-h-10 rounded-xl bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors"
+            >
+              {cardCopied ? 'Copied!' : 'Share'}
+            </button>
+          </div>
         </div>
 
         <IdlePanel walletAddress={address} player={player} />

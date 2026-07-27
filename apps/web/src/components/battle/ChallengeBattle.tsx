@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Users, Search, Trophy, HeartCrack, Copy, Check } from 'lucide-react'
+import { shareCard } from '@/lib/shareCard'
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 interface Props {
@@ -50,11 +52,13 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
   }, [])
 
   function copyShareLink() {
-    const url = `${window.location.origin}/card/${walletAddress}`
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedShare(true)
-      setTimeout(() => setCopiedShare(false), 2000)
-    })
+    void shareCard(walletAddress)
+      .then((outcome) => {
+        if (outcome !== 'copied') return
+        setCopiedShare(true)
+        setTimeout(() => setCopiedShare(false), 2000)
+      })
+      .catch(() => {})
   }
 
   /** Commit one player as the opponent and close the list. */
