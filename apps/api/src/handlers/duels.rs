@@ -103,15 +103,30 @@ struct DuelRow {
     winner_wallet: Option<String>,
 }
 
-/// Move `stake` from the player into the RewardPool. Returns the tx hash.
+/// Signed authorisation for one stake. A duel stake is a deliberate, one-off,
+/// potentially large payment, so it carries its own EIP-2612 permit for EXACTLY
+/// that amount — the same primitive marketplace checkout and transfer-out use.
 ///
-/// Gates on the LIVE on-chain allowance and balance first: an insufficient
-/// allowance means the player's session cap is spent and the client must re-arm,
-/// which is a different remedy from "you're broke" and gets its own message.
+/// It deliberately does NOT ride the survival re-arm session allowance. That rail
+/// is capped at 50 G$ on purpose, because it authorises many signature-free spends
+/// during a run; the smallest duel stake is 100 G$ and the largest is 50,000, so
+/// reusing it would have meant either rejecting every stake (which is what it did)
+/// or raising a safety ceiling that exists for an unrelated feature.
+#[derive(Deserialize)]
+pub struct StakePermit {
+    pub deadline: u64,
+    pub v: u8,
+    pub r: String,
+    pub s: String,
+}
+
+/// Move `stake` from the player into the RewardPool using their signed permit.
+/// Returns the tx hash.
 async fn escrow_stake(
     state: &AppState,
     wallet: &str,
     stake_g: i64,
+    permit: &StakePermit,
 ) -> Result<String, HttpResponse> {
     let chain = state.chain.as_ref().ok_or_else(|| {
         HttpResponse::ServiceUnavailable().json(json!({"error": "Chain relay not available"}))
@@ -123,14 +138,14 @@ async fn escrow_stake(
         HttpResponse::ServiceUnavailable().json(json!({"error": "Duel escrow not configured"}))
     })?;
 
-    let need = g_wei(stake_g as u64);
-    let allowance = chain.g_allowance(owner).await.unwrap_or_else(|_| U256::zero());
-    if allowance < need {
-        return Err(HttpResponse::PaymentRequired().json(json!({
-            "error": "Session allowance used up — arm more G$ to stake",
-            "need_arm": true, "stake_g": stake_g,
-        })));
+    // Reject an expired signature before spending gas on a doomed permit tx.
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    if permit.deadline <= now {
+        return Err(HttpResponse::BadRequest()
+            .json(json!({"error": "Signature expired — try again"})));
     }
+
+    let need = g_wei(stake_g as u64);
     let balance = chain.g_balance(owner).await.unwrap_or_else(|_| U256::zero());
     if balance < need {
         return Err(HttpResponse::PaymentRequired().json(json!({
@@ -138,7 +153,10 @@ async fn escrow_stake(
         })));
     }
 
-    match chain.spend_rearm(owner, pool, need).await {
+    match chain
+        .transfer_g_for(owner, pool, need, permit.deadline, permit.v, &permit.r, &permit.s)
+        .await
+    {
         Ok(hash) => {
             let tx_hash = format!("{:?}", hash);
             crate::handlers::ledger::insert_ledger_entry(
@@ -187,6 +205,8 @@ async fn payout(state: &AppState, wallet: &str, amount_g: u64, ref_key: &str) ->
 pub struct CreateRequest {
     pub wallet: String,
     pub stake_g: i64,
+    #[serde(flatten)]
+    pub permit: StakePermit,
 }
 
 /// Open a duel: escrow the challenger's stake and issue their run token.
@@ -227,7 +247,7 @@ pub async fn create_duel(
         }));
     }
 
-    let stake_tx = match escrow_stake(&state, &wallet, body.stake_g).await {
+    let stake_tx = match escrow_stake(&state, &wallet, body.stake_g, &body.permit).await {
         Ok(tx) => tx,
         Err(resp) => return resp,
     };
@@ -269,6 +289,8 @@ pub async fn create_duel(
 #[derive(Deserialize)]
 pub struct AcceptRequest {
     pub wallet: String,
+    #[serde(flatten)]
+    pub permit: StakePermit,
 }
 
 pub async fn accept_duel(
@@ -295,7 +317,7 @@ pub async fn accept_duel(
         return HttpResponse::BadRequest().json(json!({"error": "You can't accept your own duel"}));
     }
 
-    let stake_tx = match escrow_stake(&state, &wallet, duel.stake_g).await {
+    let stake_tx = match escrow_stake(&state, &wallet, duel.stake_g, &body.permit).await {
         Ok(tx) => tx,
         Err(resp) => return resp,
     };
@@ -470,12 +492,19 @@ async fn resolve_if_complete(state: &AppState, id: Uuid) -> HttpResponse {
 }
 
 // ── POST /duels/{id}/cancel ───────────────────────────────────────────────────
+/// Cancelling only refunds money, so it carries no permit — asking a player to
+/// sign a payment authorisation to get their own stake back would be nonsense.
+#[derive(Deserialize)]
+pub struct CancelRequest {
+    pub wallet: String,
+}
+
 /// Withdraw an unaccepted duel and refund the stake. Only valid while 'open' —
 /// once someone has staked against you, the duel has to play out.
 pub async fn cancel_duel(
     state: web::Data<AppState>,
     path: web::Path<Uuid>,
-    body: web::Json<AcceptRequest>,
+    body: web::Json<CancelRequest>,
 ) -> HttpResponse {
     let id = path.into_inner();
     if !is_valid_wallet(&body.wallet) {
