@@ -255,7 +255,19 @@ pub struct EndlessSession {
     /// 50 waves this session, and anchoring the floor absolutely would lock them out
     /// for minutes before their first credit.
     pub base_wave:    i32,
-    pub created_at:   Instant,  // run start — anchors the min-time-per-wave check
+    /// Run start, as a WALL-CLOCK time rather than a monotonic Instant, so the
+    /// session can be persisted and rehydrated after a restart. The
+    /// min-seconds-per-wave floor is measured from here; keeping it absolute
+    /// means a deploy cannot reset the floor and let a burst of impossible
+    /// clears through.
+    pub started_at:   chrono::DateTime<chrono::Utc>,
+}
+
+impl EndlessSession {
+    /// Seconds since the run opened.
+    pub fn elapsed_secs(&self) -> f64 {
+        (chrono::Utc::now() - self.started_at).num_milliseconds().max(0) as f64 / 1000.0
+    }
 }
 
 /// Server-side state for an in-progress bot fight, resolved one round at a time.
