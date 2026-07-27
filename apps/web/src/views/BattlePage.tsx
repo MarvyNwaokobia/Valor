@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight, Swords } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useDuelsAvailable } from '@/hooks/useDuels'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
@@ -20,6 +21,7 @@ export default function BattlePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const searchParams = useSearchParams()
   const challengeTarget = searchParams.get('challenge') ?? undefined
+  const duelsAvailable = useDuelsAvailable()
 
   const [view, setView] = useState<'menu' | 'operations' | 'pvp' | 'challenge'>(
     challengeTarget ? 'challenge' : 'menu'
@@ -116,6 +118,45 @@ export default function BattlePage() {
           <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
         </div>
       </motion.button>
+
+      {/* Duels — the staked competitive loop that stands in for live PvP. Both
+          fighters run the same seeded map separately and the higher score takes
+          the pot, so there is no netcode and nobody waits for an opponent to be
+          online. Hidden until the deployed API serves the staking contract this
+          UI describes (see useDuelsAvailable) — a card that offered a stake the
+          server would price differently is the one thing that must not ship. */}
+      {duelsAvailable && (
+        <motion.button
+          onClick={() => router.push('/duels')}
+          className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
+          style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(168,85,247,0.35)' }}
+          whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
+        >
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(168,85,247,0.1), transparent)' }} />
+          <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: '#a855f7' }} />
+          <div className="flex items-center gap-5 relative z-10">
+            <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.25)' }}>
+              <Swords size={28} style={{ color: '#a855f7' }} strokeWidth={1.5} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Duels</p>
+                {/* Says it moves real money on the card, not once you are inside. */}
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                  style={{ background: 'rgba(234,179,8,0.15)', color: '#eab308' }}>
+                  Stakes G$
+                </span>
+              </div>
+              <p className="text-slate-500 text-sm mt-0.5">Both fighters run the same map · one life · higher score takes the pot</p>
+            </div>
+            <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
+          </div>
+        </motion.button>
+      )}
 
       {/* Live PvP is OFF the menu pending its rebuild as a real-time FPS 1v1 (first
           kill wins, optionally staked). The BattlePvP component and its `pvp` view
