@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { shareCard } from '@/lib/shareCard'
 import type { Player } from '@/types'
 import { xpForNextRank } from '@/lib/constants'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -37,11 +38,6 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
   const { address } = useResolvedAuth()
   const isOwner = !isPublic && address?.toLowerCase() === player.wallet_address.toLowerCase()
   const { formatted: liveBalance } = useGBalance(isOwner ? (player.wallet_address as `0x${string}`) : undefined)
-
-  const shareUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/card/${player.wallet_address}`
-      : `/card/${player.wallet_address}`
 
   return (
     <>
@@ -188,7 +184,7 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
           <span>Active {formatTimeAgo(player.last_active)}</span>
           {showShareLink && !isPublic && (
             <button
-              onClick={() => navigator.clipboard.writeText(shareUrl)}
+              onClick={() => { void shareCard(player.wallet_address, player.username || player.character_name) }}
               className="flex items-center gap-1 text-valor-gold hover:text-valor-gold-light transition-colors"
             >
               <span>Share card</span>
