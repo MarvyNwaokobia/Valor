@@ -23,6 +23,8 @@ const BALANCE_ABI = [
 export interface OpenDuel {
   id: string
   challenger: string
+  /** Username, else character name. Null only if the row has no player yet. */
+  challenger_name: string | null
   stake_g: number
   winner_takes_g: number
   created_at: string
@@ -32,7 +34,9 @@ export interface OpenDuel {
 export interface MyDuel {
   id: string
   challenger: string
+  challenger_name: string | null
   opponent: string | null
+  opponent_name: string | null
   stake_g: number
   status: 'open' | 'accepted' | 'resolved' | 'cancelled'
   winner: string | null
