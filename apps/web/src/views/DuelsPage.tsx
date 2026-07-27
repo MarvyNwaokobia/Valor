@@ -26,6 +26,10 @@ const ValorScene = dynamic(
 )
 
 const short = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`
+/** Show the warrior, not the hex. Falls back to the address only when a duel row
+ *  has no player record to name. */
+const who = (name: string | null | undefined, wallet: string | null | undefined) =>
+  name || (wallet ? short(wallet) : 'anyone')
 
 /** One labelled figure in the stake-confirmation breakdown. */
 function Row({ label, value, gold, strong }: {
@@ -168,7 +172,16 @@ export default function DuelsPage() {
   const myOpen = duels?.mine.find((d) => d.status === 'open' && d.challenger.toLowerCase() === address.toLowerCase())
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto px-5 py-8" style={{ background: '#04030c' }}>
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto px-5"
+      style={{
+        background: '#04030c',
+        // Standalone PWA draws under the status bar and the home indicator, so
+        // pad by the real insets rather than a guessed constant.
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.5rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2rem)',
+      }}
+    >
       <div className="max-w-lg mx-auto flex flex-col gap-6">
         <div className="flex items-center gap-3">
           <Swords className="text-valor-gold" size={22} />
@@ -324,12 +337,16 @@ export default function DuelsPage() {
             <p className="text-slate-400 text-sm">
               {myOpen.stake_g.toLocaleString()} G$ staked — waiting for someone to accept.
             </p>
+            {/* Closing is a REFUND, not a payment, so it needs no signature and
+                stays available even when the wallet can't sign. A real button
+                rather than faint text — it is the only way out of an open duel,
+                and it moves money back to the player. */}
             <button
               onClick={() => { setError(null); void cancelDuel(myOpen.id).catch((e) => setError(e.message)) }}
               disabled={pending}
-              className="mt-1 self-start text-xs text-slate-500 hover:text-red-400 transition-colors disabled:opacity-40"
+              className="mt-1 w-full min-h-12 rounded-xl border border-valor-border bg-valor-surface-2 text-slate-200 font-bold text-sm hover:border-red-500/60 hover:text-red-300 transition-colors disabled:opacity-40"
             >
-              Cancel and refund my stake
+              {pending ? 'Closing…' : 'Close duel & refund my stake'}
             </button>
           </div>
         )}
@@ -346,7 +363,7 @@ export default function DuelsPage() {
             .map((d) => (
               <div key={d.id} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-3 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm truncate">{short(d.challenger)}</p>
+                  <p className="text-white font-bold text-sm truncate">{who(d.challenger_name, d.challenger)}</p>
                   <p className="text-slate-500 text-[11px]">
                     {d.stake_g.toLocaleString()} G$ · winner takes {d.winner_takes_g.toLocaleString()}
                   </p>
@@ -372,7 +389,7 @@ export default function DuelsPage() {
                 <div key={d.id} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-2.5 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-slate-300 text-sm truncate">
-                      vs {d.opponent ? short(d.opponent) : 'anyone'} · {d.stake_g.toLocaleString()} G$
+                      vs {who(d.opponent_name, d.opponent)} · {d.stake_g.toLocaleString()} G$
                     </p>
                     {d.status === 'resolved' && (
                       <p className="text-slate-500 text-[11px]">{d.challenger_score} — {d.opponent_score}</p>

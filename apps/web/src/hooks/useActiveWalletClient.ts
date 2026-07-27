@@ -5,6 +5,7 @@ import { createWalletClient, custom, type WalletClient } from 'viem'
 import { celo } from 'viem/chains'
 import { useWalletClient as useWagmiWalletClient } from 'wagmi'
 import { getBridgedProvider } from '@/lib/walletBridge'
+import { getMagic } from '@/lib/magic'
 import { useResolvedAuth } from './useResolvedAuth'
 
 // The one seam every signing path goes through. Returns a plain viem
@@ -34,7 +35,25 @@ export function useActiveWalletClient(): WalletClient | undefined {
     if (source === 'wallet' && wagmiWalletClient) return wagmiWalletClient
 
     const bridged = getBridgedProvider()
-    if (!bridged) return undefined
+    if (!bridged) {
+      // Fall back to building straight off Magic. This is what the hook did
+      // before the bridge existed, and dropping it was a regression: the bridge
+      // is populated by MagicAuthProvider, so ANY reason it hasn't published —
+      // ordering, a cleared session, a remount — turned "signed in" into "cannot
+      // sign at all", which is what stranded mobile/PWA users on
+      // "Wallet session not ready".
+      //
+      // Magic's provider is available synchronously from the SDK singleton, so
+      // there is no reason to need the bridge for it. The bridge stays for
+      // Web3Auth-connected wallets, which have no other route.
+      const magic = getMagic()
+      if (!magic) return undefined
+      return createWalletClient({
+        account: address,
+        chain: celo,
+        transport: custom(magic.rpcProvider),
+      })
+    }
     // The bridge publishes provider and address together, so the account here
     // can never drift from the session the provider will actually sign with.
     return createWalletClient({
