@@ -155,6 +155,114 @@ pub async fn fund(req: HttpRequest, state: web::Data<AppState>, path: web::Path<
     }
 }
 
+// ── GET /admin/seasons/:id/payout-preview ──────────────────────────────────────
+// Admin, READ-ONLY. Exactly who would be paid, how much, and whether the money and
+// gas are actually there — so the payout is a confirmation, not a leap of faith.
+//
+// Deliberately runs the SAME board + split the payout runs, rather than
+// reimplementing "who wins" for display. A preview that can disagree with the
+// transfer it is previewing is worse than no preview.
+//
+// Once a payout has started, this reports the REAL rows (with their status and tx
+// hashes) instead of a fresh computation, so a resumed payout shows what is left.
+pub async fn payout_preview(req: HttpRequest, state: web::Data<AppState>, path: web::Path<Uuid>) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) { return resp; }
+    let season_id = path.into_inner();
+
+    let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps FROM seasons WHERE id = $1",
+    )
+    .bind(season_id).fetch_optional(&state.db).await.ok().flatten();
+    let Some(season) = season else {
+        return HttpResponse::NotFound().json(json!({"error": "Season not found"}));
+    };
+
+    // Committed rows win over a recomputed board: after the first run these carry
+    // the truth, including anything that failed part-way.
+    let committed: Vec<(String, Option<String>, i32, i32, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT sp.wallet_address, p.username, sp.rank, sp.waves, sp.amount_g, sp.status, sp.tx_hash
+         FROM season_payouts sp LEFT JOIN players p ON p.wallet_address = sp.wallet_address
+         WHERE sp.season_id = $1 ORDER BY sp.rank ASC",
+    )
+    .bind(season_id).fetch_all(&state.db).await.unwrap_or_default();
+
+    let winners: Vec<serde_json::Value> = if committed.is_empty() {
+        let board = season_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
+        let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
+        board.iter().enumerate()
+            .filter_map(|(i, e)| {
+                let amount = split.get(i).copied().unwrap_or(0);
+                // Mirrors the payout's own "no dust rows" skip, so the count matches.
+                if amount == 0 { return None; }
+                Some(json!({
+                    "rank": i + 1, "wallet_address": e.wallet_address, "username": e.username,
+                    "waves": e.best, "amount_g": amount, "status": "pending", "tx_hash": null,
+                }))
+            })
+            .collect()
+    } else {
+        committed.iter().map(|(w, u, r, waves, amt, st, tx)| json!({
+            "rank": r, "wallet_address": w, "username": u,
+            "waves": waves, "amount_g": amt, "status": st, "tx_hash": tx,
+        })).collect()
+    };
+
+    let total_g: i64 = winners.iter().filter_map(|w| w["amount_g"].as_i64()).sum();
+    let unpaid_g: i64 = winners.iter()
+        .filter(|w| w["status"].as_str() != Some("paid"))
+        .filter_map(|w| w["amount_g"].as_i64())
+        .sum();
+
+    // ValorRewardPool.MAX_REWARD caps one distributeReward at 10,000 G$, so each
+    // prize goes out in chunks. Surfacing the count sets the right expectation:
+    // this is a long run of transactions, not a single click that returns at once.
+    const MAX_CHUNK_G: i64 = 10_000;
+    let tx_count: i64 = winners.iter()
+        .filter(|w| w["status"].as_str() != Some("paid"))
+        .filter_map(|w| w["amount_g"].as_i64())
+        .map(|a| (a + MAX_CHUNK_G - 1) / MAX_CHUNK_G)
+        .sum();
+
+    // Can it actually complete? Money and gas are the two ways this fails half-way.
+    let (pool_balance_g, pool_address, relay_celo) = match state.chain.as_ref() {
+        Some(chain) => {
+            let addr = chain.reward_pool_address();
+            let bal = match addr {
+                Some(a) => chain.g_balance(a).await.ok().map(|b| (b / ethers::types::U256::exp10(18)).as_u64() as i64),
+                None => None,
+            };
+            let celo = chain.celo_balance(chain.relay_address()).await.ok()
+                .map(|c| c.as_u128() as f64 / 1e18);
+            (bal, addr.map(|a| format!("{:?}", a)), celo)
+        }
+        None => (None, None, None),
+    };
+
+    let now = Utc::now();
+    let closed = season.ends_at.map(|e| e <= now).unwrap_or(false);
+
+    HttpResponse::Ok().json(json!({
+        "season": {
+            "id": season.id, "name": season.name,
+            "ends_at": season.ends_at.map(|d| d.to_rfc3339()),
+            "prize_pool_g": season.prize_pool_g,
+            "payout_status": season.payout_status,
+            "closed": closed,
+        },
+        "winners": winners,
+        "winner_count": winners.len(),
+        "total_g": total_g,
+        "unpaid_g": unpaid_g,
+        "tx_count": tx_count,
+        "pool_address": pool_address,
+        "pool_balance_g": pool_balance_g,
+        // The two preconditions, pre-checked so the UI can say WHY it is blocked.
+        "funded": pool_balance_g.map(|b| b >= unpaid_g).unwrap_or(false),
+        "relay_celo": relay_celo,
+        "can_pay": closed && pool_balance_g.map(|b| b >= unpaid_g).unwrap_or(false) && unpaid_g > 0,
+    }))
+}
+
 // ── POST /admin/seasons/:id/payout ─────────────────────────────────────────────
 // Admin, MONEY-TOUCHING. Computes the top runs in a CLOSED season, writes the payout
 // ledger (idempotent), and distributes G$ on-chain via the RewardPool. Safe to re-run:
@@ -171,8 +279,20 @@ pub async fn payout(req: HttpRequest, state: web::Data<AppState>, path: web::Pat
     let Some(season) = season else {
         return HttpResponse::NotFound().json(json!({"error": "Season not found"}));
     };
-    if season.ends_at.is_none() {
+    // The season must be OVER, not merely scheduled to end. Checking only that
+    // ends_at exists let a payout run mid-season, and that is not a recoverable
+    // mistake: the winners are frozen on the first run (see the `already == 0`
+    // guard below) and every chunk burns a one-shot on-chain reference, so a
+    // player who climbed after the early payout could never be paid the
+    // difference. Refuse until the clock has actually passed.
+    let Some(ends_at) = season.ends_at else {
         return HttpResponse::BadRequest().json(json!({"error": "End the season before paying it out"}));
+    };
+    if ends_at > Utc::now() {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "Season is still running — it closes at its scheduled time",
+            "ends_at": ends_at.to_rfc3339(),
+        }));
     }
     let Some(chain) = state.chain.as_ref().cloned() else {
         return HttpResponse::ServiceUnavailable().json(json!({"error": "Chain relay not available"}));

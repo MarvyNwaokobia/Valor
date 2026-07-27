@@ -166,6 +166,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/seasons/{id}", web::patch().to(admin::update_season))
                 .route("/seasons/{id}/reset-progress", web::post().to(admin::reset_season_progress))
                 .route("/seasons/{id}/fund", web::post().to(seasons::fund))
+                .route("/seasons/{id}/payout-preview", web::get().to(seasons::payout_preview))
                 .route("/seasons/{id}/payout", web::post().to(seasons::payout)),
         )
         .service(
