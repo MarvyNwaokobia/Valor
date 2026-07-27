@@ -493,6 +493,26 @@ pub async fn record_death(state: web::Data<AppState>, body: web::Json<DeathReque
     .bind(&wallet).bind(season)
     .execute(&state.db).await;
 
+    // Dying IS playing. This path writes a battle row but never calls
+    // award_player — which is the only thing that advances last_active — so a
+    // player grinding Endless and dying repeatedly looked completely idle.
+    //
+    // Two consequences, neither cosmetic:
+    //   • DECAY keys off last_active, so someone playing hard but mostly dying
+    //     accrues idle hours and can lose rank for it.
+    //   • the consistency cron compares last_battle against last_active and was
+    //     reporting these players as frozen on every 15-minute tick — one had 49
+    //     deaths and sat 4 hours "idle" mid-session.
+    //
+    // Only last_active is touched. No XP is granted here (a death earns nothing)
+    // and decay_status is left alone, since the decay sweep re-derives it from
+    // last_active anyway.
+    let _ = sqlx::query(
+        "UPDATE players SET last_active = now() WHERE wallet_address = $1",
+    )
+    .bind(&wallet)
+    .execute(&state.db).await;
+
     // The player is the LOSER against the house, mirroring how PvE deaths are recorded.
     crate::handlers::battles::persist_battle(
         &state,
