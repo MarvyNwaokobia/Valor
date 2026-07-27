@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Users, Search, Trophy, HeartCrack, Copy, Check } from 'lucide-react'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -7,6 +7,14 @@ interface Props {
   walletAddress: string
   onBack: () => void
   prefillOpponent?: string
+}
+
+/** One row of the search dropdown. */
+interface PlayerHit {
+  wallet_address: string
+  character_name: string
+  username: string | null
+  rank: string | null
 }
 
 interface ChallengeResult {
@@ -25,6 +33,13 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
   const [fighting, setFighting] = useState(false)
   const [result, setResult] = useState<ChallengeResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Live search results. The old flow silently took results[0], so typing a name
+  // two players shared challenged whichever the database happened to return
+  // first — with no way to tell, and no way to pick the other one.
+  const [hits, setHits] = useState<PlayerHit[]>([])
+  const [open, setOpen] = useState(false)
+  const [highlight, setHighlight] = useState(0)
+  const boxRef = useRef<HTMLDivElement>(null)
 
   // Auto-resolve prefilled wallet from challenge link
   useEffect(() => {
@@ -41,6 +56,55 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
       setTimeout(() => setCopiedShare(false), 2000)
     })
   }
+
+  /** Commit one player as the opponent and close the list. */
+  const choose = useCallback((hit: PlayerHit) => {
+    setResolvedOpponent(hit.wallet_address)
+    setResolvedName(hit.character_name)
+    setInput(hit.username || hit.character_name)
+    setHits([])
+    setOpen(false)
+    setError(null)
+  }, [])
+
+  // Debounced name search. Pasting an address skips this entirely — that path is
+  // exact, so a dropdown of one would just be in the way.
+  useEffect(() => {
+    const q = input.trim()
+    if (resolvedOpponent || q.length < 2 || q.startsWith('0x')) {
+      setHits([])
+      setOpen(false)
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${API}/players/search?q=${encodeURIComponent(q)}&exclude=${walletAddress}`,
+        )
+        if (!res.ok || cancelled) return
+        const rows = (await res.json()) as PlayerHit[]
+        if (cancelled) return
+        setHits(rows)
+        setHighlight(0)
+        setOpen(rows.length > 0)
+      } catch {
+        // A failed search is not an error worth shouting about — the player is
+        // still typing, and the button path still reports a genuine miss.
+      }
+    }, 250)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [input, walletAddress, resolvedOpponent])
+
+  // Clicking away closes the list without clearing what was typed.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
 
   async function handleLookup(override?: string) {
     const query = override ?? input
@@ -70,13 +134,22 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
         setError(`No player named "${query}" found.`)
         return
       }
-      const results = await res.json() as Array<{ wallet_address: string; character_name: string }>
+      const results = await res.json() as PlayerHit[]
       if (!results.length) {
         setError(`No player named "${query}" found.`)
         return
       }
-      setResolvedOpponent(results[0].wallet_address)
-      setResolvedName(results[0].character_name)
+      // Only auto-select when the match is unambiguous. With several matches the
+      // old code picked results[0] silently, which could send a challenge to the
+      // wrong person who happened to share a name — show the list and let the
+      // player choose instead.
+      if (results.length === 1) {
+        choose(results[0])
+      } else {
+        setHits(results)
+        setHighlight(0)
+        setOpen(true)
+      }
     }
   }
 
@@ -166,15 +239,85 @@ export default function ChallengeBattle({ walletAddress, onBack, prefillOpponent
             both players' XP updates via real-time.
           </p>
 
-          {/* Input */}
-          <div className="flex gap-2">
-            <input
-              value={input}
-              onChange={(e) => { setInput(e.target.value); setResolvedOpponent(null); setError(null) }}
-              onKeyDown={(e) => e.key === 'Enter' && void handleLookup()}
-              placeholder="0x... or player name"
-              className="flex-1 bg-valor-surface-2 border border-valor-border rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
-            />
+          {/* Input + live results */}
+          <div className="flex gap-2 relative" ref={boxRef}>
+            <div className="flex-1 relative">
+              <input
+                value={input}
+                onChange={(e) => { setInput(e.target.value); setResolvedOpponent(null); setError(null) }}
+                onFocus={() => { if (hits.length) setOpen(true) }}
+                onKeyDown={(e) => {
+                  // Arrow/Enter/Escape drive the list when it's open, so the
+                  // dropdown is usable without a mouse.
+                  if (open && hits.length) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault(); setHighlight((h) => (h + 1) % hits.length); return
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault(); setHighlight((h) => (h - 1 + hits.length) % hits.length); return
+                    }
+                    if (e.key === 'Enter') {
+                      e.preventDefault(); choose(hits[highlight]); return
+                    }
+                    if (e.key === 'Escape') { setOpen(false); return }
+                  }
+                  if (e.key === 'Enter') void handleLookup()
+                }}
+                placeholder="0x... or player name"
+                role="combobox"
+                aria-expanded={open}
+                aria-autocomplete="list"
+                aria-controls="challenge-player-list"
+                className="w-full bg-valor-surface-2 border border-valor-border rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
+              />
+
+              <AnimatePresence>
+                {open && hits.length > 0 && (
+                  <motion.ul
+                    id="challenge-player-list"
+                    role="listbox"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.14 }}
+                    className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-valor-border bg-valor-surface shadow-2xl overflow-hidden divide-y divide-valor-border max-h-72 overflow-y-auto"
+                  >
+                    {hits.map((h, i) => (
+                      <li key={h.wallet_address} role="option" aria-selected={i === highlight}>
+                        <button
+                          type="button"
+                          onMouseEnter={() => setHighlight(i)}
+                          onClick={() => choose(h)}
+                          className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors ${
+                            i === highlight ? 'bg-valor-gold/10' : 'hover:bg-valor-gold/[0.06]'
+                          }`}
+                        >
+                          <span className="flex items-center justify-center w-8 h-8 shrink-0 rounded-lg bg-valor-surface-2 border border-valor-border">
+                            <Users size={14} className="text-slate-300" />
+                          </span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-white font-bold text-sm truncate">
+                              {h.username || h.character_name}
+                            </span>
+                            {/* Two players can share a name, so always show the
+                                address — it is the only thing that is unique. */}
+                            <span className="block text-[11px] text-slate-500 truncate">
+                              {h.username ? `${h.character_name} · ` : ''}
+                              {h.wallet_address.slice(0, 6)}…{h.wallet_address.slice(-4)}
+                            </span>
+                          </span>
+                          {h.rank && (
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-valor-gold">
+                              {h.rank}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </motion.ul>
+                )}
+              </AnimatePresence>
+            </div>
             <motion.button
               onClick={() => void handleLookup()}
               disabled={searching || !input.trim()}
