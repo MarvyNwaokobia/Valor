@@ -541,30 +541,47 @@ pub struct ListQuery {
 }
 
 pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) -> HttpResponse {
-    let open: Vec<(Uuid, String, i64, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, challenger_wallet, stake_g, created_at FROM duels
-         WHERE status = 'open' ORDER BY created_at DESC LIMIT 50",
+    // Join the player so the lobby can show a warrior rather than a hex string —
+    // an address tells you nothing about who you are about to stake against.
+    // COALESCE order matches how players are named elsewhere: username first,
+    // character name as the fallback.
+    let open: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT d.id, d.challenger_wallet,
+                COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
+                d.stake_g, d.created_at
+         FROM duels d
+         LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
+         WHERE d.status = 'open'
+         ORDER BY d.created_at DESC LIMIT 50",
     )
     .fetch_all(&state.db).await.unwrap_or_default();
 
-    let open_json: Vec<_> = open.into_iter().map(|(id, w, stake, at)| json!({
-        "id": id, "challenger": w, "stake_g": stake,
+    let open_json: Vec<_> = open.into_iter().map(|(id, w, name, stake, at)| json!({
+        "id": id, "challenger": w, "challenger_name": name, "stake_g": stake,
         "winner_takes_g": winner_payout(stake), "created_at": at,
     })).collect();
 
     let mine_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
         Some(w) => {
             let wallet = normalize_wallet(w);
-            let rows: Vec<(Uuid, String, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>)> =
+            let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>)> =
                 sqlx::query_as(
-                    "SELECT id, challenger_wallet, opponent_wallet, stake_g, status,
-                            winner_wallet, challenger_score, opponent_score
-                     FROM duels WHERE challenger_wallet = $1 OR opponent_wallet = $1
-                     ORDER BY created_at DESC LIMIT 25",
+                    "SELECT d.id, d.challenger_wallet,
+                            COALESCE(NULLIF(pc.username, ''), pc.character_name) AS challenger_name,
+                            d.opponent_wallet,
+                            COALESCE(NULLIF(po.username, ''), po.character_name) AS opponent_name,
+                            d.stake_g, d.status, d.winner_wallet,
+                            d.challenger_score, d.opponent_score
+                     FROM duels d
+                     LEFT JOIN players pc ON pc.wallet_address = d.challenger_wallet
+                     LEFT JOIN players po ON po.wallet_address = d.opponent_wallet
+                     WHERE d.challenger_wallet = $1 OR d.opponent_wallet = $1
+                     ORDER BY d.created_at DESC LIMIT 25",
                 )
                 .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
-            rows.into_iter().map(|(id, c, o, stake, status, winner, cs, os)| json!({
-                "id": id, "challenger": c, "opponent": o, "stake_g": stake,
+            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os)| json!({
+                "id": id, "challenger": c, "challenger_name": cn,
+                "opponent": o, "opponent_name": on, "stake_g": stake,
                 "status": status, "winner": winner,
                 "challenger_score": cs, "opponent_score": os,
             })).collect()
