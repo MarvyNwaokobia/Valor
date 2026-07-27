@@ -205,15 +205,23 @@ pub async fn get_stats(
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((0,));
 
+    // UBI is EXCLUDED. A UBI claim is GoodDollar's money passing through a
+    // player's wallet — Valor neither funds it nor pays it, so counting it here
+    // overstated what the game has actually awarded.
     let total_g_awarded: (Decimal,) = sqlx::query_as(
         "SELECT COALESCE(SUM(amount), 0) FROM g_ledger
-         WHERE category IN ('ubi_claim', 'battle_reward') AND created_at >= $1 AND created_at < $2",
+         WHERE category = 'battle_reward' AND created_at >= $1 AND created_at < $2",
     )
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((Decimal::ZERO,));
 
+    // Throughput: rewards paid + marketplace spend + withdrawals. UBI is excluded
+    // for the same reason as above — it is not volume Valor moved. This now
+    // matches the Dune "G$ Volume Moved" query leg for leg, so the admin page and
+    // the public dashboard can be compared directly.
     let total_g_volume: (Decimal,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(amount), 0) FROM g_ledger WHERE created_at >= $1 AND created_at < $2",
+        "SELECT COALESCE(SUM(amount), 0) FROM g_ledger
+         WHERE category <> 'ubi_claim' AND created_at >= $1 AND created_at < $2",
     )
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((Decimal::ZERO,));
