@@ -44,6 +44,32 @@ async function resolveIdentity(): Promise<ResolvedIdentity> {
   if (!magic) return { address: undefined, email: undefined, issuer: undefined }
   const loggedIn = await magic.user.isLoggedIn()
   if (!loggedIn) return { address: undefined, email: undefined, issuer: undefined }
+
+  // isLoggedIn() is not the same question as "can this session sign".
+  //
+  // On mobile Safari and in an installed PWA, ITP evicts Magic's storage while
+  // leaving enough behind to report a live session. The app then looked signed
+  // in and failed at the first signature with Magic's own
+  // "-32603 User denied account access" — which reads as though the player
+  // refused a prompt that never appeared, and which they only discovered at the
+  // moment they tried to spend money.
+  //
+  // Asking the provider for an account is the cheap proof. A session that cannot
+  // produce one is treated as signed OUT, so the player is asked to sign in
+  // again up front instead of hitting a wall at checkout.
+  try {
+    const accounts = (await (magic.rpcProvider as unknown as {
+      request: (a: { method: string }) => Promise<string[]>
+    }).request({ method: 'eth_accounts' })) ?? []
+    if (!accounts.length) {
+      await magic.user.logout().catch(() => {})
+      return { address: undefined, email: undefined, issuer: undefined }
+    }
+  } catch {
+    await magic.user.logout().catch(() => {})
+    return { address: undefined, email: undefined, issuer: undefined }
+  }
+
   const info = await magic.user.getInfo()
   const address = info.wallets?.ethereum?.publicAddress
   return {
