@@ -45,6 +45,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_prestige_and_tiers.sql", include_str!("../migrations/add_prestige_and_tiers.sql")),
     ("add_rank_up_rewards.sql",   include_str!("../migrations/add_rank_up_rewards.sql")),
     ("add_ranked_xp_lifetime.sql", include_str!("../migrations/add_ranked_xp_lifetime.sql")),
+    ("add_referrals.sql",         include_str!("../migrations/add_referrals.sql")),
     ("add_repeating_decay.sql",   include_str!("../migrations/add_repeating_decay.sql")),
     ("add_season_payouts.sql",    include_str!("../migrations/add_season_payouts.sql")),
     ("add_seasonal_campaign.sql", include_str!("../migrations/add_seasonal_campaign.sql")),

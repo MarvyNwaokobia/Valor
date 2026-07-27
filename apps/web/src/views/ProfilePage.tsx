@@ -42,6 +42,16 @@ export default function ProfilePage() {
   const xpProgress = (player.xp / xpBar) * 100
   const [showUsernameModal, setShowUsernameModal] = useState(false)
   const [cardCopied, setCardCopied] = useState(false)
+  const { data: referrals } = useQuery<{ recruited: number; earned_g: number }>({
+    queryKey: ['referrals', address],
+    queryFn: async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/players/${address}/referrals`)
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    enabled: !!address,
+    staleTime: 60_000,
+  })
 
   const itemIds = inventory.map(i => i.item_id)
   const { data: items = [] } = useQuery({
@@ -259,8 +269,17 @@ export default function ProfilePage() {
             </p>
             <p className="text-slate-500 text-xs mt-1 leading-relaxed">
               A public page with your rank, record and loadout. Sharing it posts a preview
-              of your warrior.
+              of your warrior — and anyone who joins through it earns you 500 G$.
             </p>
+            {/* The count is the whole point of the loop: someone who can see
+                three recruits is far likelier to share a fourth time. */}
+            {referrals && referrals.recruited > 0 && (
+              <p className="text-valor-gold text-xs font-bold mt-2">
+                {referrals.recruited} warrior{referrals.recruited === 1 ? '' : 's'} recruited
+                {' · '}
+                {referrals.earned_g.toLocaleString()} G$ earned
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2 shrink-0">
             <Link
