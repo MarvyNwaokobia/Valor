@@ -8,6 +8,8 @@ import { parseUnits, parseSignature } from 'viem'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useRelayAddress } from '@/hooks/useTransferOut'
+import { magicCanSign, describeSigningError } from '@/lib/magic'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const G_DECIMALS = 18
@@ -132,6 +134,7 @@ export function useDuels(walletAddress: string | undefined) {
   const config = useConfig()
   const walletClient = useActiveWalletClient()
   const { data: relayAddress } = useRelayAddress()
+  const { source } = useResolvedAuth()
   const [pending, setPending] = useState(false)
 
   const list = useQuery({
@@ -193,27 +196,43 @@ export function useDuels(walletAddress: string | undefined) {
       args: [walletAddress as `0x${string}`],
     })
 
-    const rawSig = await walletClient.signTypedData({
-      account: walletClient.account,
-      domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
-      types: {
-        Permit: [
-          { name: 'owner', type: 'address' },
-          { name: 'spender', type: 'address' },
-          { name: 'value', type: 'uint256' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' },
-        ],
-      },
-      primaryType: 'Permit',
-      message: {
-        owner: walletAddress as `0x${string}`,
-        spender: relayAddress,
-        value: amount,
-        nonce,
-        deadline,
-      },
-    })
+    // Ask Magic whether it can still sign BEFORE prompting, but ONLY for Magic
+    // sessions — an external wallet has no Magic session and must not be blocked
+    // by one. A session evicted by ITP still yields a usable-looking wallet
+    // client, so without this the player gets Magic's "-32603 User denied
+    // account access", which reads as though they refused a prompt that never
+    // appeared.
+    if (source === 'magic' && !(await magicCanSign())) {
+      throw new Error('Your wallet session on this device has expired. Sign in again to stake.')
+    }
+
+    let rawSig: `0x${string}`
+    try {
+      rawSig = await walletClient.signTypedData({
+        account: walletClient.account,
+        domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
+        types: {
+          Permit: [
+            { name: 'owner', type: 'address' },
+            { name: 'spender', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'deadline', type: 'uint256' },
+          ],
+        },
+        primaryType: 'Permit',
+        message: {
+          owner: walletAddress as `0x${string}`,
+          spender: relayAddress,
+          value: amount,
+          nonce,
+          deadline,
+        },
+      })
+    } catch (err) {
+      throw new Error(describeSigningError(err))
+    }
+
     const { v, r, s } = parseSignature(rawSig)
     return { deadline: Number(deadline), v: Number(v), r, s }
   }, [walletAddress, walletClient, relayAddress, config])
