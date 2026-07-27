@@ -1405,11 +1405,22 @@ pub async fn challenge_player(
         return HttpResponse::BadRequest().json(json!({"error": "Cannot challenge yourself"}));
     }
 
+    // Normalize ONCE, then use only these. Wallets are stored lowercase (all 97
+    // rows are), but the client sends the EIP-55 checksummed form — so a raw
+    // comparison found nothing and every challenge died on "One or both players
+    // not found". This was the only handler that skipped normalize_wallet.
+    //
+    // It mattered past the lookup too: the battle row was inserted with the
+    // checksummed address, which would not join against players, the consistency
+    // check, or anything reading the ledger.
+    let challenger_wallet = normalize_wallet(&body.challenger_wallet);
+    let opponent_wallet = normalize_wallet(&body.opponent_wallet);
+
     // Async multiplayer: resolve fight immediately based on stats + random seed
     let challenger = sqlx::query_as::<_, crate::models::player::Player>(
         "SELECT * FROM players WHERE wallet_address = $1",
     )
-    .bind(&body.challenger_wallet)
+    .bind(&challenger_wallet)
     .fetch_optional(&state.db)
     .await
     .ok()
@@ -1418,7 +1429,7 @@ pub async fn challenge_player(
     let opponent = sqlx::query_as::<_, crate::models::player::Player>(
         "SELECT * FROM players WHERE wallet_address = $1",
     )
-    .bind(&body.opponent_wallet)
+    .bind(&opponent_wallet)
     .fetch_optional(&state.db)
     .await
     .ok()
@@ -1430,13 +1441,13 @@ pub async fn challenge_player(
 
     let challenger = apply_item_boosts(&state.db, challenger).await;
     let opponent   = apply_item_boosts(&state.db, opponent).await;
-    let ch_multiplier = equipped_xp_multiplier(&state.db, &body.challenger_wallet).await;
-    let op_multiplier = equipped_xp_multiplier(&state.db, &body.opponent_wallet).await;
+    let ch_multiplier = equipped_xp_multiplier(&state.db, &challenger_wallet).await;
+    let op_multiplier = equipped_xp_multiplier(&state.db, &opponent_wallet).await;
 
     let result = simulate_async_fight(&challenger, &opponent);
     let now = Utc::now();
     let battle_id = Uuid::new_v4();
-    let winner = if result.challenger_won { &body.challenger_wallet } else { &body.opponent_wallet };
+    let winner = if result.challenger_won { &challenger_wallet } else { &opponent_wallet };
 
     // Award both players through the SAME path every other mode uses. This was a
     // hand-rolled UPDATE that clamped with `.min(999)` — the exact ceiling that froze
@@ -1446,9 +1457,9 @@ pub async fn challenge_player(
     // progressive curve, the multi-rank climb, the rank-up payout, the Way-2 gate and
     // the loud save-failure log all apply here too. The outcome is server-simulated,
     // so it is refereed (reward_eligible) like the other server-authoritative modes.
-    let aw_ch = award_player(&state, &body.challenger_wallet, result.challenger_won,
+    let aw_ch = award_player(&state, &challenger_wallet, result.challenger_won,
                              result.xp_challenger, ch_multiplier, true, true).await;
-    let aw_op = award_player(&state, &body.opponent_wallet, !result.challenger_won,
+    let aw_op = award_player(&state, &opponent_wallet, !result.challenger_won,
                              result.xp_opponent, op_multiplier, true, true).await;
 
     // Record what was actually credited, not what we hoped to credit.
@@ -1462,8 +1473,8 @@ pub async fn challenge_player(
          VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8)",
     )
     .bind(battle_id)
-    .bind(&body.challenger_wallet)
-    .bind(&body.opponent_wallet)
+    .bind(&challenger_wallet)
+    .bind(&opponent_wallet)
     .bind(winner)
     .bind(serde_json::to_value(&result.rounds).unwrap_or_default())
     .bind(xp_challenger)
@@ -1475,15 +1486,15 @@ pub async fn challenge_player(
         tracing::error!(
             "BATTLE INSERT FAILED for challenge {} vs {}: history will be missing this \
              fight (XP was still awarded): {}",
-            body.challenger_wallet, body.opponent_wallet, e
+            challenger_wallet, opponent_wallet, e
         );
     }
 
     // Background chain write — non-blocking
     if let Some(chain) = state.chain.as_ref().cloned() {
         let battle_bytes = uuid_to_bytes32(battle_id);
-        let ch_addr: Option<Address> = body.challenger_wallet.parse().ok();
-        let op_addr: Option<Address> = body.opponent_wallet.parse().ok();
+        let ch_addr: Option<Address> = challenger_wallet.parse().ok();
+        let op_addr: Option<Address> = opponent_wallet.parse().ok();
         let ch_won = result.challenger_won;
         let xp_ch = xp_challenger.min(255) as u8;
         let xp_op = xp_opponent.min(255) as u8;
