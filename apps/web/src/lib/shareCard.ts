@@ -1,7 +1,13 @@
-/** Public URL of a player's card. The one place this string is built. */
+/**
+ * Public URL of a player's card — and their referral link.
+ *
+ * The `?ref=` is what ties a new signup back to whoever shared it. It rides on
+ * the card rather than a separate invite code because the card already previews
+ * as a picture of their warrior, which is a far better invite than a bare code.
+ */
 export function cardUrl(wallet: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://playvalor.app'
-  return `${origin}/card/${wallet}`
+  return `${origin}/card/${wallet}?ref=${wallet.toLowerCase()}`
 }
 
 export type ShareOutcome = 'shared' | 'copied' | 'cancelled'
