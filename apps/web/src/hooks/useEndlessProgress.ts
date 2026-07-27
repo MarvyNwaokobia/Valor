@@ -62,20 +62,73 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
     return 1
   }, [walletAddress, body])
 
+  /**
+   * Re-open a session WITHOUT touching the on-screen wave or the banked total.
+   *
+   * `start()` is for beginning a run: it resets the display. This is for the
+   * middle of one, after the server has forgotten us.
+   */
+  const reopenSession = useCallback(async (): Promise<string | null> => {
+    if (!walletAddress) return null
+    try {
+      const res = await fetch(`${API}/endless/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body({}),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      sessionRef.current = data.session_id ?? null
+      return sessionRef.current
+    } catch {
+      return null
+    }
+  }, [walletAddress, body])
+
   /** Report a cleared wave. The server credits it, pays the G$ and records the win. */
   const clearWave = useCallback(async (): Promise<WaveResult | null> => {
-    const session_id = sessionRef.current
-    if (!session_id) return null
-    try {
-      const res = await fetch(`${API}/endless/wave`, {
+    const post = async (session_id: string) =>
+      fetch(`${API}/endless/wave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id, season_id: seasonId }),
       })
-      if (!res.ok) {
-        if (res.status === 404) sessionRef.current = null // expired: stop earning, keep playing
-        return null
+
+    try {
+      let session_id = sessionRef.current
+      // No session at all (a previous call lost it) — get one before giving up.
+      if (!session_id) session_id = await reopenSession()
+      if (!session_id) return null
+
+      let res = await post(session_id)
+
+      // 404 = the server has no record of this run. That is NOT the player's
+      // fault and it is not the end of their run: the server restarts on every
+      // deploy and its session list is in memory only. The old code set the
+      // session to null here and let the player keep playing for nothing, so a
+      // deploy mid-run silently stopped counting every wave after it — which is
+      // how players finished on wave 5 and were recorded on wave 2.
+      //
+      // Re-introduce ourselves and try the wave again. Stored progress only ever
+      // moves UP and the server resumes from it, so this cannot rewind anyone.
+      if (res.status === 404) {
+        const fresh = await reopenSession()
+        if (!fresh) return null
+        res = await post(fresh)
+
+        // A brand-new session has just been created, so the anti-script floor
+        // ("you cannot clear a wave in under N seconds") sees ~0 seconds elapsed
+        // and rejects the retry. The player really did spend that time — it was
+        // spent against the session the server threw away — so wait out the
+        // floor once and try a final time rather than lose the wave.
+        if (res.status === 429) {
+          await new Promise((r) => setTimeout(r, 7000))
+          res = await post(fresh)
+        }
       }
+
+      if (!res.ok) return null
+
       const d = await res.json()
       const g = Number(d.g_awarded) || 0
       setBanked((b) => b + g)
@@ -84,7 +137,7 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
     } catch {
       return null
     }
-  }, [seasonId])
+  }, [seasonId, reopenSession])
 
   /** Report a death. Records the loss on-chain; the stored wave does NOT move. */
   const reportDeath = useCallback(async (diedOnWave: number) => {
