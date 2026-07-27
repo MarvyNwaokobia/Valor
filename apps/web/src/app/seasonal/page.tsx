@@ -221,6 +221,24 @@ export default function SeasonalPage() {
           </>
         )}
 
+        {/* Owning the fault where players will actually see it. Several runs on
+            27 Jul stopped being counted mid-session because the server's run list
+            lives in memory and every deploy wipes it — players finished on wave 5
+            and were recorded on wave 2, and some never appeared on the board at
+            all. The waves themselves were never written anywhere, so they cannot
+            be restored from history. What CAN be done is replaying: stored
+            progress only ever moves up, so reaching a wave again re-records it. */}
+        <div className="mt-8 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4">
+          <p className="text-amber-300 text-sm font-bold">Some waves were not counted</p>
+          <p className="text-slate-400 text-xs mt-1.5 leading-relaxed">
+            A fault on our side stopped recording waves for some runs earlier today, so a
+            few boards read lower than they should — and some players are missing entirely.
+            It is fixed now. Your progress never goes down, so if your wave looks low,
+            play again and reaching that wave will restore it. Sorry — this was ours,
+            not yours.
+          </p>
+        </div>
+
         {/* The ladder. Same component and same ranking as Campaign Endless — waves
             completed, ties to whoever got there first — with this season's payouts
             layered on by the season card above. */}
