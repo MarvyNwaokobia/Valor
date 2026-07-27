@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { getReferrer, clearReferrer } from '@/lib/referral'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -40,11 +41,50 @@ export default function OnboardingPage() {
   const [username,      setUsername]      = useState('')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
+  // Referral attribution. Layers 1-3 (URL, server cookie, localStorage) run in
+  // getReferrer(); this field is layer 4 — the one that recovers a click on a
+  // phone followed by a signup on a laptop, which no storage can bridge.
+  const [referrer,      setReferrer]      = useState<string>('')
+  const [referrerName,  setReferrerName]  = useState<string | null>(null)
+  const [inviterInput,  setInviterInput]  = useState('')
+  const [lookingUp,     setLookingUp]     = useState(false)
 
   // A player rebuilt from chain after the migration hasn't CONFIRMED their class
   // yet (it may be wrong). They're already a recognized user, so skip verify and
   // drop them straight onto the confirm screen, pre-filled with what we recovered.
   const confirming = !!player && player.character_confirmed === false
+  // Pick up whatever attribution survived, and put a NAME to it so the new
+  // player can see who they are crediting rather than a hex string.
+  useEffect(() => {
+    const found = getReferrer()
+    if (!found) return
+    setReferrer(found)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/players/${found}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(p => { if (p) setReferrerName(p.username || p.character_name) })
+      .catch(() => {})
+  }, [])
+
+  /** Resolve a typed name to a wallet — the fallback when nothing survived. */
+  async function lookupInviter(q: string) {
+    const name = q.trim()
+    if (!name) return
+    setLookingUp(true)
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/players/search?q=${encodeURIComponent(name)}&exclude=${address}`,
+      )
+      const rows = res.ok ? await res.json() : []
+      if (rows.length) {
+        setReferrer(rows[0].wallet_address)
+        setReferrerName(rows[0].username || rows[0].character_name)
+      } else {
+        setReferrerName(null)
+      }
+    } catch { /* leave it unset — a missing referral is not worth blocking on */ }
+    finally { setLookingUp(false) }
+  }
+
   useEffect(() => {
     if (confirming && player) {
       setSelectedClass((player.character_class as CharacterClass) || 'Berserker')
@@ -166,6 +206,9 @@ export default function OnboardingPage() {
         losses:                  0,
         magic_email:             magicEmail ?? null,
         magic_issuer:            magicIssuer ?? null,
+        // Best-effort attribution. The server re-validates it and pays at most
+        // once per new player, so a wrong or stale value costs nothing.
+        referred_by:             referrer || null,
       }
       const res = await fetch(`${API}/players`, {
         method: 'POST',
@@ -176,6 +219,9 @@ export default function OnboardingPage() {
       if (!res.ok) {
         setError('Failed to create player. Please try again.'); setPending(false); return
       }
+      // Attribution is spent — a second character on this device must not credit
+      // the same referrer again.
+      clearReferrer()
       const created = await res.json()
       setPlayer(created)
       setCreatedPlayer(created)
@@ -267,6 +313,38 @@ export default function OnboardingPage() {
                 className="flex-1 bg-transparent border-b font-display font-bold text-lg leading-none focus:outline-none placeholder:opacity-25 text-white"
                 style={{ borderColor: 'rgba(255,255,255,0.15)', caretColor: def.accentColor }}
               />
+            </div>
+
+            {/* Who invited you. Pre-filled when attribution survived, typed when
+                it did not — the only route that recovers a link opened on one
+                device and acted on days later somewhere else. */}
+            <div className="mt-4">
+              {referrer && referrerName ? (
+                <p className="text-xs text-slate-400">
+                  Invited by <span className="font-bold text-white">{referrerName}</span>
+                  {' '}·{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setReferrer(''); setReferrerName(null) }}
+                    className="underline underline-offset-2 hover:text-white transition-colors"
+                  >
+                    not them?
+                  </button>
+                </p>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={inviterInput}
+                    onChange={e => setInviterInput(e.target.value)}
+                    onBlur={() => void lookupInviter(inviterInput)}
+                    placeholder="who invited you? (optional)"
+                    className="flex-1 bg-transparent border-b text-sm leading-none py-1 focus:outline-none placeholder:opacity-25 text-white"
+                    style={{ borderColor: 'rgba(255,255,255,0.15)' }}
+                  />
+                  {lookingUp && <span className="text-[10px] text-slate-500">checking…</span>}
+                </div>
+              )}
             </div>
           </motion.div>
 

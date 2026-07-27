@@ -6,7 +6,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::handlers::ledger::{record_ubi_claim, DailyClaimLedgerBody};
-use crate::utils::normalize_wallet;
+use crate::utils::{is_valid_wallet, normalize_wallet};
 use crate::AppState;
 
 // ── PATCH /players/:wallet ────────────────────────────────────────────────────
@@ -309,6 +309,92 @@ pub struct CreatePlayerRequest {
     // person. Optional; captured from magic.user.getInfo() at sign-in.
     pub magic_email:             Option<String>,
     pub magic_issuer:            Option<String>,
+    /// Wallet of the player who referred this one, if any. Attribution is best
+    /// effort on the client (cookie, storage, or the onboarding field), so this
+    /// is untrusted input and every guard lives server-side.
+    pub referred_by:             Option<String>,
+}
+
+/// Whole G$ paid to a player whose referral completes onboarding.
+const REFERRAL_REWARD_G: u64 = 1_000;
+
+/// Credit a referrer, once, for bringing in a newly created player.
+///
+/// Called AFTER the player row exists, which is the point at which the referred
+/// wallet has already passed the GoodDollar whitelist gate in onboarding — so
+/// this pays for a verified human, not a signup.
+///
+/// Every guard is here rather than on the client: the client supplies the
+/// referrer and cannot be trusted with who gets paid.
+async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
+    let referrer = normalize_wallet(referrer_raw);
+    if !is_valid_wallet(&referrer) || referrer == referred {
+        return;
+    }
+
+    // The referrer must be a real player. Otherwise any address could be named
+    // and paid, including one the referred user controls.
+    let exists: Option<(String,)> =
+        sqlx::query_as("SELECT wallet_address FROM players WHERE wallet_address = $1")
+            .bind(&referrer)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+    if exists.is_none() {
+        return;
+    }
+
+    // Claim the one-per-referred-wallet slot. If this inserts nothing the
+    // referral was already recorded, so there is nothing to pay — this is what
+    // makes a retried or replayed create_player safe.
+    let claimed = sqlx::query(
+        "INSERT INTO referrals (referred_wallet, referrer_wallet, amount)
+         VALUES ($1, $2, $3) ON CONFLICT (referred_wallet) DO NOTHING",
+    )
+    .bind(referred)
+    .bind(&referrer)
+    .bind(REFERRAL_REWARD_G as i64)
+    .execute(&state.db)
+    .await;
+    if claimed.map(|r| r.rows_affected()).unwrap_or(0) != 1 {
+        return;
+    }
+
+    let Some(chain) = state.chain.as_ref().cloned() else { return };
+    let Ok(addr) = referrer.parse::<Address>() else { return };
+    let db = state.db.clone();
+    let referred_owned = referred.to_string();
+    let referrer_owned = referrer.clone();
+
+    // Off the request path: the new player should not wait on a chain write to
+    // finish creating their character.
+    tokio::spawn(async move {
+        let reference = ethers::utils::keccak256(format!("referral:{}", referred_owned).as_bytes());
+        if chain.reward_ref_used(reference).await.unwrap_or(false) {
+            let _ = sqlx::query("UPDATE referrals SET status = 'paid', paid_at = now() WHERE referred_wallet = $1")
+                .bind(&referred_owned).execute(&db).await;
+            return;
+        }
+        match chain.distribute_reward(addr, REFERRAL_REWARD_G, reference).await {
+            Ok(Some(tx)) => {
+                let _ = sqlx::query(
+                    "UPDATE referrals SET status = 'paid', tx_hash = $1, paid_at = now()
+                     WHERE referred_wallet = $2",
+                )
+                .bind(&tx).bind(&referred_owned).execute(&db).await;
+                crate::handlers::ledger::insert_ledger_entry(
+                    &db, &referrer_owned, "referral_reward",
+                    rust_decimal::Decimal::from(REFERRAL_REWARD_G), Some(&tx), None,
+                ).await;
+                tracing::info!("referral paid: {} recruited {} (+{} G$)", referrer_owned, referred_owned, REFERRAL_REWARD_G);
+            }
+            _ => {
+                let _ = sqlx::query("UPDATE referrals SET status = 'failed' WHERE referred_wallet = $1")
+                    .bind(&referred_owned).execute(&db).await;
+                tracing::error!("referral payout FAILED for {} (recruited {})", referrer_owned, referred_owned);
+            }
+        }
+    });
 }
 
 pub async fn create_player(
@@ -358,6 +444,16 @@ pub async fn create_player(
 
     match result {
         Ok(player) => {
+            // Credit whoever recruited them. Gated on the same "brand new" signal
+            // as the character claim below, so re-running onboarding for an
+            // existing player cannot trigger a second referral — and the
+            // one-row-per-referred-wallet key stops it even if that changed.
+            if player.character_claim_tx.is_none() {
+                if let Some(referrer) = body.referred_by.as_deref().filter(|r| !r.is_empty()) {
+                    credit_referral(&state, &wallet, referrer).await;
+                }
+            }
+
             // Background chain write — only for brand-new players (no existing claim tx)
             if player.character_claim_tx.is_none() {
                 if let Some(chain) = state.chain.as_ref().cloned() {
@@ -673,6 +769,30 @@ pub async fn search_players(
             HttpResponse::InternalServerError().json(json!({"error": "Search failed"}))
         }
     }
+}
+
+// ── GET /players/:wallet/referrals ────────────────────────────────────────────
+/// How many verified fighters this player has recruited, and what they earned.
+/// Public: it is the number shown on their card, and it is a boast, not a secret.
+pub async fn get_referrals(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT COUNT(*)::bigint, SUM(amount)::bigint FROM referrals
+         WHERE referrer_wallet = $1 AND status = 'paid'",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let (count, earned) = row.unwrap_or((0, None));
+    HttpResponse::Ok().json(json!({
+        "recruited": count,
+        "earned_g": earned.unwrap_or(0),
+    }))
 }
 
 // ── GET /players/:wallet/achievements ─────────────────────────────────────────

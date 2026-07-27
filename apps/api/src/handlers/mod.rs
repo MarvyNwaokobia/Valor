@@ -82,6 +82,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/inventory", web::get().to(players::get_inventory))
                 .route("/{wallet}/inventory", web::post().to(players::add_inventory_item))
                 .route("/{wallet}/username-available/{username}", web::get().to(players::check_username))
+                .route("/{wallet}/referrals", web::get().to(players::get_referrals))
                 .route("/{wallet}/achievements", web::get().to(players::get_achievements))
                 .route("/{wallet}/achievements/check", web::post().to(players::check_achievements))
                 .route("/{wallet}/inventory/{item_id}", web::patch().to(players::toggle_equip))
