@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Swords, Coins, Loader2, X } from 'lucide-react'
+import { Swords, Coins, Loader2, X, AlertTriangle } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useDuels, duelScore, type DuelRun, type DuelResult } from '@/hooks/useDuels'
@@ -27,6 +27,20 @@ const ValorScene = dynamic(
 
 const short = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`
 
+/** One labelled figure in the stake-confirmation breakdown. */
+function Row({ label, value, gold, strong }: {
+  label: string; value: string; gold?: boolean; strong?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between px-3.5 py-2.5">
+      <span className="text-slate-400 text-xs">{label}</span>
+      <span className={`text-sm tabular-nums ${gold ? 'text-valor-gold' : 'text-white'} ${strong ? 'font-bold' : 'font-medium'}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
 /**
  * DUELS — staked async score-duels.
  *
@@ -45,6 +59,9 @@ export default function DuelsPage() {
   const { duels, loading, pending, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
 
   const [stake, setStake] = useState(1000)
+  // The pending stake awaiting explicit confirmation. Nothing is charged until
+  // the player acts on this.
+  const [confirm, setConfirm] = useState<{ mode: 'create' | 'accept'; stake: number; id?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [run, setRun] = useState<DuelRun | null>(null)
   const [pickingLoadout, setPickingLoadout] = useState(false)
@@ -65,11 +82,11 @@ export default function DuelsPage() {
     setRun(r); setWaves(0); setResult(null); setPickingLoadout(true)
   }, [])
 
-  const onCreate = useCallback(async () => {
+  const onCreate = useCallback(async (amount: number) => {
     setError(null)
-    try { beginRun(await createDuel(stake)) }
+    try { beginRun(await createDuel(amount)) }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not open the duel') }
-  }, [createDuel, stake, beginRun])
+  }, [createDuel, beginRun])
 
   const onAccept = useCallback(async (id: string, stakeG: number) => {
     setError(null)
@@ -125,10 +142,29 @@ export default function DuelsPage() {
     )
   }
 
-  const min = duels?.min_stake_g ?? 100
-  const max = duels?.max_stake_g ?? 50_000
-  const cut = duels?.house_cut_percent ?? 10
-  const takeHome = Math.floor((stake * 2 * (100 - cut)) / 100)
+  // Every figure below comes from the SERVER, never a second copy of the ladder
+  // or the rate. If the deployed API is older than this UI it answers /duels
+  // without them — and a screen that guessed would state one fee while the
+  // server charged another. Refuse to render the staking flow at all instead.
+  if (duels && (!Array.isArray(duels.stake_tiers) || typeof duels.house_cut_bps !== 'number')) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: '#04030c' }}>
+        <p className="font-display font-black text-white text-lg">Duels are updating</p>
+        <p className="text-slate-400 text-sm max-w-xs">
+          The server is mid-deploy. Check back in a minute — nothing has been staked.
+        </p>
+        <button onClick={() => router.push('/')} className="mt-2 text-xs text-slate-500 hover:text-white transition-colors">
+          Back
+        </button>
+      </div>
+    )
+  }
+
+  const tiers = duels?.stake_tiers ?? []
+  const cutBps = duels?.house_cut_bps ?? 50
+  const cutLabel = `${(cutBps / 100).toFixed(cutBps % 100 === 0 ? 0 : 1)}%`
+  const payoutFor = (s: number) => Math.floor((s * 2 * (10_000 - cutBps)) / 10_000)
+  const poolCut = (s: number) => s * 2 - payoutFor(s)
   const myOpen = duels?.mine.find((d) => d.status === 'open' && d.challenger.toLowerCase() === address.toLowerCase())
 
   return (
@@ -195,28 +231,90 @@ export default function DuelsPage() {
         )}
 
         {/* ── Open a duel ──────────────────────────────────────────────────── */}
-        {!myOpen && !result && (
+        {!myOpen && !result && !confirm && (
           <div className="rounded-xl border border-valor-border bg-valor-surface p-5 flex flex-col gap-3">
             <p className="font-display font-black text-white text-sm uppercase tracking-wider">Open a duel</p>
-            <label htmlFor="duel-stake" className="text-[11px] uppercase tracking-widest text-slate-400 font-bold">
-              Your stake (G$)
-            </label>
-            <input
-              id="duel-stake" type="number" inputMode="numeric" min={min} max={max} step={100}
-              value={stake}
-              onChange={(e) => setStake(Math.max(min, Math.min(max, Number(e.target.value) || min)))}
-              className="w-full min-h-12 px-3.5 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-bold focus:outline-none focus:border-valor-gold/60 transition-colors"
-            />
-            <p className="text-slate-500 text-xs">
-              Winner takes <span className="text-valor-gold font-bold">{takeHome.toLocaleString()} G$</span>
-              {' '}· {cut}% stays in the pool · a draw refunds both
+            <p className="text-[11px] uppercase tracking-widest text-slate-400 font-bold">
+              Choose your stake
             </p>
+            {/* Fixed amounts rather than a free number field: both players stake the
+                SAME figure, so it has to come from one agreed ladder both sides see.
+                The server enforces the same list. */}
+            <div className="grid grid-cols-3 gap-2">
+              {tiers.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setStake(t)}
+                  aria-pressed={stake === t}
+                  className={`min-h-12 rounded-xl border font-bold text-sm transition-colors ${
+                    stake === t
+                      ? 'border-valor-gold bg-valor-gold/15 text-valor-gold'
+                      : 'border-valor-border bg-valor-surface-2 text-slate-300 hover:border-valor-gold/50'
+                  }`}
+                >
+                  {t.toLocaleString()}
+                </button>
+              ))}
+            </div>
             <button
-              onClick={onCreate} disabled={pending}
+              onClick={() => setConfirm({ mode: 'create', stake })}
+              disabled={pending}
               className="w-full min-h-12 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
             >
-              {pending ? <><Loader2 className="animate-spin" size={16} /> Staking…</> : <><Coins size={16} /> Stake &amp; Play</>}
+              <Coins size={16} /> Review stake
             </button>
+          </div>
+        )}
+
+        {/* ── Stake confirmation ───────────────────────────────────────────────
+            The last screen before real G$ leaves the wallet. It exists so nobody
+            can stake by reflex: the amount, what winning pays, what the pool keeps
+            and what happens on a draw are all stated before the button that spends. */}
+        {confirm && (
+          <div className="rounded-xl border border-valor-gold/50 bg-valor-surface p-5 flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="text-valor-gold shrink-0" size={16} />
+              <p className="font-display font-black text-white text-sm uppercase tracking-wider">
+                You are staking real G$
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-valor-surface-2 border border-valor-border divide-y divide-valor-border">
+              <Row label="Your stake" value={`${confirm.stake.toLocaleString()} G$`} strong />
+              <Row label="Opponent stakes" value={`${confirm.stake.toLocaleString()} G$`} />
+              <Row label="If you win" value={`+${payoutFor(confirm.stake).toLocaleString()} G$`} gold strong />
+              <Row label="If you lose" value={`-${confirm.stake.toLocaleString()} G$`} />
+              <Row label={`Valor pool (${cutLabel})`} value={`${poolCut(confirm.stake).toLocaleString()} G$`} />
+            </div>
+
+            <p className="text-slate-500 text-xs leading-relaxed">
+              Your stake leaves your wallet now and is held until the duel resolves.
+              Both fighters run the same map, one life each. A draw refunds both
+              stakes in full and takes no cut.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirm(null)} disabled={pending}
+                className="flex-1 min-h-12 rounded-xl border border-valor-border bg-valor-surface-2 text-slate-300 font-bold text-sm hover:text-white transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const c = confirm
+                  setConfirm(null)
+                  if (c.mode === 'create') void onCreate(c.stake)
+                  else void onAccept(c.id!, c.stake)
+                }}
+                disabled={pending}
+                className="flex-1 min-h-12 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+              >
+                {pending
+                  ? <><Loader2 className="animate-spin" size={16} /> Staking…</>
+                  : <>Stake {confirm.stake.toLocaleString()} G$</>}
+              </button>
+            </div>
           </div>
         )}
 
@@ -254,7 +352,7 @@ export default function DuelsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => void onAccept(d.id, d.stake_g)} disabled={pending}
+                  onClick={() => setConfirm({ mode: 'accept', stake: d.stake_g, id: d.id })} disabled={pending}
                   className="shrink-0 px-4 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors disabled:opacity-40"
                 >
                   Accept

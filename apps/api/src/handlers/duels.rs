@@ -21,15 +21,29 @@ use uuid::Uuid;
 use crate::utils::{is_valid_wallet, normalize_wallet};
 use crate::AppState;
 
-/// Percent of the pot the house keeps. The sink that makes duels net-deflationary:
-/// 2 stakes come in, 1.8 go out, 0.2 stays in the RewardPool.
-const HOUSE_CUT_PERCENT: u64 = 10;
+/// House cut in BASIS POINTS (1 bp = 0.01%), taken out of the pot and left in the
+/// Valor RewardPool. Basis points rather than a percent because the rate is 0.5%,
+/// which is not expressible as an integer percent — storing it as `0` or rounding
+/// to 1% would silently change what players are charged.
+///
+/// This is the sink that keeps duels from being a pure wash: two stakes come in,
+/// slightly less than two go out, and the remainder stays in the pool.
+const HOUSE_CUT_BPS: u64 = 50; // 0.5%
 
-/// Stake bounds, in whole G$. The floor keeps dust duels from spamming the chain
-/// (every duel costs two escrow txs + one payout tx in CELO gas); the ceiling
-/// bounds how much a single bad run can cost a player while this is new.
-const MIN_STAKE_G: i64 = 100;
-const MAX_STAKE_G: i64 = 50_000;
+/// The agreed stake amounts. A duel is only fair if both sides put up the SAME
+/// amount, so rather than let a challenger name any number, stakes come from one
+/// fixed ladder that both players see. The acceptor is then agreeing to a figure
+/// from a list they already know, not to whatever the challenger typed.
+///
+/// Enforced here rather than only in the UI: the client is not the place to decide
+/// how much real money a request is allowed to move.
+const STAKE_TIERS: [i64; 6] = [100, 500, 1_000, 5_000, 25_000, 50_000];
+
+/// Floor and ceiling, derived from the ladder so they cannot drift apart from it.
+/// The floor keeps dust duels from spamming the chain (every duel costs two escrow
+/// txs plus a payout tx in CELO gas); the ceiling bounds what one bad run can cost.
+const MIN_STAKE_G: i64 = STAKE_TIERS[0];
+const MAX_STAKE_G: i64 = STAKE_TIERS[STAKE_TIERS.len() - 1];
 
 /// Anti-cheat anchor, mirroring the Gauntlet's: a score cannot exceed what the
 /// server-measured elapsed time can physically support. A client never supplies
@@ -44,9 +58,13 @@ fn g_wei(whole: u64) -> U256 {
 }
 
 /// What the winner receives from a pot of two `stake` deposits.
+///
+/// Integer division floors, so any fractional G$ stays in the pool rather than
+/// being rounded in the winner's favour — the pool can never pay out more than it
+/// took in, whatever the stake.
 fn winner_payout(stake_g: i64) -> u64 {
     let pot = (stake_g as u64).saturating_mul(2);
-    pot.saturating_mul(100 - HOUSE_CUT_PERCENT) / 100
+    pot.saturating_mul(10_000 - HOUSE_CUT_BPS) / 10_000
 }
 
 /// Pure validation of a submitted duel score, extracted so the anti-cheat rules are
@@ -188,9 +206,10 @@ pub async fn create_duel(
     if !is_valid_wallet(&body.wallet) {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
     }
-    if body.stake_g < MIN_STAKE_G || body.stake_g > MAX_STAKE_G {
+    if !STAKE_TIERS.contains(&body.stake_g) {
         return HttpResponse::BadRequest().json(json!({
-            "error": format!("Stake must be between {} and {} G$", MIN_STAKE_G, MAX_STAKE_G),
+            "error": "Pick one of the standard stake amounts",
+            "stake_tiers": STAKE_TIERS,
         }));
     }
     let wallet = normalize_wallet(&body.wallet);
@@ -527,9 +546,10 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     HttpResponse::Ok().json(json!({
         "open": open_json,
         "mine": mine_json,
+        "stake_tiers": STAKE_TIERS,
         "min_stake_g": MIN_STAKE_G,
         "max_stake_g": MAX_STAKE_G,
-        "house_cut_percent": HOUSE_CUT_PERCENT,
+        "house_cut_bps": HOUSE_CUT_BPS,
     }))
 }
 
@@ -539,19 +559,50 @@ mod tests {
 
     #[test]
     fn winner_takes_the_pot_minus_the_house_cut() {
-        // Two 1000 G$ stakes = 2000 pot, 10% stays behind.
-        assert_eq!(winner_payout(1000), 1800);
-        assert_eq!(winner_payout(100), 180);
+        // Two 1000 G$ stakes = 2000 pot, 0.5% (10 G$) stays in the pool.
+        assert_eq!(winner_payout(1000), 1990);
+        // Two 50k stakes = 100k pot, 500 G$ retained.
+        assert_eq!(winner_payout(50_000), 99_500);
     }
 
     #[test]
-    fn the_house_cut_is_a_real_sink() {
-        // What matters economically: less leaves the pool than entered it, so a
-        // duel can never mint G$ no matter how many are played.
-        for stake in [100i64, 777, 50_000] {
+    fn the_house_cut_is_a_real_sink_at_every_stake() {
+        // The property that actually matters: less leaves the pool than entered
+        // it, at EVERY legal stake. At 0.5% the cut is small enough that integer
+        // rounding could plausibly erase it, which would quietly turn duels into
+        // a zero-sink feature — so this asserts the invariant rather than a
+        // formula, and sweeps the whole legal range instead of a few examples.
+        for stake in (MIN_STAKE_G..=MAX_STAKE_G).step_by(97) {
             let pot = (stake as u64) * 2;
-            assert!(winner_payout(stake) < pot, "stake {} would emit", stake);
+            assert!(
+                winner_payout(stake) < pot,
+                "stake {} pays out {} from a pot of {} — no cut retained",
+                stake, winner_payout(stake), pot,
+            );
         }
+    }
+
+    #[test]
+    fn every_offered_tier_is_a_legal_stake() {
+        // The ladder is what both the UI and the validator read, so a tier that
+        // the validator would reject would be an amount players can pick and then
+        // be refused — after they have already been shown it as an option.
+        for tier in STAKE_TIERS {
+            assert!(STAKE_TIERS.contains(&tier));
+            assert!(tier >= MIN_STAKE_G && tier <= MAX_STAKE_G);
+        }
+        // Ascending, so the UI can render it in order without sorting.
+        let mut sorted = STAKE_TIERS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, STAKE_TIERS, "stake tiers must stay in ascending order");
+    }
+
+    #[test]
+    fn the_minimum_stake_still_retains_a_cut() {
+        // The smallest pot is where rounding bites hardest: 200 G$ at 0.5% is 1 G$.
+        let pot = (MIN_STAKE_G as u64) * 2;
+        assert_eq!(winner_payout(MIN_STAKE_G), 199);
+        assert_eq!(pot - winner_payout(MIN_STAKE_G), 1);
     }
 
     #[test]
