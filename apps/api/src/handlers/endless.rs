@@ -188,7 +188,12 @@ pub async fn start_endless(
     let wallet = normalize_wallet(&body.wallet);
 
     // Sweep abandoned sessions opportunistically — no background task needed.
-    state.endless_sessions.retain(|_, s| s.created_at.elapsed() < Duration::from_secs(ENDLESS_TTL_SECS));
+    state.endless_sessions.retain(|_, s| s.elapsed_secs() < ENDLESS_TTL_SECS as f64);
+    // Same sweep for the durable copy, so the table tracks live runs rather than
+    // growing forever.
+    let _ = sqlx::query("DELETE FROM endless_sessions WHERE started_at < now() - ($1 || ' seconds')::interval")
+        .bind(ENDLESS_TTL_SECS.to_string())
+        .execute(&state.db).await;
 
     // Resume where they left off. Quitting never costs progress, so a session opens
     // on the player's stored wave rather than at 1 — and the session's own counter
@@ -202,11 +207,22 @@ pub async fn start_endless(
     let resume = current_wave(&state.db, &wallet, season).await;
 
     let session_id = Uuid::new_v4();
+    let started_at = chrono::Utc::now();
+    // Persist BEFORE answering. The memory map is the hot path; this row is what
+    // the next process reads after a deploy, and writing it first means a crash
+    // between the two cannot hand out a session id nobody can honour.
+    let _ = sqlx::query(
+        "INSERT INTO endless_sessions (session_id, wallet, season_id, wave, base_wave, started_at)
+         VALUES ($1, $2, $3, $4, $4, $5) ON CONFLICT (session_id) DO NOTHING",
+    )
+    .bind(session_id).bind(&wallet).bind(season).bind(resume - 1).bind(started_at)
+    .execute(&state.db).await;
+
     state.endless_sessions.insert(session_id, EndlessSession {
         wallet,
         wave: resume - 1, // the session credits wave N by incrementing to it
         base_wave: resume - 1,
-        created_at: Instant::now(),
+        started_at,
     });
     HttpResponse::Ok().json(json!({
         "session_id": session_id,
@@ -232,11 +248,30 @@ pub async fn endless_wave(
     body: web::Json<EndlessWaveRequest>,
 ) -> HttpResponse {
     // Advance the SERVER's wave counter under the session lock; validate timing here.
+    // A miss here used to mean the run was over. It usually meant the SERVER had
+    // restarted — the map is in memory, every deploy empties it — and the player
+    // carried on clearing waves that nothing counted. Rehydrate from the row
+    // written at start before giving up on them.
+    if !state.endless_sessions.contains_key(&body.session_id) {
+        let row: Option<(String, i32, i32, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT wallet, wave, base_wave, started_at FROM endless_sessions WHERE session_id = $1",
+        )
+        .bind(body.session_id)
+        .fetch_optional(&state.db).await.unwrap_or(None);
+
+        if let Some((wallet, wave, base_wave, started_at)) = row {
+            state.endless_sessions.insert(body.session_id, EndlessSession {
+                wallet, wave, base_wave, started_at,
+            });
+            tracing::info!("endless session {} rehydrated after restart", body.session_id);
+        }
+    }
+
     let (wallet, wave) = {
         let Some(mut session) = state.endless_sessions.get_mut(&body.session_id) else {
             return HttpResponse::NotFound().json(json!({"error": "No active run — start a new one", "expired": true}));
         };
-        if session.created_at.elapsed() >= Duration::from_secs(ENDLESS_TTL_SECS) {
+        if session.elapsed_secs() >= ENDLESS_TTL_SECS as f64 {
             return HttpResponse::NotFound().json(json!({"error": "Run expired", "expired": true}));
         }
         let next_wave = session.wave + 1;
@@ -244,12 +279,18 @@ pub async fn endless_wave(
         // with waves actually played now rather than the absolute wave number.
         let played = (next_wave - session.base_wave).max(1);
         let required = played as f64 * min_secs_per_wave();
-        if session.created_at.elapsed().as_secs_f64() < required {
+        if session.elapsed_secs() < required {
             return HttpResponse::TooManyRequests().json(json!({"error": "Too fast", "too_fast": true}));
         }
         session.wave = next_wave;
         (session.wallet.clone(), next_wave)
     };
+
+    // Keep the durable copy in step, so a restart mid-run resumes on the wave
+    // actually reached rather than the one the run opened on.
+    let _ = sqlx::query("UPDATE endless_sessions SET wave = $1 WHERE session_id = $2")
+        .bind(wave).bind(body.session_id)
+        .execute(&state.db).await;
 
     let week = current_week_key();
     let season = body.season_id.unwrap_or(CAMPAIGN_ENDLESS);
@@ -536,6 +577,8 @@ pub async fn end_endless(
     state: web::Data<AppState>,
     body: web::Json<EndEndlessRequest>,
 ) -> HttpResponse {
+    let _ = sqlx::query("DELETE FROM endless_sessions WHERE session_id = $1")
+        .bind(body.session_id).execute(&state.db).await;
     let Some((_, session)) = state.endless_sessions.remove(&body.session_id) else {
         return HttpResponse::Ok().json(json!({"ok": true, "score": 0, "note": "no session"}));
     };
