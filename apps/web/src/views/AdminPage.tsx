@@ -42,6 +42,31 @@ interface OnchainRow {
   created_at: string
 }
 
+/** What GET /admin/seasons/:id/payout-preview returns — the exact shape of the
+ *  transfer the Pay button will make, checked against the pool balance. */
+interface PayoutWinner {
+  rank: number
+  wallet_address: string
+  username: string | null
+  waves: number
+  amount_g: number
+  status: string
+  tx_hash: string | null
+}
+interface PayoutPreview {
+  season: { id: string; name: string; ends_at: string | null; prize_pool_g: number; payout_status: string; closed: boolean }
+  winners: PayoutWinner[]
+  winner_count: number
+  total_g: number
+  unpaid_g: number
+  tx_count: number
+  pool_address: string | null
+  pool_balance_g: number | null
+  funded: boolean
+  relay_celo: number | null
+  can_pay: boolean
+}
+
 const KIND_LABEL: Record<string, string> = {
   mission_record:       'Mission cleared',
   marketplace_purchase: 'Purchase',
@@ -134,6 +159,8 @@ export default function AdminPage() {
   const [seasonPerWinner, setSeasonPerWinner] = useState(50000)
   const [busy, setBusy] = useState(false)
   const [showScheduler, setShowScheduler] = useState(false)
+  const [preview, setPreview] = useState<PayoutPreview | null>(null)
+  const [paying, setPaying] = useState(false)
 
   useEffect(() => { setSession(loadSession()) }, [])
 
@@ -191,10 +218,21 @@ export default function AdminPage() {
     if (res.ok) setOnchain(await res.json())
   }, [authedFetch])
 
+  const refreshPreview = useCallback(async () => {
+    if (selectedSeason === 'all') { setPreview(null); return }
+    const res = await authedFetch(`/admin/seasons/${selectedSeason}/payout-preview`)
+    setPreview(res.ok ? await res.json() : null)
+  }, [authedFetch, selectedSeason])
+
   useEffect(() => {
     if (!session) return
     refreshSeasons()
   }, [session, refreshSeasons])
+
+  useEffect(() => {
+    if (!session) return
+    refreshPreview()
+  }, [session, refreshPreview])
 
   useEffect(() => {
     if (!session) return
@@ -290,6 +328,44 @@ export default function AdminPage() {
       }
     } finally {
       setBusy(false)
+    }
+  }
+
+  // Pays the season prizes on-chain. Long-running by nature: each prize is split
+  // into 10,000 G$ chunks (the pool's per-transfer cap), so this is dozens of
+  // transactions, not one. Safe to re-run — chunks that already landed are
+  // skipped without gas, so a timeout here is resumed by pressing the button again.
+  async function handlePayout() {
+    if (!preview) return
+    const { winners, unpaid_g, tx_count, season } = preview
+    const lines = winners
+      .filter((w) => w.status !== 'paid')
+      .map((w) => `  ${w.rank}. ${w.username || w.wallet_address.slice(0, 10)} — ${w.amount_g.toLocaleString()} G$`)
+      .join('\n')
+    const ok = window.confirm(
+      `Pay out "${season.name}"?\n\n${lines}\n\n` +
+      `Total: ${unpaid_g.toLocaleString()} G$ across ${tx_count} on-chain transactions.\n\n` +
+      `This sends REAL money and cannot be undone. It may take several minutes.`,
+    )
+    if (!ok) return
+
+    setPaying(true)
+    try {
+      const res = await authedFetch(`/admin/seasons/${season.id}/payout`, { method: 'POST' })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body) {
+        window.alert(
+          body.season_paid
+            ? `Season paid in full — ${body.paid} of ${body.attempted} winners settled.`
+            : `${body.paid} of ${body.attempted} settled, ${body.still_unpaid} still unpaid.\n\n` +
+              `Press Pay again to resume: anything already sent is skipped.`,
+        )
+      } else {
+        window.alert(`Payout did not run: ${body?.error ?? await res.text()}`)
+      }
+      await Promise.all([refreshPreview(), refreshSeasons()])
+    } finally {
+      setPaying(false)
     }
   }
 
@@ -464,8 +540,79 @@ export default function AdminPage() {
             </div>
           )
         })()}
-        <div className="hidden">
-        </div>
+        {/* Prize payout. Shows the exact transfer before it happens — who, how much,
+            how many transactions, and whether the pool can actually cover it — so
+            the button is a confirmation rather than a leap. Blocked until the season
+            has genuinely closed: winners freeze on the first run and each chunk burns
+            a one-shot on-chain reference, so an early payout cannot be corrected. */}
+        {preview && preview.winner_count > 0 && (
+          <div className="mb-3 p-3 rounded-xl border" style={{ borderColor: 'rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.04)' }}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-400">Prize payout</p>
+              {preview.season.payout_status === 'paid' && (
+                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Paid</span>
+              )}
+            </div>
+
+            <div className="max-h-56 overflow-y-auto rounded-lg mb-2" style={{ background: 'rgba(0,0,0,0.3)' }}>
+              {preview.winners.map((w) => (
+                <div key={w.wallet_address} className="flex items-center gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: 'rgba(42,42,58,0.5)' }}>
+                  <span className="w-5 text-slate-500 font-bold tabular-nums">{w.rank}</span>
+                  <span className="flex-1 truncate text-slate-200">
+                    {w.username || `${w.wallet_address.slice(0, 6)}…${w.wallet_address.slice(-4)}`}
+                  </span>
+                  <span className="text-slate-500 tabular-nums">{w.waves}w</span>
+                  <span className="text-amber-300 font-bold tabular-nums">{w.amount_g.toLocaleString()} G$</span>
+                  {w.status === 'paid'
+                    ? <span className="text-emerald-400 text-[10px] font-bold w-12 text-right">PAID</span>
+                    : w.status === 'failed'
+                    ? <span className="text-red-400 text-[10px] font-bold w-12 text-right">FAILED</span>
+                    : <span className="text-slate-600 text-[10px] w-12 text-right">—</span>}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 mb-2">
+              <span>{preview.winner_count} winners</span>
+              <span className="text-slate-200 font-bold">{preview.unpaid_g.toLocaleString()} G$ to send</span>
+              <span>{preview.tx_count} transactions</span>
+              {preview.pool_balance_g !== null && (
+                <span className={preview.funded ? 'text-emerald-400' : 'text-red-400'}>
+                  pool {preview.pool_balance_g.toLocaleString()} G$
+                </span>
+              )}
+              {preview.relay_celo !== null && (
+                <span className={preview.relay_celo > 0.1 ? '' : 'text-red-400'}>
+                  gas {preview.relay_celo.toFixed(2)} CELO
+                </span>
+              )}
+            </div>
+
+            {!preview.season.closed && (
+              <p className="text-[11px] text-amber-300/90 mb-2">
+                Season is still running. Payout unlocks when it closes
+                {preview.season.ends_at && ` — ${new Date(preview.season.ends_at).toLocaleString()}`}.
+              </p>
+            )}
+            {preview.season.closed && !preview.funded && preview.unpaid_g > 0 && (
+              <p className="text-[11px] text-red-400 mb-2">
+                Reward pool holds less than the prizes. Top it up before paying, or the run stops part-way.
+              </p>
+            )}
+
+            <button
+              onClick={handlePayout}
+              disabled={paying || busy || !preview.can_pay}
+              className="w-full px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: '#fbbf24' }}
+            >
+              {paying ? 'Paying… this takes a few minutes'
+                : preview.unpaid_g === 0 ? 'All winners paid'
+                : !preview.season.closed ? 'Locked until the season closes'
+                : `Pay ${preview.winners.filter((w) => w.status !== 'paid').length} winners · ${preview.unpaid_g.toLocaleString()} G$`}
+            </button>
+          </div>
+        )}
 
         <div className="flex flex-col gap-2 pt-3 border-t" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
           <button
