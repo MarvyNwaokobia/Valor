@@ -29,3 +29,43 @@ export function getMagic() {
   if (!instance) instance = createMagic()
   return instance
 }
+
+/**
+ * Is the Magic session actually able to sign RIGHT NOW?
+ *
+ * `isLoggedIn()` is not the same question as "the app thinks you're signed in".
+ * On mobile Safari and in an installed PWA, ITP can evict Magic's storage while
+ * the app still holds a cached address, leaving a session that reads as valid
+ * but refuses to sign. Asking Magic directly, immediately before a signature, is
+ * the only reliable check.
+ */
+export async function magicCanSign(): Promise<boolean> {
+  const magic = getMagic()
+  if (!magic) return false
+  try {
+    return await magic.user.isLoggedIn()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Turn a provider signing failure into something a player can act on.
+ *
+ * Magic reports a dead or unauthorised session as
+ *   "Magic RPC Error: [-32603] Internal error: User denied account access"
+ * which reads like the player refused a prompt they never saw. It is far more
+ * often an evicted session — so name the likely cause and the remedy instead of
+ * printing the SDK's stack.
+ */
+export function describeSigningError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+
+  if (/user (denied|rejected)|account access|-32603/i.test(raw)) {
+    return 'Your wallet session on this device could not sign. Sign out and back in, then try again.'
+  }
+  if (/user rejected|denied (the )?request|4001/i.test(raw)) {
+    return 'Signature declined.'
+  }
+  return raw
+}
