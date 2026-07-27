@@ -164,7 +164,15 @@ export function useDuels(walletAddress: string | undefined) {
    */
   const signStake = useCallback(async (stakeG: number) => {
     if (!walletAddress) throw new Error('Not signed in')
-    if (!walletClient?.account) throw new Error('Wallet not connected')
+    if (!walletClient?.account) {
+      // Being signed in and being able to SIGN are different states. wagmi
+      // restores a connection from storage before its wallet client is ready,
+      // and a Magic session on mobile Safari can survive while its provider does
+      // not, so the app can look logged in with nothing able to sign. Say that,
+      // rather than the flat "not connected" that sent people hunting for a
+      // disconnected wallet.
+      throw new Error('Wallet session not ready to sign — reload, or sign out and back in')
+    }
     if (!relayAddress) throw new Error('Staking relay unavailable')
 
     const amount = parseUnits(stakeG.toString(), G_DECIMALS)
@@ -247,6 +255,9 @@ export function useDuels(walletAddress: string | undefined) {
   }, [walletAddress, refresh])
 
   return {
+    // Whether a signature is actually possible right now. The UI gates staking on
+    // this instead of letting a player commit to a stake and fail at the wallet.
+    signerReady: !!walletClient?.account,
     duels: list.data,
     loading: list.isLoading,
     error: list.error instanceof Error ? list.error.message : null,

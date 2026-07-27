@@ -56,7 +56,7 @@ export default function DuelsPage() {
   const router = useRouter()
   const player = usePlayerStore((s) => s.player)
   const inventory = usePlayerStore((s) => s.inventory)
-  const { duels, loading, pending, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
+  const { duels, loading, pending, signerReady, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
 
   const [stake, setStake] = useState(1000)
   // The pending stake awaiting explicit confirmation. Nothing is charged until
@@ -190,6 +190,18 @@ export default function DuelsPage() {
           )}
         </AnimatePresence>
 
+        {/* Signed in, but nothing can sign yet. Shown instead of letting someone
+            pick a stake, confirm it, and only then hit a wallet error. */}
+        {!signerReady && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-4 py-3 flex flex-col gap-1">
+            <p className="text-amber-300 text-sm font-bold">Wallet session not ready</p>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              You&apos;re signed in, but your wallet can&apos;t sign right now — so staking is
+              paused. This usually clears on reload; if it doesn&apos;t, sign out and back in.
+            </p>
+          </div>
+        )}
+
         {/* ── Result card ──────────────────────────────────────────────────── */}
         {result && (
           <div className="rounded-xl border border-valor-gold/40 bg-valor-surface p-5 flex flex-col gap-2">
@@ -258,7 +270,7 @@ export default function DuelsPage() {
             </div>
             <button
               onClick={() => setConfirm({ mode: 'create', stake })}
-              disabled={pending}
+              disabled={pending || !signerReady}
               className="w-full min-h-12 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
             >
               <Coins size={16} /> Review stake
@@ -352,7 +364,8 @@ export default function DuelsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => setConfirm({ mode: 'accept', stake: d.stake_g, id: d.id })} disabled={pending}
+                  onClick={() => setConfirm({ mode: 'accept', stake: d.stake_g, id: d.id })}
+                  disabled={pending || !signerReady}
                   className="shrink-0 px-4 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors disabled:opacity-40"
                 >
                   Accept
