@@ -316,7 +316,12 @@ pub struct CreatePlayerRequest {
 }
 
 /// Whole G$ paid to a player whose referral completes onboarding.
-const REFERRAL_REWARD_G: u64 = 1_000;
+///
+/// Set against what the pool can actually fund, not what sounds generous: at
+/// 1,000 a head the free balance covered under 200 referrals, because the same
+/// pool also pays campaign wins, rank-ups, endless waves and season prizes — and
+/// every recruited player immediately starts drawing on it too.
+const REFERRAL_REWARD_G: u64 = 500;
 
 /// Credit a referrer, once, for bringing in a newly created player.
 ///
