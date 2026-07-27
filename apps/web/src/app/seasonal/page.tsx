@@ -207,7 +207,7 @@ export default function SeasonalPage() {
               Every player runs the same generated compound. Leave whenever you like and
               come back on the wave you left — dying only sends you to the start of your
               current wave, never back to the beginning. The board ranks WAVES COMPLETED.
-              Top 5 are paid when the season closes.
+              Top 10 are paid 50,000 G$ each when the season closes.
             </p>
 
             <button

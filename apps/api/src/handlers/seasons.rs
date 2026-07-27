@@ -22,7 +22,7 @@ const PAYOUT_BPS: &[u64] = &[
 /// Whole-G$ prize for each of `n` winners from a `pool_g` pool. Rank i (0-based)
 /// gets floor(pool * bps[i] / 10000); ranks beyond the table get 0.
 ///
-/// `custom` is the season's own split when it has one (e.g. Season 1's flat top 5,
+/// `custom` is the season's own split when it has one (e.g. Season 1's flat top 10,
 /// which the long-tail default can't express); otherwise the default table applies.
 fn payout_split(pool_g: u64, n: usize, custom: Option<&[i32]>) -> Vec<u64> {
     let table: Vec<u64> = match custom {
