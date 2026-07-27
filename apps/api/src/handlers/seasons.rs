@@ -97,7 +97,11 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
         return HttpResponse::Ok().json(json!({ "season": null }));
     };
 
-    let board = season_board(&state.db, &season, 25).await;
+    // Show the WHOLE field, not a page of it. With 28 entrants a limit of 25 quietly
+    // hid three players who had earned their place — and a player who cannot see
+    // themselves on the board has no way to tell a ranking from a recording fault.
+    // Payout is capped separately by the split table, so this only affects display.
+    let board = season_board(&state.db, &season, 500).await;
     let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
     let entries: Vec<_> = board.iter().enumerate().map(|(i, e)| json!({
         "rank": i + 1,
