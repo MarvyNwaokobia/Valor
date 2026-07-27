@@ -67,12 +67,20 @@ interface PayoutPreview {
   can_pay: boolean
 }
 
+// Every category the API writes needs a label here, or real money shows up in the
+// activity feed as a raw category string. The five below were invisible until the
+// g_ledger CHECK that rejected them was dropped (fix_ledger_categories.sql).
 const KIND_LABEL: Record<string, string> = {
   mission_record:       'Mission cleared',
   marketplace_purchase: 'Purchase',
   battle_reward:        'Reward paid',
   transfer_out:         'Transfer',
   ubi_claim:            'UBI claim',
+  season_reward:        'Season prize',
+  referral_reward:      'Referral',
+  survival_rearm:       'Re-arm',
+  duel_stake:           'Duel stake',
+  duel_payout:          'Duel payout',
 }
 
 // ── CSV export ───────────────────────────────────────────────────────────────
