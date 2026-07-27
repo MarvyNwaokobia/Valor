@@ -262,7 +262,7 @@ pub async fn endless_wave(
         }));
     }
 
-    // SEASONAL pays NOTHING per wave. Its whole prize is the end-of-season top 5, so
+    // SEASONAL pays NOTHING per wave. Its whole prize is the end-of-season top 10, so
     // paying per wave as well would double the cost of a season and drain the endless
     // pool over a 24-hour event. Campaign Endless is the mode that pays as you go.
     let mut amount = if is_seasonal { 0 } else { wave_reward_g(wave) };
