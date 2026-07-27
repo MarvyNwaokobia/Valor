@@ -1,7 +1,7 @@
 use ethers::{
     middleware::SignerMiddleware,
     prelude::abigen,
-    providers::{Http, Provider},
+    providers::{Http, Middleware, Provider},
     signers::{LocalWallet, Signer},
     types::{Address, H256, U256},
 };
@@ -518,32 +518,77 @@ impl ChainWriter {
         let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {}", s_hex))?.0;
         let spender = self.client.address();
 
-        // 1. Consume the permit — grants this wallet an allowance for `amount`.
-        let permit_call = self.g_token.permit(from, spender, amount, U256::from(deadline), v, r, s);
-        let permit_pending = {
+        // This is the ONLY chain call that broadcasts two DEPENDENT transactions
+        // (permit, then transferFrom against the allowance it just granted), and
+        // that is what made it the only one that hit
+        //   "nonce too low: next nonce 1409, tx nonce 1408".
+        //
+        // tx_lock's contract is that a broadcast completes before the next tx
+        // reads the nonce. Taking the lock twice with a confirmation wait in
+        // between broke it: the pending-nonce read for transferFrom could be
+        // served by a load-balanced node that had not yet seen the permit, so
+        // both txs claimed the same nonce and the second was rejected.
+        //
+        // Fixed by submitting the pair as ONE unit: a single lock hold, one
+        // nonce read, explicit sequential nonces. No confirmation wait sits
+        // inside the lock, so a hung RPC still cannot stall other payouts —
+        // which is the property the two-lock version was reaching for.
+        //
+        // Waiting for the permit receipt before sending transferFrom is not
+        // needed for correctness: nonce order guarantees the permit executes
+        // first, so the allowance exists by the time transferFrom runs.
+        let mut permit_call =
+            self.g_token.permit(from, spender, amount, U256::from(deadline), v, r, s);
+        let mut transfer_call = self.g_token.transfer_from(from, to, amount);
+
+        let (permit_pending, transfer_pending) = {
             let _tx = self.tx_lock.lock().await;
-            permit_call.send().await
-                .map_err(|e| format!("permit submission failed: {}", e))?
+
+            let nonce = self
+                .client
+                .get_transaction_count(spender, Some(ethers::types::BlockNumber::Pending.into()))
+                .await
+                .map_err(|e| format!("nonce read failed: {}", e))?;
+            permit_call.tx.set_nonce(nonce);
+            transfer_call.tx.set_nonce(nonce + 1);
+
+            let permit_pending = permit_call
+                .send()
+                .await
+                .map_err(|e| format!("permit submission failed: {}", e))?;
+            let transfer_pending = transfer_call
+                .send()
+                .await
+                .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+
+            (permit_pending, transfer_pending)
         };
-        tokio::time::timeout(Duration::from_secs(90), permit_pending.confirmations(1))
+
+        let hash = transfer_pending.tx_hash();
+
+        // The permit is only interesting when it FAILS: a reverted permit leaves
+        // no allowance, so the transfer reverts too and the useful error is that
+        // one. Surface it rather than reporting a generic transfer failure.
+        let permit_receipt = tokio::time::timeout(Duration::from_secs(90), permit_pending.confirmations(1))
             .await
             .map_err(|_| "permit tx timed out".to_string())?
             .map_err(|e| format!("permit tx failed: {}", e))?
             .ok_or_else(|| "permit tx was dropped from mempool".to_string())?;
+        if permit_receipt.status == Some(0.into()) {
+            return Err("permit reverted — signature invalid, expired, or already used".to_string());
+        }
 
-        // 2. Move the funds straight to the destination.
-        let transfer_call = self.g_token.transfer_from(from, to, amount);
-        let transfer_pending = {
-            let _tx = self.tx_lock.lock().await;
-            transfer_call.send().await
-                .map_err(|e| format!("transferFrom submission failed: {}", e))?
-        };
-        let hash = transfer_pending.tx_hash();
-        tokio::time::timeout(Duration::from_secs(90), transfer_pending.confirmations(1))
+        let receipt = tokio::time::timeout(Duration::from_secs(90), transfer_pending.confirmations(1))
             .await
             .map_err(|_| "transfer tx timed out".to_string())?
             .map_err(|e| format!("transfer tx failed: {}", e))?
             .ok_or_else(|| "transfer tx was dropped from mempool".to_string())?;
+        // A reverted tx still produces a receipt. Without this check a revert was
+        // reported as a successful transfer — and for a duel stake that would have
+        // opened a duel nobody had actually paid into.
+        if receipt.status == Some(0.into()) {
+            return Err("transfer reverted on-chain — nothing was moved".to_string());
+        }
 
         tracing::info!("transferG: {} -> {} amount={} tx={:?}", from, to, amount, hash);
         Ok(hash)
