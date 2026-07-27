@@ -1,4 +1,7 @@
+'use client'
+
 import { useParams } from 'next/navigation'
+import { shareCard } from '@/lib/shareCard'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
@@ -19,11 +22,15 @@ export default function PlayerCardPage() {
   const [copied, setCopied] = useState(false)
 
   function copyCardUrl() {
-    const url = `${window.location.origin}/card/${walletAddress}`
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+    void shareCard(walletAddress as string, player?.username || player?.character_name)
+      .then((outcome) => {
+        // Only confirm when there is something to confirm. A native share sheet
+        // gives its own feedback, and a cancelled one should say nothing at all.
+        if (outcome !== 'copied') return
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => {})
   }
 
   useEffect(() => {
