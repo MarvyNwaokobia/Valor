@@ -30,9 +30,14 @@ export interface MyDuel {
 export interface DuelsList {
   open: OpenDuel[]
   mine: MyDuel[]
+  /** The agreed stake ladder. Both sides can only pick from this, and the server
+   *  enforces it — the UI renders whatever the server says rather than its own copy,
+   *  so the two can never disagree about what a legal stake is. */
+  stake_tiers: number[]
   min_stake_g: number
   max_stake_g: number
-  house_cut_percent: number
+  /** House cut in basis points (50 = 0.5%). */
+  house_cut_bps: number
 }
 
 /** Everything needed to play one side of a duel. */
@@ -75,6 +80,34 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((json as { error?: string }).error ?? 'Request failed')
   return json as T
+}
+
+/**
+ * Is the deployed API new enough to serve duels the way this UI describes them?
+ *
+ * The web app and the API deploy independently, so rather than document a deploy
+ * order and hope, the entry point feature-detects. Crucially it detects the
+ * CONTRACT, not just the route: an older API answers /duels perfectly happily
+ * while charging a different house cut and accepting different stakes. Showing
+ * the card then would put a screen in front of players that states one fee while
+ * the server takes another, which is the one failure mode that must not ship.
+ *
+ * `stake_tiers` is the marker because it arrived with the 0.5% cut, so its
+ * presence means the server agrees with every number this UI prints.
+ */
+export function useDuelsAvailable(): boolean {
+  const q = useQuery({
+    queryKey: ['duels-available'],
+    queryFn: async () => {
+      const res = await fetch(`${API}/duels`)
+      if (!res.ok) return false
+      const body = (await res.json().catch(() => null)) as Partial<DuelsList> | null
+      return Array.isArray(body?.stake_tiers) && typeof body?.house_cut_bps === 'number'
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  return q.data === true
 }
 
 export function useDuels(walletAddress: string | undefined) {
