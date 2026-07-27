@@ -6,6 +6,7 @@ pub mod battles;
 pub mod missions;
 pub mod items;
 pub mod decay;
+pub mod duels;
 pub mod rewards;
 pub mod ws;
 pub mod endless;
@@ -113,6 +114,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("", web::get().to(items::list_items))
                 .route("/{id}/purchase", web::post().to(items::purchase_item))
                 .route("/{id}/purchase-relay", web::post().to(items::purchase_item_relay)),
+        )
+        .service(
+            web::scope("/duels")
+                .route("", web::get().to(duels::list_duels))
+                .route("", web::post().to(duels::create_duel))
+                .route("/{id}/accept", web::post().to(duels::accept_duel))
+                .route("/{id}/submit", web::post().to(duels::submit_duel_score))
+                .route("/{id}/cancel", web::post().to(duels::cancel_duel)),
         )
         .service(
             web::scope("/decay")
