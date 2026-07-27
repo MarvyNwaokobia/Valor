@@ -2,9 +2,22 @@
 
 import { useCallback, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSurvivalRearm } from '@/hooks/useSurvivalRearm'
+import { useConfig } from 'wagmi'
+import { readContract } from '@wagmi/core'
+import { parseUnits, parseSignature } from 'viem'
+import { G_TOKEN_ADDRESS } from '@/lib/constants'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { useRelayAddress } from '@/hooks/useTransferOut'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+const G_DECIMALS = 18
+
+const NONCES_ABI = [
+  { name: 'nonces', type: 'function', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+] as const
+const BALANCE_ABI = [
+  { name: 'balanceOf', type: 'function', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+] as const
 
 /** A duel someone has opened and not yet had accepted. */
 export interface OpenDuel {
@@ -112,7 +125,9 @@ export function useDuelsAvailable(): boolean {
 
 export function useDuels(walletAddress: string | undefined) {
   const queryClient = useQueryClient()
-  const rearm = useSurvivalRearm(walletAddress)
+  const config = useConfig()
+  const walletClient = useActiveWalletClient()
+  const { data: relayAddress } = useRelayAddress()
   const [pending, setPending] = useState(false)
 
   const list = useQuery({
@@ -137,45 +152,89 @@ export function useDuels(walletAddress: string | undefined) {
   }, [queryClient])
 
   /**
-   * Staking spends against a signed allowance rather than prompting per duel.
-   * `arm` is the same EIP-2612 permit the survival re-arm uses, so a player who
-   * already armed this session stakes with no popup at all. We only ask for a
-   * signature when the backend tells us the allowance is short (need_arm), which
-   * keeps the common case one tap.
+   * Sign an EIP-2612 permit for EXACTLY this stake.
+   *
+   * One signature per stake, rather than the survival re-arm's standing session
+   * allowance. That allowance is capped at 50 G$ because it authorises many
+   * signature-free spends mid-run — every duel stake starts at 100 G$, so it was
+   * rejected outright ("Arm cap must be between 1 and 50 G$"). Raising that
+   * ceiling would have loosened a safety bound belonging to another feature; a
+   * per-stake permit is both correct and more honest, since the player authorises
+   * the exact figure the confirmation screen just showed them.
    */
-  const withStake = useCallback(async <T,>(stakeG: number, call: () => Promise<T>): Promise<T> => {
-    try {
-      return await call()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      if (!/allowance/i.test(msg)) throw err
-      // Arm a little over the stake so a follow-up duel doesn't re-prompt.
-      await rearm.arm(stakeG * 2)
-      return await call()
+  const signStake = useCallback(async (stakeG: number) => {
+    if (!walletAddress) throw new Error('Not signed in')
+    if (!walletClient?.account) {
+      // Being signed in and being able to SIGN are different states. wagmi
+      // restores a connection from storage before its wallet client is ready,
+      // and a Magic session on mobile Safari can survive while its provider does
+      // not, so the app can look logged in with nothing able to sign. Say that,
+      // rather than the flat "not connected" that sent people hunting for a
+      // disconnected wallet.
+      throw new Error('Wallet session not ready to sign — reload, or sign out and back in')
     }
-  }, [rearm])
+    if (!relayAddress) throw new Error('Staking relay unavailable')
+
+    const amount = parseUnits(stakeG.toString(), G_DECIMALS)
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30)
+
+    const balance = await readContract(config, {
+      address: G_TOKEN_ADDRESS, abi: BALANCE_ABI, functionName: 'balanceOf',
+      args: [walletAddress as `0x${string}`],
+    })
+    if (balance < amount) throw new Error('Not enough G$ for this stake')
+
+    const nonce = await readContract(config, {
+      address: G_TOKEN_ADDRESS, abi: NONCES_ABI, functionName: 'nonces',
+      args: [walletAddress as `0x${string}`],
+    })
+
+    const rawSig = await walletClient.signTypedData({
+      account: walletClient.account,
+      domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
+      types: {
+        Permit: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+      primaryType: 'Permit',
+      message: {
+        owner: walletAddress as `0x${string}`,
+        spender: relayAddress,
+        value: amount,
+        nonce,
+        deadline,
+      },
+    })
+    const { v, r, s } = parseSignature(rawSig)
+    return { deadline: Number(deadline), v: Number(v), r, s }
+  }, [walletAddress, walletClient, relayAddress, config])
 
   const createDuel = useCallback(async (stakeG: number): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
-      const run = await withStake(stakeG, () =>
-        post<DuelRun>('/duels', { wallet: walletAddress, stake_g: stakeG }))
+      const permit = await signStake(stakeG)
+      const run = await post<DuelRun>('/duels', { wallet: walletAddress, stake_g: stakeG, ...permit })
       refresh()
       return run
     } finally { setPending(false) }
-  }, [walletAddress, withStake, refresh])
+  }, [walletAddress, signStake, refresh])
 
   const acceptDuel = useCallback(async (id: string, stakeG: number): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
-      const run = await withStake(stakeG, () =>
-        post<DuelRun>(`/duels/${id}/accept`, { wallet: walletAddress }))
+      const permit = await signStake(stakeG)
+      const run = await post<DuelRun>(`/duels/${id}/accept`, { wallet: walletAddress, ...permit })
       refresh()
       return run
     } finally { setPending(false) }
-  }, [walletAddress, withStake, refresh])
+  }, [walletAddress, signStake, refresh])
 
   const submitScore = useCallback(async (id: string, runToken: string, score: number): Promise<DuelResult> => {
     if (!walletAddress) throw new Error('Not signed in')
@@ -196,10 +255,13 @@ export function useDuels(walletAddress: string | undefined) {
   }, [walletAddress, refresh])
 
   return {
+    // Whether a signature is actually possible right now. The UI gates staking on
+    // this instead of letting a player commit to a stake and fail at the wallet.
+    signerReady: !!walletClient?.account,
     duels: list.data,
     loading: list.isLoading,
     error: list.error instanceof Error ? list.error.message : null,
-    pending: pending || rearm.pending,
+    pending,
     createDuel, acceptDuel, submitScore, cancelDuel, refresh,
   }
 }
