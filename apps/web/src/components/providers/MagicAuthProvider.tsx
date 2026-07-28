@@ -39,34 +39,66 @@ interface ResolvedIdentity {
   issuer: string | undefined
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Reject rather than hang for ever: a provider call that never settles would
+ *  otherwise pin the whole app on `status: 'loading'`. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ])
+}
+
+/**
+ * Can this session actually produce an account to sign with?
+ *
+ * `isLoggedIn()` does not answer that. On mobile Safari and in an installed PWA,
+ * ITP evicts Magic's storage while leaving enough behind to report a live
+ * session; the app looks signed in and then fails at the first signature with
+ * "-32603 User denied account access", at the exact moment the player tries to
+ * spend money. Asking the provider for an account is the cheap proof.
+ *
+ * RETRIED, because one failed call is not proof of a dead session. The provider
+ * talks to an iframe that may not have booted on first paint, over a network
+ * that may blip, on phones that throttle background frames. Treating any single
+ * failure as fatal turned every transient hiccup into a forced sign-out — which
+ * is exactly what players hit as an intermittent "Sign in to buy" on a session
+ * they had never left.
+ */
+async function canSign(magic: NonNullable<ReturnType<typeof getMagic>>): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const accounts = (await withTimeout(
+        (magic.rpcProvider as unknown as {
+          request: (a: { method: string }) => Promise<string[]>
+        }).request({ method: 'eth_accounts' }),
+        4000,
+      )) ?? []
+      if (accounts.length) return true
+    } catch {
+      // Fall through and try again — see above.
+    }
+    if (attempt < 2) await sleep(400 * (attempt + 1))
+  }
+  return false
+}
+
 async function resolveIdentity(): Promise<ResolvedIdentity> {
   const magic = getMagic()
   if (!magic) return { address: undefined, email: undefined, issuer: undefined }
   const loggedIn = await magic.user.isLoggedIn()
   if (!loggedIn) return { address: undefined, email: undefined, issuer: undefined }
 
-  // isLoggedIn() is not the same question as "can this session sign".
+  // Deliberately does NOT log the user out when this fails.
   //
-  // On mobile Safari and in an installed PWA, ITP evicts Magic's storage while
-  // leaving enough behind to report a live session. The app then looked signed
-  // in and failed at the first signature with Magic's own
-  // "-32603 User denied account access" — which reads as though the player
-  // refused a prompt that never appeared, and which they only discovered at the
-  // moment they tried to spend money.
-  //
-  // Asking the provider for an account is the cheap proof. A session that cannot
-  // produce one is treated as signed OUT, so the player is asked to sign in
-  // again up front instead of hitting a wall at checkout.
-  try {
-    const accounts = (await (magic.rpcProvider as unknown as {
-      request: (a: { method: string }) => Promise<string[]>
-    }).request({ method: 'eth_accounts' })) ?? []
-    if (!accounts.length) {
-      await magic.user.logout().catch(() => {})
-      return { address: undefined, email: undefined, issuer: undefined }
-    }
-  } catch {
-    await magic.user.logout().catch(() => {})
+  // Destroying the session was the original response, and it made a temporary
+  // fault permanent: a player whose provider blipped once was signed out for
+  // real and had to log in again, when simply reloading would have recovered a
+  // perfectly good session. Reporting "signed out" for this render is enough —
+  // if the session really is dead the player signs in again, and if it was only
+  // unreachable the next refresh picks it straight back up.
+  if (!(await canSign(magic))) {
     return { address: undefined, email: undefined, issuer: undefined }
   }
 
