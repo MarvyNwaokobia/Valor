@@ -80,6 +80,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}", web::patch().to(players::update_player))
                 .route("/{wallet}/identity", web::post().to(players::set_magic_identity))
                 .route("/{wallet}/inventory", web::get().to(players::get_inventory))
+                .route("/{wallet}/earn-cap", web::get().to(players::get_earn_cap))
                 .route("/{wallet}/inventory", web::post().to(players::add_inventory_item))
                 .route("/{wallet}/username-available/{username}", web::get().to(players::check_username))
                 .route("/{wallet}/referrals", web::get().to(players::get_referrals))

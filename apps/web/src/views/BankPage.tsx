@@ -14,6 +14,7 @@ import { useTransferOut } from '@/hooks/useTransferOut'
 import { useDebt, useSettleDebt } from '@/hooks/useDebt'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
+import WeeklyEarnCap from '@/components/bank/WeeklyEarnCap'
 import { formatGDollarNumber } from '@/utils/format'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -217,6 +218,7 @@ export default function BankPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <DailyClaimButton walletAddress={address as `0x${string}`} />
         <RankPoolPanel rank={player.rank} walletAddress={address as `0x${string}`} />
+        <WeeklyEarnCap walletAddress={address} />
       </div>
 
       {/* Transfer out */}
