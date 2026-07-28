@@ -920,3 +920,13 @@ pub async fn freeze_decay(
         "shield_item_id": shield_item_id.to_string(),
     }))
 }
+
+// ── GET /players/{wallet}/earn-cap ─────────────────────────────────────────────
+// This week's earning allowance. Public (same as the rest of the player reads) and
+// cheap: three indexed sums. Exists so the UI can SHOW the cap — a player whose
+// rewards quietly shrink with no explanation reports a payout bug, which costs
+// more than the cap saves.
+pub async fn get_earn_cap(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    HttpResponse::Ok().json(crate::services::earn_cap::status_for(&state.db, &wallet).await)
+}
