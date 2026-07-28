@@ -30,11 +30,10 @@ const ENDLESS_WAVE_XP: i32 = 50;
 fn min_secs_per_wave() -> f64 {
     std::env::var("ENDLESS_MIN_SECS_PER_WAVE").ok().and_then(|v| v.parse().ok()).unwrap_or(6.0)
 }
-/// Optional per-player, per-week G$ ceiling. 0 (default) = NO CAP. A config knob so a
-/// cap can be switched on later without a code change (see the Endless spec).
-fn weekly_cap_g() -> u64 {
-    std::env::var("ENDLESS_WEEKLY_CAP_G").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
-}
+// The Endless-only weekly ceiling (ENDLESS_WEEKLY_CAP_G) is gone. It defaulted to 0,
+// so it never actually capped anything, and being scoped to one earn surface it could
+// not bound a player's total anyway. Replaced by services::earn_cap, which spans
+// Endless, Campaign first-clears and rank-up bonuses together — see WEEKLY_EARN_CAP_G.
 /// Warn in the logs once the reward pool drops below this, so it gets topped up before
 /// payouts start failing (the no-cap safety net).
 fn pool_warn_g() -> u64 {
@@ -308,19 +307,12 @@ pub async fn endless_wave(
     // pool over a 24-hour event. Campaign Endless is the mode that pays as you go.
     let mut amount = if is_seasonal { 0 } else { wave_reward_g(wave) };
 
-    // Optional weekly cap (0 = off). Never lowers below zero; the run still continues
-    // for score/XP even once a capped player stops earning G$.
-    let cap = weekly_cap_g();
-    if cap > 0 {
-        let paid_this_week: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(amount), 0)::bigint FROM endless_rewards
-             WHERE wallet_address = $1 AND week_key = $2 AND status <> 'failed'",
-        )
-        .bind(&wallet).bind(&week)
-        .fetch_optional(&state.db).await.ok().flatten().unwrap_or(0);
-        let remaining = (cap as i64 - paid_this_week).max(0) as u64;
-        amount = amount.min(remaining);
-    }
+    // Weekly cap, now shared with Campaign first-clears and rank-up bonuses so the
+    // ceiling is a player's TOTAL for the week rather than one per earn surface.
+    // Beyond it earnings taper instead of stopping, so a capped player still has a
+    // reason to keep playing (see services::earn_cap). The run always continues for
+    // score and XP regardless of what it pays.
+    amount = crate::services::earn_cap::cap_reward(&state.db, &wallet, amount).await;
 
     // Claim the once-per-(session,wave) payout slot idempotently.
     let claimed = amount > 0 && sqlx::query(
