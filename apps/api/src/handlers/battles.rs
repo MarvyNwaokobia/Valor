@@ -342,8 +342,12 @@ pub(crate) async fn award_player(
     // rank it passed through rather than only the one it landed on.
     for (reward_key, reward_ordinal, promoted) in &steps {
         let (reward_key, reward_ordinal) = (reward_key.clone(), *reward_ordinal);
-        // This rank-up's payout grows with the rank (STEP × ordinal), capped on-chain.
-        let reward_g = rank_up_reward_g(reward_ordinal);
+        // This rank-up's payout grows with the rank (STEP × ordinal), capped on-chain,
+        // then trimmed by the player's remaining weekly allowance. The RANK still
+        // advances in full either way — the cap only ever touches money.
+        let reward_g = crate::services::earn_cap::cap_reward(
+            &state.db, wallet, rank_up_reward_g(reward_ordinal),
+        ).await;
         // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
         // earns the level (the Nth rank-up needs the curve's cumulative XP through N).
         // The rank/prestige itself still advances above and on-chain below — only the
@@ -910,7 +914,12 @@ pub async fn complete_live_fight(
                 .await;
             log_write_failure("pve_level unlock", &wallet, &advanced);
 
-            let amount = first_clear_bounty(level);
+            // Trimmed by the shared weekly ceiling before the row is written, so the
+            // stored amount is what actually gets paid and the reconcile sweep has
+            // nothing to disagree with.
+            let amount = crate::services::earn_cap::cap_reward(
+                &state.db, &wallet, first_clear_bounty(level),
+            ).await;
             // Claim the payout slot idempotently: only the first request to insert
             // the (wallet, level) row owns the payout. A retry or a concurrent
             // duplicate hits the PK conflict and pays nothing (and the on-chain ref
