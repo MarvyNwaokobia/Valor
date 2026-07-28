@@ -41,8 +41,13 @@ export function useBattle(player: Player, walletAddress: string) {
       if (itemIds.length === 0) return []
       const res = await fetch(`${API}/items`)
       if (!res.ok) return []
-      const all: Item[] = await res.json()
-      return all.filter(i => itemIds.includes(i.id))
+      const all = await res.json()
+      // /items is trusted to be a list by the type annotation alone. A 200 carrying
+      // anything else made .filter throw inside the queryFn, which React Query
+      // reports as a failed query — so the player silently owns nothing and fights
+      // with none of their stat boosts, with no error anywhere.
+      if (!Array.isArray(all)) return []
+      return (all as Item[]).filter(i => itemIds.includes(i.id))
     },
     enabled: itemIds.length > 0,
     staleTime: 60_000,

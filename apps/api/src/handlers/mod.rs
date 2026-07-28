@@ -18,6 +18,7 @@ pub mod debts;
 pub mod gas;
 pub mod admin;
 pub mod consistency;
+pub mod client_errors;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -55,6 +56,7 @@ async fn root() -> HttpResponse {
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         .route("/", web::get().to(root))
+            .route("/client-errors", web::post().to(client_errors::report))
         .route("/health", web::get().to(health))
         // DB-aware readiness — external monitors should watch THIS, not /health.
         .route("/health/ready", web::get().to(ready))

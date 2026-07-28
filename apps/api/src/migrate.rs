@@ -33,6 +33,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_battle_mode.sql",       include_str!("../migrations/add_battle_mode.sql")),
     ("add_chain_tx_columns.sql",  include_str!("../migrations/add_chain_tx_columns.sql")),
     ("add_character_confirmed.sql", include_str!("../migrations/add_character_confirmed.sql")),
+    ("add_client_errors.sql",     include_str!("../migrations/add_client_errors.sql")),
     ("add_duels.sql",             include_str!("../migrations/add_duels.sql")),
     ("add_endless_progress.sql",  include_str!("../migrations/add_endless_progress.sql")),
     ("add_endless_rewards.sql",   include_str!("../migrations/add_endless_rewards.sql")),
