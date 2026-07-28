@@ -42,12 +42,17 @@ interface ResolvedIdentity {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Reject rather than hang for ever: a provider call that never settles would
- *  otherwise pin the whole app on `status: 'loading'`. */
+ *  otherwise pin the whole app on `status: 'loading'`.
+ *
+ *  The timer is cleared once the race settles. Leaving it armed fires a rejection
+ *  into a promise nobody is listening to any more, and an unhandled rejection per
+ *  probe is noise we would then have to explain away while hunting real faults. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
-  ])
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), ms)
+  })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer)) as Promise<T>
 }
 
 /**

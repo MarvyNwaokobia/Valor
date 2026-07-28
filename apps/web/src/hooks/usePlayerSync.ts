@@ -22,8 +22,14 @@ export function usePlayerSync(address: string | undefined) {
     const wallet = address.toLowerCase()
 
     // Guard: Clear cached player immediately if it belongs to a different wallet
+    // Optional-chained on purpose. This runs in the effect BODY, outside the
+    // try below, so a missing wallet_address here does not fail the sync — it
+    // takes down the whole route through the error boundary. The store now
+    // validates on rehydrate so this should be unreachable; it stays because
+    // the cost of being wrong about that is a crash, and the cost of the guard
+    // is one character.
     const cachedPlayer = usePlayerStore.getState().player
-    if (cachedPlayer && cachedPlayer.wallet_address.toLowerCase() !== wallet) {
+    if (cachedPlayer && cachedPlayer.wallet_address?.toLowerCase() !== wallet) {
       clearPlayer()
     }
 
@@ -55,7 +61,9 @@ export function usePlayerSync(address: string | undefined) {
 
         if (inventoryRes.ok) {
           const inventory = await inventoryRes.json()
-          setInventory(inventory ?? [])
+          // `?? []` only ever caught null/undefined. A 200 carrying an object
+          // instead of a list went straight into the store — see setInventory.
+          setInventory(Array.isArray(inventory) ? inventory : [])
         }
 
       } catch {
