@@ -60,8 +60,10 @@ export default function ProfilePage() {
       if (itemIds.length === 0) return []
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ''}/items`)
       if (!res.ok) return []
-      const all: Item[] = await res.json()
-      return all.filter(i => itemIds.includes(i.id))
+      const all = await res.json()
+      // See useBattle: a non-list 200 here silently empties the player's kit.
+      if (!Array.isArray(all)) return []
+      return (all as Item[]).filter(i => itemIds.includes(i.id))
     },
     enabled: itemIds.length > 0,
     staleTime: 60_000,

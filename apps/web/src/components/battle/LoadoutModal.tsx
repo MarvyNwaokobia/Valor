@@ -84,7 +84,11 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
     queryKey: ['items-all'],
     queryFn: async () => {
       const res = await fetch(`${API}/items`)
-      return res.ok ? ((await res.json()) as Item[]) : []
+      if (!res.ok) return []
+      // Cast alone is a lie about a network response — a non-list here would leave
+      // every owned weapon out of the picker with no sign anything went wrong.
+      const all = await res.json()
+      return Array.isArray(all) ? (all as Item[]) : []
     },
   })
 
