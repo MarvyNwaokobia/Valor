@@ -36,6 +36,12 @@ export function useActiveWalletClient(): WalletClient | undefined {
 
     const bridged = getBridgedProvider()
     if (!bridged) {
+      // Only a Magic session may fall back to Magic's provider. An external
+      // wallet that has lost its connector must NOT: building a client with the
+      // wallet's address on Magic's transport signs with Magic's key while
+      // claiming the wallet's address, so the permit carries a signature the
+      // backend cannot match to the buyer and the purchase reverts.
+      if (source !== 'magic') return undefined
       // Fall back to building straight off Magic. This is what the hook did
       // before the bridge existed, and dropping it was a regression: the bridge
       // is populated by MagicAuthProvider, so ANY reason it hasn't published —
