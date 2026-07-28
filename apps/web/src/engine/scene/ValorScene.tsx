@@ -18,7 +18,7 @@ import { STARTER_GUN_ID, type GunId } from '../combat/GunStats';
 import type { AmmoId, AttachmentId, AttachmentSlot } from '../combat/Loadout';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
-import { useGunPrototypes, GUN_IDS } from './gunModels';
+import { useGunPrototypes, ALL_GUN_IDS } from './gunModels';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, ENDLESS_MISSION, SEASONAL_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import {
@@ -768,7 +768,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const gunProtos = useGunPrototypes();
   const gunMeshes = useMemo(() => {
     const out = {} as Record<GunId, THREE.Group>;
-    for (const id of GUN_IDS) {
+    // ALL guns, not just the GLB-backed ones. Iterating the loading list here
+    // left every seasonal weapon without a viewmodel, and the muzzle lookup
+    // below dereferences it immediately.
+    for (const id of ALL_GUN_IDS) {
       const g = gunProtos[id].clone(true);
       // The viewmodel inherits the CAMERA's orientation, and a camera looks down
       // its own -Z. The barrel is +Z, so unturned it fires into your face.
@@ -780,8 +783,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   }, [gunProtos]);
   // The active weapon's muzzle (tracers / flash / laser spawn here); repointed on
   // a weapon switch in the frame loop.
+  // Falls back to the rifle rather than dereferencing whatever the player has
+  // equipped. A weapon with no viewmodel is a content gap; taking the entire
+  // route down with "undefined is not an object" is a bug, and this line is the
+  // one that did it for anyone holding a seasonal gun.
+  const startMesh = gunMeshes[LOADOUT[0]] ?? gunMeshes.assault_rifle;
   const muzzleRef = useRef<THREE.Object3D>(
-    gunMeshes[LOADOUT[0]].getObjectByName('muzzle') ?? gunMeshes[LOADOUT[0]],
+    startMesh.getObjectByName('muzzle') ?? startMesh,
   );
 
   useEffect(() => {
@@ -1249,8 +1257,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const activeId = sim.gun.id;
     const view = WEAPON_VIEW[activeId] ?? WEAPON_VIEW.assault_rifle;
     // Show only the weapon you're holding; repoint the muzzle to it.
-    for (const id of GUN_IDS) gunMeshes[id].visible = id === activeId;
-    muzzleRef.current = gunMeshes[activeId].getObjectByName('muzzle') ?? gunMeshes[activeId];
+    for (const id of ALL_GUN_IDS) gunMeshes[id].visible = id === activeId;
+    // Same fallback as the initial muzzle: this runs every frame, so an unmapped
+    // weapon here would throw sixty times a second.
+    const activeMesh = gunMeshes[activeId] ?? gunMeshes.assault_rifle;
+    muzzleRef.current = activeMesh.getObjectByName('muzzle') ?? activeMesh;
     swapRaise.current = Math.max(0, swapRaise.current - dt * 2.4);
     const vm = vmRef.current;
     if (vm) {
@@ -2372,7 +2383,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
       {/* viewmodel — all five guns mounted; the frame loop shows only the active one */}
       <group ref={vmRef}>
-        {GUN_IDS.map((id) => (
+        {ALL_GUN_IDS.map((id) => (
           <primitive key={id} object={gunMeshes[id]} />
         ))}
         {/* simple graybox hands so the first person reads */}

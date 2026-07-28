@@ -103,8 +103,23 @@ function buildPrototype(src: THREE.Object3D, gunId: GunId): THREE.Group {
   return group;
 }
 
-/** Only the GLB-backed guns; the procedural ones are built, not fetched. */
+/** Only the GLB-backed guns; the procedural ones are built, not fetched.
+ *  This is a LOADING list — it says what to fetch, not what a player can hold.
+ *  Anything iterating weapons to build or show them wants ALL_GUN_IDS. */
 export const GUN_IDS = Object.keys(GUN_MODEL_URL) as Exclude<GunId, ProceduralGunId>[];
+
+/**
+ * Every gun a player can actually equip — GLB-backed and procedural alike, and
+ * exactly the keys `useGunPrototypes` returns.
+ *
+ * Split out because the scene built its viewmodels from GUN_IDS, which silently
+ * meant "the five with model files". Equipping a seasonal weapon then looked up
+ * a mesh that was never created, and the very next line called
+ * .getObjectByName on it — so buying a seasonal gun and deploying crashed the
+ * whole route with "undefined is not an object". The prototypes were always
+ * there; only the loop that cloned them was short.
+ */
+export const ALL_GUN_IDS: GunId[] = [...GUN_IDS, ...PROCEDURAL_IDS];
 
 /** Load + normalise every gun model. Returns one prototype per tier; clone before
  *  mutating. Suspends while the GLBs load, so mount under a <Suspense>. */
