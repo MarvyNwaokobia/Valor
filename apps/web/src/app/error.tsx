@@ -29,6 +29,16 @@ export default function AppError({
     if (chunk && !hardReloadForChunkError()) setReloading(false);
   }, [chunk]);
 
+  // This boundary used to swallow the error completely: players saw "Something
+  // broke", we saw nothing, and diagnosing it meant guessing at which of a dozen
+  // client paths threw on a phone we cannot attach a console to. Log it, and put
+  // a short identifier on screen so a screenshot carries the one detail that
+  // makes the report actionable.
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.error('[valor] route error', { message: error.message, digest: error.digest, stack: error.stack });
+  }, [error]);
+
   return (
     <div
       style={{
@@ -80,6 +90,20 @@ export default function AppError({
           >
             Try again
           </button>
+        )}
+        {!reloading && (error.digest || error.message) && (
+          <p
+            style={{
+              marginTop: 18,
+              fontSize: 11,
+              lineHeight: 1.4,
+              color: '#5c5868',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              wordBreak: 'break-word',
+            }}
+          >
+            {error.digest ? `ref ${error.digest}` : error.message.slice(0, 120)}
+          </p>
         )}
       </div>
     </div>
