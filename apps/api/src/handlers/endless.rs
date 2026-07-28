@@ -312,7 +312,7 @@ pub async fn endless_wave(
     // Beyond it earnings taper instead of stopping, so a capped player still has a
     // reason to keep playing (see services::earn_cap). The run always continues for
     // score and XP regardless of what it pays.
-    amount = crate::services::earn_cap::cap_reward(&state.db, &wallet, amount).await;
+    amount = crate::services::earn_cap::cap_reward(&state, &wallet, amount).await;
 
     // Claim the once-per-(session,wave) payout slot idempotently.
     let claimed = amount > 0 && sqlx::query(
