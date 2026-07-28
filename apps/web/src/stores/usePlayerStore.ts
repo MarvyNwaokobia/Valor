@@ -34,7 +34,19 @@ export const usePlayerStore = create<PlayerState>()(
         set((state) => ({
           player: state.player ? { ...state.player, ...updates } : null,
         })),
-      setInventory: (inventory) => set({ inventory }),
+      // Coerced, not trusted. `inventory` is read straight into render by
+      // MarketplaceItem, ProfilePage, LoadoutModal and useBattle, all of which
+      // call .map/.some/.filter on it — so a non-array here is not a bad value,
+      // it is a TypeError during render, which React escalates to the route
+      // error boundary and the player sees as "Something broke".
+      //
+      // It arrives from `await res.json()` on a 200. Any response that is
+      // shaped like {"error": ...} rather than a list — a proxy error page, a
+      // truncated body, an API returning a message with the wrong status —
+      // slips through a `?? []` guard untouched, because it is neither null nor
+      // undefined. Then persist writes it to localStorage and every reload
+      // rehydrates the same crash.
+      setInventory: (inventory) => set({ inventory: Array.isArray(inventory) ? inventory : [] }),
       addInventoryItem: (item) =>
         set((state) => ({ inventory: [...state.inventory, item] })),
       removeInventoryItem: (itemId) =>
@@ -65,6 +77,42 @@ export const usePlayerStore = create<PlayerState>()(
         player: state.player,
         inventory: state.inventory,
       }),
+
+      // Rehydration must be TOTAL: whatever is in localStorage, the store comes
+      // back in a shape the app can render.
+      //
+      // It was not. Anything persisted under this key was trusted as-is, so a
+      // `player` missing `wallet_address` made usePlayerSync throw on
+      // `cachedPlayer.wallet_address.toLowerCase()` — in the effect body, which
+      // React reports to the route error boundary as "Something broke". And
+      // because the bad value is in localStorage, reloading rehydrates it and
+      // throws again, so the retry button cannot clear it. That is the
+      // intermittent, sticky crash.
+      //
+      // localStorage gets into that state without anyone doing anything wrong:
+      // the persisted shape changes between releases while an old blob survives,
+      // and iOS can kill a tab mid-write and leave a truncated record.
+      //
+      // `version` handles the honest schema bump; this validation handles
+      // everything else, since a corrupt blob carries whatever version it was
+      // written with. A cache is not worth a crash — anything that fails to
+      // convince us is dropped, and the server sync refills it moments later.
+      version: 1,
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<PlayerState>
+        const player =
+          saved.player && typeof saved.player.wallet_address === 'string' && saved.player.wallet_address
+            ? saved.player
+            : null
+        return {
+          ...current,
+          ...saved,
+          player,
+          // A non-array here would throw the moment anything mapped over it.
+          inventory: Array.isArray(saved.inventory) ? saved.inventory : [],
+          isVerified: Boolean(saved.isVerified),
+        }
+      },
     },
   ),
 )
