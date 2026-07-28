@@ -346,7 +346,7 @@ pub(crate) async fn award_player(
         // then trimmed by the player's remaining weekly allowance. The RANK still
         // advances in full either way — the cap only ever touches money.
         let reward_g = crate::services::earn_cap::cap_reward(
-            &state.db, wallet, rank_up_reward_g(reward_ordinal),
+            state, wallet, rank_up_reward_g(reward_ordinal),
         ).await;
         // Way 2 gate: the G$ bonus is paid only when the player's refereed lifetime XP
         // earns the level (the Nth rank-up needs the curve's cumulative XP through N).
@@ -918,7 +918,7 @@ pub async fn complete_live_fight(
             // stored amount is what actually gets paid and the reconcile sweep has
             // nothing to disagree with.
             let amount = crate::services::earn_cap::cap_reward(
-                &state.db, &wallet, first_clear_bounty(level),
+                &state, &wallet, first_clear_bounty(level),
             ).await;
             // Claim the payout slot idempotently: only the first request to insert
             // the (wallet, level) row owns the payout. A retry or a concurrent

@@ -22,6 +22,9 @@
 //! handful of players can still empty a 200,000 G$ pool in a week. Keeping the pool
 //! funded is a separate job (see `pool_warn_g` in the endless handler).
 
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use sqlx::PgPool;
 
@@ -90,20 +93,108 @@ pub async fn earned_this_week(db: &PgPool, wallet: &str) -> u64 {
     total.unwrap_or(0).max(0) as u64
 }
 
-/// Cap `proposed` against what this wallet has already earned this week.
-/// Returns the amount actually payable.
-pub async fn cap_reward(db: &PgPool, wallet: &str, proposed: u64) -> u64 {
-    let cap = weekly_cap_g();
-    if cap == 0 || proposed == 0 { return proposed; }
-    let earned = earned_this_week(db, wallet).await;
-    let allowed = apply_cap(earned, proposed, cap, over_cap_rate());
-    if allowed < proposed {
-        tracing::info!(
-            "weekly cap: {} earned {} of {} this week — reward trimmed {} -> {}",
-            wallet, earned, cap, proposed, allowed,
-        );
+// ── Pool floor ────────────────────────────────────────────────────────────────
+//
+// The weekly cap bounds ONE player. It does not bound the pool: at 50,000 a
+// handful of capped players still empty a 200,000 G$ balance inside a week, and
+// the failure mode is ugly — transfers start reverting mid-session, so players
+// see rewards that silently never arrive rather than a smaller reward.
+//
+// So below a floor, grindable payouts taper. Prizes and duel payouts are
+// untouched, same as the cap: they are budgeted, and a season that cannot pay
+// its winners is worse than a slow drip of bounties.
+
+/// Reward-pool balance under which grindable payouts taper. 0 disables.
+fn pool_floor_g() -> u64 {
+    std::env::var("REWARD_POOL_FLOOR_G").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000)
+}
+
+/// Share of a reward still paid while the pool is under the floor.
+fn pool_floor_rate() -> f64 {
+    std::env::var("REWARD_POOL_FLOOR_RATE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25)
+}
+
+/// How long a pool-balance reading is reused. An RPC round trip per reward would
+/// put a network call in the path of every wave cleared; the balance only has to
+/// be fresh enough to catch the floor within a minute of crossing it.
+const POOL_BALANCE_TTL: Duration = Duration::from_secs(60);
+
+static POOL_BALANCE: OnceLock<Mutex<Option<(Instant, u64)>>> = OnceLock::new();
+
+/// Whole G$ in the main reward pool, cached. `None` when there is no chain
+/// configured or the read failed — callers treat that as "do not taper", because
+/// refusing to pay on a failed balance read would turn an RPC blip into a silent
+/// pay cut.
+async fn pool_balance_g(chain: &crate::services::chain::ChainWriter) -> Option<u64> {
+    let cell = POOL_BALANCE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cell.lock() {
+        if let Some((at, bal)) = *guard {
+            if at.elapsed() < POOL_BALANCE_TTL { return Some(bal); }
+        }
     }
+    let addr = chain.reward_pool_address()?;
+    let raw = chain.g_balance(addr).await.ok()?;
+    let whole = (raw / ethers::types::U256::exp10(18)).as_u64();
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some((Instant::now(), whole));
+    }
+    Some(whole)
+}
+
+/// Cap `proposed` against this wallet's weekly allowance, then against the pool.
+/// Returns the amount actually payable.
+pub async fn cap_reward(state: &crate::AppState, wallet: &str, proposed: u64) -> u64 {
+    if proposed == 0 { return 0; }
+    let mut allowed = proposed;
+
+    let cap = weekly_cap_g();
+    if cap > 0 {
+        let earned = earned_this_week(&state.db, wallet).await;
+        allowed = apply_cap(earned, allowed, cap, over_cap_rate());
+        if allowed < proposed {
+            tracing::info!(
+                "weekly cap: {} earned {} of {} this week — reward trimmed {} -> {}",
+                wallet, earned, cap, proposed, allowed,
+            );
+        }
+    }
+
+    let floor = pool_floor_g();
+    if floor > 0 && allowed > 0 {
+        if let Some(chain) = state.chain.as_ref() {
+            if let Some(balance) = pool_balance_g(chain).await {
+                if balance < floor {
+                    let tapered = (allowed as f64 * pool_floor_rate().clamp(0.0, 1.0)).floor() as u64;
+                    tracing::warn!(
+                        "REWARD POOL LOW: {} G$ is under the {} G$ floor — payouts tapered \
+                         ({} -> {} for {}). Top the pool up.",
+                        balance, floor, allowed, tapered, wallet,
+                    );
+                    allowed = tapered;
+                }
+            }
+        }
+    }
+
     allowed
+}
+
+/// What the player is shown: how much of this week's allowance is spent, and what
+/// happens next. Diminishing returns the player cannot see read as a payout bug,
+/// so this exists specifically to be rendered, not just to be queryable.
+pub async fn status_for(db: &PgPool, wallet: &str) -> serde_json::Value {
+    let cap = weekly_cap_g();
+    let earned = earned_this_week(db, wallet).await;
+    let resets = week_start() + chrono::Duration::days(7);
+    serde_json::json!({
+        "earned_this_week_g": earned,
+        "cap_g": cap,
+        "remaining_g": cap.saturating_sub(earned),
+        "over_cap": cap > 0 && earned >= cap,
+        // Percentage of full rate earned past the cap, for the explanatory line.
+        "over_cap_rate": over_cap_rate(),
+        "resets_at": resets.to_rfc3339(),
+    })
 }
 
 #[cfg(test)]
