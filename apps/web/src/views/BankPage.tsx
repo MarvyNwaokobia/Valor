@@ -10,7 +10,7 @@ import { useSignOut } from '@/hooks/useSignOut'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
 import { useLedgerSummary } from '@/hooks/useLedgerSummary'
-import { useTransferOut } from '@/hooks/useTransferOut'
+import { useTransferOut, useWithdrawFee, splitWithdrawal } from '@/hooks/useTransferOut'
 import { useDebt, useSettleDebt } from '@/hooks/useDebt'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
@@ -100,6 +100,9 @@ export default function BankPage() {
   const { formatted: gBalanceFormatted, refetch: refetchBalance } = useGBalance(address as `0x${string}` | undefined)
   const { data: ledger } = useLedgerSummary(address)
   const { transfer, pending: transferring } = useTransferOut(address)
+  const { data: withdrawFee } = useWithdrawFee()
+  const feeBps = withdrawFee?.bps ?? 0
+  const { net: amountNet, fee: amountFee } = splitWithdrawal(parseFloat(amount) || 0, feeBps)
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
@@ -224,7 +227,10 @@ export default function BankPage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="font-bold text-white text-sm">Transfer G$ Out</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">Send to any wallet — cash out your winnings</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Send to any wallet — cash out your winnings
+              {feeBps > 0 && ` · ${withdrawFee?.percent}% withdrawal fee`}
+            </p>
           </div>
           <ArrowUpRight size={18} className="text-slate-500" />
         </div>
@@ -256,6 +262,26 @@ export default function BankPage() {
               className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none"
             />
 
+            {/* The breakdown, shown BEFORE they sign. A withdrawal fee a player
+                only discovers from the amount that arrived is the single fastest
+                way to lose their trust, so it is spelled out here in full. */}
+            {feeBps > 0 && (
+              <div className="rounded-lg border border-valor-border bg-black/20 px-3 py-2 flex flex-col gap-1 text-[11px]">
+                <div className="flex justify-between text-slate-400">
+                  <span>Leaving your wallet</span>
+                  <span className="font-mono text-slate-300">{formatGDollarNumber(parseFloat(amount) || 0)} G$</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Withdrawal fee ({withdrawFee?.percent}%)</span>
+                  <span className="font-mono text-amber-400">-{formatGDollarNumber(amountFee)} G$</span>
+                </div>
+                <div className="flex justify-between font-bold text-white pt-1 border-t border-valor-border">
+                  <span>They receive</span>
+                  <span className="font-mono">{formatGDollarNumber(amountNet)} G$</span>
+                </div>
+              </div>
+            )}
+
             {transferError && <p className="text-red-400 text-xs">{transferError}</p>}
             {transferSuccess && <p className="text-green-400 text-xs">Sent! tx {transferSuccess.slice(0, 10)}…</p>}
 
@@ -275,7 +301,11 @@ export default function BankPage() {
                 className="flex-1 py-2.5 text-sm font-black rounded-lg text-black transition-opacity disabled:opacity-50"
                 style={{ background: '#eab308' }}
               >
-                {transferring ? 'Sending…' : `Confirm sending ${amount || '0'} G$`}
+                {transferring
+                  ? 'Sending…'
+                  : feeBps > 0
+                    ? `Send ${formatGDollarNumber(amountNet)} G$`
+                    : `Confirm sending ${amount || '0'} G$`}
               </motion.button>
             </div>
           </div>
