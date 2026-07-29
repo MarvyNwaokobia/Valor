@@ -9,7 +9,6 @@ import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGBalance } from '@/hooks/useGBalance'
-import { useSignerReady } from '@/hooks/useSignerReady'
 import { gunIdFromItemId } from './GunIcons'
 import { ItemArt } from './ItemArt'
 import { WeaponCrate, crateLabel } from './WeaponCrate'
@@ -83,7 +82,6 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
   const isLimited    = item.total_supply !== null
   const isSoldOut    = isLimited && (item.remaining_supply ?? 0) <= 0
   const isPending    = pendingItemId === item.id
-  const { canSign }  = useSignerReady()
   const alreadyOwned = inventory.some((i) => i.item_id === item.id)
 
   async function handleConfirm() {
@@ -235,7 +233,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
         ) : (
           <motion.button
             onClick={() => { setError(null); setShowConfirm(true) }}
-            disabled={!walletAddress || isSoldOut || !canSign}
+            disabled={!walletAddress || isSoldOut}
             whileTap={!isSoldOut ? { scale: 0.97 } : {}}
             className="w-full py-2.5 text-sm font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
@@ -243,13 +241,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               color: isSoldOut ? '#6b7280' : '#000',
             }}
           >
-            {isSoldOut
-              ? 'Sold Out'
-              : !walletAddress
-                ? 'Sign in to buy'
-                : !canSign
-                  ? 'Wallet can’t sign'
-                  : 'Buy with G$'}
+            {isSoldOut ? 'Sold Out' : !walletAddress ? 'Sign in to buy' : 'Buy with G$'}
           </motion.button>
         )}
       </motion.div>
