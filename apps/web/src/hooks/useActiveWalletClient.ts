@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import { createWalletClient, custom, type WalletClient } from 'viem'
 import { celo } from 'viem/chains'
 import { useWalletClient as useWagmiWalletClient } from 'wagmi'
-import { getBridgedProvider } from '@/lib/walletBridge'
+import { getBridgedProviderFor } from '@/lib/walletBridge'
 import { getMagic } from '@/lib/magic'
 import { useResolvedAuth } from './useResolvedAuth'
 
@@ -16,25 +16,54 @@ import { useResolvedAuth } from './useResolvedAuth'
 // - External wallet via wagmi's injected connector: wagmi's own
 //   useWalletClient. Safe because it's wagmi's native connector talking
 //   straight to the wallet.
-// - Anything else: built from whatever provider is published to
-//   lib/walletBridge — Magic's embedded wallet, or an external wallet connected
-//   through Web3Auth's chooser (wagmi registers no connector for that one, so
-//   it can only be reached through the bridge).
+// - Anything else: built from the provider published to lib/walletBridge BY THE
+//   SDK THAT OWNS THIS SESSION — Magic's embedded wallet, or an external wallet
+//   connected through Web3Auth's chooser (wagmi registers no connector for that
+//   one, so it can only be reached through the bridge).
+//
+// The source scoping is load-bearing. The bridge used to be a single slot, read
+// without checking who filled it, so a Magic player whose Web3Auth session
+// restored on page load got the external wallet's provider AND address: every
+// wallet action prompted a wallet they hadn't signed in with, and any signature
+// that did go through was made by the wrong address, so the backend permit could
+// not match the player and the transaction reverted.
 //
 // Adding another SDK later means publishing to the bridge from its provider
-// component; this hook and all ten of its call sites stay untouched.
+// component and mapping it below; the call sites stay untouched.
 export function useActiveWalletClient(): WalletClient | undefined {
   const { status, address, source } = useResolvedAuth()
   const { data: wagmiWalletClient } = useWagmiWalletClient()
 
   return useMemo(() => {
     if (status !== 'ready' || !address) return undefined
+
+    // Never hand back a client that would sign as someone else. Every branch
+    // below returns through here, so a future provider change cannot quietly
+    // reintroduce a mismatch: the worst case becomes "cannot sign, reload",
+    // which is recoverable, instead of "signed with the wrong wallet", which
+    // costs the player a reverted transaction and a wallet prompt they cannot
+    // explain.
+    const guard = (client: WalletClient | undefined): WalletClient | undefined => {
+      const signer = client?.account?.address
+      if (!signer) return undefined
+      if (signer.toLowerCase() !== address.toLowerCase()) {
+        console.error(
+          `[wallet] signer ${signer} does not match session ${address} — refusing to sign`,
+        )
+        return undefined
+      }
+      return client
+    }
+
     // A 'wallet' source is wagmi's only when wagmi actually holds the
     // connection; a Web3Auth-connected wallet reports the same source but falls
     // through to the bridge below.
-    if (source === 'wallet' && wagmiWalletClient) return wagmiWalletClient
+    if (source === 'wallet' && wagmiWalletClient) return guard(wagmiWalletClient)
 
-    const bridged = getBridgedProvider()
+    // Ask for the provider belonging to THIS session's SDK. A 'magic' session
+    // reads only Magic's entry; a 'wallet' session reads only Web3Auth's. The
+    // other SDK being live is no longer able to affect this lookup.
+    const bridged = getBridgedProviderFor(source === 'magic' ? 'magic' : 'web3auth')
     if (!bridged) {
       // Only a Magic session may fall back to Magic's provider. An external
       // wallet that has lost its connector must NOT: building a client with the
@@ -54,18 +83,22 @@ export function useActiveWalletClient(): WalletClient | undefined {
       // Web3Auth-connected wallets, which have no other route.
       const magic = getMagic()
       if (!magic) return undefined
-      return createWalletClient({
-        account: address,
-        chain: celo,
-        transport: custom(magic.rpcProvider),
-      })
+      return guard(
+        createWalletClient({
+          account: address,
+          chain: celo,
+          transport: custom(magic.rpcProvider),
+        }),
+      )
     }
     // The bridge publishes provider and address together, so the account here
     // can never drift from the session the provider will actually sign with.
-    return createWalletClient({
-      account: bridged.address,
-      chain: celo,
-      transport: custom(bridged.provider),
-    })
+    return guard(
+      createWalletClient({
+        account: bridged.address,
+        chain: celo,
+        transport: custom(bridged.provider),
+      }),
+    )
   }, [status, address, source, wagmiWalletClient])
 }
