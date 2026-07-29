@@ -6,6 +6,7 @@ import MarketplaceGrid from '@/components/marketplace/MarketplaceGrid'
 import ResaleBrowse from '@/components/marketplace/ResaleBrowse'
 import { useGBalance } from '@/hooks/useGBalance'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import SignerWarning from '@/components/ui/SignerWarning'
 
 export default function MarketplacePage() {
   const { address } = useResolvedAuth()
@@ -54,6 +55,10 @@ export default function MarketplacePage() {
           )}
         </div>
       </motion.div>
+
+      {/* Above the grid, so a session that cannot sign is known before a player
+          picks an item and commits to a purchase that was never going to work. */}
+      <SignerWarning action="buy anything" />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
