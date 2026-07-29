@@ -32,6 +32,31 @@ export function useRelayAddress() {
   })
 }
 
+export type WithdrawFee = { bps: number; percent: number; address: `0x${string}` }
+
+// The withdrawal fee, read from the server rather than hardcoded here. The rate
+// shown to a player before they sign MUST be the rate the server charges, and a
+// duplicated constant drifts the first time it changes. Falls back to 0 on a
+// failed fetch so a dead endpoint understates the fee rather than inventing one.
+export function useWithdrawFee() {
+  return useQuery({
+    queryKey: ['withdraw-fee'],
+    queryFn: async (): Promise<WithdrawFee> => {
+      const res = await fetch(`${API}/withdraw-fee`)
+      if (!res.ok) throw new Error('Fee unavailable')
+      return res.json()
+    },
+    staleTime: 5 * 60_000,
+  })
+}
+
+/// Split a gross amount the way the server does: fee rounded down, player keeps
+/// the dust. Mirrors `split_fee` in the API.
+export function splitWithdrawal(amountG: number, bps: number) {
+  const fee = Math.floor(amountG * bps) / 10_000
+  return { net: amountG - fee, fee }
+}
+
 export function useTransferOut(walletAddress: string | undefined) {
   const queryClient = useQueryClient()
   const config = useConfig()
