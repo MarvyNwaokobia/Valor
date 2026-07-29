@@ -148,16 +148,41 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
         Err(e) => (vec![], Some(e.to_string())),
     };
 
-    let healthy =
-        frozen.is_empty() && stuck.is_empty() && frozen_err.is_none() && stuck_err.is_none();
+    // 3. CAN THE RELAY STILL PAY GAS?
+    //
+    // A funded G$ pool proves nothing: G$ cannot pay Celo gas, so the relay needs
+    // its own CELO. When it runs dry EVERY on-chain action fails at once — payouts,
+    // purchases, transfers, referrals — and each one fails with its own unrelated-
+    // looking error, which is exactly how an empty tank cost us a day of chasing
+    // signature bugs. At ~345k gas a transaction and Celo's current base fee, a
+    // few hours of ordinary play drains it, so this is a routine condition and
+    // belongs in the health check rather than in someone's memory.
+    let (relay_gas_celo, relay_can_pay) = match state.chain.as_ref() {
+        Some(chain) => {
+            let bal = chain.relay_gas_balance().await;
+            let celo = bal.map(|b| b.as_u128() as f64 / 1e18);
+            (celo, chain.relay_can_pay().await)
+        }
+        None => (None, true), // no chain configured — nothing to be out of gas for
+    };
+
+    let healthy = frozen.is_empty()
+        && stuck.is_empty()
+        && frozen_err.is_none()
+        && stuck_err.is_none()
+        && relay_can_pay;
 
     if !healthy {
         tracing::error!(
-            "CONSISTENCY CHECK FAILED: {} frozen player row(s), {} stuck payout(s){}{}",
+            "CONSISTENCY CHECK FAILED: {} frozen player row(s), {} stuck payout(s){}{}{}",
             frozen.len(),
             stuck.len(),
             frozen_err.as_ref().map(|e| format!(" | frozen query error: {}", e)).unwrap_or_default(),
             stuck_err.as_ref().map(|e| format!(" | payout query error: {}", e)).unwrap_or_default(),
+            if relay_can_pay { String::new() } else {
+                format!(" | RELAY OUT OF GAS: {:.4} CELO — every on-chain action is failing",
+                        relay_gas_celo.unwrap_or(0.0))
+            },
         );
     }
 
@@ -169,5 +194,7 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
         "stuck_payouts": stuck,
         "stuck_payout_query_error": stuck_err,
         "stuck_after_minutes": STUCK_PAYOUT_MINUTES,
+        "relay_gas_celo": relay_gas_celo,
+        "relay_can_pay": relay_can_pay,
     }))
 }
