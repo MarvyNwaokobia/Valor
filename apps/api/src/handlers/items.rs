@@ -148,6 +148,18 @@ pub async fn purchase_item_relay(
             Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),
         };
 
+        // Same as transfer-out: check the tank before spending the buyer's
+        // signature, so a relay with no gas doesn't burn a permit nonce and send
+        // them round the "signature invalid" loop.
+        if !chain.relay_can_pay().await {
+            tracing::error!("RELAY OUT OF GAS — refusing purchase for {} before taking the signature", wallet);
+            return HttpResponse::ServiceUnavailable().json(json!({
+                "error": "Valor can't process purchases right now — our relay is out of gas. \
+                          You have not been charged. This is on us, not your wallet.",
+                "code": crate::services::chain::RELAY_OUT_OF_GAS,
+            }));
+        }
+
         tx_hash = match chain
             .purchase_item_for(buyer, on_chain_id as u64, body.deadline, body.v, &body.r, &body.s)
             .await
@@ -155,6 +167,13 @@ pub async fn purchase_item_relay(
             Ok(hash) => format!("{:?}", hash),
             Err(e) => {
                 tracing::warn!("purchase relay failed for {}: {}", wallet, e);
+                if crate::services::chain::is_out_of_gas(&e) {
+                    return HttpResponse::ServiceUnavailable().json(json!({
+                        "error": "Valor's relay ran out of gas mid-purchase. You have not been \
+                                  charged — this is on us, not your wallet.",
+                        "code": crate::services::chain::RELAY_OUT_OF_GAS,
+                    }));
+                }
                 return HttpResponse::BadRequest().json(json!({"error": e}));
             }
         };

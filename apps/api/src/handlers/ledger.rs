@@ -278,6 +278,18 @@ pub async fn transfer_out(
         }
     };
 
+    // Check the tank BEFORE spending the player's signature. A permit is
+    // single-use per nonce, so submitting one we cannot pay for burns their
+    // signature and leaves them to sign again for no reason.
+    if !chain.relay_can_pay().await {
+        tracing::error!("RELAY OUT OF GAS — refusing transfer for {} before taking the signature", wallet);
+        return HttpResponse::ServiceUnavailable().json(json!({
+            "error": "Valor can't send transactions right now — our relay is out of gas. \
+                      Your G$ has not been touched. This is on us, not your wallet; try again shortly.",
+            "code": crate::services::chain::RELAY_OUT_OF_GAS,
+        }));
+    }
+
     let hash = match chain
         .transfer_g_with_fee(from, to, net, fee_to, fee, body.deadline, body.v, &body.r, &body.s)
         .await
@@ -285,6 +297,15 @@ pub async fn transfer_out(
         Ok(h) => h,
         Err(e) => {
             tracing::warn!("transfer-out failed for {}: {}", wallet, e);
+            // A relay fuel failure is OURS. Saying "signature invalid" here sent
+            // players to re-sign something that could never succeed.
+            if crate::services::chain::is_out_of_gas(&e) {
+                return HttpResponse::ServiceUnavailable().json(json!({
+                    "error": "Valor's relay ran out of gas mid-transfer. Your G$ has not been \
+                              touched — this is on us, not your wallet.",
+                    "code": crate::services::chain::RELAY_OUT_OF_GAS,
+                }));
+            }
             return HttpResponse::BadRequest().json(json!({"error": e}));
         }
     };
