@@ -15,11 +15,8 @@
 
 import type { EIP1193Provider } from 'viem'
 
-/** Which SDK published the provider. Only Magic publishes now — Web3Auth was
- * removed because its bundled WalletConnect hardcodes a relay host that some
- * ISP resolvers sinkhole, with no way to override it. The keyed shape stays so
- * a future embedded SDK cannot reintroduce last-writer-wins. */
-export type BridgeSource = 'magic'
+/** Which SDK published the current provider. Used to scope clears. */
+export type BridgeSource = 'magic' | 'web3auth'
 
 export interface BridgeEntry {
   source: BridgeSource

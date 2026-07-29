@@ -2,6 +2,7 @@
 
 import { useAccount } from 'wagmi'
 import { useMagicAuthContext, type ResolvedAuthStatus } from '@/components/providers/MagicAuthProvider'
+import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 
 export type { ResolvedAuthStatus }
 export type AuthSource = 'magic' | 'wallet'
@@ -12,15 +13,16 @@ export type AuthSource = 'magic' | 'wallet'
 //  • 'magic'  — Valor's own embedded wallet, from email or Google. The only
 //               path that MINTS an address, so it stays the sole owner of
 //               player identity.
-//  • 'wallet' — an external wallet the player already owned, connected through
-//               wagmi's own connectors (injected, or WalletConnect for mobile).
-//               There is exactly one route now: a second SDK also claiming this
-//               source is what let one session mask another's signer.
+//  • 'wallet' — an external wallet the player already owned, connected either
+//               through wagmi's injected connector or through Web3Auth's wallet
+//               chooser. Both end at the same place; which one carried the
+//               connection is an implementation detail, so they share a source.
 //
 // Magic wins if both are somehow live: it's the account the player's rank,
 // items and G$ hang off.
 export function useResolvedAuth() {
   const magic = useMagicAuthContext()
+  const web3authWallet = useWeb3AuthWallet()
   const { address: walletAddress, isConnected } = useAccount()
 
   if (magic.status === 'ready' && magic.address) {
@@ -38,6 +40,15 @@ export function useResolvedAuth() {
     return {
       status: 'ready' as const,
       address: walletAddress,
+      source: 'wallet' as AuthSource,
+      magicEmail: undefined,
+      magicIssuer: undefined,
+    }
+  }
+  if (web3authWallet.address) {
+    return {
+      status: 'ready' as const,
+      address: web3authWallet.address,
       source: 'wallet' as AuthSource,
       magicEmail: undefined,
       magicIssuer: undefined,

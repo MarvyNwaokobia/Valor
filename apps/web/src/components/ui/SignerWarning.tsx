@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useConnect } from 'wagmi'
+import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { useSignerReady } from '@/hooks/useSignerReady'
 import { useSignOut } from '@/hooks/useSignOut'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
@@ -21,7 +21,7 @@ export default function SignerWarning({ action = 'buy or transfer' }: { action?:
   const signOut = useSignOut()
   const router = useRouter()
 
-  const { connectors, connectAsync } = useConnect()
+  const { connect: connectWallet, isReady: web3authReady } = useWeb3AuthWallet()
   const [reconnecting, setReconnecting] = useState(false)
   const [reconnectError, setReconnectError] = useState<string | null>(null)
 
@@ -34,17 +34,11 @@ export default function SignerWarning({ action = 'buy or transfer' }: { action?:
     setReconnecting(true)
     setReconnectError(null)
     try {
-      // Prefer an injected provider when the page actually has one (desktop
-      // extension, or a wallet's in-app browser); otherwise WalletConnect, which
-      // deep-links the wallet app. Both are wagmi's own connectors, pointed at a
-      // relay host that resolves — see lib/wagmi.ts.
-      const injectedC = connectors.find((c) => c.type === 'injected')
-      const wcC = connectors.find((c) => c.id === 'walletConnect')
-      const target = (typeof window !== 'undefined' && (window as { ethereum?: unknown }).ethereum)
-        ? (injectedC ?? wcC)
-        : (wcC ?? injectedC)
-      if (!target) throw new Error('No wallet connector available.')
-      await connectAsync({ connector: target })
+      // Web3Auth's chooser carries WalletConnect v2, which is the only transport
+      // that reaches a wallet app from a mobile browser now that the self-hosted
+      // connector is gone. On desktop, or inside a wallet's own browser, it also
+      // offers the injected provider that is already there.
+      await connectWallet()
     } catch (err) {
       setReconnectError(err instanceof Error ? err.message : 'Could not open wallet options.')
     } finally {
@@ -79,11 +73,11 @@ export default function SignerWarning({ action = 'buy or transfer' }: { action?:
         {isWallet ? (
           <button
             onClick={handleReconnect}
-            disabled={reconnecting}
+            disabled={reconnecting || !web3authReady}
             className="flex-1 py-2 text-xs font-black rounded-lg text-black disabled:opacity-50"
             style={{ background: '#a855f7' }}
           >
-            {reconnecting ? 'Opening…' : 'Reconnect wallet'}
+            {reconnecting ? 'Opening…' : !web3authReady ? 'Loading…' : 'Reconnect wallet'}
           </button>
         ) : (
           <button
