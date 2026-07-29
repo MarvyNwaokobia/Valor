@@ -34,10 +34,9 @@ export default function SignerWarning({ action = 'buy or transfer' }: { action?:
     setReconnecting(true)
     setReconnectError(null)
     try {
-      // Web3Auth's chooser carries WalletConnect v2, which is the only transport
-      // that reaches a wallet app from a mobile browser now that the self-hosted
-      // connector is gone. On desktop, or inside a wallet's own browser, it also
-      // offers the injected provider that is already there.
+      // The chooser is the one route that reaches every wallet: it carries
+      // WalletConnect for wallet apps on a phone, and offers the injected
+      // provider directly on desktop or inside a wallet's own browser.
       await connectWallet()
     } catch (err) {
       setReconnectError(err instanceof Error ? err.message : 'Could not open wallet options.')
