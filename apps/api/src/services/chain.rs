@@ -79,7 +79,61 @@ pub struct ChainWriter {
     tx_lock:      Arc<tokio::sync::Mutex<()>>,
 }
 
+/// Marker prefix on any error caused by the RELAY being out of CELO, rather than by
+/// anything the player did.
+///
+/// WHY THIS EXISTS. When the relay wallet cannot pay gas, ethers reports
+/// "permit submission failed: insufficient funds for gas * price + value". Three
+/// frontend hooks matched the word "permit" in that string and told the player
+/// "Signature expired or invalid — please try again". So a fuel problem on OUR
+/// wallet was reported to the player as a fault with THEIR signature, and the
+/// advice was to retry — which could never work, and which sent us chasing
+/// signing bugs for hours while the real cause was an empty tank.
+///
+/// Callers check this to answer honestly and, crucially, to stop telling people
+/// to retry something that cannot succeed until we top the wallet up.
+pub const RELAY_OUT_OF_GAS: &str = "RELAY_OUT_OF_GAS";
+
+/// True when a chain error means the relay could not pay for the transaction.
+/// Matched on substrings because the text comes from the node, not from us.
+pub fn is_out_of_gas(err: &str) -> bool {
+    let e = err.to_ascii_lowercase();
+    e.contains("insufficient funds") || e.contains("gas required exceeds")
+}
+
+/// Tag an error so the handler can tell a relay fuel failure from a real one.
+fn tag_gas(err: String) -> String {
+    if is_out_of_gas(&err) {
+        format!("{}: {}", RELAY_OUT_OF_GAS, err)
+    } else {
+        err
+    }
+}
+
 impl ChainWriter {
+    /// The relay's CELO balance. Used to refuse a money operation BEFORE taking a
+    /// player's signature, rather than after.
+    pub async fn relay_gas_balance(&self) -> Option<U256> {
+        self.client.get_balance(self.client.address(), None).await.ok()
+    }
+
+    /// Whether the relay can afford one transaction right now.
+    ///
+    /// Sized off what a payout actually costs: ~345k gas measured on real
+    /// distributeReward receipts, at whatever the current base fee is, with 3x
+    /// headroom because the fee moves. Returns true when the balance cannot be
+    /// read — an RPC blip must not block every purchase in the app.
+    pub async fn relay_can_pay(&self) -> bool {
+        let Some(balance) = self.relay_gas_balance().await else { return true };
+        let price = self
+            .client
+            .get_gas_price()
+            .await
+            .unwrap_or_else(|_| U256::from(200_000_000_000u64));
+        let needed = price * U256::from(345_000u64) * U256::from(3u64);
+        balance >= needed
+    }
+
     pub fn from_env() -> Option<Self> {
         let private_key   = std::env::var("BACKEND_PRIVATE_KEY").ok()?;
         let contract_addr = std::env::var("GAME_RECORD_CONTRACT").ok()?;
@@ -555,11 +609,11 @@ impl ChainWriter {
             let permit_pending = permit_call
                 .send()
                 .await
-                .map_err(|e| format!("permit submission failed: {}", e))?;
+                .map_err(|e| tag_gas(format!("permit submission failed: {}", e)))?;
             let transfer_pending = transfer_call
                 .send()
                 .await
-                .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+                .map_err(|e| tag_gas(format!("transferFrom submission failed: {}", e)))?;
 
             (permit_pending, transfer_pending)
         };
@@ -650,11 +704,11 @@ impl ChainWriter {
             let permit_pending = permit_call
                 .send()
                 .await
-                .map_err(|e| format!("permit submission failed: {}", e))?;
+                .map_err(|e| tag_gas(format!("permit submission failed: {}", e)))?;
             let transfer_pending = transfer_call
                 .send()
                 .await
-                .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+                .map_err(|e| tag_gas(format!("transferFrom submission failed: {}", e)))?;
             let fee_pending = if fee.is_zero() {
                 None
             } else {
@@ -662,7 +716,7 @@ impl ChainWriter {
                     fee_call
                         .send()
                         .await
-                        .map_err(|e| format!("fee transferFrom submission failed: {}", e))?,
+                        .map_err(|e| tag_gas(format!("fee transferFrom submission failed: {}", e)))?,
                 )
             };
 
@@ -738,7 +792,7 @@ impl ChainWriter {
         let call = self.g_token.permit(owner, spender, cap, U256::from(deadline), v, r, s);
         let pending = {
             let _tx = self.tx_lock.lock().await;
-            call.send().await.map_err(|e| format!("permit submission failed: {}", e))?
+            call.send().await.map_err(|e| tag_gas(format!("permit submission failed: {}", e)))?
         };
         let hash = pending.tx_hash();
         tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1))
