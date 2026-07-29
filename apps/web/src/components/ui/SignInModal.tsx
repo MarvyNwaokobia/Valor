@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronRight, Wallet } from 'lucide-react'
+import { Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
-import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
-import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
 
 interface Props {
   onClose: () => void
@@ -20,7 +18,6 @@ const CONNECTOR_LABELS: Record<string, string> = {
 
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
-  const { connect: connectWeb3AuthWallet, isReady: web3authReady } = useWeb3AuthWallet()
   const { connectors, connect } = useConnect()
   // wagmi's static config always includes the generic `injected` connector,
   // regardless of whether a provider actually exists for it to target — on
@@ -35,25 +32,14 @@ export default function SignInModal({ onClose }: Props) {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
+  // WalletConnect is a first-class row now (it IS the mobile path), so only the
+  // generic `injected` shim is conditional — it targets window.ethereum, which a
+  // plain mobile browser doesn't have.
   const visibleConnectors = connectors
     .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  async function handleWeb3AuthWallet() {
-    if (pending) return
-    setPending('web3auth')
-    setError(null)
-    try {
-      await connectWeb3AuthWallet()
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not open wallet options — try again.')
-    } finally {
-      setPending(null)
-    }
-  }
 
   async function handleConnectWallet(connectorId: string) {
     if (pending) return
@@ -163,11 +149,13 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {/* Bring-your-own-wallet. Ordered by how likely each is to just work:
-            a wallet already injected into this page connects with no network
-            hop at all, then Web3Auth's chooser for everything else, then the
-            relay-free deep-links if that hangs. */}
-        {(visibleConnectors.length > 0 || isWeb3AuthConfigured) && (
+        {/* Bring-your-own-wallet, through wagmi's own connectors only. An
+            injected provider connects with no network hop; WalletConnect
+            deep-links the wallet app and is the mobile path. Note this is a
+            DIFFERENT experience from the embedded wallet above: an external
+            wallet holds its own keys, so every transaction is approved in that
+            app rather than in Valor. */}
+        {visibleConnectors.length > 0 && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -195,43 +183,16 @@ export default function SignInModal({ onClose }: Props) {
                       {CONNECTOR_LABELS[connector.id] ?? connector.name}
                     </span>
                     <span className="block text-[11px] text-slate-500 truncate">
-                      {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
+                      {pending === connector.id
+                        ? 'Connecting…'
+                        : connector.id === 'walletConnect'
+                          ? 'Opens your wallet app to approve'
+                          : 'Detected · connects in one tap'}
                     </span>
                   </span>
                 </button>
               ))}
 
-              {isWeb3AuthConfigured && (
-                <button
-                  onClick={handleWeb3AuthWallet}
-                  disabled={!!pending || !web3authReady}
-                  className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07] disabled:opacity-50 disabled:hover:bg-transparent"
-                >
-                  <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
-                    <Wallet size={16} />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-white font-bold text-sm truncate">
-                      {visibleConnectors.length > 0 ? 'Other Wallets' : 'Connect a Wallet'}
-                    </span>
-                    <span className="block text-[11px] text-slate-500 truncate">
-                      {pending === 'web3auth'
-                        ? 'Opening wallets…'
-                        : !web3authReady
-                          ? 'Loading…'
-                          : visibleConnectors.length > 0
-                            // Don't name a wallet that already has its own row above.
-                            ? 'WalletConnect, Coinbase, Trust and more'
-                            : 'MetaMask, Coinbase, Trust and more'}
-                    </span>
-                  </span>
-                  <ChevronRight
-                    size={16}
-                    className="shrink-0 text-slate-600 transition-colors group-hover:text-valor-gold"
-                    aria-hidden
-                  />
-                </button>
-              )}
             </div>
           </>
         )}
