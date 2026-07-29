@@ -90,9 +90,25 @@ describe('useActiveWalletClient — which wallet actually signs', () => {
   // the session belongs to, refusing to sign is the only safe answer: a
   // signature from the wrong wallet reverts on-chain and reads as a random bug.
   it('refuses to sign when the provider address does not match the session', () => {
+    mockMagic.mockReturnValue(null) // no SDK fallback, so only the bridge can answer
     setBridgedProvider('magic', magicProvider, WALLET_ADDR) // wrong address
     const { result } = renderHook(() => useActiveWalletClient())
     expect(result.current).toBeUndefined()
+  })
+
+  // THE REGRESSION THIS REPLACED. Selection used to run in a fixed order and
+  // then reject the winner on a bad address, so a leftover entry for a DIFFERENT
+  // address masked the correct provider and the session could never sign — which
+  // is what "connect MetaMask, then the Bank says wallet can't sign" was.
+  it('a stale entry for another address cannot mask the right provider', () => {
+    mockAuth.mockReturnValue({ status: 'ready', address: WALLET_ADDR, source: 'wallet' })
+    // Leftover half-finished session from the other SDK, on a different address.
+    setBridgedProvider('magic', magicProvider, MAGIC_ADDR)
+    // The provider that actually owns this session.
+    setBridgedProvider('web3auth', web3authProvider, WALLET_ADDR)
+
+    const { result } = renderHook(() => useActiveWalletClient())
+    expect(result.current?.account?.address).toBe(WALLET_ADDR)
   })
 
   it('gives nothing while auth is still loading', () => {
