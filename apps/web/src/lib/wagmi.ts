@@ -1,6 +1,6 @@
 import { createConfig, fallback, http } from 'wagmi'
 import { celo, celoAlfajores } from 'wagmi/chains'
-import { injected } from 'wagmi/connectors'
+import { injected, walletConnect } from 'wagmi/connectors'
 
 // Primary login is Magic's embedded wallet, which deliberately does NOT go
 // through a wagmi connector — it publishes its EIP-1193 provider to
@@ -20,9 +20,44 @@ import { injected } from 'wagmi/connectors'
 // dApp browsers inject one; a plain mobile browser doesn't, so SignInModal
 // deep-links those users into their wallet's own browser, where one exists.
 // wagmi additionally auto-discovers named extensions via EIP-6963.
+const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+
 export const wagmiConfig = createConfig({
   chains: [celo, celoAlfajores],
-  connectors: [injected()],
+  connectors: [
+    injected(),
+    // WalletConnect is BACK, and owned by us again.
+    //
+    // It was removed in 968926d and replaced with Web3Auth's chooser, on the
+    // reasoning that a managed integration would stop us fighting relay hosts.
+    // The opposite happened: @web3auth/no-modal hardcodes
+    // `relayUrl: "wss://relay.walletconnect.com"` and its modal exposes no way
+    // to change it (ModalConfig carries label/showOnModal/loginMethods and
+    // nothing else). That host is precisely the one some ISP/router resolvers
+    // sinkhole — the failure diagnosed on-device on 2026-07-25 and fixed in
+    // a7d53ba by pinning Reown's host. So swapping to Web3Auth reintroduced the
+    // exact bug we had already fixed, and made it unfixable: the wallet hangs
+    // on "Connecting to DApp" forever because the pairing socket never opens.
+    //
+    // Owning the connector is what lets us point at a relay that resolves.
+    ...(walletConnectProjectId
+      ? [walletConnect({
+          projectId: walletConnectProjectId,
+          // Reown's current relay host — the same relay network, under a name
+          // those DNS filters don't catch. NOT relay.walletconnect.com, which
+          // is blocked by the same filter.
+          relayUrl: 'wss://relay.reown.com',
+          // `url` must match the domain allowlisted in the Reown Cloud project,
+          // or the pairing is rejected and the mobile "Open" button never arms.
+          metadata: {
+            name: 'Valor',
+            description: 'Earn your honor. Web3 tactical FPS on Celo.',
+            url: 'https://playvalor.app',
+            icons: ['https://playvalor.app/valor-icon.png'],
+          },
+        })]
+      : []),
+  ],
   // Defer connector reconnection to a client effect instead of running it
   // during render, so the server HTML and first client render agree. The game
   // shell stays server-rendered; without this, wagmi reads persisted connection

@@ -21,7 +21,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 //   - is Magic's SDK even constructible here, and does it still hold a session
 //     (ITP evicts its storage in mobile Safari and installed PWAs, leaving a
 //     cached address that reads valid and refuses to sign — see lib/magic.ts)
-//   - did either SDK publish a provider to the bridge
+//   - did Magic publish a provider to the bridge
 //   - does wagmi believe it is connected, and is there an injected provider for
 //     it to talk to
 //   - is this the installed PWA, where deep-linking out to a wallet behaves
@@ -56,7 +56,6 @@ export function useSignerDiagnostic(canSign: boolean) {
         magicPresent,
         magicLoggedIn,
         bridgeMagic: !!getBridgedProviderFor('magic'),
-        bridgeWeb3auth: !!getBridgedProviderFor('web3auth'),
         wagmiConnected: isConnected,
         wagmiConnector: connector?.id ?? null,
         hasInjected:
@@ -72,7 +71,7 @@ export function useSignerDiagnostic(canSign: boolean) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: `SIGNER_DIAGNOSTIC source=${source} magicLoggedIn=${magicLoggedIn} bridgeMagic=${diag.bridgeMagic} bridgeWeb3auth=${diag.bridgeWeb3auth} wagmi=${isConnected} injected=${diag.hasInjected} pwa=${diag.standalone}`,
+            message: `SIGNER_DIAGNOSTIC source=${source} magicLoggedIn=${magicLoggedIn} bridgeMagic=${diag.bridgeMagic} wagmi=${isConnected} injected=${diag.hasInjected} pwa=${diag.standalone}`,
             stack: JSON.stringify(diag, null, 2),
             url: typeof window !== 'undefined' ? window.location.href : undefined,
             wallet_address: address,
