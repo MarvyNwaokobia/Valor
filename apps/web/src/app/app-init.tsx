@@ -5,7 +5,6 @@ import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
-import { useWalletSessionHeal } from '@/hooks/useWalletSessionHeal'
 import { useGLTF } from '@react-three/drei'
 import { CHARACTER_GLB } from '@/lib/classes'
 
@@ -19,7 +18,6 @@ Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
   useValorAuth()
-  useWalletSessionHeal()
   const { address } = useResolvedAuth()
   usePlayerSync(address)
   useRealtimePlayer(address)

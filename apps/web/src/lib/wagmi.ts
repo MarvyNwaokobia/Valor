@@ -5,30 +5,21 @@ import { injected } from 'wagmi/connectors'
 // Primary login is Magic's embedded wallet, which deliberately does NOT go
 // through a wagmi connector — it publishes its EIP-1193 provider to
 // lib/walletBridge instead. wagmi's job here is only the separate "I already
-// have a wallet" path, and only for a wallet that is ALREADY IN THIS PAGE.
+// have a wallet" path.
 //
-// NO WALLETCONNECT CONNECTOR HERE, deliberately and permanently.
+// That path is `injected()` alone, on purpose. We used to also run a
+// self-hosted `walletConnect()` connector, and every mobile connect bug we've
+// had traced back to owning that integration: the pairing relay host getting
+// sinkholed by consumer router/ISP resolvers (the endless "Connecting…" hang),
+// the Reown Cloud domain allowlist rejecting pairings when `metadata.url`
+// drifted, and relay-host pins that fixed our browser's leg while the wallet
+// app still dialled the blocked host itself. None of it was ours to fix.
 //
-// Every mobile connect bug we have ever had traced back to owning that
-// integration: the pairing relay host sinkholed by consumer router/ISP
-// resolvers (the endless "Connecting…" hang), the Reown Cloud domain allowlist
-// rejecting pairings when `metadata.url` drifted, relay-host pins that fixed our
-// browser's leg while the wallet app still dialled the blocked host itself.
-// None of it was ever ours to fix.
-//
-// Worse, it was also redundant. Web3Auth's chooser already carries WalletConnect
-// (see lib/web3authConfig.ts), so running our own put TWO WalletConnect cores on
-// one page — the SDK says so out loud: "WalletConnect Core is already
-// initialized. This is probably a mistake and can lead to unexpected behavior.
-// Init() was called 2 times." Two cores racing over one pairing store is not a
-// state worth debugging when the second one buys nothing.
-//
-// So the bring-your-own-wallet story is exactly two routes now:
-//   • `injected()` — a provider already in the page. No relay, no cloud project,
-//     no allowlist. Desktop extensions and in-wallet dApp browsers inject one;
-//     wagmi additionally auto-discovers named extensions via EIP-6963.
-//   • Web3Auth's chooser — everything else, including WalletConnect, run as
-//     managed infrastructure we do not host.
+// `injected()` needs no relay, no cloud project, and no allowlist: it talks to
+// a provider that is already in the page. Desktop extensions and in-wallet
+// dApp browsers inject one; a plain mobile browser doesn't, so SignInModal
+// deep-links those users into their wallet's own browser, where one exists.
+// wagmi additionally auto-discovers named extensions via EIP-6963.
 export const wagmiConfig = createConfig({
   chains: [celo, celoAlfajores],
   connectors: [injected()],
