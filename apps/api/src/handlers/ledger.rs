@@ -37,6 +37,59 @@ pub async fn insert_ledger_entry(
     }
 }
 
+// ── Withdrawal fee ─────────────────────────────────────────────────────────────
+//
+// A cut of every transfer-out. Unlike every other G$ sink in the app (shop spend,
+// duel stakes, re-arm) this one does NOT go to the reward pool — it goes to a
+// treasury address, so it leaves the reward economy entirely instead of being
+// recycled back into payouts.
+//
+// The rate lives here rather than in an env var alone because an unset env var
+// would silently mean "no fee", and a fee that quietly stops being charged is
+// the kind of thing nobody notices for a month. The env vars override; the
+// constants are the working default.
+
+/// Withdrawal fee in basis points (2000 = 20%).
+fn withdraw_fee_bps() -> u64 {
+    std::env::var("WITHDRAW_FEE_BPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000)
+        .min(10_000)
+}
+
+/// Treasury address the withdrawal fee is paid to. NOT the reward pool.
+const WITHDRAW_FEE_ADDRESS: &str = "0x84A3D9F71DcF0D05841cDBdEAE24a7A6e05A582D";
+
+fn withdraw_fee_address() -> String {
+    std::env::var("WITHDRAW_FEE_ADDRESS").unwrap_or_else(|_| WITHDRAW_FEE_ADDRESS.to_string())
+}
+
+/// Split a gross withdrawal into (net to destination, fee). Pure, so the policy
+/// is testable and so the UI's preview and the chain call cannot disagree: both
+/// derive from this one rule.
+///
+/// Rounds the fee DOWN, so rounding dust always favours the player.
+fn split_fee(gross: U256, bps: u64) -> (U256, U256) {
+    if bps == 0 {
+        return (gross, U256::zero());
+    }
+    let fee = gross * U256::from(bps) / U256::from(10_000u64);
+    (gross - fee, fee)
+}
+
+// ── GET /withdraw-fee ──────────────────────────────────────────────────────────
+// Public. The UI reads the rate from here rather than hardcoding it, so the
+// number a player is shown before signing is the number the server will actually
+// charge — a hardcoded copy would drift the first time the rate changed.
+pub async fn get_withdraw_fee() -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "bps":     withdraw_fee_bps(),
+        "percent": withdraw_fee_bps() as f64 / 100.0,
+        "address": withdraw_fee_address(),
+    }))
+}
+
 // ── GET /relay-address ─────────────────────────────────────────────────────────
 // Public (addresses aren't secret) — the frontend needs this as the `spender`
 // in the EIP-2612 permit it signs for a transfer-out.
@@ -205,8 +258,28 @@ pub async fn transfer_out(
         }
     };
 
+    // `amount` is the GROSS the player signed for — the full sum leaving their
+    // wallet. The fee comes out of it, so the destination receives `net`. Charging
+    // the fee ON TOP would need a permit larger than the amount they were shown,
+    // which is exactly the sort of surprise a withdrawal fee must not spring.
+    let bps = withdraw_fee_bps();
+    let (net, fee) = split_fee(amount, bps);
+    if net.is_zero() {
+        return HttpResponse::BadRequest()
+            .json(json!({"error": "Amount too small after the withdrawal fee"}));
+    }
+
+    let fee_to: Address = match withdraw_fee_address().parse() {
+        Ok(a) => a,
+        Err(_) => {
+            tracing::error!("WITHDRAW_FEE_ADDRESS is not a valid address — refusing to transfer");
+            return HttpResponse::ServiceUnavailable()
+                .json(json!({"error": "Withdrawal temporarily unavailable"}));
+        }
+    };
+
     let hash = match chain
-        .transfer_g_for(from, to, amount, body.deadline, body.v, &body.r, &body.s)
+        .transfer_g_with_fee(from, to, net, fee_to, fee, body.deadline, body.v, &body.r, &body.s)
         .await
     {
         Ok(h) => h,
@@ -217,20 +290,73 @@ pub async fn transfer_out(
     };
     let hash_str = format!("{:?}", hash);
 
+    // Two rows, because they are two different facts: what the player sent out,
+    // and what we took. Recording only the gross would make the fee invisible in
+    // the very ledger a player checks when the number looks wrong.
     insert_ledger_entry(
         &state.db,
         &wallet,
         "transfer_out",
-        wei_to_g(amount),
+        wei_to_g(net),
         Some(&hash_str),
         Some(&normalize_wallet(&body.to)),
     )
     .await;
+    if !fee.is_zero() {
+        insert_ledger_entry(
+            &state.db,
+            &wallet,
+            "withdraw_fee",
+            wei_to_g(fee),
+            Some(&hash_str),
+            Some(&normalize_wallet(&withdraw_fee_address())),
+        )
+        .await;
+    }
 
-    tracing::info!("Transfer-out confirmed: {} -> {} amount={} tx={}", wallet, body.to, amount, hash_str);
+    tracing::info!(
+        "Transfer-out confirmed: {} -> {} net={} fee={} ({} bps) tx={}",
+        wallet, body.to, net, fee, bps, hash_str,
+    );
 
     HttpResponse::Ok().json(json!({
-        "success": true,
-        "tx_hash": hash_str,
+        "success":  true,
+        "tx_hash":  hash_str,
+        "sent_g":   wei_to_g(net),
+        "fee_g":    wei_to_g(fee),
+        "fee_bps":  bps,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn g(n: u64) -> U256 {
+        U256::from(n) * U256::exp10(18)
+    }
+
+    #[test]
+    fn twenty_percent_is_taken_from_the_gross() {
+        let (net, fee) = split_fee(g(1_000), 2000);
+        assert_eq!(net, g(800));
+        assert_eq!(fee, g(200));
+        assert_eq!(net + fee, g(1_000), "the split must never mint or burn G$");
+    }
+
+    #[test]
+    fn zero_bps_disables_the_fee() {
+        let (net, fee) = split_fee(g(1_000), 0);
+        assert_eq!(net, g(1_000));
+        assert!(fee.is_zero());
+    }
+
+    #[test]
+    fn rounding_dust_favours_the_player() {
+        // 3 wei at 20% is 0.6 wei of fee — floor it, so the player keeps the dust
+        // and the two legs still sum to exactly what they signed for.
+        let (net, fee) = split_fee(U256::from(3u64), 2000);
+        assert_eq!(fee, U256::zero());
+        assert_eq!(net, U256::from(3u64));
+    }
 }
