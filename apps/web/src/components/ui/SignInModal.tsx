@@ -47,6 +47,11 @@ export default function SignInModal({ onClose }: Props) {
     setPending('web3auth')
     setError(null)
     try {
+      // Only closes on a REAL connection now. This used to run unconditionally,
+      // because the SDK resolves with null instead of throwing — so a wallet that
+      // hung got the same treatment as one that connected: modal closed, no
+      // error, nothing signed in. The provider now rejects on failure, which is
+      // what makes this catch reachable at all.
       await connectWeb3AuthWallet()
       onClose()
     } catch (err) {
