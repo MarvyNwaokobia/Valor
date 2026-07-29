@@ -5,6 +5,7 @@ import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useWalletBrowserConnect } from '@/hooks/useWalletBrowserConnect'
 import { useGLTF } from '@react-three/drei'
 import { CHARACTER_GLB } from '@/lib/classes'
 
@@ -18,6 +19,9 @@ Object.values(CHARACTER_GLB).forEach(path => useGLTF.preload(path))
 
 export default function AppInit() {
   useValorAuth()
+  // Mounted app-wide because the deep link re-opens whatever page the player was
+  // on, not just the landing page.
+  useWalletBrowserConnect()
   const { address } = useResolvedAuth()
   usePlayerSync(address)
   useRealtimePlayer(address)

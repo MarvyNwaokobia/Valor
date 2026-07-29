@@ -11,25 +11,10 @@ interface Web3AuthWalletValue {
   address: `0x${string}` | undefined
   /** False until the SDK has booted; opening the modal before then is queued. */
   isReady: boolean
-  /**
-   * Opens Web3Auth's wallet chooser. Socials are hidden (see web3authConfig).
-   * REJECTS when no wallet ends up connected, which the SDK itself will not do
-   * — see the note on `connect` below.
-   */
+  /** Opens Web3Auth's wallet chooser. Socials are hidden (see web3authConfig). */
   connect: () => Promise<void>
   disconnect: () => Promise<void>
 }
-
-/**
- * How long to wait for a wallet to answer before giving up.
- *
- * Nothing in the stack ever times out. Web3Auth starts the WalletConnect pairing
- * in the background to mint a URI, and if that pairing never completes (a relay
- * host the network can't resolve, a wallet that never returns) the promise sits
- * unresolved for ever and the player is left staring at a spinner with no way to
- * tell whether it is slow or dead.
- */
-const CONNECT_TIMEOUT_MS = 30_000
 
 const EMPTY: Web3AuthWalletValue = {
   address: undefined,
@@ -47,9 +32,7 @@ export function useWeb3AuthWallet() {
 // Inner half — must sit under Web3AuthProvider to use its hooks.
 function Web3AuthWallet({ children }: { children: ReactNode }) {
   const { isConnected, isInitialized, web3Auth, initError } = useWeb3Auth()
-  // `error` is the SDK's captured failure. It is already exposed and was simply
-  // never read, which is half of why connect failures were invisible.
-  const { connect: web3authConnect, error: connectError } = useWeb3AuthConnect()
+  const { connect: web3authConnect } = useWeb3AuthConnect()
   const { disconnect: web3authDisconnect } = useWeb3AuthDisconnect()
 
   const [address, setAddress] = useState<`0x${string}` | undefined>()
@@ -94,46 +77,10 @@ function Web3AuthWallet({ children }: { children: ReactNode }) {
     }
   }, [isConnected, web3Auth])
 
-  // Turn Web3Auth's silent failure into a real rejection.
-  //
-  // `useWeb3AuthConnect().connect()` NEVER throws: it catches internally, parks
-  // the error in its own state, and resolves with `null`. So an awaited call
-  // that failed is indistinguishable from one that succeeded, and every caller's
-  // try/catch is dead code. That is why picking MetaMask, watching it hang, and
-  // returning to Valor left the sign-in modal closed with no error and nothing
-  // connected — the caller had been told it worked.
-  //
-  // Three things are fixed here: the null return is treated as failure, the
-  // hook's own `connectError` is used for the message when it has one, and the
-  // whole thing races a timeout so a pairing that never completes still ends.
   const connect = useCallback(async () => {
     if (!isInitialized) throw new Error('Wallet connect is still loading — give it a moment.')
-
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(
-          "Your wallet didn't respond. If it opened and then stalled, close it and try " +
-          'the WalletConnect option instead.',
-        )),
-        CONNECT_TIMEOUT_MS,
-      )
-    })
-
-    try {
-      const connection = await Promise.race([web3authConnect(), timeout])
-      // `null` is the SDK's way of saying it failed. Prefer its own error text
-      // when it captured one, since that names the actual cause.
-      if (!connection) {
-        throw new Error(
-          connectError?.message
-            ?? 'Could not connect that wallet. Try again, or use the WalletConnect option.',
-        )
-      }
-    } finally {
-      if (timer) clearTimeout(timer)
-    }
-  }, [web3authConnect, isInitialized, connectError])
+    await web3authConnect()
+  }, [web3authConnect, isInitialized])
 
   const disconnect = useCallback(async () => {
     try {

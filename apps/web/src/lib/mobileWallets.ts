@@ -32,14 +32,34 @@ export interface MobileWalletLink {
   build: () => string
 }
 
-// `location` is read at click time so the link always carries the live host,
-// path, and query (share tokens, ?level=, etc.).
-function dappHostPath(): string {
-  const { host, pathname, search } = window.location
-  return `${host}${pathname}${search}`
-}
+/**
+ * Marker the deep link carries so the wallet's browser knows the player has
+ * ALREADY asked to connect.
+ *
+ * Without it the hop is two separate journeys: the wallet's browser opens Valor
+ * cold, signed out, and the player has to find Enter Valor and pick their wallet
+ * a second time — having just done exactly that in Safari. That double hop is
+ * the reason this route was shelved in July, and it is the only thing that was
+ * ever wrong with it.
+ *
+ * The tap in Safari is real intent. This carries that intent across the hop so
+ * the wallet's browser can finish the job the player already started, which
+ * makes the whole thing one tap.
+ */
+export const WALLET_BROWSER_CONNECT_PARAM = 'valor_connect'
+
+/** This page's URL, plus the connect marker, preserving any existing query. */
 function dappUrl(): string {
-  return window.location.href
+  const url = new URL(window.location.href)
+  url.searchParams.set(WALLET_BROWSER_CONNECT_PARAM, '1')
+  return url.toString()
+}
+
+// MetaMask's deep link takes the target with the scheme stripped, so it needs
+// host+path+query rather than a full URL.
+function dappHostPath(): string {
+  const url = new URL(dappUrl())
+  return `${url.host}${url.pathname}${url.search}`
 }
 
 export const MOBILE_WALLETS: MobileWalletLink[] = [
