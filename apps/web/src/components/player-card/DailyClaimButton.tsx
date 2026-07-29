@@ -6,6 +6,7 @@ import { X, RefreshCw } from 'lucide-react'
 import { useGoodDollarClaim } from '@/hooks/useGoodDollarClaim'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { useGBalance } from '@/hooks/useGBalance'
+import { useSignerReady } from '@/hooks/useSignerReady'
 
 interface Props {
   walletAddress: `0x${string}`
@@ -16,6 +17,7 @@ export default function DailyClaimButton({ walletAddress }: Props) {
   const [reverifying, setReverifying] = useState(false)
 
   const { refetch: refetchBalance } = useGBalance(walletAddress)
+  const { canSign } = useSignerReady()
   const { getFaceVerifyUrl } = useGoodDollarIdentity()
 
   const { status, entitlement, nextClaimTime, claiming, claimStep, txHash, error, claim, refresh } =
@@ -271,12 +273,14 @@ export default function DailyClaimButton({ walletAddress }: Props) {
                   </button>
                   <motion.button
                     onClick={handleClaim}
-                    disabled={claiming}
+                    disabled={claiming || !canSign}
                     whileTap={{ scale: 0.97 }}
                     className="flex-1 py-2.5 text-sm font-black rounded-xl text-black transition-opacity disabled:opacity-60"
                     style={{ background: '#00bf72' }}
                   >
-                    {claiming ? (
+                    {!canSign && !claiming ? (
+                      'Wallet can’t sign'
+                    ) : claiming ? (
                       <span className="flex items-center justify-center gap-2">
                         <motion.span
                           className="w-3.5 h-3.5 rounded-full border-2 border-black border-t-transparent inline-block"

@@ -18,16 +18,29 @@ import type { EIP1193Provider } from 'viem'
 /** Which SDK published the current provider. Used to scope clears. */
 export type BridgeSource = 'magic' | 'web3auth'
 
-interface BridgeEntry {
+export interface BridgeEntry {
   source: BridgeSource
   provider: EIP1193Provider
   address: `0x${string}`
 }
 
-let current: BridgeEntry | null = null
+// KEYED BY SOURCE, not a single slot.
+//
+// This was one `current` variable holding one entry for two independent SDKs,
+// so publishing was last-writer-wins: a Magic player whose Web3Auth wallet
+// session restored on page load had their signer silently replaced by the
+// external wallet's provider AND address. Every signing path reads this
+// registry, so that one overwrite broke all eleven of them at once, and it only
+// reproduced when Web3Auth happened to publish second — which is why it looked
+// random.
+//
+// Two live sessions is a legitimate state (a player can hold a Magic wallet and
+// have connected an external one), so the fix is to stop pretending only one can
+// exist. Callers now ask for the source they mean and cannot be handed the other.
+const entries = new Map<BridgeSource, BridgeEntry>()
 
 /**
- * Publish the active embedded wallet. Call only once the SDK has resolved a
+ * Publish the active wallet for one SDK. Call only once the SDK has resolved a
  * real address — publishing early is the race the old bridge died on.
  */
 export function setBridgedProvider(
@@ -35,7 +48,7 @@ export function setBridgedProvider(
   provider: EIP1193Provider,
   address: `0x${string}`,
 ): void {
-  current = { source, provider, address }
+  entries.set(source, { source, provider, address })
 }
 
 /**
@@ -43,9 +56,13 @@ export function setBridgedProvider(
  * one signing out can never clear the other's live session.
  */
 export function clearBridgedProvider(source: BridgeSource): void {
-  if (current?.source === source) current = null
+  entries.delete(source)
 }
 
-export function getBridgedProvider(): BridgeEntry | null {
-  return current
+/**
+ * The provider published by a SPECIFIC SDK. Callers must name the source they
+ * mean, so a Magic session can never be handed Web3Auth's signer.
+ */
+export function getBridgedProviderFor(source: BridgeSource): BridgeEntry | null {
+  return entries.get(source) ?? null
 }

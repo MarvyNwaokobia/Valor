@@ -17,6 +17,8 @@ import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import WeeklyEarnCap from '@/components/bank/WeeklyEarnCap'
 import { formatGDollarNumber } from '@/utils/format'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import SignerWarning from '@/components/ui/SignerWarning'
+import { useSignerReady } from '@/hooks/useSignerReady'
 
 function truncate(address: string) {
   return `${address.slice(0, 8)}…${address.slice(-6)}`
@@ -102,6 +104,7 @@ export default function BankPage() {
   const { data: ledger } = useLedgerSummary(address)
   const { transfer, pending: transferring } = useTransferOut(address)
   const { data: withdrawFee } = useWithdrawFee()
+  const { canSign } = useSignerReady()
   const feeBps = withdrawFee?.bps ?? 0
   const { net: amountNet, fee: amountFee } = splitWithdrawal(parseFloat(amount) || 0, feeBps)
 
@@ -217,6 +220,11 @@ export default function BankPage() {
         <StatTile label="Transferred Out" value={`${formatGDollarNumber(ledger?.transferred_out ?? 0)} G$`} />
       </div>
 
+      {/* Said BEFORE anything on this page asks for a signature, so a session
+          that cannot sign is visible up front rather than at the moment a
+          player taps Claim or Send. */}
+      <SignerWarning action="claim or transfer" />
+
       {/* Daily claim + rank pool */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <DailyClaimButton walletAddress={address as `0x${string}`} />
@@ -298,14 +306,16 @@ export default function BankPage() {
               </button>
               <motion.button
                 onClick={handleTransfer}
-                disabled={transferring || !destination || !amount}
+                disabled={transferring || !destination || !amount || !canSign}
                 whileTap={{ scale: 0.97 }}
                 className="flex-1 py-2.5 text-sm font-black rounded-lg text-black transition-opacity disabled:opacity-50"
                 style={{ background: '#eab308' }}
               >
                 {transferring
                   ? 'Sending…'
-                  : feeBps > 0
+                  : !canSign
+                    ? 'Wallet can’t sign'
+                    : feeBps > 0
                       ? `Send ${formatGDollarNumber(amountNet)} G$`
                       : `Confirm sending ${amount || '0'} G$`}
               </motion.button>
