@@ -46,10 +46,8 @@ export function useActiveWalletClient(): WalletClient | undefined {
       return wagmiWalletClient
     }
 
-    // 2. Either SDK's published provider — whichever one owns this address.
-    //    Order here is irrelevant: only an address match can return.
+    // 2. Magic's published provider, if it owns this address.
     const matched = fromBridge(getBridgedProviderFor('magic'))
-      ?? fromBridge(getBridgedProviderFor('web3auth'))
     if (matched) return matched
 
     // 3. Magic's SDK singleton. Its provider is available synchronously, so a

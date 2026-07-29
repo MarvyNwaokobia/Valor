@@ -6,7 +6,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { wagmiConfig } from '@/lib/wagmi'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
 import { MagicAuthProvider } from '@/components/providers/MagicAuthProvider'
-import { Web3AuthSessionProvider } from '@/components/providers/Web3AuthSessionProvider'
 import AppInit from './app-init'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -26,14 +25,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ErrorBoundary>
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
-          {/* Two independent embedded-wallet SDKs. Neither blocks the other:
-              each publishes to lib/walletBridge on its own schedule, and
-              useResolvedAuth takes whichever has actually resolved. */}
+          {/* ONE embedded-wallet SDK (Magic, which publishes to lib/walletBridge)
+              and ONE external-wallet path (wagmi's own connectors). Two SDKs both
+              claiming "the wallet" is what produced the signer mix-ups. */}
           <MagicAuthProvider>
-            <Web3AuthSessionProvider>
-              <AppInit />
-              {children}
-            </Web3AuthSessionProvider>
+            <AppInit />
+            {children}
           </MagicAuthProvider>
         </QueryClientProvider>
       </WagmiProvider>
