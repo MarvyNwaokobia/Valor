@@ -94,6 +94,11 @@ export function useSettleDebt(walletAddress: string | undefined) {
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Settlement failed' }))
         const msg = (body.error as string) ?? 'Settlement failed'
+        // Relay-fuel failures are OURS, and the backend now says so explicitly.
+        // Check this BEFORE the permit match: the node's out-of-gas error text
+        // contains the word "permit", so the signature branch used to swallow it
+        // and tell the player to re-sign — advice that could never work.
+        if (body.code === 'RELAY_OUT_OF_GAS') throw new Error(msg)
         if (msg.includes('permit')) throw new Error('Signature expired or invalid — please try again')
         throw new Error(msg)
       }
