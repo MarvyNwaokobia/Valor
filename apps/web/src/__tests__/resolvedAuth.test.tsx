@@ -2,14 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
 
 const mockMagicCtx = vi.fn()
-const mockWeb3Auth = vi.fn()
 const mockAccount = vi.fn()
 
 vi.mock('@/components/providers/MagicAuthProvider', () => ({
   useMagicAuthContext: () => mockMagicCtx(),
-}))
-vi.mock('@/components/providers/Web3AuthSessionProvider', () => ({
-  useWeb3AuthWallet: () => mockWeb3Auth(),
 }))
 vi.mock('wagmi', () => ({
   useAccount: () => mockAccount(),
@@ -23,7 +19,6 @@ const WALLET_ADDR = '0x2222222222222222222222222222222222222222' as const
 describe('useResolvedAuth — who the app thinks you are', () => {
   it('Magic wins once it has resolved', () => {
     mockMagicCtx.mockReturnValue({ status: 'ready', address: MAGIC_ADDR })
-    mockWeb3Auth.mockReturnValue({ address: undefined })
     mockAccount.mockReturnValue({ address: WALLET_ADDR, isConnected: true })
 
     const { result } = renderHook(() => useResolvedAuth())
@@ -49,7 +44,6 @@ describe('useResolvedAuth — who the app thinks you are', () => {
   // Skipped rather than deleted so the gap stays visible.
   it.skip('a still-loading Magic session must not resolve as the injected wallet', () => {
     mockMagicCtx.mockReturnValue({ status: 'loading', address: undefined })
-    mockWeb3Auth.mockReturnValue({ address: undefined })
     mockAccount.mockReturnValue({ address: WALLET_ADDR, isConnected: true })
 
     const { result } = renderHook(() => useResolvedAuth())
