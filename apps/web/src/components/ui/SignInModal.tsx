@@ -16,7 +16,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const CONNECTOR_LABELS: Record<string, string> = {
   injected: 'Browser Wallet',
-  walletConnect: 'WalletConnect',
 }
 
 export default function SignInModal({ onClose }: Props) {
@@ -47,11 +46,6 @@ export default function SignInModal({ onClose }: Props) {
     setPending('web3auth')
     setError(null)
     try {
-      // Only closes on a REAL connection now. This used to run unconditionally,
-      // because the SDK resolves with null instead of throwing — so a wallet that
-      // hung got the same treatment as one that connected: modal closed, no
-      // error, nothing signed in. The provider now rejects on failure, which is
-      // what makes this catch reachable at all.
       await connectWeb3AuthWallet()
       onClose()
     } catch (err) {
@@ -201,14 +195,7 @@ export default function SignInModal({ onClose }: Props) {
                       {CONNECTOR_LABELS[connector.id] ?? connector.name}
                     </span>
                     <span className="block text-[11px] text-slate-500 truncate">
-                      {pending === connector.id
-                        ? 'Connecting…'
-                        : connector.id === 'walletConnect'
-                          // Not "detected" — it pairs over a relay and opens the
-                          // wallet app. Kept visible because it is the fallback
-                          // when Web3Auth's chooser hangs on a filtered relay.
-                          ? 'Opens your wallet app · use if others hang'
-                          : 'Detected · connects in one tap'}
+                      {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
                     </span>
                   </span>
                 </button>
