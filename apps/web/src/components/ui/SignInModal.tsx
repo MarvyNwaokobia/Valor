@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronRight, Wallet } from 'lucide-react'
+import { ChevronRight, ExternalLink, Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
+import { MOBILE_WALLETS, hasInjectedProvider, isMobileBrowser } from '@/lib/mobileWallets'
 
 interface Props {
   onClose: () => void
@@ -37,6 +38,29 @@ export default function SignInModal({ onClose }: Props) {
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
   const visibleConnectors = connectors
     .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
+
+  // A phone's normal browser (Safari, Chrome) with no wallet in the page.
+  //
+  // This is the case that cannot be served in place. Nothing here can sign,
+  // because the key is inside a separate app, and asking that app to sign from
+  // here means waiting on an out-of-band channel while iOS freezes this tab the
+  // moment the player leaves for the wallet. That wait is what produced
+  // "Transport request timed out" after a player had already tapped approve.
+  //
+  // So these players are pointed INTO their wallet's own browser instead, where
+  // the wallet publishes itself into the page and signing is local, instant, and
+  // needs no relay, no cloud project and no app switching ever again.
+  //
+  // Detected in an effect, not during render: the server has no user agent and
+  // no window, so deciding this at render time would make the first client paint
+  // disagree with the server HTML.
+  //
+  // DESKTOP AND IN-WALLET BROWSERS ARE UNTOUCHED — both already have a provider
+  // in the page, so `hasInjectedProvider()` is true and this stays false.
+  const [useWalletBrowserLinks, setUseWalletBrowserLinks] = useState(false)
+  useEffect(() => {
+    setUseWalletBrowserLinks(isMobileBrowser() && !hasInjectedProvider())
+  }, [])
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -167,7 +191,7 @@ export default function SignInModal({ onClose }: Props) {
             a wallet already injected into this page connects with no network
             hop at all, then Web3Auth's chooser for everything else, then the
             relay-free deep-links if that hangs. */}
-        {(visibleConnectors.length > 0 || isWeb3AuthConfigured) && (
+        {(visibleConnectors.length > 0 || isWeb3AuthConfigured || useWalletBrowserLinks) && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -180,26 +204,58 @@ export default function SignInModal({ onClose }: Props) {
                 the chooser opens a picker — so each gets a subtitle saying
                 which it is, and a chevron marks the one that opens more UI. */}
             <div className="rounded-xl border border-valor-border bg-valor-surface-2/50 overflow-hidden divide-y divide-valor-border">
-              {visibleConnectors.map((connector) => (
-                <button
-                  key={connector.id}
-                  onClick={() => handleConnectWallet(connector.id)}
-                  disabled={!!pending}
-                  className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07] disabled:opacity-50 disabled:hover:bg-transparent"
-                >
-                  <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
-                    <Wallet size={16} />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-white font-bold text-sm truncate">
-                      {CONNECTOR_LABELS[connector.id] ?? connector.name}
-                    </span>
-                    <span className="block text-[11px] text-slate-500 truncate">
-                      {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
-                    </span>
-                  </span>
-                </button>
-              ))}
+              {/* Phone browser, no wallet in the page: plain links, not connect
+                  buttons. A link hands the phone straight to the wallet app,
+                  which is the whole point — there is nothing here to connect TO,
+                  so a button that "connects" would be the lie that produced the
+                  timeout. Rendered in place of the in-page rows rather than
+                  beside them, so there is exactly one way forward. */}
+              {useWalletBrowserLinks
+                ? MOBILE_WALLETS.map((wallet) => (
+                    <a
+                      key={wallet.id}
+                      href={wallet.build()}
+                      className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07]"
+                    >
+                      <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
+                        <Wallet size={16} />
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-white font-bold text-sm truncate">{wallet.name}</span>
+                        {/* Kept short deliberately: at phone width anything
+                            longer truncates mid-sentence, and "Coinbase Wallet"
+                            is the longest name it has to sit under. */}
+                        <span className="block text-[11px] text-slate-500 truncate">
+                          Opens the app · connects there
+                        </span>
+                      </span>
+                      <ExternalLink
+                        size={16}
+                        className="shrink-0 text-slate-600 transition-colors group-hover:text-valor-gold"
+                        aria-hidden
+                      />
+                    </a>
+                  ))
+                : visibleConnectors.map((connector) => (
+                    <button
+                      key={connector.id}
+                      onClick={() => handleConnectWallet(connector.id)}
+                      disabled={!!pending}
+                      className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07] disabled:opacity-50 disabled:hover:bg-transparent"
+                    >
+                      <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
+                        <Wallet size={16} />
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-white font-bold text-sm truncate">
+                          {CONNECTOR_LABELS[connector.id] ?? connector.name}
+                        </span>
+                        <span className="block text-[11px] text-slate-500 truncate">
+                          {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
 
               {isWeb3AuthConfigured && (
                 <button
