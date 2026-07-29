@@ -594,6 +594,123 @@ impl ChainWriter {
         Ok(hash)
     }
 
+    /// Like `transfer_g_for`, but splits the player's signed allowance between the
+    /// destination and a fee address — the withdrawal fee on transfer-out.
+    ///
+    /// The player signs ONE permit for the gross amount, exactly as before; this
+    /// spends that single allowance with two `transferFrom`s. Doing it that way
+    /// means the fee cannot be dodged by a client that lies about the split: the
+    /// server decides both legs, and the player's signature only ever authorised
+    /// the gross.
+    ///
+    /// Returns the hash of the leg that pays the DESTINATION — that is the
+    /// transfer the player cares about and the one shown to them.
+    ///
+    /// A zero fee (rounded away on a dust withdrawal) skips the second leg rather
+    /// than burning gas on a zero-value transfer.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn transfer_g_with_fee(
+        &self,
+        from: Address,
+        to: Address,
+        net: U256,
+        fee_to: Address,
+        fee: U256,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let r: [u8; 32] = H256::from_str(r_hex).map_err(|_| format!("Invalid r: {}", r_hex))?.0;
+        let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {}", s_hex))?.0;
+        let spender = self.client.address();
+        let gross = net.checked_add(fee).ok_or_else(|| "transfer amount overflow".to_string())?;
+
+        // Same single-lock, explicit-sequential-nonce discipline as transfer_g_for —
+        // see the long note there. These are now THREE dependent txs (permit, then
+        // both transferFrom legs against the allowance it granted), so the nonce
+        // ordering matters even more: a gap would strand the fee leg.
+        let mut permit_call =
+            self.g_token.permit(from, spender, gross, U256::from(deadline), v, r, s);
+        let mut transfer_call = self.g_token.transfer_from(from, to, net);
+        let mut fee_call = self.g_token.transfer_from(from, fee_to, fee);
+
+        let (permit_pending, transfer_pending, fee_pending) = {
+            let _tx = self.tx_lock.lock().await;
+
+            let nonce = self
+                .client
+                .get_transaction_count(spender, Some(ethers::types::BlockNumber::Pending.into()))
+                .await
+                .map_err(|e| format!("nonce read failed: {}", e))?;
+            permit_call.tx.set_nonce(nonce);
+            transfer_call.tx.set_nonce(nonce + 1);
+            fee_call.tx.set_nonce(nonce + 2);
+
+            let permit_pending = permit_call
+                .send()
+                .await
+                .map_err(|e| format!("permit submission failed: {}", e))?;
+            let transfer_pending = transfer_call
+                .send()
+                .await
+                .map_err(|e| format!("transferFrom submission failed: {}", e))?;
+            let fee_pending = if fee.is_zero() {
+                None
+            } else {
+                Some(
+                    fee_call
+                        .send()
+                        .await
+                        .map_err(|e| format!("fee transferFrom submission failed: {}", e))?,
+                )
+            };
+
+            (permit_pending, transfer_pending, fee_pending)
+        };
+
+        let hash = transfer_pending.tx_hash();
+
+        let permit_receipt = tokio::time::timeout(Duration::from_secs(90), permit_pending.confirmations(1))
+            .await
+            .map_err(|_| "permit tx timed out".to_string())?
+            .map_err(|e| format!("permit tx failed: {}", e))?
+            .ok_or_else(|| "permit tx was dropped from mempool".to_string())?;
+        if permit_receipt.status == Some(0.into()) {
+            return Err("permit reverted — signature invalid, expired, or already used".to_string());
+        }
+
+        let receipt = tokio::time::timeout(Duration::from_secs(90), transfer_pending.confirmations(1))
+            .await
+            .map_err(|_| "transfer tx timed out".to_string())?
+            .map_err(|e| format!("transfer tx failed: {}", e))?
+            .ok_or_else(|| "transfer tx was dropped from mempool".to_string())?;
+        if receipt.status == Some(0.into()) {
+            return Err("transfer reverted on-chain — nothing was moved".to_string());
+        }
+
+        // The fee leg is deliberately NOT fatal. The player has already been paid
+        // by this point; failing their withdrawal because our own fee collection
+        // hiccuped would take money they successfully received and report it as an
+        // error. A missed fee is our loss to reconcile, not their problem.
+        if let Some(pending) = fee_pending {
+            match tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1)).await {
+                Ok(Ok(Some(r))) if r.status != Some(0.into()) => {
+                    tracing::info!("withdraw fee collected: {} -> {} amount={}", from, fee_to, fee);
+                }
+                other => {
+                    tracing::error!(
+                        "WITHDRAW FEE LEG FAILED for {} (fee {} to {}) — player was paid, fee was not collected: {:?}",
+                        from, fee, fee_to, other.map(|r| r.map(|o| o.map(|x| x.transaction_hash))),
+                    );
+                }
+            }
+        }
+
+        tracing::info!("transferG (net): {} -> {} amount={} fee={} tx={:?}", from, to, net, fee, hash);
+        Ok(hash)
+    }
+
     /// The ValorRewardPool address — the sink destination for Survival re-arm G$
     /// (spent G$ flows into the prize pool). `None` if the pool isn't configured.
     pub fn reward_pool_address(&self) -> Option<Address> {

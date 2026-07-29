@@ -61,6 +61,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // Read-only self-audit; the cron fails its job when this reports trouble.
         .route("/health/consistency", web::post().to(consistency::run_consistency_check))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
+        .route("/withdraw-fee", web::get().to(ledger::get_withdraw_fee))
         // Which reward pools this server actually loaded — see get_pools.
         .route("/pools", web::get().to(ledger::get_pools))
         .route("/ws/battle", web::get().to(ws::battle_ws))
@@ -167,7 +168,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/seasons/{id}/reset-progress", web::post().to(admin::reset_season_progress))
                 .route("/seasons/{id}/fund", web::post().to(seasons::fund))
                 .route("/seasons/{id}/payout-preview", web::get().to(seasons::payout_preview))
-                .route("/seasons/{id}/payout", web::post().to(seasons::payout)),
+                .route("/seasons/{id}/payout", web::post().to(seasons::payout))
+                .route("/referrals/retry", web::post().to(players::retry_referrals)),
         )
         .service(
             web::scope("/seasons")
