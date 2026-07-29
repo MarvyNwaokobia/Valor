@@ -9,9 +9,8 @@ import { useResolvedAuth } from './useResolvedAuth'
 // "signed in" as soon as an address has been resolved, but signing needs a live
 // provider behind that address — and an external wallet can lose its provider
 // while the address survives. In a plain mobile browser there is no
-// window.ethereum at all, and since the WalletConnect connector was removed
-// (968926d) there is no in-page route to the wallet app either, so an
-// external-wallet session there can never sign anything.
+// window.ethereum at all, so once a wallet app's session dies there is nothing
+// in the page left to sign with, even though the address is still remembered.
 //
 // The result was a session that looked completely live — balance, stats, every
 // button enabled — and only revealed the truth as "Wallet not connected" at the

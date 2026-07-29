@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Wallet } from 'lucide-react'
 import { useConnect } from 'wagmi'
+import { celo } from 'wagmi/chains'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
@@ -16,13 +17,39 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const CONNECTOR_LABELS: Record<string, string> = {
   injected: 'Browser Wallet',
-  walletConnect: 'WalletConnect',
+}
+
+// EIP-6963 announcements that are NOT an installed wallet.
+//
+// `io.metamask.mmc` is @metamask/connect-evm, which Web3Auth's SDK bundles and
+// which announces itself on the 6963 channel exactly like a real extension
+// would. wagmi's auto-discovery cannot tell the difference, so it became a
+// connector, and this modal advertised it as "MetaMask · Detected · connects in
+// one tap" — on phones with no MetaMask installed at all. Verified in a clean
+// browser: window.ethereum absent, one announcement, and it was this.
+//
+// Tapping it is what produced the sessions in prod that report wagmi=true,
+// injected=false and cannot sign a single thing: a connection that half-exists
+// and can never be rebuilt. It is not a detected wallet, so it is not listed as
+// one. Anyone who actually has MetaMask reaches it through the chooser below,
+// which is the route that works.
+const NOT_INSTALLED_WALLETS = new Set(['io.metamask.mmc'])
+
+// Connector errors arrive as developer text ("User rejected the request.",
+// "An error occurred when attempting to switch chain."). Say the same thing in
+// words that tell the player what to do about it.
+function friendlyConnectError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : ''
+  if (/rejected|denied|cancel/i.test(raw)) return 'You cancelled that in your wallet. Tap to try again.'
+  if (/chain|network/i.test(raw)) return 'Your wallet needs to be on the Celo network. Approve the network switch and try again.'
+  if (/already pending|pending request/i.test(raw)) return 'Your wallet already has a request open — finish it there first.'
+  return 'Could not connect that wallet. Try again, or use the wallet chooser below.'
 }
 
 export default function SignInModal({ onClose }: Props) {
   const { loginWithEmailOTP, loginWithGoogle } = useMagicAuthContext()
   const { connect: connectWeb3AuthWallet, isReady: web3authReady } = useWeb3AuthWallet()
-  const { connectors, connect } = useConnect()
+  const { connectors, connectAsync } = useConnect()
   // wagmi's static config always includes the generic `injected` connector,
   // regardless of whether a provider actually exists for it to target — on
   // a plain mobile browser (no wallet app, no extension) there's no
@@ -35,8 +62,9 @@ export default function SignInModal({ onClose }: Props) {
   useEffect(() => {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
   }, [])
-  const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
-  const visibleConnectors = connectors
+  const installed = connectors.filter((c) => !NOT_INSTALLED_WALLETS.has(c.id))
+  const hasNamedInjected = installed.some((c) => c.type === 'injected' && c.id !== 'injected')
+  const visibleConnectors = installed
     .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
   const [email, setEmail] = useState('')
   const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
@@ -68,10 +96,22 @@ export default function SignInModal({ onClose }: Props) {
     setPending(connectorId)
     setError(null)
     try {
-      await connect({ connector })
+      // connectAsync, NOT connect. `useConnect().connect` is a fire-and-forget
+      // mutate: it returns void, never throws, and parks failures in its own
+      // state. So `await connect(...)` settled instantly whatever happened, and
+      // the line below closed the modal on a connect that had failed or that the
+      // player had rejected — no wallet, no error, no clue. Reproduced in a
+      // clean browser: the modal vanished 1.5s after the tap with nothing
+      // connected. Only the async variant actually reports the outcome.
+      //
+      // `chainId` connects straight onto Celo. Without it a wallet sitting on
+      // Ethereum connects happily and then rejects every signature later, since
+      // our EIP-712 domains and writes are all Celo — a failure that surfaces at
+      // the checkout, which is the worst place to find it.
+      await connectAsync({ connector, chainId: celo.id })
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not connect wallet — try again.')
+      setError(friendlyConnectError(err))
     } finally {
       setPending(null)
     }
@@ -169,10 +209,11 @@ export default function SignInModal({ onClose }: Props) {
           </button>
         </div>
 
-        {/* Bring-your-own-wallet. Ordered by how likely each is to just work:
-            a wallet already injected into this page connects with no network
-            hop at all, then Web3Auth's chooser for everything else, then the
-            relay-free deep-links if that hangs. */}
+        {/* Bring-your-own-wallet, in exactly two rows now: a wallet already in
+            this page (no network hop at all), then the chooser for every other
+            wallet on earth, WalletConnect included. Our own WalletConnect row
+            used to sit here too and was pure duplication — the chooser already
+            offers it, and running both put two WalletConnect cores on one page. */}
         {(visibleConnectors.length > 0 || isWeb3AuthConfigured) && (
           <>
             <div className="flex items-center gap-3">
@@ -201,14 +242,10 @@ export default function SignInModal({ onClose }: Props) {
                       {CONNECTOR_LABELS[connector.id] ?? connector.name}
                     </span>
                     <span className="block text-[11px] text-slate-500 truncate">
-                      {pending === connector.id
-                        ? 'Connecting…'
-                        : connector.id === 'walletConnect'
-                          // Not "detected" — it pairs over a relay and opens the
-                          // wallet app. Kept visible because it is the fallback
-                          // when Web3Auth's chooser hangs on a filtered relay.
-                          ? 'Opens your wallet app · use if others hang'
-                          : 'Detected · connects in one tap'}
+                      {/* Every row here is now a wallet genuinely present in
+                          this page, so "detected" is finally true of all of
+                          them. */}
+                      {pending === connector.id ? 'Connecting…' : 'Detected · connects in one tap'}
                     </span>
                   </span>
                 </button>

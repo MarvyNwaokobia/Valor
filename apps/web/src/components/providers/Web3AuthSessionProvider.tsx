@@ -113,8 +113,8 @@ function Web3AuthWallet({ children }: { children: ReactNode }) {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
         () => reject(new Error(
-          "Your wallet didn't respond. If it opened and then stalled, close it and try " +
-          'the WalletConnect option instead.',
+          "Your wallet didn't respond. Close it, come back, and pick it again — or sign " +
+          'in with email or Google, which needs no wallet app at all.',
         )),
         CONNECT_TIMEOUT_MS,
       )
@@ -127,7 +127,7 @@ function Web3AuthWallet({ children }: { children: ReactNode }) {
       if (!connection) {
         throw new Error(
           connectError?.message
-            ?? 'Could not connect that wallet. Try again, or use the WalletConnect option.',
+            ?? 'Could not connect that wallet. Try again, or pick a different one from the list.',
         )
       }
     } finally {
