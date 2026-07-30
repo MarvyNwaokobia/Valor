@@ -235,6 +235,11 @@ export default function OnboardingPage() {
         // Best-effort attribution. The server re-validates it and pays at most
         // once per new player, so a wrong or stale value costs nothing.
         referred_by:             referrer || null,
+        // Which door this player came through. Recorded once and never updated,
+        // and it is what the server reads before paying anything — a MiniPay
+        // player earns no real G$ and credits no referral, because they passed
+        // no identity check on the way in. See apps/api/src/services/edition.rs.
+        edition:                 edition().id,
       }
       const res = await fetch(`${API}/players`, {
         method: 'POST',

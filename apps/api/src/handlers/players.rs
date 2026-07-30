@@ -313,6 +313,15 @@ pub struct CreatePlayerRequest {
     /// effort on the client (cookie, storage, or the onboarding field), so this
     /// is untrusted input and every guard lives server-side.
     pub referred_by:             Option<String>,
+    /// Which edition of Valor this player signed up in: `web`, `minipay` or
+    /// `avalanche`. Absent or unrecognised means `web`, matching the column default.
+    ///
+    /// Client-asserted, because no server-visible property of the request
+    /// distinguishes the editions — they share one domain on purpose. It is
+    /// nonetheless recorded ONCE and never updated afterwards (see the INSERT
+    /// below), so it cannot be flipped per-request to unlock earning. See
+    /// services::edition for what this does and does not defend against.
+    pub edition:                 Option<String>,
 }
 
 /// Whole G$ paid to a player whose referral completes onboarding.
@@ -331,15 +340,44 @@ const REFERRAL_REWARD_G: u64 = 100;
 
 /// Credit a referrer, once, for bringing in a newly created player.
 ///
-/// Called AFTER the player row exists, which is the point at which the referred
-/// wallet has already passed the GoodDollar whitelist gate in onboarding — so
-/// this pays for a verified human, not a signup.
+/// Called AFTER the player row exists. In the WEB edition that is the point at which
+/// the referred wallet has already passed the GoodDollar whitelist gate in
+/// onboarding, so the payout buys a verified human rather than a signup.
+///
+/// That justification is edition-specific, and it is the reason for the first guard
+/// below. The MiniPay edition has no identity gate at all — deliberately, because
+/// nothing there pays out — so a MiniPay signup proves nothing about who is behind
+/// the wallet. Paying 100 G$ for one would make signups the cheapest possible way to
+/// mint real money out of the pool, with no proof-of-unique-human anywhere in the
+/// path. Referrals are already the cheapest reward in the game (no play required),
+/// which makes this the first place an unverified edition would be farmed.
 ///
 /// Every guard is here rather than on the client: the client supplies the
 /// referrer and cannot be trusted with who gets paid.
 async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
     let referrer = normalize_wallet(referrer_raw);
     if !is_valid_wallet(&referrer) || referrer == referred {
+        return;
+    }
+
+    // Neither side may be a non-earning edition.
+    //
+    // The REFERRED player is the identity argument above: no gate passed, nothing
+    // proven, nothing paid. The REFERRER is simpler — their edition does not pay
+    // real money, so there is nothing to credit them with.
+    //
+    // Checked before the `referrals` row is claimed on purpose. Claiming first and
+    // paying nothing would burn the one-per-referred-wallet slot, leaving a player
+    // who later joins properly permanently unable to credit anyone.
+    if !crate::services::edition::wallet_earns(&state.db, referred).await {
+        tracing::info!(
+            "referral skipped: {} signed up in a non-earning edition, no identity gate passed",
+            referred,
+        );
+        return;
+    }
+    if !crate::services::edition::wallet_earns(&state.db, &referrer).await {
+        tracing::info!("referral skipped: referrer {} is in a non-earning edition", referrer);
         return;
     }
 
@@ -452,8 +490,14 @@ pub async fn create_player(
             character_customization, play_style, avatar, character_name,
             rank, xp, attack_stat, defense_stat, speed_stat,
             g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed,
-            magic_email, magic_issuer
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true, $12, $13)
+            magic_email, magic_issuer, edition
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true, $12, $13, $14)
+         -- `edition` is deliberately ABSENT from this UPDATE list. It is written once,
+         -- at signup, and is immutable thereafter. Letting it change here would undo
+         -- the whole point of storing it: a player who signed up in MiniPay could
+         -- re-run onboarding claiming `web` and unlock real payouts, having passed no
+         -- identity check. Onboarding is re-runnable by design (the confirm-your-class
+         -- flow), so this is a reachable path, not a theoretical one.
          ON CONFLICT (wallet_address) DO UPDATE
            SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
                character_customization = CASE
@@ -480,6 +524,12 @@ pub async fn create_player(
     .bind(body.speed_stat.unwrap_or(10))
     .bind(&body.magic_email)
     .bind(&body.magic_issuer)
+    // Normalised through Edition::parse so an unknown string lands on 'web' rather
+    // than tripping the CHECK constraint and failing the whole signup.
+    .bind(
+        crate::services::edition::Edition::parse(body.edition.as_deref().unwrap_or("web"))
+            .as_str(),
+    )
     .fetch_one(&state.db)
     .await;
 
