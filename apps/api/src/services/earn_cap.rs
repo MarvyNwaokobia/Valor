@@ -229,6 +229,29 @@ pub async fn cap_reward(
 ) -> u64 {
     if proposed == 0 { return 0; }
 
+    // Brake 0: does this player's EDITION pay real money at all?
+    //
+    // Ahead of both other brakes because it is not a taper, it is a hard no. A
+    // MiniPay player earns an in-game balance and spends real stablecoins in the
+    // shop; they never bank withdrawable G$, and they passed no GoodDollar identity
+    // check on the way in because there was nothing to gate.
+    //
+    // Returning 0 rather than gating each call site keeps this on the same path the
+    // earning pause already uses, and every caller already handles a 0 correctly:
+    // each guards its INSERT with `amount > 0`, so no payout row is written and no
+    // once-per-slot claim is burnt. Play is untouched — XP, ranks, unlocks and
+    // leaderboards all continue.
+    //
+    // Referrals do not pass through here (they are exempt from the weekly cap by
+    // design) and are gated separately in handlers::players::credit_referral.
+    if !crate::services::edition::wallet_earns(&state.db, wallet).await {
+        tracing::info!(
+            "non-earning edition: {} G$ skipped for {} (progression unaffected)",
+            proposed, wallet,
+        );
+        return 0;
+    }
+
     // Brake 1: this wallet's weekly allowance. Not a flat rate — a reward straddling
     // the boundary is split, so this is computed rather than derived from a percentage.
     let mut weekly_allowed = proposed;
