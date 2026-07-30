@@ -16,9 +16,9 @@ import { rankLabel } from '@/lib/ranks'
 import { formatGDollarNumber } from '@/utils/format'
 
 const CLASS_SOLO: Record<string, string> = {
-  Berserker: '/characters/Berserkers.png',
-  Sentinel:  '/characters/Sentinel.png',
-  Phantom:   '/characters/Phanthom.png',
+  Berserker: '/characters/Berserkers.webp',
+  Sentinel:  '/characters/Sentinel.webp',
+  Phantom:   '/characters/Phanthom.webp',
 }
 
 const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [

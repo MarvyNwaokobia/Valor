@@ -8,9 +8,9 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 
 // Ghost character art that bleeds into background of every page
 const CLASS_BG: Record<string, { img: string; accent: string; glow: string }> = {
-  Berserker: { img: '/characters/Berserkers.png',  accent: '#ef4444', glow: 'rgba(239,68,68,0.12)' },
-  Sentinel:  { img: '/characters/Sentinel.png',    accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)' },
-  Phantom:   { img: '/characters/Phanthom.png',    accent: '#8b5cf6', glow: 'rgba(139,92,246,0.12)' },
+  Berserker: { img: '/characters/Berserkers.webp',  accent: '#ef4444', glow: 'rgba(239,68,68,0.12)' },
+  Sentinel:  { img: '/characters/Sentinel.webp',    accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)' },
+  Phantom:   { img: '/characters/Phanthom.webp',    accent: '#8b5cf6', glow: 'rgba(139,92,246,0.12)' },
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
