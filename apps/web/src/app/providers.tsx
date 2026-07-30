@@ -7,6 +7,7 @@ import { wagmiConfig } from '@/lib/wagmi'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
 import { MagicAuthProvider } from '@/components/providers/MagicAuthProvider'
 import { Web3AuthSessionProvider } from '@/components/providers/Web3AuthSessionProvider'
+import { MiniPayProvider } from '@/editions/minipay/MiniPayProvider'
 import AppInit from './app-init'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -31,8 +32,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
               useResolvedAuth takes whichever has actually resolved. */}
           <MagicAuthProvider>
             <Web3AuthSessionProvider>
-              <AppInit />
-              {children}
+              {/* Attaches MiniPay's injected wallet when the page is running
+                  inside MiniPay's browser, where there is no connect button.
+                  Renders children untouched everywhere else, so the web and
+                  Avalanche editions are unaffected. Mounted innermost because
+                  it only needs wagmi, not the embedded-wallet SDKs. */}
+              <MiniPayProvider>
+                <AppInit />
+                {children}
+              </MiniPayProvider>
             </Web3AuthSessionProvider>
           </MagicAuthProvider>
         </QueryClientProvider>
