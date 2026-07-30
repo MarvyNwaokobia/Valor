@@ -96,18 +96,26 @@ fn rank_step_xp(ordinal: i32) -> i32 {
 fn cumulative_xp_for_rank(ordinal: i32) -> i32 {
     (1..=ordinal.max(0)).map(rank_step_xp).sum()
 }
-/// Rank-up G$ GROWS with each rank: the Nth rank-up pays STEP × N (500, 1000, 1500,
-/// 2000, …). Higher ranks are rarer AND richer. Paid once per (wallet, rank) on-chain,
-/// idempotently — see award_player + settle_rank_up_reward. Capped at MAX_REWARD_G so a
-/// single on-chain distributeReward never exceeds the pool's per-call limit.
-const RANK_UP_REWARD_STEP_G: u64 = 500;
+/// Rank-up G$ is FLAT: every rank-up pays the same, whichever rank it is.
+///
+/// It used to be STEP × N (Bronze 500, Silver 1000 … Diamond 3000), so reaching
+/// Diamond paid 10,500 G$ across the climb. The scaling was the point — rarer ranks
+/// paid more — but at the pool's real size it was unaffordable: measured against the
+/// live ledger, rank-ups plus campaign clears plus Endless had paid 622,238 G$ in
+/// eighteen days against a 73,534 G$ pool, roughly two days of runway.
+///
+/// Flat pays 1,200 G$ for the whole climb to Diamond instead of 10,500, and every
+/// prestige past it the same 200. Paid once per (wallet, rank) on-chain, idempotently —
+/// see award_player + settle_rank_up_reward.
+const RANK_UP_REWARD_G: u64 = 200;
 const MAX_REWARD_G: u64 = 10_000; // ValorRewardPool.MAX_REWARD — a bigger payout reverts
 
-/// G$ for the reward_ordinal-th rank-up (Bronze = 1 → 500, Silver = 2 → 1000, … Diamond
-/// = 6 → 3000; prestige P is the (6+P)th). Clamped to the on-chain per-call cap.
-fn rank_up_reward_g(reward_ordinal: i32) -> u64 {
-    let n = reward_ordinal.max(0) as u64;
-    (RANK_UP_REWARD_STEP_G * n).min(MAX_REWARD_G)
+/// G$ for the reward_ordinal-th rank-up. Flat, so the ordinal no longer changes the
+/// amount; kept in the signature because callers pass it and the idempotency key is
+/// still per-rank. Clamped for the same reason the others are: MAX_REWARD_G is the
+/// on-chain per-call ceiling, and a constant over it would revert every payout.
+fn rank_up_reward_g(_reward_ordinal: i32) -> u64 {
+    RANK_UP_REWARD_G.min(MAX_REWARD_G)
 }
 const VALID_MOVES: &[&str] = &["attack", "defend", "special"];
 
@@ -130,16 +138,24 @@ fn next_rank(rank: &str) -> Option<&'static str> {
     RANK_LADDER.get(i + 1).copied()
 }
 
-/// G$ bounty step per Campaign op level — op N pays 500 × N, so deeper ops pay more.
-/// Paid on the first clear (once per (wallet, op)) AND on every pay-per-play replay win
-/// (keyed by battle id — see complete_live_fight + the on-chain refs).
-const FIRST_CLEAR_BOUNTY_G: u64 = 500;
+/// G$ bounty for a Campaign op — FLAT, the same for every op. Paid on the first clear,
+/// once per (wallet, op).
+///
+/// It used to be 500 × level, so op 15 paid 7,500 and clearing all fifteen paid 60,000.
+/// Splitting the live ledger by source showed why that had to go: campaign first clears
+/// alone were 573,822 G$ of the 622,238 G$ ever paid out — 92% of everything — against
+/// a 73,534 G$ pool. The weekly cap was already quietly halving the top ops (op 15
+/// averaged 3,712 paid against 7,500 owed), which is a cap doing a payout curve's job
+/// and telling players a number that then does not arrive.
+///
+/// Flat pays 3,000 G$ for the full fifteen-op campaign instead of 60,000, and the
+/// number a player is promised is the number they get at every op.
+const FIRST_CLEAR_BOUNTY_G: u64 = 200;
 
-/// Op payout: +500 per op level, clamped to the on-chain per-payout cap (ops 20+ pay
-/// the 10,000 ceiling, since a bigger single distributeReward call reverts).
-fn first_clear_bounty(level: i32) -> u64 {
-    let n = level.max(1) as u64;
-    (FIRST_CLEAR_BOUNTY_G * n).min(MAX_REWARD_G)
+/// Op payout: flat, so the level no longer changes the amount. Clamped to the on-chain
+/// per-payout ceiling, since a bigger single distributeReward call reverts.
+fn first_clear_bounty(_level: i32) -> u64 {
+    FIRST_CLEAR_BOUNTY_G.min(MAX_REWARD_G)
 }
 
 struct FightOutcome {
@@ -1540,12 +1556,13 @@ mod reward_amount_tests {
     use super::*;
 
     #[test]
-    fn op_bounty_scales_500_per_level_then_caps() {
-        assert_eq!(first_clear_bounty(1), 500);
-        assert_eq!(first_clear_bounty(5), 2500);
-        assert_eq!(first_clear_bounty(15), 7500);        // deepest real op, under the cap
-        assert_eq!(first_clear_bounty(20), 10_000);      // hits the ceiling
-        assert_eq!(first_clear_bounty(30), MAX_REWARD_G); // clamped past it
+    fn op_bounty_is_flat_at_every_level() {
+        // Was 500 × level. Flat now, so op 1 and op 15 pay the same and no op can ever
+        // reach the on-chain ceiling — which is the point: the old curve's deep ops were
+        // most of the pool's outflow, and the weekly cap was silently trimming them.
+        for level in [1, 5, 15, 20, 30] {
+            assert_eq!(first_clear_bounty(level), 200, "op {level} should pay the flat rate");
+        }
     }
 
     #[test]
@@ -1648,9 +1665,11 @@ mod reward_amount_tests {
         assert_eq!(rank, "Gold");
         assert_eq!(crossed, vec![1, 2, 3]);
         assert_eq!(left, 2_610 - 2_600);
-        // Every rank passed through is its own payout, so none are skipped.
+        // Every rank passed through is its own payout, so none are skipped. Flat rate, so
+        // three ranks in one award pay three times the flat amount — the property under
+        // test is that all three are paid, not what each is worth.
         let paid: u64 = crossed.iter().map(|o| rank_up_reward_g(*o)).sum();
-        assert_eq!(paid, 500 + 1_000 + 1_500);
+        assert_eq!(paid, 3 * 200);
     }
 
     #[test]
@@ -1727,17 +1746,18 @@ mod reward_amount_tests {
     }
 
     #[test]
-    fn rank_up_reward_grows_500_per_rank_and_caps() {
-        // Iron→Bronze 500, Bronze→Silver 1000, … Emerald→Diamond 3000.
-        assert_eq!(rank_up_reward_g(rank_ordinal("Bronze")), 500);
-        assert_eq!(rank_up_reward_g(rank_ordinal("Silver")), 1000);
-        assert_eq!(rank_up_reward_g(rank_ordinal("Gold")), 1500);
-        assert_eq!(rank_up_reward_g(rank_ordinal("Platinum")), 2000);
-        assert_eq!(rank_up_reward_g(rank_ordinal("Emerald")), 2500);
-        assert_eq!(rank_up_reward_g(rank_ordinal("Diamond")), 3000);
-        // Deep prestige clamps to the on-chain per-call cap and never reverts a payout.
-        assert_eq!(rank_up_reward_g(20), MAX_REWARD_G as u64);
+    fn rank_up_reward_is_flat_at_every_rank() {
+        // Was 500 × ordinal, so the climb to Diamond paid 10,500 across six rank-ups.
+        // Flat now: 1,200 for the same climb, and every prestige past it the same again.
+        for rank in ["Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond"] {
+            assert_eq!(
+                rank_up_reward_g(rank_ordinal(rank)),
+                200,
+                "{rank} should pay the flat rate",
+            );
+        }
+        // Deep prestige stays flat and so can never exceed the on-chain per-call cap.
+        assert_eq!(rank_up_reward_g(20), 200);
         assert!(rank_up_reward_g(999) <= MAX_REWARD_G);
-        assert_eq!(rank_up_reward_g(0), 0);
     }
 }

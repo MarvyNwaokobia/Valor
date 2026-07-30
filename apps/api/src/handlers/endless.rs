@@ -40,13 +40,21 @@ fn pool_warn_g() -> u64 {
     std::env::var("ENDLESS_POOL_WARN_G").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000)
 }
 
-/// G$ paid for clearing `wave` (1-based): +100 per wave (wave N pays 100 × N), clamped
-/// to the on-chain per-payout cap. Wave 1 pays 100, wave 2 pays 200 … wave 100 hits the
-/// 10,000 ceiling and every deeper wave pays that (a bigger distributeReward reverts).
-fn wave_reward_g(wave: i32) -> u64 {
+/// G$ paid for clearing a wave — FLAT, the same for every wave.
+///
+/// It used to be 100 × wave, which compounds: a run to wave 20 paid 21,000 G$ and one to
+/// wave 30 paid 46,500, on the one earn surface that repeats for ever. That is what made
+/// Endless the only unbounded way to drain the pool, and the reason the weekly cap had to
+/// exist at all.
+///
+/// Flat makes the deep runs linear: wave 20 pays 4,000 instead of 21,000. Note wave 1 and
+/// 2 now pay the SAME or MORE than before (200 vs 100 and 200) — the early waves got
+/// better and only the marathons got worse, which is the shape worth having.
+const WAVE_REWARD_G: u64 = 200;
+
+fn wave_reward_g(_wave: i32) -> u64 {
     const MAX_REWARD_G: u64 = 10_000; // mirrors ValorRewardPool.MAX_REWARD (on-chain cap)
-    let w = wave.max(1) as u64;
-    (100 * w).min(MAX_REWARD_G)
+    WAVE_REWARD_G.min(MAX_REWARD_G)
 }
 
 #[derive(Deserialize)]
