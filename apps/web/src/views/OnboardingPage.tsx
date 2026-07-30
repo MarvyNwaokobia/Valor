@@ -7,6 +7,8 @@ import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import { edition } from '@/editions'
+import type { IdentityMode } from '@/editions/types'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
@@ -48,6 +50,24 @@ export default function OnboardingPage() {
   const [referrerName,  setReferrerName]  = useState<string | null>(null)
   const [inviterInput,  setInviterInput]  = useState('')
   const [lookingUp,     setLookingUp]     = useState(false)
+
+  // Which identity provider this edition gates on, or 'none'.
+  //
+  // Resolved in an effect rather than at render because `edition()` reads
+  // `window` — deciding this during render would make the server HTML and the
+  // first client render disagree. `null` means "not resolved yet" and holds the
+  // loading screen below, so the GoodDollar gate can never flash in an edition
+  // that doesn't use it.
+  const [identityMode, setIdentityMode] = useState<IdentityMode | null>(null)
+  useEffect(() => {
+    const mode = edition().identity
+    setIdentityMode(mode)
+    // No identity provider means no gate to pass. MiniPay is the case this
+    // exists for: nothing pays out there, so there is nothing to verify, and
+    // an identity wall on a wallet's Mini App is exactly the onboarding
+    // friction that makes people close it.
+    if (mode === 'none') setStep((s) => (s === 'verify' ? 'covenant' : s))
+  }, [])
 
   // A player rebuilt from chain after the migration hasn't CONFIRMED their class
   // yet (it may be wrong). They're already a recognized user, so skip verify and
@@ -94,8 +114,9 @@ export default function OnboardingPage() {
     }
   }, [confirming, player])
 
-  // Auth session still resolving — wait; don't flash the sign-in screen.
-  if (status === 'loading') return <LoadingScreen />
+  // Auth session still resolving, or the edition not yet known — wait; don't
+  // flash the sign-in screen, and don't flash a verify step this edition skips.
+  if (status === 'loading' || identityMode === null) return <LoadingScreen />
 
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
@@ -117,7 +138,12 @@ export default function OnboardingPage() {
   }
 
   // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
+  // Skipped entirely when the edition has no identity provider; the mount
+  // effect above has already advanced the step, so this only guards the frame
+  // between the two. Mounting IdentityVerification here would fire its own
+  // on-mount whitelist check against a chain the edition may not even use.
   if (step === 'verify') {
+    if (identityMode === 'none') return <LoadingScreen />
     return (
       <IdentityVerification
         walletAddress={address as `0x${string}`}
