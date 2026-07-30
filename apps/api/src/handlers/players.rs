@@ -368,7 +368,6 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
     }
 
     let Some(chain) = state.chain.as_ref().cloned() else { return };
-    let Ok(addr) = referrer.parse::<Address>() else { return };
     let db = state.db.clone();
     let referred_owned = referred.to_string();
     let referrer_owned = referrer.clone();
@@ -376,32 +375,63 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
     // Off the request path: the new player should not wait on a chain write to
     // finish creating their character.
     tokio::spawn(async move {
-        let reference = ethers::utils::keccak256(format!("referral:{}", referred_owned).as_bytes());
-        if chain.reward_ref_used(reference).await.unwrap_or(false) {
-            let _ = sqlx::query("UPDATE referrals SET status = 'paid', paid_at = now() WHERE referred_wallet = $1")
-                .bind(&referred_owned).execute(&db).await;
-            return;
-        }
-        match chain.distribute_reward(addr, REFERRAL_REWARD_G, reference).await {
-            Ok(Some(tx)) => {
-                let _ = sqlx::query(
-                    "UPDATE referrals SET status = 'paid', tx_hash = $1, paid_at = now()
-                     WHERE referred_wallet = $2",
-                )
-                .bind(&tx).bind(&referred_owned).execute(&db).await;
-                crate::handlers::ledger::insert_ledger_entry(
-                    &db, &referrer_owned, "referral_reward",
-                    rust_decimal::Decimal::from(REFERRAL_REWARD_G), Some(&tx), None,
-                ).await;
-                tracing::info!("referral paid: {} recruited {} (+{} G$)", referrer_owned, referred_owned, REFERRAL_REWARD_G);
-            }
-            _ => {
-                let _ = sqlx::query("UPDATE referrals SET status = 'failed' WHERE referred_wallet = $1")
-                    .bind(&referred_owned).execute(&db).await;
-                tracing::error!("referral payout FAILED for {} (recruited {})", referrer_owned, referred_owned);
-            }
-        }
+        settle_referral(&db, &chain, &referrer_owned, &referred_owned, REFERRAL_REWARD_G).await;
     });
+}
+
+/// Pay ONE referral from the main reward pool and record the outcome. Idempotent.
+///
+/// Shared by the live path above and the cron reconcile sweep, which is the whole point
+/// of it existing. Referrals were the one payout with no automatic retry: first-clear
+/// bounties and rank-up bonuses are swept every 15 minutes, but a failed referral sat at
+/// `status = 'failed'` for ever, reachable only through an admin endpoint that nothing in
+/// the UI called. Two of them were stranded that way when the main pool ran dry, with no
+/// route to ever being paid.
+///
+/// Safe to call repeatedly on the same referral: the on-chain reference is derived from
+/// the referred wallet, so `reward_ref_used` catches a payout that already landed and
+/// marks the row paid rather than sending twice. Returns the status it settled on.
+pub async fn settle_referral(
+    db: &sqlx::PgPool,
+    chain: &crate::services::chain::ChainWriter,
+    referrer: &str,
+    referred: &str,
+    amount_g: u64,
+) -> &'static str {
+    let Ok(addr) = referrer.parse::<Address>() else {
+        tracing::error!("referral settle: {} is not a valid address", referrer);
+        return "failed";
+    };
+    let reference = ethers::utils::keccak256(format!("referral:{}", referred).as_bytes());
+
+    // Already delivered on a previous attempt whose DB write did not land.
+    if chain.reward_ref_used(reference).await.unwrap_or(false) {
+        let _ = sqlx::query("UPDATE referrals SET status = 'paid', paid_at = now() WHERE referred_wallet = $1")
+            .bind(referred).execute(db).await;
+        return "paid";
+    }
+
+    match chain.distribute_reward(addr, amount_g, reference).await {
+        Ok(Some(tx)) => {
+            let _ = sqlx::query(
+                "UPDATE referrals SET status = 'paid', tx_hash = $1, paid_at = now()
+                 WHERE referred_wallet = $2",
+            )
+            .bind(&tx).bind(referred).execute(db).await;
+            crate::handlers::ledger::insert_ledger_entry(
+                db, referrer, "referral_reward",
+                rust_decimal::Decimal::from(amount_g), Some(&tx), None,
+            ).await;
+            tracing::info!("referral paid: {} recruited {} (+{} G$)", referrer, referred, amount_g);
+            "paid"
+        }
+        _ => {
+            let _ = sqlx::query("UPDATE referrals SET status = 'failed' WHERE referred_wallet = $1")
+                .bind(referred).execute(db).await;
+            tracing::error!("referral payout FAILED for {} (recruited {})", referrer, referred);
+            "failed"
+        }
+    }
 }
 
 pub async fn create_player(
