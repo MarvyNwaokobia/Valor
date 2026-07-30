@@ -29,6 +29,38 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use sqlx::PgPool;
 
+/// GAMEPLAY EARNING PAUSE — deliberate, temporary, owner's decision (2026-07-30).
+///
+/// While this is on, the two GRINDABLE surfaces pay nothing: Campaign op clears
+/// and Endless waves. Rank-up bonuses and referrals are untouched and keep
+/// paying, so progression still has a reward attached and recruiting still
+/// works. Play itself is unaffected — XP, ranks, unlocks, leaderboards and
+/// scores all continue exactly as before; only the G$ stops.
+///
+/// Defaults to PAUSED in code rather than relying on an env var being set,
+/// because an unset var silently resuming payouts is the failure that costs
+/// real money. To resume: set `EARNING_PAUSED=false` on the host, or flip this
+/// default and deploy.
+///
+/// NOTE ON OPS CLEARED DURING THE PAUSE: an op bounty is once-per-(wallet, op)
+/// and `first_clear` is `level > pve_level`, so an op cleared now advances the
+/// unlock and will never re-qualify. Those clears are therefore forfeited, not
+/// deferred. They stay reconstructible from the `battles` table if a goodwill
+/// backpay is ever wanted — that is why each skip is logged with wallet and
+/// level rather than passed over in silence.
+pub fn earning_paused() -> bool {
+    paused_from(std::env::var("EARNING_PAUSED").ok().as_deref())
+}
+
+/// The pause decision as a pure function of the env value, so it can be tested without
+/// mutating process env — which is `unsafe` on this edition and races other tests.
+fn paused_from(value: Option<&str>) -> bool {
+    match value {
+        Some(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no" | "off"),
+        None => true, // unset means PAUSED, never "quietly resume"
+    }
+}
+
 /// Per-player G$ ceiling for one week. `WEEKLY_EARN_CAP_G=0` disables capping.
 pub fn weekly_cap_g() -> u64 {
     std::env::var("WEEKLY_EARN_CAP_G").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000)
@@ -365,5 +397,23 @@ mod tests {
         assert_eq!(w.weekday(), Weekday::Mon);
         assert_eq!((w.hour(), w.minute(), w.second()), (0, 0, 0));
         assert!(w <= Utc::now());
+    }
+
+    #[test]
+    fn an_unset_pause_var_means_paused() {
+        // The important direction. An unset var resuming payouts is the failure that
+        // costs real money and goes unnoticed until the pool moves, so "no answer"
+        // must read as "paused".
+        assert!(paused_from(None));
+    }
+
+    #[test]
+    fn only_an_explicit_no_resumes_earning() {
+        for off in ["false", "FALSE", " false ", "0", "no", "off"] {
+            assert!(!paused_from(Some(off)), "{off:?} should resume earning");
+        }
+        for on in ["true", "1", "yes", "", "paused", "banana"] {
+            assert!(paused_from(Some(on)), "{on:?} should stay paused");
+        }
     }
 }
