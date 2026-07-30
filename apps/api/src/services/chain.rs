@@ -57,12 +57,15 @@ abigen!(
 // Mainnet G$ SuperToken on Celo — matches apps/web/src/lib/constants.ts's G_TOKEN_ADDRESS.
 const DEFAULT_G_TOKEN: &str = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
 
-/// Gas limit for the transferFrom half of a withdrawal.
+/// Gas limit for any transferFrom that runs against an allowance granted by a
+/// permit in the SAME batch — the withdrawal legs in `transfer_g_with_fee`, the
+/// single leg in `transfer_g_for`, and any future dependent pair.
 ///
-/// Set explicitly so ethers does NOT gas-estimate it — see the long note in
-/// `transfer_g_for`, where estimating is the bug. Observed SuperToken
-/// transferFrom cost is well under 100k; this leaves generous headroom for the
-/// token's hooks, and unused gas is refunded either way.
+/// Set explicitly so ethers does NOT gas-estimate them, because estimating is
+/// the bug: the estimate is a dry run against a chain where the permit has not
+/// been mined yet, so the allowance reads zero and the transfer is never
+/// broadcast. Observed SuperToken transferFrom cost is well under 100k; this
+/// leaves generous headroom for the token's hooks, and unused gas is refunded.
 const TRANSFER_FROM_GAS: u64 = 300_000;
 
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
@@ -720,10 +723,19 @@ impl ChainWriter {
         // see the long note there. These are now THREE dependent txs (permit, then
         // both transferFrom legs against the allowance it granted), so the nonce
         // ordering matters even more: a gap would strand the fee leg.
+        //
+        // THIS is the path a player's withdrawal actually takes, and both legs need
+        // their gas limit set for the same reason transfer_g_for's does: an unset
+        // limit makes ethers dry-run the transfer against a chain where the permit
+        // has not been mined, the allowance reads zero, and it refuses to broadcast
+        // with "SuperToken: transfer amount exceeds allowance". With three
+        // dependent txs there were two legs exposed to it, not one.
         let mut permit_call =
             self.g_token.permit(from, spender, gross, U256::from(deadline), v, r, s);
         let mut transfer_call = self.g_token.transfer_from(from, to, net);
         let mut fee_call = self.g_token.transfer_from(from, fee_to, fee);
+        transfer_call.tx.set_gas(TRANSFER_FROM_GAS);
+        fee_call.tx.set_gas(TRANSFER_FROM_GAS);
 
         let (permit_pending, transfer_pending, fee_pending) = {
             let _tx = self.tx_lock.lock().await;
