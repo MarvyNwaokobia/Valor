@@ -15,6 +15,23 @@ apps/web/public/characters/raw/sentinel/
 # Sketchfab zip archives (keep extracted gltf/glb, not zips)
 apps/web/public/models/**/*.zip
 
+# Raw Sketchfab source models — 140MB that NOTHING loads.
+#
+# The game loads the COMPRESSED copies instead: characters from
+# public/characters/glb/*.glb (9.5MB for all four, vs 110MB raw here — Sentinel
+# alone is 68MB raw and 3.1MB as glb), and the only environment it ever fetches
+# is scifi_stage, which stays tracked below.
+#
+# Kept on disk deliberately, not deleted: these are the sources a re-export or a
+# re-bake would start from. They just have no business in a deploy. Same reason
+# the zips above are ignored.
+#
+# Verified unreferenced before untracking: no string, template literal or
+# dynamic path anywhere in apps/web/src resolves into either directory.
+# Re-check with:  grep -rn "models/characters" apps/web/src
+apps/web/public/models/characters/
+apps/web/public/models/environments/rpg_environment/
+
 # Dependencies
 node_modules/
 .pnp
