@@ -1325,9 +1325,41 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
     let (endless_attempted, endless_reconciled) =
         crate::handlers::endless::sweep_endless_rewards(&state.db, &chain).await;
 
+    // And referrals, which had no automatic retry at all until now. Every other payout
+    // was swept here; a failed referral just sat at 'failed' for ever, reachable only
+    // through an admin endpoint that nothing in the UI called. Two were stranded that way
+    // when the main pool ran dry. Same idempotent rail, same pool, same cadence.
+    //
+    // 'pending' rows are swept for the same reason as the others: the row is written
+    // before the spawned settle task runs, so a process that dies mid-flight leaves money
+    // owed with nothing to retry it.
+    let referral_rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT referrer_wallet, referred_wallet, amount
+         FROM referrals
+         WHERE status = 'failed'
+            OR (status = 'pending' AND created_at < now() - interval '5 minutes')
+         ORDER BY created_at ASC
+         LIMIT 25",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let referral_attempted = referral_rows.len();
+    let mut referral_reconciled = 0u32;
+    for (referrer, referred, amount) in referral_rows {
+        if crate::handlers::players::settle_referral(
+            &state.db, &chain, &referrer, &referred, amount.max(0) as u64,
+        ).await == "paid" {
+            referral_reconciled += 1;
+        }
+    }
+
     tracing::info!(
-        "reward reconcile: bounties {}/{}, rank-ups {}/{}, op-plays {}/{}, endless {}/{} settled",
-        reconciled, attempted, rank_reconciled, rank_attempted, play_reconciled, play_attempted, endless_reconciled, endless_attempted
+        "reward reconcile: bounties {}/{}, rank-ups {}/{}, op-plays {}/{}, endless {}/{}, \
+         referrals {}/{} settled",
+        reconciled, attempted, rank_reconciled, rank_attempted, play_reconciled, play_attempted,
+        endless_reconciled, endless_attempted, referral_reconciled, referral_attempted
     );
     HttpResponse::Ok().json(json!({
         "attempted":         attempted,
@@ -1340,6 +1372,8 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         "rank_still_failed": rank_attempted as u32 - rank_reconciled,
         "endless_attempted":  endless_attempted,
         "endless_reconciled": endless_reconciled,
+        "referral_attempted":  referral_attempted,
+        "referral_reconciled": referral_reconciled,
         "ran_at":            Utc::now().to_rfc3339(),
     }))
 }
