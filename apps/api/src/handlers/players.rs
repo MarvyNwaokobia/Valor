@@ -323,7 +323,11 @@ pub struct CreatePlayerRequest {
 /// every recruited player immediately starts drawing on it too. Cut 500 -> 200
 /// once the pool ran dry: a referral is the cheapest reward to earn (no play
 /// required), so it is the first one that should shrink when outflow is trimmed.
-const REFERRAL_REWARD_G: u64 = 200;
+/// Cut again 200 -> 100 on 2026-07-30, alongside the gameplay earning pause.
+///
+/// Referrals deliberately keep paying through that pause: it is a growth lever
+/// rather than a grind, and the amount already reflects that.
+const REFERRAL_REWARD_G: u64 = 100;
 
 /// Credit a referrer, once, for bringing in a newly created player.
 ///

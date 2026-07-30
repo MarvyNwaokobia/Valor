@@ -52,7 +52,14 @@ fn pool_warn_g() -> u64 {
 /// better and only the marathons got worse, which is the shape worth having.
 const WAVE_REWARD_G: u64 = 200;
 
+/// Returns 0 while the earning pause is on (see earn_cap::earning_paused). Endless is
+/// the other grindable surface the pause covers. The run itself is unaffected: waves,
+/// score, XP and the leaderboard all continue — the existing `amount > 0` guard on the
+/// payout row means a paused wave simply banks no money and writes nothing.
 fn wave_reward_g(_wave: i32) -> u64 {
+    if crate::services::earn_cap::earning_paused() {
+        return 0;
+    }
     const MAX_REWARD_G: u64 = 10_000; // mirrors ValorRewardPool.MAX_REWARD (on-chain cap)
     WAVE_REWARD_G.min(MAX_REWARD_G)
 }

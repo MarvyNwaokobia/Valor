@@ -152,10 +152,24 @@ fn next_rank(rank: &str) -> Option<&'static str> {
 /// number a player is promised is the number they get at every op.
 const FIRST_CLEAR_BOUNTY_G: u64 = 200;
 
-/// Op payout: flat, so the level no longer changes the amount. Clamped to the on-chain
-/// per-payout ceiling, since a bigger single distributeReward call reverts.
-fn first_clear_bounty(_level: i32) -> u64 {
+/// The op RATE, ignoring whether earning is currently paused. Flat, so the level no
+/// longer changes the amount. Clamped to the on-chain per-payout ceiling, since a
+/// bigger single distributeReward call reverts.
+///
+/// Split from `first_clear_bounty` so the rate stays assertable on its own: a test that
+/// exercised the paused path would only ever see 0 and would stop guarding the curve.
+fn op_bounty_rate_g(_level: i32) -> u64 {
     FIRST_CLEAR_BOUNTY_G.min(MAX_REWARD_G)
+}
+
+/// What an op clear actually pays right now: the rate, or nothing while the earning
+/// pause is on (see earn_cap::earning_paused). Ops are one of the two grindable
+/// surfaces the pause covers; rank-ups keep paying.
+fn first_clear_bounty(level: i32) -> u64 {
+    if crate::services::earn_cap::earning_paused() {
+        return 0;
+    }
+    op_bounty_rate_g(level)
 }
 
 struct FightOutcome {
@@ -942,7 +956,18 @@ pub async fn complete_live_fight(
             // the (wallet, level) row owns the payout. A retry or a concurrent
             // duplicate hits the PK conflict and pays nothing (and the on-chain ref
             // guard is a second line of defence).
-            let claimed = sqlx::query(
+            // `amount > 0` so a paused payout writes NO row. Writing a zero row would
+            // burn the once-per-(wallet, level) slot and make the op unpayable for
+            // ever, and the reconcile sweep only retries rows it can find — so an
+            // absent row is the honest record of "not paid" rather than a poisoned one.
+            // The unlock above still happens: play is unaffected, only the money stops.
+            if amount == 0 {
+                tracing::info!(
+                    "EARNING PAUSED: op bounty skipped for {} at level {} (unlock still granted)",
+                    wallet, level,
+                );
+            }
+            let claimed = amount > 0 && sqlx::query(
                 "INSERT INTO first_clear_bounties (wallet_address, level, amount)
                  VALUES ($1, $2, $3) ON CONFLICT (wallet_address, level) DO NOTHING",
             )
@@ -1597,9 +1622,10 @@ mod reward_amount_tests {
         // reach the on-chain ceiling — which is the point: the old curve's deep ops were
         // most of the pool's outflow, and the weekly cap was silently trimming them.
         for level in [1, 5, 15, 20, 30] {
-            assert_eq!(first_clear_bounty(level), 200, "op {level} should pay the flat rate");
+            assert_eq!(op_bounty_rate_g(level), 200, "op {level} should pay the flat rate");
         }
     }
+
 
     #[test]
     fn rewards_stay_under_the_contract_cap() {
