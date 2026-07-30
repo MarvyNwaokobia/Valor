@@ -57,6 +57,14 @@ abigen!(
 // Mainnet G$ SuperToken on Celo — matches apps/web/src/lib/constants.ts's G_TOKEN_ADDRESS.
 const DEFAULT_G_TOKEN: &str = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
 
+/// Gas limit for the transferFrom half of a withdrawal.
+///
+/// Set explicitly so ethers does NOT gas-estimate it — see the long note in
+/// `transfer_g_for`, where estimating is the bug. Observed SuperToken
+/// transferFrom cost is well under 100k; this leaves generous headroom for the
+/// token's hooks, and unused gas is refunded either way.
+const TRANSFER_FROM_GAS: u64 = 300_000;
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 #[derive(Clone)]
@@ -591,9 +599,37 @@ impl ChainWriter {
         // Waiting for the permit receipt before sending transferFrom is not
         // needed for correctness: nonce order guarantees the permit executes
         // first, so the allowance exists by the time transferFrom runs.
+        //
+        // THAT REASONING IS ONLY TRUE IF WE SET THE GAS LIMIT OURSELVES, which is
+        // what TRANSFER_FROM_GAS below is for. It holds for EXECUTION and says
+        // nothing about SUBMISSION: ethers fills an unset gas limit by calling
+        // eth_estimateGas first (ethers-providers rpc/provider.rs, "Set gas to
+        // estimated value only if it was not set by the caller"), and that
+        // estimate is a dry run against the chain AS IT IS NOW — a chain where
+        // the permit broadcast microseconds earlier has not been mined. So the
+        // allowance is still zero in the dry run, the dry run reverts with
+        // "SuperToken: transfer amount exceeds allowance", and send() refuses to
+        // broadcast at all.
+        //
+        // The player's permit still lands, so they are left with their signature
+        // spent, a standing allowance for the full amount, and no transfer. That
+        // is what a player saw as "transferFrom submission failed: Contract call
+        // reverted" while holding 47k G$ and a relay with 41 CELO of gas. It is a
+        // race against block time, which is why 51 withdrawals had gone through
+        // and only some fail: sometimes the permit is already mined when the
+        // estimate runs.
+        //
+        // Marketplace purchases never had this bug because they are a SINGLE
+        // transaction (purchaseWithPermit), so the permit runs inside the same
+        // dry run as the transfer. This path is the only two-transaction one, and
+        // was the only one affected.
         let mut permit_call =
             self.g_token.permit(from, spender, amount, U256::from(deadline), v, r, s);
         let mut transfer_call = self.g_token.transfer_from(from, to, amount);
+        // Skips eth_estimateGas for the dependent tx. A SuperToken transferFrom
+        // is well under this; unused gas is refunded, so a generous ceiling is
+        // free, and paying it is strictly better than not broadcasting.
+        transfer_call.tx.set_gas(TRANSFER_FROM_GAS);
 
         let (permit_pending, transfer_pending) = {
             let _tx = self.tx_lock.lock().await;
