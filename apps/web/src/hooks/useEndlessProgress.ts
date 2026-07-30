@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
+import { usePlayerStore } from '@/stores/usePlayerStore'
+import type { Player } from '@/types'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -6,7 +8,9 @@ export interface WaveResult {
   wave: number
   gAwarded: number
   rankedUp: boolean
+  newRank: Player['rank'] | null
   prestiged: boolean
+  prestigeLevel: number
 }
 
 /**
@@ -133,7 +137,37 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
       const g = Number(d.g_awarded) || 0
       setBanked((b) => b + g)
       setWave(Number(d.wave) + 1)
-      return { wave: Number(d.wave), gAwarded: g, rankedUp: !!d.ranked_up, prestiged: !!d.prestiged }
+
+      // Write the server's XP and rank back into the player, which this hook used to
+      // throw away entirely.
+      //
+      // The server has always credited the XP — 50 a wave, stored, on-chain — and has
+      // always returned new_xp, new_rank and prestige_level on every wave. Nothing read
+      // them. So the bar and the rank badge kept showing whatever they showed when the
+      // page loaded, and a player who climbed two ranks in a run saw none of it until a
+      // full reload. The XP was never lost; only the news of it was.
+      //
+      // Guarded on a real number: the server answers 0 when its own award call failed,
+      // and writing that would wipe the player's XP to zero on screen over a server-side
+      // hiccup — the one way this sync could be worse than no sync at all.
+      const updates: Partial<Player> = {}
+      if (typeof d.new_xp === 'number' && d.new_xp > 0) updates.xp = d.new_xp
+      if (d.ranked_up && d.new_rank) updates.rank = d.new_rank
+      if (typeof d.prestige_level === 'number') updates.prestige_level = d.prestige_level
+      if (g > 0) {
+        const cur = usePlayerStore.getState().player?.g_earned_lifetime ?? 0
+        updates.g_earned_lifetime = Number(cur) + g
+      }
+      if (Object.keys(updates).length > 0) usePlayerStore.getState().updatePlayer(updates)
+
+      return {
+        wave: Number(d.wave),
+        gAwarded: g,
+        rankedUp: !!d.ranked_up,
+        newRank: d.new_rank ?? null,
+        prestiged: !!d.prestiged,
+        prestigeLevel: Number(d.prestige_level) || 0,
+      }
     } catch {
       return null
     }

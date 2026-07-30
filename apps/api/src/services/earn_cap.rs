@@ -141,42 +141,75 @@ async fn pool_balance_g(chain: &crate::services::chain::ChainWriter) -> Option<u
     Some(whole)
 }
 
-/// Cap `proposed` against this wallet's weekly allowance, then against the pool.
-/// Returns the amount actually payable.
+/// Cap `proposed` against this wallet's weekly allowance AND against the pool, and
+/// return the amount actually payable.
+///
+/// THE TWO BRAKES DO NOT COMPOUND. Each is measured against the FULL proposed reward
+/// and the harsher of the two wins; they are not applied one after the other.
+///
+/// Chaining them was the old behaviour and it multiplied: a player over their weekly
+/// allowance while the pool sat under its floor was trimmed to 25%, then that 25% was
+/// trimmed to 25% again, paying 6.25%. Observed live — a wave promising 1,100 G$ paid 68,
+/// and one promising 1,400 paid 87. Two brakes each meant to soften a payout combined
+/// into one that erases it, and at that size the CELO gas to deliver the reward costs
+/// more than the reward.
+///
+/// Neither brake is supposed to mean "pay almost nothing": the weekly cap exists so a
+/// grinder cannot take the whole pool, the floor so a draining pool degrades gently
+/// instead of reverting mid-session. Taking the minimum honours both — whichever
+/// condition is worse still bites in full — without inventing a third, harsher rate
+/// that nobody chose.
 pub async fn cap_reward(state: &crate::AppState, wallet: &str, proposed: u64) -> u64 {
     if proposed == 0 { return 0; }
-    let mut allowed = proposed;
 
+    // Brake 1: this wallet's weekly allowance. Not a flat rate — a reward straddling
+    // the boundary is split, so this is computed rather than derived from a percentage.
+    let mut weekly_allowed = proposed;
     let cap = weekly_cap_g();
     if cap > 0 {
         let earned = earned_this_week(&state.db, wallet).await;
-        allowed = apply_cap(earned, allowed, cap, over_cap_rate());
-        if allowed < proposed {
+        weekly_allowed = apply_cap(earned, proposed, cap, over_cap_rate());
+        if weekly_allowed < proposed {
             tracing::info!(
                 "weekly cap: {} earned {} of {} this week — reward trimmed {} -> {}",
-                wallet, earned, cap, proposed, allowed,
+                wallet, earned, cap, proposed, weekly_allowed,
             );
         }
     }
 
+    // Brake 2: the pool's own floor, measured against the same full reward.
+    let mut pool_tapering = false;
     let floor = pool_floor_g();
-    if floor > 0 && allowed > 0 {
+    if floor > 0 {
         if let Some(chain) = state.chain.as_ref() {
             if let Some(balance) = pool_balance_g(chain).await {
                 if balance < floor {
-                    let tapered = (allowed as f64 * pool_floor_rate().clamp(0.0, 1.0)).floor() as u64;
+                    pool_tapering = true;
                     tracing::warn!(
                         "REWARD POOL LOW: {} G$ is under the {} G$ floor — payouts tapered \
-                         ({} -> {} for {}). Top the pool up.",
-                        balance, floor, allowed, tapered, wallet,
+                         for {}. Top the pool up.",
+                        balance, floor, wallet,
                     );
-                    allowed = tapered;
                 }
             }
         }
     }
 
-    allowed
+    payable(proposed, weekly_allowed, pool_tapering, pool_floor_rate())
+}
+
+/// The final payable amount from both brakes. Pure, so the no-compounding rule is
+/// testable without a database or a chain.
+///
+/// `weekly_allowed` is what the weekly cap alone would pay. The pool taper is applied to
+/// the FULL `proposed`, not to `weekly_allowed`, and the stricter of the two wins.
+pub fn payable(proposed: u64, weekly_allowed: u64, pool_tapering: bool, floor_rate: f64) -> u64 {
+    let pool_allowed = if pool_tapering {
+        (proposed as f64 * floor_rate.clamp(0.0, 1.0)).floor() as u64
+    } else {
+        proposed
+    };
+    weekly_allowed.min(pool_allowed)
 }
 
 /// What the player is shown: how much of this week's allowance is spent, and what
@@ -204,6 +237,37 @@ mod tests {
 
     const CAP: u64 = 50_000;
     const RATE: f64 = 0.25;
+
+    #[test]
+    fn the_two_brakes_never_compound() {
+        // A player over their weekly cap, with the pool under its floor. Each brake
+        // alone pays 25%; chained they paid 6.25%, which is what produced a wave
+        // promising 1,100 G$ paying 68 in production.
+        let over_cap = apply_cap(50_000, 1_100, CAP, RATE); // 275 = 25%
+        assert_eq!(over_cap, 275);
+        assert_eq!(payable(1_100, over_cap, true, RATE), 275, "the harsher brake, applied once");
+        assert_ne!(payable(1_100, over_cap, true, RATE), 68, "must not multiply to 6.25%");
+    }
+
+    #[test]
+    fn each_brake_still_bites_on_its_own() {
+        // Only the pool is low: full reward tapered to 25%.
+        assert_eq!(payable(1_000, 1_000, true, RATE), 250);
+        // Only the wallet is over its cap: the cap's figure stands.
+        assert_eq!(payable(1_000, 250, false, RATE), 250);
+        // Neither: paid in full.
+        assert_eq!(payable(1_000, 1_000, false, RATE), 1_000);
+    }
+
+    #[test]
+    fn a_straddling_reward_survives_a_low_pool_correctly() {
+        // 2,000 of headroom then 8,000 over at 25% = 4,000 from the cap. The pool taper
+        // on the FULL 10,000 is 2,500, which is stricter, so 2,500 is paid — not
+        // 4,000 × 25% = 1,000.
+        let straddled = apply_cap(48_000, 10_000, CAP, RATE);
+        assert_eq!(straddled, 4_000);
+        assert_eq!(payable(10_000, straddled, true, RATE), 2_500);
+    }
 
     #[test]
     fn under_the_cap_pays_in_full() {
