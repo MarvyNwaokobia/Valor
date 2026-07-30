@@ -51,6 +51,9 @@ export const MINIPAY_EDITION: EditionConfig = {
     address: USDM,
     decimals: 18,
     redeemable: false, // spend-only: goods in, no cash-out path
+    // MiniPay cannot sign typed data at all, so no permit domain can be used
+    // here whatever the token supports. Purchases go through approve-then-call.
+    permit: null,
   },
 
   // The constraint that costs the most code. Do not flip this hopefully.

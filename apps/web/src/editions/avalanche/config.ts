@@ -41,6 +41,9 @@ export const AVALANCHE_EDITION: EditionConfig = {
     address: null,
     decimals: 18,
     redeemable: false,
+    // Fill in from the deployed token's own EIP-712 domain, read off the
+    // contract. Do not copy G$'s — a mismatched domain reverts on-chain.
+    permit: null,
   },
 
   // Standard EVM wallets sign typed data fine, so the permit flows that

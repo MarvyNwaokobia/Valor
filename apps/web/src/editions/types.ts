@@ -49,6 +49,19 @@ export interface EditionCurrency {
    * Drives whether Bank, Withdraw and Transfer Out render at all.
    */
   redeemable: boolean
+  /**
+   * EIP-712 domain identity for this token's EIP-2612 `permit`, when it has one.
+   *
+   * These are properties of the TOKEN, not the chain: G$ signs under
+   * `{ name: 'GoodDollar', version: '1' }`, and a different token on a different
+   * chain will not. Swapping only `chainId` would produce a domain the token
+   * rejects, which surfaces as a signature that verifies locally and then
+   * reverts on-chain — the worst kind of failure to debug.
+   *
+   * `null` where the edition cannot sign typed data anyway (MiniPay) or has no
+   * currency deployed yet (Avalanche).
+   */
+  permit: { name: string; version: string } | null
 }
 
 export interface EditionConfig {

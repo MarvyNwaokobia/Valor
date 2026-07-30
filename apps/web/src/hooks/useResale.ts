@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { readContract, waitForTransactionReceipt } from '@wagmi/core'
 import { useConfig } from 'wagmi'
-import { celo } from 'viem/chains'
+import { activeChain, requirePermitDomain } from '@/editions/chain'
 import { parseUnits, parseSignature } from 'viem'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
@@ -84,14 +84,14 @@ export function useResale(walletAddress?: string) {
       })
       if (!approved) {
         const ah = await walletClient.writeContract({
-          account: walletClient.account, chain: celo,
+          account: walletClient.account, chain: activeChain(),
           address: items, abi: ITEMS_ABI, functionName: 'setApprovalForAll', args: [MARKETPLACE, true],
         })
         await waitForTransactionReceipt(config, { hash: ah })
       }
       const price = parseUnits(priceG.toString(), G_DECIMALS)
       const hash = await walletClient.writeContract({
-        account: walletClient.account, chain: celo,
+        account: walletClient.account, chain: activeChain(),
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'listForResale',
         args: [BigInt(item.on_chain_id), price],
       })
@@ -107,7 +107,7 @@ export function useResale(walletAddress?: string) {
     setPending(true)
     try {
       const hash = await walletClient.writeContract({
-        account: walletClient.account, chain: celo,
+        account: walletClient.account, chain: activeChain(),
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'cancelResale', args: [resaleId],
       })
       await waitForTransactionReceipt(config, { hash })
@@ -129,7 +129,7 @@ export function useResale(walletAddress?: string) {
       })
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
+        domain: requirePermitDomain(),
         types: { Permit: [
           { name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' },
           { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
@@ -139,7 +139,7 @@ export function useResale(walletAddress?: string) {
       })
       const { v, r, s } = parseSignature(rawSig)
       const hash = await walletClient.writeContract({
-        account: walletClient.account, chain: celo,
+        account: walletClient.account, chain: activeChain(),
         address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'buyResaleWithPermit',
         args: [resaleId, deadline, Number(v), r, s],
       })
