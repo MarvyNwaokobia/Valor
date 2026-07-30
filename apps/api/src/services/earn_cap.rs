@@ -22,6 +22,7 @@
 //! handful of players can still empty a 200,000 G$ pool in a week. Keeping the pool
 //! funded is a separate job (see `pool_warn_g` in the endless handler).
 
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -119,24 +120,53 @@ fn pool_floor_rate() -> f64 {
 /// be fresh enough to catch the floor within a minute of crossing it.
 const POOL_BALANCE_TTL: Duration = Duration::from_secs(60);
 
-static POOL_BALANCE: OnceLock<Mutex<Option<(Instant, u64)>>> = OnceLock::new();
+/// Cached per POOL ADDRESS, not once globally.
+///
+/// Valor runs two reward pools — the main one (campaign first clears, rank-ups,
+/// referrals) and a dedicated Endless one — and they hold very different amounts.
+/// A single cache slot would serve whichever was read first to both.
+static POOL_BALANCE: OnceLock<Mutex<HashMap<ethers::types::Address, (Instant, u64)>>> =
+    OnceLock::new();
 
-/// Whole G$ in the main reward pool, cached. `None` when there is no chain
-/// configured or the read failed — callers treat that as "do not taper", because
+/// Which pool a reward will actually be paid out of.
+///
+/// This exists because the floor used to measure the MAIN pool for every reward,
+/// whatever paid it. An empty main pool therefore throttled Endless to 25% while the
+/// Endless pool sat on 73,209 G$ — a healthy surface punished for a different one's
+/// balance. Observed live: Endless waves paying a quarter of their face value with the
+/// pool behind them fully funded.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RewardSource {
+    /// Campaign first clears, rank-up bonuses, referrals.
+    Main,
+    /// Endless / Seasonal waves.
+    Endless,
+}
+
+/// Whole G$ in the pool that will pay this reward, cached. `None` when there is no
+/// chain configured or the read failed — callers treat that as "do not taper", because
 /// refusing to pay on a failed balance read would turn an RPC blip into a silent
 /// pay cut.
-async fn pool_balance_g(chain: &crate::services::chain::ChainWriter) -> Option<u64> {
-    let cell = POOL_BALANCE.get_or_init(|| Mutex::new(None));
+async fn pool_balance_g(
+    chain: &crate::services::chain::ChainWriter,
+    source: RewardSource,
+) -> Option<u64> {
+    // Endless falls back to the main pool when no dedicated one is configured, which is
+    // exactly what the payout path does, so the floor follows the money either way.
+    let addr = match source {
+        RewardSource::Main => chain.reward_pool_address()?,
+        RewardSource::Endless => chain.endless_pool_address()?,
+    };
+    let cell = POOL_BALANCE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(guard) = cell.lock() {
-        if let Some((at, bal)) = *guard {
-            if at.elapsed() < POOL_BALANCE_TTL { return Some(bal); }
+        if let Some((at, bal)) = guard.get(&addr) {
+            if at.elapsed() < POOL_BALANCE_TTL { return Some(*bal); }
         }
     }
-    let addr = chain.reward_pool_address()?;
     let raw = chain.g_balance(addr).await.ok()?;
     let whole = (raw / ethers::types::U256::exp10(18)).as_u64();
     if let Ok(mut guard) = cell.lock() {
-        *guard = Some((Instant::now(), whole));
+        guard.insert(addr, (Instant::now(), whole));
     }
     Some(whole)
 }
@@ -159,7 +189,12 @@ async fn pool_balance_g(chain: &crate::services::chain::ChainWriter) -> Option<u
 /// instead of reverting mid-session. Taking the minimum honours both — whichever
 /// condition is worse still bites in full — without inventing a third, harsher rate
 /// that nobody chose.
-pub async fn cap_reward(state: &crate::AppState, wallet: &str, proposed: u64) -> u64 {
+pub async fn cap_reward(
+    state: &crate::AppState,
+    wallet: &str,
+    proposed: u64,
+    source: RewardSource,
+) -> u64 {
     if proposed == 0 { return 0; }
 
     // Brake 1: this wallet's weekly allowance. Not a flat rate — a reward straddling
@@ -177,18 +212,19 @@ pub async fn cap_reward(state: &crate::AppState, wallet: &str, proposed: u64) ->
         }
     }
 
-    // Brake 2: the pool's own floor, measured against the same full reward.
+    // Brake 2: the floor of THE POOL THIS REWARD COMES FROM, measured against the same
+    // full reward. Reading the main pool for an Endless wave is the bug this replaces.
     let mut pool_tapering = false;
     let floor = pool_floor_g();
     if floor > 0 {
         if let Some(chain) = state.chain.as_ref() {
-            if let Some(balance) = pool_balance_g(chain).await {
+            if let Some(balance) = pool_balance_g(chain, source).await {
                 if balance < floor {
                     pool_tapering = true;
                     tracing::warn!(
-                        "REWARD POOL LOW: {} G$ is under the {} G$ floor — payouts tapered \
-                         for {}. Top the pool up.",
-                        balance, floor, wallet,
+                        "REWARD POOL LOW: the {:?} pool holds {} G$, under the {} G$ floor — \
+                         payouts from it tapered for {}. Top that pool up.",
+                        source, balance, floor, wallet,
                     );
                 }
             }
