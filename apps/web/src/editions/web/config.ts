@@ -32,6 +32,10 @@ export const WEB_EDITION: EditionConfig = {
     address: G_TOKEN_ADDRESS,
     decimals: 18,
     redeemable: true,
+    // Exactly what G$ expects. Pinned by a test in editions/chain.test.ts against
+    // the literals these replaced, because a wrong permit domain produces a
+    // signature that looks fine and then reverts on-chain.
+    permit: { name: 'GoodDollar', version: '1' },
   },
 
   canSignTypedData: true,

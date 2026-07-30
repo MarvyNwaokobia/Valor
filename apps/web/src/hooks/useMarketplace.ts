@@ -8,6 +8,7 @@ import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { requirePermitDomain } from '@/editions/chain'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const MARKETPLACE_CONTRACT = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
@@ -88,12 +89,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       // Sign EIP-2612 permit — wallet shows "Sign message", zero gas for player
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: {
-          name: 'GoodDollar',
-          version: '1',
-          chainId: 42220,
-          verifyingContract: G_TOKEN_ADDRESS,
-        },
+        domain: requirePermitDomain(),
         types: {
           Permit: [
             { name: 'owner',    type: 'address' },
