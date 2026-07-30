@@ -60,6 +60,11 @@ const KEY_LOOK = 0.9;           // rad/s for arrow-key look — small nudges
 const ADS_SENS = 0.55;          // look slows while aiming down sights (precision)
 const MOUSE_MAX_STEP = 90;      // clamp per-event mouse delta — kills pointer-lock spikes
 const TOUCH_LOOK_SENS = 0.0022; // rad per touch-drag pixel (mobile look)
+/// How fast the touch-drag buffer drains, per second. Higher = tighter and more
+/// immediate, lower = glassier and more floaty. Used as `1 - exp(-dt * rate)`, so this
+/// is a real-time constant: the same feel at 20fps as at 60fps. This is the number to
+/// turn if mobile aim feels either laggy or twitchy.
+const LOOK_SMOOTH_RATE = 19;
 const PITCH_LIMIT = 1.45;       // ~83°
 
 const RECOIL_RECOVER = 12;     // per second
@@ -1038,14 +1043,31 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const adsMult = THREE.MathUtils.lerp(1, ADS_SENS, adsCur.current);
     // Touch drag feeds a buffer we EASE out of, so aiming glides instead of
     // jittering frame-to-frame (mouse stays raw — desktop wants 1:1).
-    lookAccum.current.x += ct.lookX; lookAccum.current.y += ct.lookY;
+    const rawTouchX = ct.lookX, rawTouchY = ct.lookY; // this frame's actual finger travel
+    lookAccum.current.x += rawTouchX; lookAccum.current.y += rawTouchY;
     ct.lookX = 0; ct.lookY = 0;
-    const ease = Math.min(1, dt * 19);
+    // FRAME-RATE-INDEPENDENT smoothing. This was `Math.min(1, dt * 19)`, the linear
+    // approximation of an exponential decay, and it fell apart exactly where it was
+    // needed most: `dt` is capped at 1/20, so on a phone at 20fps the term reached 0.95
+    // and the ENTIRE buffered swipe was dumped into one frame. Smoothing therefore
+    // switched itself off as the device got slower, which is why aiming felt stepped on
+    // Android and fine on desktop — 0.32 of the buffer per frame at 60fps against 0.95 at
+    // 20fps.
+    //
+    // `1 - exp(-dt * rate)` is the real thing: the buffer's half-life is now a fixed
+    // amount of REAL TIME, so 20fps and 60fps smooth identically. Total rotation for a
+    // given swipe is unchanged — exponential decay only spreads it, so sensitivity feels
+    // the same and only the delivery is smoother.
+    const ease = 1 - Math.exp(-dt * LOOK_SMOOTH_RATE);
     const tx = lookAccum.current.x * ease, ty = lookAccum.current.y * ease;
     lookAccum.current.x -= tx; lookAccum.current.y -= ty;
     // A real manual look this frame (drag or mouse) drops any lock-on so you aim freely.
+    // Measured on the RAW finger travel, not the eased output: the eased value is now
+    // smaller per frame (that is the fix above working), and testing the smoothed number
+    // against a fixed threshold would have quietly made lock-on harder to break by
+    // dragging — worst on the slow devices this is all for.
     const manualLook = Math.abs(mouseDX.current) > 0.5 || Math.abs(mouseDY.current) > 0.5
-      || Math.abs(tx) > 1.5 || Math.abs(ty) > 1.5;
+      || Math.abs(rawTouchX) > 1.5 || Math.abs(rawTouchY) > 1.5;
     yaw.current -= (mouseDX.current * LOOK_SENS + tx * TOUCH_LOOK_SENS) * adsMult;
     pitch.current -= (mouseDY.current * LOOK_SENS + ty * TOUCH_LOOK_SENS) * adsMult;
     mouseDX.current = 0; mouseDY.current = 0;
