@@ -65,6 +65,22 @@ const TOUCH_LOOK_SENS = 0.0022; // rad per touch-drag pixel (mobile look)
 /// is a real-time constant: the same feel at 20fps as at 60fps. This is the number to
 /// turn if mobile aim feels either laggy or twitchy.
 const LOOK_SMOOTH_RATE = 19;
+
+// Player-tunable look sensitivity. A single multiplier over the tuned defaults, kept
+// per device in localStorage — a phone and a desktop want very different numbers, and
+// localStorage is already per device, so one key covers both without a mode switch.
+const SENS_KEY = 'valor_look_sens';
+const SENS_MIN = 0.25, SENS_MAX = 2.5, SENS_DEFAULT = 1;
+function loadLookSens(): number {
+  if (typeof window === 'undefined') return SENS_DEFAULT;
+  try {
+    const v = Number(window.localStorage.getItem(SENS_KEY));
+    // Clamped on the way IN, not just on the way out: a hand-edited or stale value
+    // must not be able to make the game unplayable before the slider can fix it.
+    if (Number.isFinite(v) && v > 0) return Math.max(SENS_MIN, Math.min(SENS_MAX, v));
+  } catch { /* private mode */ }
+  return SENS_DEFAULT;
+}
 const PITCH_LIMIT = 1.45;       // ~83°
 
 const RECOIL_RECOVER = 12;     // per second
@@ -414,6 +430,14 @@ interface Controls {
   moveY: number; // -1..1 forward (forward +)
   lookX: number; // accumulated touch-drag dx, consumed each frame
   lookY: number;
+  /**
+   * Player's look-sensitivity multiplier on top of LOOK_SENS / TOUCH_LOOK_SENS.
+   *
+   * Lives here rather than in a prop so the frame loop picks a change up on the very
+   * next frame with no remount. 1 = the tuned default; the slider in the pause menu
+   * writes it and persists it per device.
+   */
+  lookSens: number;
   fire: boolean;
   ads: boolean;
   reload: boolean;
@@ -820,7 +844,21 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       } catch { /* pointer lock unavailable (headless / blocked) — arrow keys still aim */ }
     };
     const down = (e: KeyboardEvent) => {
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
+      // Don't swallow keys aimed at a control the player is actually using. Arrows and
+      // Space and Tab are blocked here so they aim and fire instead of scrolling the
+      // page — but that block is global, so it also disabled every keyboard-operated
+      // control in the pause menu. The sensitivity slider is arrow-driven, and Tab is
+      // the only way to reach these buttons without a mouse.
+      //
+      // Keys are still RECORDED below rather than returned on: a HUD button can hold
+      // focus after a click, and dropping input entirely in that state would silently
+      // stop movement working mid-fight. Only the preventDefault is skipped.
+      const t = e.target as HTMLElement | null;
+      const onControl = !!t && (
+        t.tagName === 'INPUT' || t.tagName === 'BUTTON' ||
+        t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable
+      );
+      if (!onControl && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       keys.current.add(e.code);
       if (e.code === 'KeyR') wantReload.current = true;
@@ -1068,8 +1106,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // dragging — worst on the slow devices this is all for.
     const manualLook = Math.abs(mouseDX.current) > 0.5 || Math.abs(mouseDY.current) > 0.5
       || Math.abs(rawTouchX) > 1.5 || Math.abs(rawTouchY) > 1.5;
-    yaw.current -= (mouseDX.current * LOOK_SENS + tx * TOUCH_LOOK_SENS) * adsMult;
-    pitch.current -= (mouseDY.current * LOOK_SENS + ty * TOUCH_LOOK_SENS) * adsMult;
+    // The player's multiplier scales mouse and touch together — whichever they use is
+    // the one they are tuning, and a device is effectively one or the other.
+    const sens = adsMult * (ct.lookSens > 0 ? ct.lookSens : 1);
+    yaw.current -= (mouseDX.current * LOOK_SENS + tx * TOUCH_LOOK_SENS) * sens;
+    pitch.current -= (mouseDY.current * LOOK_SENS + ty * TOUCH_LOOK_SENS) * sens;
     mouseDX.current = 0; mouseDY.current = 0;
     const keyStep = KEY_LOOK * adsMult * dt;
     if (held('ArrowLeft')) yaw.current += keyStep;
@@ -2953,7 +2994,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
 
   // Mobile is a first-class target (Marvy's note): a left move-stick, a right
   // look-pad, and fire/ADS/reload buttons write into this, read by FpsWorld.
-  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null, lockCycle: false, tapAimX: null, tapAimY: null });
+  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, lookSens: loadLookSens(), fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null, lockCycle: false, tapAimX: null, tapAimY: null });
   const audio = useMemo(() => new FpsAudio(), []);
   useEffect(() => () => audio.dispose(), [audio]);
 
@@ -3169,6 +3210,16 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
       if (q === 'high') window.localStorage.removeItem('valor_degraded');
     } catch { /* private mode */ }
   }, []);
+  // Look sensitivity. Mirrored in React state purely so the slider re-renders; the
+  // frame loop reads controls.current.lookSens, so a drag is felt immediately.
+  const [lookSens, setLookSens] = useState<number>(loadLookSens);
+  const pickLookSens = useCallback((v: number) => {
+    const clamped = Math.max(SENS_MIN, Math.min(SENS_MAX, v));
+    setLookSens(clamped);
+    controls.current.lookSens = clamped;
+    try { window.localStorage.setItem(SENS_KEY, String(clamped)); } catch { /* private mode */ }
+  }, []);
+
   // Auto-detect: PerformanceMonitor flags a machine that can't hold framerate even
   // after AdaptiveDpr has dropped the resolution. A warmup window + a small counter
   // avoid tripping on the one-time load hitch. PERSISTED: once a machine degrades we
@@ -3607,6 +3658,27 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
                   opacity: quality === q ? 1 : 0.65,
                 }}>{q.toUpperCase()}</button>
               ))}
+            </div>
+            {/* Look sensitivity. Here rather than in a settings screen because the only
+                way to judge it is to change it and immediately fight again — RESUME is
+                one tap away, and the value is live the moment the slider moves. */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center', width: 'min(88vw, 340px)' }}>
+              <span style={{ fontSize: 10, letterSpacing: 2, color: '#6f7d8c', whiteSpace: 'nowrap' }}>
+                {isTouch ? 'AIM SPEED' : 'MOUSE SPEED'}
+              </span>
+              <input
+                type="range"
+                min={SENS_MIN} max={SENS_MAX} step={0.05} value={lookSens}
+                onChange={(e) => pickLookSens(Number(e.currentTarget.value))}
+                aria-label="Look sensitivity"
+                style={{ flex: 1, accentColor: '#37d0e0', height: 26, cursor: 'pointer', touchAction: 'none' }}
+              />
+              <span style={{ fontSize: 11, color: '#37d0e0', fontVariantNumeric: 'tabular-nums', width: 38, textAlign: 'right' }}>
+                {lookSens.toFixed(2)}
+              </span>
+              {lookSens !== SENS_DEFAULT && (
+                <button onClick={() => pickLookSens(SENS_DEFAULT)} style={{ ...btnC4('#5a6773'), padding: '4px 8px', fontSize: 9, letterSpacing: 1 }}>RESET</button>
+              )}
             </div>
             <div style={{ fontSize: 11, color: '#4a5763', letterSpacing: 1, marginTop: 18 }}>{isTouch ? 'tap RESUME to return to the fight' : 'ESC resumes · this pause is safe, nothing is lost'}</div>
           </div>
