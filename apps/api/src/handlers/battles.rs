@@ -148,9 +148,10 @@ fn next_rank(rank: &str) -> Option<&'static str> {
 /// averaged 3,712 paid against 7,500 owed), which is a cap doing a payout curve's job
 /// and telling players a number that then does not arrive.
 ///
-/// Flat pays 3,000 G$ for the full fifteen-op campaign instead of 60,000, and the
-/// number a player is promised is the number they get at every op.
-const FIRST_CLEAR_BOUNTY_G: u64 = 200;
+/// Cut again 200 -> 10 on 2026-07-31: the full fifteen-op campaign now pays 150 G$,
+/// down from 3,000 and from 60,000 before that. Same shape, same promise at every op —
+/// only the size changed.
+const FIRST_CLEAR_BOUNTY_G: u64 = 10;
 
 /// The op RATE, ignoring whether earning is currently paused. Flat, so the level no
 /// longer changes the amount. Clamped to the on-chain per-payout ceiling, since a
@@ -1622,7 +1623,7 @@ mod reward_amount_tests {
         // reach the on-chain ceiling — which is the point: the old curve's deep ops were
         // most of the pool's outflow, and the weekly cap was silently trimming them.
         for level in [1, 5, 15, 20, 30] {
-            assert_eq!(op_bounty_rate_g(level), 200, "op {level} should pay the flat rate");
+            assert_eq!(op_bounty_rate_g(level), 10, "op {level} should pay the flat rate");
         }
     }
 
