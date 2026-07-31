@@ -18,7 +18,7 @@ import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { ConnectButton } from '@/components/ui/ConnectButton'
 
-type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
+type Step = 'verify' | 'covenant' | 'telegram' | 'select' | 'confirm' | 'tutorial'
 
 const PREFIXES = ['Iron','Dark','Storm','Ash','Void','Flame','Shadow','Silver','Crimson','Frost','Thunder','Ember','Blood','Death','War']
 const SUFFIXES = ['Blade','Fist','Heart','Walker','Strike','Guard','Born','Wolf','Hawk','Bane','Forge','Rift','Claw','Rage','Fire']
@@ -152,9 +152,18 @@ export default function OnboardingPage() {
     )
   }
 
-  // ── Step: COVENANT — permanent identity intro (auto-advance to 'select') ──────
+  // ── Step: COVENANT — permanent identity intro (auto-advance to 'telegram') ────
   if (step === 'covenant') {
-    return <CovenantIntro onComplete={() => setStep('select')} />
+    return <CovenantIntro onComplete={() => setStep('telegram')} />
+  }
+
+  // ── Step: TELEGRAM — join the community ───────────────────────────────────────
+  // Placed here, between the covenant and class select, rather than immediately
+  // before the claim: picking a class and naming it flows straight into forging,
+  // and interrupting that with an ask would land at the worst moment. Here it
+  // still reads as part of setup.
+  if (step === 'telegram') {
+    return <JoinTelegram onContinue={() => setStep('select')} />
   }
 
   // ── Step: SELECT ──────────────────────────────────────────────────────────────
@@ -468,6 +477,82 @@ export default function OnboardingPage() {
   }
 
   return null
+}
+
+// ── Join Telegram ─────────────────────────────────────────────────────────────
+//
+// Deliberately UNVERIFIED. We never ask Telegram whether they joined and we
+// store nothing: "I've joined" is the whole gate, and it is tappable from the
+// first frame.
+//
+// That is not laziness, it is the only workable design. Plenty of people are in
+// the group before they ever open the site, and plenty do not have Telegram
+// installed at all — gating the button on a click-through would strand both, at
+// the one point in onboarding where dropping out costs us the player entirely.
+// The ask is worth making; blocking on it is not.
+const TELEGRAM_URL = 'https://t.me/playvalor'
+
+function JoinTelegram({ onContinue }: { onContinue: () => void }) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-70 flex flex-col items-center justify-center px-6"
+      style={{ background: '#04030c' }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+    >
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse 60% 50% at 50% 45%, rgba(42,171,238,0.10), transparent)' }}
+      />
+
+      <motion.div
+        className="relative z-10 w-full max-w-sm flex flex-col items-center text-center gap-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.15 }}
+      >
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center"
+          style={{ background: 'rgba(42,171,238,0.12)', border: '1px solid rgba(42,171,238,0.35)' }}
+        >
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="#2AABEE" aria-hidden>
+            <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+          </svg>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h1 className="font-display font-black text-white text-2xl tracking-wide">Join the Telegram</h1>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Season news, payout updates and the people you&apos;ll be fighting. It&apos;s where
+            everything about Valor gets announced first.
+          </p>
+        </div>
+
+        <a
+          href={TELEGRAM_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="w-full py-3.5 rounded-xl font-black text-sm text-center transition-transform active:scale-[0.98]"
+          style={{ background: '#2AABEE', color: '#04030c' }}
+        >
+          Open Telegram
+        </a>
+
+        <button
+          onClick={onContinue}
+          className="w-full py-3 rounded-xl font-bold text-sm border text-slate-300 hover:text-white transition-colors"
+          style={{ borderColor: 'rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.03)' }}
+        >
+          I&apos;ve joined
+        </button>
+
+        <p className="text-[11px] text-slate-600">
+          Already in the group, or no Telegram? Carry on — nothing here is checked.
+        </p>
+      </motion.div>
+    </motion.div>
+  )
 }
 
 // ── Covenant intro — "One human. One warrior." ────────────────────────────────
