@@ -40,9 +40,17 @@ export async function renderCardImage(walletAddress: string): Promise<ImageRespo
   // Never let a dead API produce a broken image — a card with placeholder text
   // still previews, a 500 leaves the link bare, which is the thing this fixes.
   let player: CardPlayer | null = null
+  let recruited = 0
   try {
-    const res = await fetch(`${API}/players/${walletAddress.toLowerCase()}`, { cache: 'no-store' })
-    if (res.ok) player = (await res.json()) as CardPlayer
+    const [pRes, rRes] = await Promise.all([
+      fetch(`${API}/players/${walletAddress.toLowerCase()}`, { cache: 'no-store' }),
+      fetch(`${API}/players/${walletAddress.toLowerCase()}/referrals`, { cache: 'no-store' }).catch(() => null),
+    ])
+    if (pRes.ok) player = (await pRes.json()) as CardPlayer
+    if (rRes?.ok) {
+      const r = await rRes.json()
+      if (typeof r?.recruited === 'number') recruited = r.recruited
+    }
   } catch {
     player = null
   }
@@ -126,6 +134,13 @@ export async function renderCardImage(walletAddress: string): Promise<ImageRespo
                 {compactG(earned)} G$
               </div>
             </div>
+            {/* Hidden at zero, like the other surfaces. */}
+            {recruited > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', fontSize: 18, letterSpacing: 3, color: '#64748b' }}>RECRUITED</div>
+                <div style={{ display: 'flex', fontSize: 34, color: '#e2e8f0', fontWeight: 700 }}>{recruited}</div>
+              </div>
+            )}
           </div>
         </div>
 

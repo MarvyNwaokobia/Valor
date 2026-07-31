@@ -56,15 +56,21 @@ export async function renderCardPortrait(walletAddress: string): Promise<ImageRe
 
   let player: CardPlayer | null = null
   let unlocked = 0
+  let recruited = 0
   try {
-    const [pRes, aRes] = await Promise.all([
+    const [pRes, aRes, rRes] = await Promise.all([
       fetch(`${API}/players/${wallet}`, { cache: 'no-store' }),
       fetch(`${API}/players/${wallet}/achievements`, { cache: 'no-store' }).catch(() => null),
+      fetch(`${API}/players/${wallet}/referrals`, { cache: 'no-store' }).catch(() => null),
     ])
     if (pRes.ok) player = (await pRes.json()) as CardPlayer
     if (aRes?.ok) {
       const rows = await aRes.json()
       if (Array.isArray(rows)) unlocked = rows.length
+    }
+    if (rRes?.ok) {
+      const r = await rRes.json()
+      if (typeof r?.recruited === 'number') recruited = r.recruited
     }
   } catch {
     player = null
@@ -225,8 +231,17 @@ export async function renderCardPortrait(walletAddress: string): Promise<ImageRe
               <span style={{ color: '#55606f', margin: '0 10px' }}>/</span>
               <span style={{ color: '#ef4444' }}>{losses}L</span>
             </div>
-            <div style={{ display: 'flex', fontSize: 30, color: '#eab308', fontWeight: 700 }}>
-              {compactG(earned)} G$ earned
+            <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+              {/* Hidden at zero — a new player's card should not advertise an
+                  empty stat. */}
+              {recruited > 0 && (
+                <div style={{ display: 'flex', fontSize: 30, color: '#94a3b8' }}>
+                  {recruited} recruited
+                </div>
+              )}
+              <div style={{ display: 'flex', fontSize: 30, color: '#eab308', fontWeight: 700 }}>
+                {compactG(earned)} G$ earned
+              </div>
             </div>
           </div>
 
