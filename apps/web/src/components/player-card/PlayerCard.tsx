@@ -192,7 +192,12 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
             </button>
           )}
           {isPublic && (
-            <span className="text-slate-600">valorapp.xyz</span>
+            /* The player's OWN link, not a bare domain — and not the stale
+               `valorapp.xyz`, which is not a domain Valor runs. A card that gets
+               screenshotted should still tell you where to find the player. */
+            <span className="text-slate-600">
+              playvalor.app{player.username ? `/${player.username}` : ''}
+            </span>
           )}
         </div>
       </div>
