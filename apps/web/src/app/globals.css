@@ -430,22 +430,6 @@ body {
   /* clear the bottom tab bar (~5.5rem) + the home-indicator inset */
   padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
 }
-
-/* TOP inset — INSTALLED ONLY.
-   viewportFit:'cover' (see layout.tsx) lets the page draw under the Dynamic
-   Island. In a browser tab that is harmless, because the URL bar physically
-   occupies that strip and the page never reaches it. Installed, there is no
-   URL bar, so the status-bar clock lands on top of the first row of content.
-
-   Scoped to `display-mode: standalone` deliberately. An earlier attempt applied
-   this unconditionally and pushed the browser layout down too — fixing the PWA
-   by breaking the web. Outside an installed PWA this block simply never
-   matches, so Safari cannot be affected by construction rather than by
-   assumption. Sides are left alone: they are 0 in portrait, and the previous
-   attempt gave no evidence they were involved. */
-@media (display-mode: standalone) {
-  .app-shell { padding-top: env(safe-area-inset-top, 0px); }
-}
 @media (min-width: 768px) {
   /* desktop has no bottom tab bar */
   .app-shell > main { padding-bottom: 2rem; }
