@@ -179,8 +179,16 @@ export default function PlayerCardPage() {
               cookie was blocked or cleared between landing and tapping. */}
           <Link
             href={signedIn ? '/' : `/?ref=${walletAddress}`}
-            className="w-full px-5 py-4 rounded-xl font-black text-base text-center tracking-wide transition-transform active:scale-[0.98]"
-            style={{ background: 'linear-gradient(180deg,#fde047,#eab308)', color: '#0a0a0f', boxShadow: '0 6px 24px rgba(234,179,8,0.25)' }}
+            className={
+              signedIn
+                ? 'self-center px-6 py-2.5 rounded-xl font-bold text-xs text-center tracking-wide transition-transform active:scale-[0.98]'
+                : 'w-full px-5 py-4 rounded-xl font-black text-base text-center tracking-wide transition-transform active:scale-[0.98]'
+            }
+            style={
+              signedIn
+                ? { background: 'rgba(234,179,8,0.12)', color: '#eab308', border: '1px solid rgba(234,179,8,0.35)' }
+                : { background: 'linear-gradient(180deg,#fde047,#eab308)', color: '#0a0a0f', boxShadow: '0 6px 24px rgba(234,179,8,0.25)' }
+            }
           >
             {signedIn ? 'ENTER VALOR' : 'JOIN VALOR'}
           </Link>
