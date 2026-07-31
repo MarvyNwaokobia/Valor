@@ -22,6 +22,13 @@ interface BattleRow {
   rounds_data?: { kind?: string; level?: number; won?: boolean } | unknown
   /** REAL G$ this fight paid (the one-time first-clear bounty). 0 for a replay. */
   g_awarded?: number
+  /**
+   * Which mode wrote this row. An `endless` row is NOT a defeat — dying is how an
+   * Endless run ends, and the server writes those with `counts_result = false` so
+   * they never touch the player's W/L record. Rendering them as red LOSS made a
+   * player who had been earning per wave see ten straight losses and 0 XP.
+   */
+  mode?: string | null
 }
 
 /** A campaign fight carries {kind:"mission", level}; resolve its display label. */
@@ -111,6 +118,11 @@ export default function BattleHistory({ walletAddress }: Props) {
           // bonus painted onto every won row, which invented money nobody was paid.
           const gEarned      = battle.g_awarded ?? 0
           const mission      = missionInfo(battle.rounds_data)
+          // An Endless row records the END of a run, not a loss. It carries no W/L
+          // weight on the server, so it must not be dressed as a defeat here: neutral
+          // colour, honest label, and no red bar implying the player did badly.
+          const isEndless    = battle.mode === 'endless'
+          const neutral      = isEndless && !won
 
           return (
             <motion.div
@@ -120,14 +132,14 @@ export default function BattleHistory({ walletAddress }: Props) {
               transition={{ delay: i * 0.03 }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg border"
               style={{
-                background:   won ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.04)',
-                borderColor:  won ? 'rgba(34,197,94,0.2)'  : 'rgba(239,68,68,0.15)',
+                background:   neutral ? 'rgba(148,163,184,0.04)' : won ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.04)',
+                borderColor:  neutral ? 'rgba(148,163,184,0.16)' : won ? 'rgba(34,197,94,0.2)'  : 'rgba(239,68,68,0.15)',
               }}
             >
               {/* Win/loss indicator */}
               <div
                 className="w-1 h-8 rounded-full shrink-0"
-                style={{ background: won ? '#22c55e' : '#ef4444' }}
+                style={{ background: neutral ? '#64748b' : won ? '#22c55e' : '#ef4444' }}
               />
 
               {/* Opponent — a campaign op shows the mission, else the wallet/bot */}
@@ -137,15 +149,19 @@ export default function BattleHistory({ walletAddress }: Props) {
                     : battle.is_bot && <Bot size={10} className="text-slate-500 shrink-0" />}
                   {mission
                     ? <p className="text-xs font-bold text-white truncate"><span className="text-slate-500">OP {mission.op} · </span>{mission.name}</p>
-                    : <p className="text-xs font-bold text-white truncate">{shortAddr(opponent)}</p>}
+                    : isEndless
+                      ? <p className="text-xs font-bold text-white truncate">Endless</p>
+                      : <p className="text-xs font-bold text-white truncate">{shortAddr(opponent)}</p>}
                   <span
                     className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm shrink-0"
                     style={{
-                      background: won ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-                      color:       won ? '#22c55e'             : '#ef4444',
+                      background: neutral ? 'rgba(148,163,184,0.14)' : won ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                      color:       neutral ? '#94a3b8' : won ? '#22c55e' : '#ef4444',
                     }}
                   >
-                    {mission ? (won ? 'CLEARED' : 'FAILED') : (won ? 'WIN' : 'LOSS')}
+                    {isEndless ? (won ? 'WAVE CLEARED' : 'RUN ENDED')
+                      : mission ? (won ? 'CLEARED' : 'FAILED')
+                      : (won ? 'WIN' : 'LOSS')}
                   </span>
                 </div>
                 <p className="text-[9px] text-slate-600 mt-0.5">{timeAgo(battle.created_at)}</p>
@@ -153,7 +169,7 @@ export default function BattleHistory({ walletAddress }: Props) {
 
               {/* Rewards */}
               <div className="text-right shrink-0">
-                <p className="text-xs font-black" style={{ color: won ? '#22c55e' : '#64748b' }}>
+                <p className="text-xs font-black" style={{ color: won && !neutral ? '#22c55e' : '#64748b' }}>
                   +{xpEarned} XP
                 </p>
                 {gEarned > 0 && (
@@ -175,8 +191,13 @@ export default function BattleHistory({ walletAddress }: Props) {
 
       {/* Lifetime G$ summary */}
       <div className="mt-4 pt-4 border-t border-valor-border flex items-center justify-between">
+        {/* Counts only rows that are actually a win on the player's record. An
+            Endless row is excluded for the same reason it is not drawn as a loss:
+            the server does not count it either. */}
         <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">
-          From {battles.filter(b => b.winner_wallet.toLowerCase() === walletAddress.toLowerCase()).length} wins
+          From {battles.filter(b =>
+            b.mode !== 'endless' && b.winner_wallet.toLowerCase() === walletAddress.toLowerCase(),
+          ).length} wins
         </p>
         <a
           href={`https://celoscan.io/address/${walletAddress}#tokentxns`}
