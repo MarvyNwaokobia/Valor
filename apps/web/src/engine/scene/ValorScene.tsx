@@ -3835,6 +3835,16 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ color: '#37d0e0', animation: 'none' }}><Icon name="rotate" size={64} /></div>
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 5, marginTop: 22 }}>ROTATE YOUR DEVICE</div>
           <div style={{ fontSize: 13, color: '#7f8c99', letterSpacing: 3, marginTop: 10 }}>VALOR IS PLAYED IN LANDSCAPE</div>
+          {/* This screen covers everything at z-index 60, including the EXIT button in
+              the HUD beneath it. Without its own way out, a player who opened a fight
+              and DIDN'T want to rotate had no exit at all — rotate or kill the app.
+              A refusal to turn the phone is a legitimate answer, so give it one. */}
+          {onExit && (
+            <div onTouchStart={(e) => { e.stopPropagation(); onExit(); }} onClick={onExit}
+              style={{ marginTop: 34, display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px 10px 14px', borderRadius: 10, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontSize: 12, letterSpacing: 3, pointerEvents: 'auto' }}>
+              <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+            </div>
+          )}
         </div>
       )}
 
