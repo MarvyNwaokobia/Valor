@@ -13,6 +13,7 @@ import type { IdentityMode } from '@/editions/types'
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
 import TutorialArena from '@/components/onboarding/TutorialArena'
+import { TELEGRAM_URL } from '@/lib/constants'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
@@ -490,7 +491,6 @@ export default function OnboardingPage() {
 // installed at all — gating the button on a click-through would strand both, at
 // the one point in onboarding where dropping out costs us the player entirely.
 // The ask is worth making; blocking on it is not.
-const TELEGRAM_URL = 'https://t.me/playvalor'
 
 function JoinTelegram({ onContinue }: { onContinue: () => void }) {
   return (
