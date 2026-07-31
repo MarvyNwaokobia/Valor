@@ -239,18 +239,8 @@ export default function ProfilePage() {
         transition={{ duration: 0.5, delay: 0.12 }}
       >
         {/* Page header */}
-        {/* min-w-0 on both sides is load-bearing. A flex child defaults to
-            min-width:auto, so neither the heading nor the username pill can
-            shrink below its content: a long enough @username pushes this row past
-            the viewport, and because nothing clamps horizontal overflow the WHOLE
-            page then scrolls right — which is why the pill appeared cut off at the
-            screen edge on a long name.
-
-            Note this is NOT PWA-specific; it needs a name long enough, and the
-            heading is set in Cinzel, which is far wider than a system font at the
-            same size. */}
-        <div className="flex items-end justify-between gap-3 min-w-0">
-          <div className="flex flex-col gap-0.5 min-w-0">
+        <div className="flex items-end justify-between gap-4">
+          <div className="flex flex-col gap-0.5">
             <p className="text-[10px] uppercase tracking-[0.3em] font-bold" style={{ color: def.accentColor }}>
               Warrior File
             </p>
@@ -258,14 +248,14 @@ export default function ProfilePage() {
           </div>
           <button
             onClick={() => setShowUsernameModal(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border transition-all hover:border-slate-500 hover:text-white min-w-0 max-w-[55%]"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border transition-all hover:border-slate-500 hover:text-white shrink-0"
             style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(42,42,58,0.8)', color: 'rgba(148,163,184,0.8)' }}
           >
-            <svg className="shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
-            <span className="text-xs font-bold truncate">
+            <span className="text-xs font-bold">
               {player.username ? `@${player.username}` : 'Set username'}
             </span>
           </button>
