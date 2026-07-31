@@ -767,12 +767,18 @@ pub async fn get_battles(
         // bounty row is written in the same request as the battle (~20ms later), so the
         // window is tight enough to attach it to the run that actually earned it.
         g_awarded:             i64,
+        /// Which mode produced this row. The UI needs it because an ENDLESS row is not
+        /// a defeat: dying is how an Endless run ENDS, and those rows are written with
+        /// `counts_result = false` so they never touch the player's W/L record. Without
+        /// this field the history painted them the same red LOSS as a real fight, so a
+        /// player who had been earning per wave saw ten straight losses and 0 XP.
+        mode:                  Option<String>,
     }
 
     let result = sqlx::query_as::<_, BattleRow>(
         "SELECT b.id, b.challenger_wallet, b.opponent_wallet, b.winner_wallet,
                 b.xp_awarded_challenger, b.xp_awarded_opponent, b.is_bot, b.created_at,
-                b.game_record_tx, b.rounds_data,
+                b.game_record_tx, b.rounds_data, b.mode,
                 COALESCE(fc.amount, 0)::bigint AS g_awarded
          FROM battles b
          LEFT JOIN first_clear_bounties fc
