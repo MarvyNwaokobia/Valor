@@ -92,3 +92,8 @@ export const ITEM_RARITY_COLORS = {
 
 export const PLAY_STYLES = ['Wanderer', 'Fighter', 'Champion'] as const
 export type PlayStyle = (typeof PLAY_STYLES)[number]
+
+/** The community group. Announcements, season news and payout updates land here
+ *  first. Defined once because it is linked from onboarding, the Help Center and
+ *  the profile, and three copies of a URL drift the moment one changes. */
+export const TELEGRAM_URL = 'https://t.me/playvalor'
