@@ -232,8 +232,20 @@ export default function ProfilePage() {
       </motion.div>
 
       {/* ── RIGHT — Panels ──────────────────────────────────────────── */}
+      {/* w-full min-w-0 is the alignment fix, and both halves are needed.
+          The parent is `items-start`, i.e. align-items:flex-start — in a COLUMN
+          flex that stops children stretching to the container width, so a child
+          with no width sizes to its own content. The left column carries w-full
+          and stays pinned to the page; this one did not, so everything from
+          WARRIOR FILE down (header, player card, idle, inventory, battle
+          history) sized itself to its widest child and ran past the left
+          column's right edge instead of lining up with it.
+          `flex-1` does not help: in a column it governs the MAIN axis, which is
+          height. min-w-0 then lets long children shrink rather than push the
+          column wide again. On lg: the parent becomes flex-row, where flex-1's
+          0% basis governs the width and w-full is inert. */}
       <motion.div
-        className="flex-1 flex flex-col gap-4"
+        className="flex-1 w-full min-w-0 flex flex-col gap-4"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.12 }}
