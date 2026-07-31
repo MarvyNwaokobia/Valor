@@ -47,10 +47,12 @@ fn pool_warn_g() -> u64 {
 /// Endless the only unbounded way to drain the pool, and the reason the weekly cap had to
 /// exist at all.
 ///
-/// Flat makes the deep runs linear: wave 20 pays 4,000 instead of 21,000. Note wave 1 and
-/// 2 now pay the SAME or MORE than before (200 vs 100 and 200) — the early waves got
-/// better and only the marathons got worse, which is the shape worth having.
-const WAVE_REWARD_G: u64 = 200;
+/// Flat makes the deep runs linear rather than compounding: a run to wave 20 pays
+/// 20 × the rate instead of 21,000.
+///
+/// Cut to 10 on 2026-07-31, matching the op rate — clearing a wave and clearing an op
+/// are worth the same, so neither surface is the one to farm.
+const WAVE_REWARD_G: u64 = 10;
 
 /// Returns 0 while the earning pause is on (see earn_cap::earning_paused). Endless is
 /// the other grindable surface the pause covers. The run itself is unaffected: waves,
