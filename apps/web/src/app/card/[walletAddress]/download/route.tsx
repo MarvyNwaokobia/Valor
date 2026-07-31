@@ -1,28 +1,28 @@
-import { renderCardImage } from '../cardImage'
+import { renderCardPortrait } from '../cardPortrait'
 
 /**
- * GET /card/:wallet/download — the card as a PNG file, not a page.
+ * GET /card/:wallet/download — the card as a portrait PNG.
  *
- * Same picture as the link preview (see ../cardImage), served with a
- * Content-Disposition so the browser saves it instead of rendering it. That is
- * what makes it postable to X: a player downloads their card and attaches it,
- * rather than screenshotting a phone UI with a status bar across the top.
+ * Portrait, not the 1200x630 link preview: a download is going to be posted as a
+ * picture, and a wide banner is neither what the player sees on screen nor what
+ * reads as "their card".
  *
- * A route handler rather than a client-side canvas render on purpose — no extra
- * dependency, no fonts-and-CORS problems rasterising the live DOM, and the file
- * is identical to what everyone else sees when the link unfurls.
+ * NO Content-Disposition. On iOS an attachment hands the file to the Files
+ * app — "Open in iRAR" — instead of the image viewer, so there is no way to get
+ * it into Photos. Served as a plain inline image, the client can fetch it as a
+ * blob and hand it to the share sheet, which is the only route to "Save Image"
+ * on a phone (see PlayerCardPage.downloadCard).
  */
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ walletAddress: string }> },
 ) {
   const { walletAddress } = await params
-  const image = await renderCardImage(walletAddress)
+  const image = await renderCardPortrait(walletAddress)
 
-  const filename = `valor-${walletAddress.slice(0, 10).toLowerCase()}.png`
   const headers = new Headers(image.headers)
-  headers.set('Content-Disposition', `attachment; filename="${filename}"`)
-  // The card changes as the player plays, so a cached copy would hand someone a
+  headers.set('Content-Type', 'image/png')
+  // The card changes as the player plays, so a long cache would hand someone a
   // stale record. Short cache keeps repeat taps cheap without freezing it.
   headers.set('Cache-Control', 'public, max-age=60')
 

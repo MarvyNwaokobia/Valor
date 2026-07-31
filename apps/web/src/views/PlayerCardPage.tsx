@@ -22,6 +22,49 @@ export default function PlayerCardPage() {
   const [notFound, setNotFound] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  /**
+   * Save the card as a picture WITHOUT leaving the page.
+   *
+   * A plain <a download> navigated the tab to the PNG, and on iOS that lands in
+   * the Files viewer ("Open in iRAR") with no route into Photos. Fetching the
+   * blob and handing it to the share sheet is the only way a phone offers
+   * "Save Image"; desktop has no share sheet, so it gets a real anchor download.
+   * Either way the player stays on their card.
+   */
+  async function downloadCard() {
+    if (!walletAddress || saving) return
+    setSaving(true)
+    try {
+      const res = await fetch(`/card/${walletAddress}/download`)
+      if (!res.ok) throw new Error(String(res.status))
+      const blob = await res.blob()
+      const filename = `valor-${(player?.username || player?.character_name || 'card')
+        .replace(/[^a-z0-9]/gi, '-').toLowerCase()}.png`
+      const file = new File([blob], filename, { type: 'image/png' })
+
+      const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean }
+      if (typeof navigator.share === 'function' && nav.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] })
+      } else {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch {
+      // Dismissing the share sheet is a choice, not a failure — say nothing.
+    } finally {
+      setSaving(false)
+    }
+  }
+
   function copyCardUrl() {
     void shareCard(walletAddress as string, player?.username || player?.character_name)
       .then((outcome) => {
@@ -88,20 +131,22 @@ export default function PlayerCardPage() {
       {/* Way out. A card is usually opened from a link in a chat, so history may
           be empty — fall back to home rather than leaving someone stranded on a
           page whose only other exits are "Challenge" and "Share". */}
-      <button
-        onClick={() => { if (window.history.length > 1) router.back(); else router.push('/') }}
-        className="absolute left-5 top-5 z-20 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white transition-colors"
-        style={{ background: 'rgba(6,10,16,.6)', border: '1px solid rgba(255,255,255,.12)' }}
-      >
-        <ArrowLeft size={14} /> Back
-      </button>
-
       <motion.div
         className="w-full max-w-sm z-10"
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
+        {/* Sits in the same column as the card, so it lines up with the content
+            instead of floating against the top-left corner of the viewport. */}
+        <button
+          onClick={() => { if (window.history.length > 1) router.back(); else router.push('/') }}
+          className="mb-3 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white transition-colors"
+          style={{ background: 'rgba(6,10,16,.6)', border: '1px solid rgba(255,255,255,.12)' }}
+        >
+          <ArrowLeft size={14} /> Back
+        </button>
+
         <PlayerCard player={player} isPublic />
 
         {/* CTA below card */}
@@ -142,14 +187,16 @@ export default function PlayerCardPage() {
           {/* Downloads the SAME picture the link preview uses, as a PNG file —
               so a player posts the card itself on X instead of a phone
               screenshot with a status bar across the top. */}
-          <a
-            href={`/card/${walletAddress}/download`}
-            download
-            className="flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl font-bold text-xs transition-colors"
-            style={{ background: 'rgba(255,255,255,0.04)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)' }}
+          <button
+            onClick={downloadCard}
+            disabled={saving}
+            className="flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl font-bold text-xs transition-colors disabled:opacity-60"
+            style={{ background: 'rgba(255,255,255,0.04)', color: saved ? '#22c55e' : '#cbd5e1', border: `1px solid ${saved ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.12)'}` }}
           >
-            <Download size={14} /> Download card
-          </a>
+            {saved
+              ? <><Check size={14} /> Saved</>
+              : <><Download size={14} /> {saving ? 'Preparing…' : 'Save card as picture'}</>}
+          </button>
 
           <Link
             href="/"
