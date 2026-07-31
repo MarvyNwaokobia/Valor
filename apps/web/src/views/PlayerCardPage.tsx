@@ -1,6 +1,7 @@
 'use client'
 
 import { useParams, useRouter } from 'next/navigation'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { shareCard } from '@/lib/shareCard'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
@@ -21,6 +22,9 @@ export default function PlayerCardPage() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  const { status: authStatus } = useResolvedAuth()
+  const signedIn = authStatus === 'ready'
 
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -164,6 +168,28 @@ export default function PlayerCardPage() {
             playing Valor.
           </p>
 
+          {/* THE reason a shared card exists. This was a grey "Create your own
+              warrior →" under everything else, which is not an invitation — a
+              stranger who followed someone's link had no obvious way in. It is
+              now the primary action.
+
+              The ?ref rides along even though middleware.ts already wrote the
+              referral cookie when this page loaded: the cookie is the reliable
+              path, the query is the belt-and-braces one for a visitor whose
+              cookie was blocked or cleared between landing and tapping. */}
+          <Link
+            href={signedIn ? '/' : `/?ref=${walletAddress}`}
+            className="w-full px-5 py-4 rounded-xl font-black text-base text-center tracking-wide transition-transform active:scale-[0.98]"
+            style={{ background: 'linear-gradient(180deg,#fde047,#eab308)', color: '#0a0a0f', boxShadow: '0 6px 24px rgba(234,179,8,0.25)' }}
+          >
+            {signedIn ? 'ENTER VALOR' : 'JOIN VALOR'}
+          </Link>
+          <p className="text-[11px] text-slate-600 -mt-1">
+            {signedIn
+              ? 'Back to your own warrior'
+              : 'Create your character, fight, and earn real G$ on Celo.'}
+          </p>
+
           {/* Action row */}
           <div className="flex gap-2 justify-center">
             <Link
@@ -198,12 +224,6 @@ export default function PlayerCardPage() {
               : <><Download size={14} /> {saving ? 'Preparing…' : 'Save card as picture'}</>}
           </button>
 
-          <Link
-            href="/"
-            className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
-          >
-            Create your own warrior →
-          </Link>
         </motion.div>
       </motion.div>
     </div>
