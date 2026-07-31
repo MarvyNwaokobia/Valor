@@ -426,6 +426,17 @@ body {
    the home indicator. Pad the app chrome (top nav, bottom nav, content) so the
    menu pages fit any device — iPhone (notched or not), iPad, all sizes. The
    fight scene is intentionally excluded and stays full-bleed. */
+.app-shell {
+  /* TOP: installed, there is no browser chrome occupying the notch strip, so the
+     page draws under the Dynamic Island — the status-bar clock lands on top of
+     the first row of content. In Safari this never shows because the URL bar
+     physically fills that space, which is exactly why it looked fine in the
+     browser and broken in the PWA.
+     SIDES: zero in portrait, non-zero in landscape on a notched phone. */
+  padding-top:   env(safe-area-inset-top, 0px);
+  padding-left:  env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
 .app-shell > main {
   /* clear the bottom tab bar (~5.5rem) + the home-indicator inset */
   padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
