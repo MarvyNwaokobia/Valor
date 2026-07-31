@@ -841,6 +841,39 @@ pub struct SearchQuery {
     pub exclude: Option<String>,
 }
 
+// ── GET /players/by-username/:username ────────────────────────────────────────
+/// Resolve a username to its player, EXACTLY.
+///
+/// `search_players` exists but does a LIKE match, which is right for a search box
+/// and wrong for a permalink: /Ember would resolve to EmberForge and send a
+/// visitor to the wrong warrior. This is a case-insensitive equality lookup so
+/// playvalor.app/<username> can only ever land on the person it names.
+pub async fn get_player_by_username(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let username = path.into_inner();
+    if username.len() < 3 || username.len() > 20 {
+        return HttpResponse::NotFound().json(json!({"error": "No such player"}));
+    }
+
+    let result = sqlx::query_as::<_, crate::models::player::Player>(
+        "SELECT * FROM players WHERE LOWER(username) = LOWER($1) LIMIT 1",
+    )
+    .bind(&username)
+    .fetch_optional(&state.db)
+    .await;
+
+    match result {
+        Ok(Some(player)) => HttpResponse::Ok().json(player),
+        Ok(None) => HttpResponse::NotFound().json(json!({"error": "No such player"})),
+        Err(e) => {
+            tracing::error!("username lookup failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
 pub async fn search_players(
     state: web::Data<AppState>,
     query: web::Query<SearchQuery>,
