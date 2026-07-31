@@ -1,11 +1,11 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { shareCard } from '@/lib/shareCard'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Swords, Copy, Check } from 'lucide-react'
+import { Swords, Copy, Check, Download, ArrowLeft } from 'lucide-react'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
@@ -15,6 +15,7 @@ import { formatGDollarNumber } from '@/utils/format'
 
 export default function PlayerCardPage() {
   const params = useParams()
+  const router = useRouter()
   const walletAddress = params?.walletAddress as string | undefined
   const [player, setPlayer] = useState<Player | null>(null)
   const [loading, setLoading] = useState(true)
@@ -84,6 +85,17 @@ export default function PlayerCardPage() {
         }}
       />
 
+      {/* Way out. A card is usually opened from a link in a chat, so history may
+          be empty — fall back to home rather than leaving someone stranded on a
+          page whose only other exits are "Challenge" and "Share". */}
+      <button
+        onClick={() => { if (window.history.length > 1) router.back(); else router.push('/') }}
+        className="absolute left-5 top-5 z-20 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white transition-colors"
+        style={{ background: 'rgba(6,10,16,.6)', border: '1px solid rgba(255,255,255,.12)' }}
+      >
+        <ArrowLeft size={14} /> Back
+      </button>
+
       <motion.div
         className="w-full max-w-sm z-10"
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
@@ -126,6 +138,18 @@ export default function PlayerCardPage() {
               {copied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Share</>}
             </button>
           </div>
+
+          {/* Downloads the SAME picture the link preview uses, as a PNG file —
+              so a player posts the card itself on X instead of a phone
+              screenshot with a status bar across the top. */}
+          <a
+            href={`/card/${walletAddress}/download`}
+            download
+            className="flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl font-bold text-xs transition-colors"
+            style={{ background: 'rgba(255,255,255,0.04)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)' }}
+          >
+            <Download size={14} /> Download card
+          </a>
 
           <Link
             href="/"
