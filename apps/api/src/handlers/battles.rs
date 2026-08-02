@@ -17,6 +17,108 @@ fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
     bytes
 }
 
+/// Writes the same match to Avalanche and records the result.
+///
+/// ONE REAL EVENT, TWO LEDGERS. The fight happened once; Valor runs on two chains
+/// and keeps a record on each. That is bookkeeping, not invented activity, and the
+/// distinction matters because inflating a transaction count is exactly what
+/// docs/ONCHAIN_TRANSACTIONS.md warns makes a grant application look like spam.
+///
+/// A no-op when the relay is unconfigured, which is the normal state until the
+/// contracts are deployed.
+///
+/// Never fails the caller. The match is already finished, the player already has
+/// their XP, and Celo already holds the authoritative record — a missing mirror
+/// costs one reporting row and nothing else.
+#[allow(clippy::too_many_arguments)]
+async fn mirror_battle_to_avalanche(
+    db: &sqlx::PgPool,
+    avalanche: Option<crate::services::avalanche::AvalancheWriter>,
+    battle_id: Uuid,
+    battle_bytes: [u8; 32],
+    winner: Address,
+    loser: Address,
+    xp_winner: u8,
+    xp_loser: u8,
+    is_bot: bool,
+) {
+    let Some(av) = avalanche else { return };
+
+    // Gas here is AVAX we bought, unlike a Valor L1 where we would have minted it.
+    // Checking first means a drained relay logs one clear line instead of one
+    // failed send per fight.
+    if !av.relay_can_pay().await {
+        tracing::error!(
+            "{}: skipping Avalanche mirror for battle {} — relay {:?} cannot pay gas",
+            crate::services::chain::RELAY_OUT_OF_GAS,
+            battle_id,
+            av.relay_address(),
+        );
+        return;
+    }
+
+    if let Some(hash) = av
+        .record_battle(battle_bytes, winner, loser, xp_winner, xp_loser, is_bot)
+        .await
+    {
+        record_battle_chain_tx(
+            db,
+            battle_id,
+            crate::services::chain_id::ChainId::Avalanche,
+            &format!("{:?}", hash),
+        )
+        .await;
+    }
+}
+
+/// Records that a battle's on-chain match record landed, on a named chain.
+///
+/// Valor writes the SAME match to every chain it runs on: one real event, two
+/// ledgers. `battle_chain_records` is the authoritative multi-chain row.
+/// `battles.game_record_tx` is a legacy single-hash column that three read paths
+/// still depend on (admin.rs's activity feed, players.rs's battle history,
+/// BattleHistory.tsx), so it keeps being written for Celo and only for Celo —
+/// overwriting it with an L1 hash would point those explorers at the wrong chain.
+///
+/// Both writes live here so the two cannot drift apart.
+///
+/// Best-effort, matching the surrounding call sites: the transaction is already
+/// mined by the time this runs, so failing to note it down must not look like
+/// the battle failed.
+async fn record_battle_chain_tx(
+    db: &sqlx::PgPool,
+    battle_id: Uuid,
+    chain: crate::services::chain_id::ChainId,
+    tx_hash: &str,
+) {
+    use crate::services::chain_id::ChainId;
+
+    if let Err(e) = sqlx::query(
+        "INSERT INTO battle_chain_records (battle_id, chain_id, tx_hash)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (battle_id, chain_id) DO NOTHING",
+    )
+    .bind(battle_id)
+    .bind(chain.as_i32())
+    .bind(tx_hash)
+    .execute(db)
+    .await
+    {
+        tracing::error!("Failed to record battle_chain_records for {} on {:?}: {}", battle_id, chain, e);
+    }
+
+    if chain == ChainId::Celo {
+        if let Err(e) = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
+            .bind(tx_hash)
+            .bind(battle_id)
+            .execute(db)
+            .await
+        {
+            tracing::error!("Failed to set game_record_tx for {}: {}", battle_id, e);
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct EquippedBoost {
     stat_boost: i32,
@@ -493,12 +595,22 @@ pub(crate) async fn persist_battle(
         let battle_bytes = uuid_to_bytes32(battle_id);
         let xp_u8 = xp_challenger.max(xp_opponent).min(255) as u8;
         let db = state.db.clone();
+        // Cloned here rather than read inside the task: `state` is a reference and
+        // the spawned future outlives this call. Note this sits inside the Celo
+        // `if let`, so an unconfigured Celo relay also skips the mirror — fine in
+        // practice, since Celo is always configured, and it keeps `record_on_chain`
+        // as the single gate for whether this match is recorded anywhere at all.
+        let avalanche = state.avalanche.clone();
         tokio::spawn(async move {
             if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_u8, 0, is_bot).await {
                 let hash_str = format!("{:?}", hash);
-                let _ = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
-                    .bind(hash_str).bind(battle_id).execute(&db).await;
+                record_battle_chain_tx(
+                    &db, battle_id, crate::services::chain_id::ChainId::Celo, &hash_str,
+                ).await;
             }
+            mirror_battle_to_avalanche(
+                &db, avalanche, battle_id, battle_bytes, winner_addr, loser_addr, xp_u8, 0, is_bot,
+            ).await;
         });
     }
 }
@@ -1074,6 +1186,7 @@ async fn settle_first_clear_bounty(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!(
                     "first-clear bounty paid: {} op{} +{} G${}",
@@ -1157,6 +1270,7 @@ async fn settle_op_play_bounty(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!("op-play bounty paid: {} op{} +{} G$ (battle {})", wallet, level, amount, battle_id);
             }
@@ -1226,6 +1340,7 @@ async fn settle_rank_up_reward(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!(
                     "rank-up reward paid: {} {} +{} G${}",
@@ -1586,20 +1701,20 @@ pub async fn challenge_player(
         let xp_ch = xp_challenger.min(255) as u8;
         let xp_op = xp_opponent.min(255) as u8;
         let db = state.db.clone();
+        let avalanche = state.avalanche.clone();
         let battle_uuid = battle_id;
         tokio::spawn(async move {
             if let (Some(ch), Some(op)) = (ch_addr, op_addr) {
                 let (winner_addr, loser_addr) = if ch_won { (ch, op) } else { (op, ch) };
                 if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_ch, xp_op, false).await {
                     let hash_str = format!("{:?}", hash);
-                    let _ = sqlx::query(
-                        "UPDATE battles SET game_record_tx = $1 WHERE id = $2",
-                    )
-                    .bind(hash_str)
-                    .bind(battle_uuid)
-                    .execute(&db)
-                    .await;
+                    record_battle_chain_tx(
+                        &db, battle_uuid, crate::services::chain_id::ChainId::Celo, &hash_str,
+                    ).await;
                 }
+                mirror_battle_to_avalanche(
+                    &db, avalanche, battle_uuid, battle_bytes, winner_addr, loser_addr, xp_ch, xp_op, false,
+                ).await;
             }
         });
     }

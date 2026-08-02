@@ -203,6 +203,7 @@ pub async fn purchase_item_relay(
 
     crate::handlers::ledger::insert_ledger_entry(
         &state.db, &wallet, "marketplace_purchase", item.price_g, Some(&tx_hash), None,
+        crate::services::chain_id::ChainId::Celo,
     ).await;
 
     // Recirculate shop revenue: sweep what this purchase just added into the reward
