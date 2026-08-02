@@ -66,6 +66,40 @@ fn wave_reward_g(_wave: i32) -> u64 {
     WAVE_REWARD_G.min(MAX_REWARD_G)
 }
 
+/// What one cleared Endless wave accrues in Scrip.
+///
+/// Sized against the campaign anchor of 100 SCRP per clear (see
+/// battles.rs::SCRIP_PER_CLEAR). A wave is a shorter unit of play than a full op,
+/// so four waves make roughly one clear.
+///
+/// Flat rather than banded by depth, matching how `wave_reward_g` prices the G$
+/// side. Deep waves are harder and arguably deserve more, but banding is a tuning
+/// decision that wants real player data behind it, and a flat rate is the one
+/// that cannot accidentally hyperinflate the currency while nobody is looking.
+const SCRIP_PER_WAVE: i64 = 25;
+
+/// Accrue Scrip for a cleared wave. Never fails the run.
+///
+/// Idempotent on (session, wave), the same slot the G$ payout claims, so a
+/// replayed or retried wave credits exactly once.
+async fn award_scrip_for_wave(
+    state: &AppState,
+    wallet: &str,
+    session_id: Uuid,
+    wave: i32,
+) {
+    let ref_key = format!("endless_wave:{wallet}:{session_id}:{wave}");
+    crate::services::earnings::award(
+        &state.db,
+        wallet,
+        crate::services::chain_id::ChainId::Avalanche,
+        "endless_wave",
+        rust_decimal::Decimal::from(SCRIP_PER_WAVE),
+        &ref_key,
+    )
+    .await;
+}
+
 #[derive(Deserialize)]
 pub struct SubmitScoreRequest {
     pub wallet: String,
@@ -352,6 +386,18 @@ pub async fn endless_wave(
             });
         }
     }
+
+    // Scrip accrues for the wave regardless of what it paid in G$, and that
+    // difference is deliberate. The three things that can zero `amount` above —
+    // an empty reward pool, the weekly earn cap, and Seasonal paying nothing per
+    // wave — all exist to limit REAL MONEY leaving. Scrip is minted by us with no
+    // exchange rate and no cash-out, so none of those reasons apply to it.
+    //
+    // This is also what makes the price ladder reachable. Campaign alone caps a
+    // player at 15 clears x 100 = 1,500 SCRP for life, which never reaches the
+    // 8,000 top gun. Endless is the repeatable source that closes that gap, and
+    // without it the catalogue prices a thing nobody can ever buy.
+    award_scrip_for_wave(&state, &wallet, body.session_id, wave).await;
 
     // Advance the player's PERSISTENT progress. `wave` here is the wave just cleared,
     // so they move on to the next one — and because dying never takes a cleared wave
@@ -706,4 +752,53 @@ pub async fn sweep_endless_rewards(
         }
     }
     (attempted, reconciled)
+}
+
+#[cfg(test)]
+mod scrip_accrual_tests {
+    use super::SCRIP_PER_WAVE;
+
+    /// The campaign anchor, restated here so this file's rate is checkable on its
+    /// own. Kept in sync with battles.rs::SCRIP_PER_CLEAR by the assertion below.
+    const SCRIP_PER_CLEAR: i64 = 100;
+
+    #[test]
+    fn a_wave_is_a_sensible_fraction_of_a_clear() {
+        // Four waves to a clear. If someone raises this to where a wave out-earns a
+        // whole campaign op, Endless becomes the only sane way to play and the
+        // campaign stops mattering.
+        assert_eq!(SCRIP_PER_CLEAR / SCRIP_PER_WAVE, 4);
+        assert!(SCRIP_PER_WAVE < SCRIP_PER_CLEAR, "a wave must not out-earn a full op");
+    }
+
+    /// THE REASON THIS ACCRUAL EXISTS.
+    ///
+    /// Campaign is finite: 15 ops, once each, 1,500 SCRP for a player's entire
+    /// life. The catalogue's top gun costs 8,000. Without a repeatable source the
+    /// shop advertises something nobody can ever buy, which is the same failure as
+    /// Celo's — where the prices and the earn rate were set at different times and
+    /// never reconciled.
+    #[test]
+    fn the_top_of_the_ladder_is_actually_reachable() {
+        const CAMPAIGN_OPS: i64 = 15;
+        const TOP_GUN: i64 = 8_000; // RegisterAvalancheItems.s.sol
+
+        let campaign_lifetime = CAMPAIGN_OPS * SCRIP_PER_CLEAR;
+        assert!(
+            campaign_lifetime < TOP_GUN,
+            "campaign alone should NOT buy the top gun — it is meant to be aspirational",
+        );
+
+        // …but it has to be reachable by playing more, not merely unaffordable.
+        let waves_needed = (TOP_GUN - campaign_lifetime) / SCRIP_PER_WAVE;
+        assert_eq!(waves_needed, 260);
+        assert!(waves_needed < 500, "further than this and nobody ever gets there");
+    }
+
+    #[test]
+    fn the_entry_gun_is_a_first_session_goal() {
+        const ENTRY_GUN: i64 = 800;
+        assert_eq!(ENTRY_GUN / SCRIP_PER_CLEAR, 8, "eight campaign clears");
+        assert_eq!(ENTRY_GUN / SCRIP_PER_WAVE, 32, "or thirty-two Endless waves");
+    }
 }
