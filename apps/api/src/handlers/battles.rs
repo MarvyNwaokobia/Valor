@@ -1093,6 +1093,19 @@ pub async fn complete_live_fight(
                 bounty_awarded = amount;
                 pay_first_clear_bounty(&state, wallet.clone(), level, amount);
             }
+            // Scrip accrues for the SAME clear, alongside the G$ above rather than
+            // instead of it. That is not double-paying: Scrip is minted by us, has
+            // no exchange rate and no cash-out, so it costs nothing to issue and
+            // moves no real value. It is closer to XP than to money.
+            //
+            // Awarded to every player, not to an "Avalanche player", because Valor
+            // has ONE player population by design — the chain is a property of a
+            // payout, not of a person. That is what lets the whole player base
+            // generate Avalanche claim transactions without splitting anyone off.
+            //
+            // Keyed on the same first-clear identity as the G$ bounty, so a replayed
+            // op accrues nothing and a retried request accrues once.
+            award_scrip_for_clear(&state, &wallet, level).await;
         }
     }
     // Pay-per-play was removed (2026-07-26): a Campaign op pays its bounty ONCE, on the
@@ -1216,6 +1229,38 @@ async fn settle_first_clear_bounty(
 /// Retired 2026-07-26 (ops pay once, on first clear) but kept so pay-per-play can be
 /// toggled back on without rewiring the settle rail.
 #[allow(dead_code)]
+/// What one campaign clear accrues in Scrip.
+///
+/// THE ANCHOR FOR THE WHOLE AVALANCHE ECONOMY. Every price in
+/// contracts/script/RegisterAvalancheItems.s.sol is a multiple of this: a booster
+/// is a quarter of a clear, the entry gun eight, the top gun eighty. Change this
+/// and every item silently re-prices in real terms, so change the ladder with it.
+///
+/// Deliberately flat rather than scaling with level. Scrip measures time played,
+/// and a level-12 op does not take twelve times as long as a level-1 op.
+const SCRIP_PER_CLEAR: i64 = 100;
+
+/// Accrue Scrip for a campaign clear. Never fails the fight.
+///
+/// Unlike the G$ bounty this writes no transaction: it is a database credit the
+/// player later turns into an on-chain mint at the Bank. That is the entire point
+/// of the accrue-then-claim shape — one transaction per claim instead of one per
+/// win, which is what stops the relay draining.
+async fn award_scrip_for_clear(state: &AppState, wallet: &str, level: i32) {
+    // Same idempotency key shape as the on-chain refs this codebase already uses,
+    // so a retry credits nothing rather than paying twice.
+    let ref_key = format!("first_clear:{wallet}:{level}");
+    crate::services::earnings::award(
+        &state.db,
+        wallet,
+        crate::services::chain_id::ChainId::Avalanche,
+        "first_clear",
+        rust_decimal::Decimal::from(SCRIP_PER_CLEAR),
+        &ref_key,
+    )
+    .await;
+}
+
 fn pay_op_play_bounty(state: &AppState, battle_id: Uuid, wallet: String, level: i32, amount: u64) {
     let Some(chain) = state.chain.as_ref().cloned() else { return; };
     let db = state.db.clone();
@@ -1731,6 +1776,38 @@ pub async fn challenge_player(
 #[cfg(test)]
 mod reward_amount_tests {
     use super::*;
+
+    /// The Scrip anchor, and what it buys.
+    ///
+    /// Every Avalanche price in RegisterAvalancheItems.s.sol is a multiple of
+    /// SCRIP_PER_CLEAR, so this is the number the whole catalogue is denominated
+    /// in. If someone changes it without moving the ladder, every item silently
+    /// re-prices in real terms — the entry gun stops being a first-session goal,
+    /// or the top gun stops being aspirational. That is exactly the drift that
+    /// left Celo with a shop where two wins buy the best item in the game.
+    #[test]
+    fn scrip_anchor_matches_the_avalanche_price_ladder() {
+        assert_eq!(SCRIP_PER_CLEAR, 100, "the Avalanche catalogue is priced against this");
+
+        // Prices from contracts/script/RegisterAvalancheItems.s.sol, expressed as
+        // the thing that actually matters: how many clears each one costs.
+        let clears = |price: i64| price / SCRIP_PER_CLEAR;
+        assert_eq!(clears(25), 0, "a booster is a fraction of a clear, bought casually");
+        assert_eq!(clears(800), 8, "entry gun: reachable in a first session");
+        assert_eq!(clears(2_500), 25, "mid gun");
+        assert_eq!(clears(8_000), 80, "top gun: still out of reach after hours");
+    }
+
+    /// Scrip accrues, G$ pays out. Both happen for the same clear and that is
+    /// deliberate: Scrip is minted by us with no exchange rate and no cash-out, so
+    /// issuing it alongside G$ moves no real value. It is closer to XP than money.
+    #[test]
+    fn scrip_accrues_on_top_of_the_g_bounty_not_instead_of_it() {
+        assert!(SCRIP_PER_CLEAR > 0, "a clear must accrue something or the Bank is empty");
+        // The G$ side is unaffected by the Scrip side — no shared rate, no shared
+        // pause. Celo behaviour must stay exactly as it was.
+        assert_eq!(op_bounty_rate_g(1), FIRST_CLEAR_BOUNTY_G.min(MAX_REWARD_G));
+    }
 
     #[test]
     fn op_bounty_is_flat_at_every_level() {

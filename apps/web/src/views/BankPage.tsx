@@ -15,6 +15,7 @@ import { useDebt, useSettleDebt } from '@/hooks/useDebt'
 import DailyClaimButton from '@/components/player-card/DailyClaimButton'
 import RankPoolPanel from '@/components/profile/RankPoolPanel'
 import WeeklyEarnCap from '@/components/bank/WeeklyEarnCap'
+import ClaimCard from '@/components/bank/ClaimCard'
 import { formatGDollarNumber } from '@/utils/format'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
@@ -208,6 +209,10 @@ export default function BankPage() {
           </div>
         </motion.div>
       )}
+
+      {/* Accrued balance waiting to be taken on-chain. Renders nothing on Celo,
+          which pays on every win and so has nothing to claim. */}
+      <ClaimCard walletAddress={address} />
 
       {/* Earned / spent breakdown */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
