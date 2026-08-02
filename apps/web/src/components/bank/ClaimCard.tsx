@@ -32,6 +32,41 @@ export default function ClaimCard({ walletAddress }: { walletAddress: string | u
   if (balance <= 0 && !claim.isSuccess) return null
 
   const explorer = txHash && data.chain_id ? explorerTxUrl(data.chain_id, txHash) : null
+  const justClaimed = claim.isSuccess && claim.data?.claimed
+
+  // Claimed everything: show the receipt, not an empty wallet with a dead button.
+  // Rendering the normal card here gives "UNCLAIMED · 0 SCRP" above a greyed-out
+  // "Claim 0 SCRP", which reads as though the claim failed — the opposite of what
+  // just happened.
+  if (justClaimed && balance <= 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-valor-surface border border-valor-border rounded-xl p-4 flex items-center gap-3"
+      >
+        <Coins size={16} className="text-emerald-400 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-emerald-400">
+            Claimed {Number(claim.data?.amount ?? 0).toLocaleString()} {claim.data?.symbol}
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            It&rsquo;s in your wallet. Keep playing to earn more.{' '}
+            {explorer && (
+              <a
+                href={explorer}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-0.5 underline hover:text-slate-300"
+              >
+                View <ExternalLink size={9} />
+              </a>
+            )}
+          </p>
+        </div>
+      </motion.div>
+    )
+  }
 
   async function handleClaim() {
     setTxHash(null)
@@ -66,15 +101,21 @@ export default function ClaimCard({ walletAddress }: { walletAddress: string | u
         <Coins size={18} className="text-slate-600 shrink-0 mt-1" />
       </div>
 
-      <button
+      {/* Gold on black, set inline and tapped-scaled to match the Transfer Out
+          button directly below it on this page. There is no `valor-accent` token —
+          the theme's gold is `valor-gold` (#eab308) — and a class that does not
+          exist renders a button with no background at all: dark text on a dark
+          card, which typechecks perfectly and is unreadable. */}
+      <motion.button
         onClick={handleClaim}
         disabled={!data.claimable || claim.isPending}
-        className="w-full py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider
-                   bg-valor-accent text-black transition-opacity
-                   disabled:opacity-40 disabled:cursor-not-allowed"
+        whileTap={{ scale: 0.97 }}
+        className="w-full py-2.5 rounded-lg font-black text-sm text-black
+                   transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+        style={{ background: '#eab308' }}
       >
         {claim.isPending ? 'Claiming…' : `Claim ${balance.toLocaleString()} ${data.symbol}`}
-      </button>
+      </motion.button>
 
       {/* Why the button is disabled. The server's wording says what is actually
           wrong — a payout wallet needing a top-up is our problem, not theirs, and
@@ -89,9 +130,11 @@ export default function ClaimCard({ walletAddress }: { walletAddress: string | u
         </p>
       )}
 
-      {claim.isSuccess && claim.data?.claimed && (
+      {/* A claim that settled while more was still accruing: confirm it, but keep
+          the live balance and an active button above rather than replacing them. */}
+      {justClaimed && (
         <div className="flex items-center gap-2 text-[10px] text-emerald-400">
-          <span>Claimed {Number(claim.data.amount ?? 0).toLocaleString()} {claim.data.symbol}.</span>
+          <span>Claimed {Number(claim.data?.amount ?? 0).toLocaleString()} {claim.data?.symbol}.</span>
           {explorer && (
             <a
               href={explorer}
