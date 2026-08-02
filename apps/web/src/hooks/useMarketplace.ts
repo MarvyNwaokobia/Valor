@@ -3,18 +3,24 @@ import { useConfig } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { parseUnits, parseSignature } from 'viem'
 import { useState } from 'react'
-import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { requirePermitDomain } from '@/editions/chain'
+import { requireCurrencyAddress, requireMarketplaceAddress, requirePermitDomain } from '@/editions/chain'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
-const MARKETPLACE_CONTRACT = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
+// Both the marketplace and the spend currency now come from the ACTIVE EDITION
+// rather than from a global. Valor deploys its own marketplace to every chain it
+// runs on, at a different address each time, and the currency differs too (G$ on
+// Celo, USDm in MiniPay, SCRP on Avalanche). Reading either from one global was
+// correct only while every edition was Celo.
+//
+// Resolved per call, not at module load: `edition()` reads the host at first use,
+// and a module-level constant would freeze whatever the first import saw.
 
-// G$ is 18 decimals on Celo mainnet (SuperToken)
-const G_DECIMALS = 18
+// Every currency Valor uses is 18 decimals (G$, USDm, SCRP).
+const CURRENCY_DECIMALS = 18
 
 const NONCES_ABI = [
   {
@@ -60,16 +66,20 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const purchase = async (item: Item): Promise<string> => {
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) throw new Error('Wallet not connected')
-    if (!MARKETPLACE_CONTRACT) throw new Error('Marketplace not configured')
+    // Both throw with an edition-specific message if this edition has no
+    // marketplace or no spend currency, which is a clearer failure than a
+    // transaction reverting against an address that holds no code.
+    const MARKETPLACE_CONTRACT = requireMarketplaceAddress()
+    const CURRENCY = requireCurrencyAddress()
 
     setPendingItemId(item.id)
     try {
-      const amount   = parseUnits(item.price_g.toString(), G_DECIMALS)
+      const amount   = parseUnits(item.price_g.toString(), CURRENCY_DECIMALS)
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30) // 30-min window
 
       // Check G$ balance before attempting — surface a clear error instead of contract revert
       const balance = await readContract(config, {
-        address: G_TOKEN_ADDRESS,
+        address: CURRENCY,
         abi: BALANCE_ABI,
         functionName: 'balanceOf',
         args: [walletAddress as `0x${string}`],
@@ -80,7 +90,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
 
       // Read player's current permit nonce from the G$ token contract
       const nonce = await readContract(config, {
-        address: G_TOKEN_ADDRESS,
+        address: CURRENCY,
         abi: NONCES_ABI,
         functionName: 'nonces',
         args: [walletAddress as `0x${string}`],
