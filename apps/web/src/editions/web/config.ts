@@ -38,6 +38,13 @@ export const WEB_EDITION: EditionConfig = {
     permit: { name: 'GoodDollar', version: '1' },
   },
 
+  contracts: {
+    // Celo marketplace, from env as it always was. Kept in env rather than
+    // hardcoded because the Celo deployment has been upgraded before and may be
+    // again; the Avalanche one is pinned in its own config.
+    marketplace: (process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT ?? null) as `0x${string}` | null,
+  },
+
   canSignTypedData: true,
 
   assetBase: '/',

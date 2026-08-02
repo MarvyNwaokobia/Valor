@@ -50,6 +50,26 @@ export function activeChainId(): number {
 }
 
 /**
+ * A block-explorer link for a transaction on a SPECIFIC chain.
+ *
+ * Takes the chain id rather than reading the active edition, because a stored
+ * transaction belongs to whichever chain it was mined on, which is not
+ * necessarily the one this session is transacting with. Valor writes the same
+ * match record to every chain it runs on, so a battle can carry a Celo hash and
+ * an L1 hash at once; resolving either against `activeChain()` would send half
+ * of them to an explorer that has never heard of them.
+ *
+ * Returns `null` for a chain with no known explorer, so callers render nothing
+ * rather than a dead link. `null` is also correct for the placeholder hashes
+ * this codebase stores for off-chain items (`offchain-{id}`), which callers
+ * should filter with the `0x` check they already do.
+ */
+export function explorerTxUrl(chainId: number, txHash: string): string | null {
+  const url = CHAINS[chainId]?.blockExplorers?.default?.url
+  return url ? `${url.replace(/\/$/, '')}/tx/${txHash}` : null
+}
+
+/**
  * The EIP-712 domain for the active edition's currency `permit`.
  *
  * Returns `null` when the edition has no permit-capable currency — MiniPay,
@@ -72,6 +92,38 @@ export function permitDomain(): {
     chainId: chain.id,
     verifyingContract: currency.address,
   }
+}
+
+/**
+ * The ERC-20 players spend in this edition, or a thrown error naming the reason.
+ *
+ * Replaces call sites that imported `G_TOKEN_ADDRESS` directly. That constant is
+ * G$ on Celo and nothing else, so a hook using it while the active edition was
+ * Avalanche would have quoted a Scrip price and then tried to move G$ — a token
+ * with no deployment on that chain.
+ */
+export function requireCurrencyAddress(): `0x${string}` {
+  const { currency, id } = edition()
+  if (!currency.address) {
+    throw new Error(`The ${id} edition has no spend currency deployed, so nothing can be bought.`)
+  }
+  return currency.address
+}
+
+/**
+ * ValorMarketplace on the active edition's chain, or a thrown error.
+ *
+ * Throws rather than returning a default for the reason spelled out on
+ * `EditionContracts.marketplace`: substituting another chain's address produces a
+ * transaction that reverts against an address holding no code, which reads to a
+ * player as the app being broken and to a developer as nothing in particular.
+ */
+export function requireMarketplaceAddress(): `0x${string}` {
+  const { contracts, id } = edition()
+  if (!contracts.marketplace) {
+    throw new Error(`The ${id} edition has no marketplace deployed, so buying is unavailable.`)
+  }
+  return contracts.marketplace
 }
 
 /**
