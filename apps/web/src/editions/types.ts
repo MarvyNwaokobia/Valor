@@ -64,6 +64,25 @@ export interface EditionCurrency {
   permit: { name: string; version: string } | null
 }
 
+/** Valor's own contracts, per chain. */
+export interface EditionContracts {
+  /**
+   * ValorMarketplace on this edition's chain.
+   *
+   * A per-edition value because Valor deploys its own marketplace to every chain
+   * it runs on, at a DIFFERENT address each time. It used to be read directly
+   * from `NEXT_PUBLIC_MARKETPLACE_CONTRACT`, a single global — which was fine
+   * while every edition was Celo, and silently wrong the moment one was not: an
+   * Avalanche player would have signed a permit against the Celo marketplace,
+   * which does not exist on Avalanche, and the transaction would revert with
+   * nothing useful to read.
+   *
+   * `null` means this edition has no marketplace deployed yet, and callers must
+   * disable buying rather than fall back to another chain's address.
+   */
+  marketplace: `0x${string}` | null
+}
+
 export interface EditionConfig {
   id: EditionId
 
@@ -87,6 +106,9 @@ export interface EditionConfig {
 
   /** What players spend in the marketplace. */
   currency: EditionCurrency
+
+  /** Valor's own deployed contracts on this edition's chain. */
+  contracts: EditionContracts
 
   /**
    * Can the wallet sign EIP-712 typed data?

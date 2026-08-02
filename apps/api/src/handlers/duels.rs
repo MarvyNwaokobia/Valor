@@ -162,6 +162,7 @@ async fn escrow_stake(
             crate::handlers::ledger::insert_ledger_entry(
                 &state.db, wallet, "duel_stake",
                 rust_decimal::Decimal::from(-stake_g), Some(&tx_hash), None,
+                crate::services::chain_id::ChainId::Celo,
             ).await;
             Ok(tx_hash)
         }
@@ -189,6 +190,7 @@ async fn payout(state: &AppState, wallet: &str, amount_g: u64, ref_key: &str) ->
             crate::handlers::ledger::insert_ledger_entry(
                 &state.db, wallet, "duel_payout",
                 rust_decimal::Decimal::from(amount_g), Some(&tx), None,
+                crate::services::chain_id::ChainId::Celo,
             ).await;
             Some(tx)
         }

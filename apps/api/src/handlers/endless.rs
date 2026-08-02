@@ -644,6 +644,7 @@ pub async fn settle_endless_reward(
                     .bind(amount as i64).bind(wallet).execute(db).await;
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!("endless reward paid: {} wave{} +{} G${}",
                     wallet, wave, amount, if already_paid { " (reconciled)" } else { "" });

@@ -1,9 +1,13 @@
 import { useCallback, useState } from 'react'
 import { readContract, waitForTransactionReceipt } from '@wagmi/core'
 import { useConfig } from 'wagmi'
-import { activeChain, requirePermitDomain } from '@/editions/chain'
+import {
+  activeChain,
+  requireCurrencyAddress,
+  requireMarketplaceAddress,
+  requirePermitDomain,
+} from '@/editions/chain'
 import { parseUnits, parseSignature } from 'viem'
-import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import type { Item } from '@/types'
 
@@ -16,8 +20,12 @@ import type { Item } from '@/types'
  * (item.on_chain_id != null) to be listable.
  */
 
-const MARKETPLACE = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
-const G_DECIMALS = 18
+// Per-edition, not global: see the note in useMarketplace.ts. Called inside each
+// callback so the edition is resolved at use rather than frozen at import.
+const MARKETPLACE = () => requireMarketplaceAddress()
+const CURRENCY = () => requireCurrencyAddress()
+// Every currency Valor uses is 18 decimals (G$, USDm, SCRP).
+const CURRENCY_DECIMALS = 18
 
 const MARKETPLACE_ABI = [
   { name: 'items', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
@@ -63,7 +71,7 @@ export function useResale(walletAddress?: string) {
   const [pending, setPending] = useState(false)
 
   const itemsAddress = useCallback(
-    () => readContract(config, { address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'items' }) as Promise<`0x${string}`>,
+    () => readContract(config, { address: MARKETPLACE(), abi: MARKETPLACE_ABI, functionName: 'items' }) as Promise<`0x${string}`>,
     [config],
   )
 
@@ -71,7 +79,6 @@ export function useResale(walletAddress?: string) {
   const listForResale = useCallback(async (item: Item, priceG: number): Promise<`0x${string}`> => {
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) throw new Error('Wallet not connected')
-    if (!MARKETPLACE) throw new Error('Marketplace not configured')
     if (item.on_chain_id == null) throw new Error('This item is not registered on-chain yet — can’t list it')
     if (!(priceG > 0)) throw new Error('Enter a price greater than 0')
 
@@ -80,19 +87,19 @@ export function useResale(walletAddress?: string) {
       const items = await itemsAddress()
       const approved = await readContract(config, {
         address: items, abi: ITEMS_ABI, functionName: 'isApprovedForAll',
-        args: [walletAddress as `0x${string}`, MARKETPLACE],
+        args: [walletAddress as `0x${string}`, MARKETPLACE()],
       })
       if (!approved) {
         const ah = await walletClient.writeContract({
           account: walletClient.account, chain: activeChain(),
-          address: items, abi: ITEMS_ABI, functionName: 'setApprovalForAll', args: [MARKETPLACE, true],
+          address: items, abi: ITEMS_ABI, functionName: 'setApprovalForAll', args: [MARKETPLACE(), true],
         })
         await waitForTransactionReceipt(config, { hash: ah })
       }
-      const price = parseUnits(priceG.toString(), G_DECIMALS)
+      const price = parseUnits(priceG.toString(), CURRENCY_DECIMALS)
       const hash = await walletClient.writeContract({
         account: walletClient.account, chain: activeChain(),
-        address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'listForResale',
+        address: MARKETPLACE(), abi: MARKETPLACE_ABI, functionName: 'listForResale',
         args: [BigInt(item.on_chain_id), price],
       })
       await waitForTransactionReceipt(config, { hash })
@@ -108,7 +115,7 @@ export function useResale(walletAddress?: string) {
     try {
       const hash = await walletClient.writeContract({
         account: walletClient.account, chain: activeChain(),
-        address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'cancelResale', args: [resaleId],
+        address: MARKETPLACE(), abi: MARKETPLACE_ABI, functionName: 'cancelResale', args: [resaleId],
       })
       await waitForTransactionReceipt(config, { hash })
       return hash
@@ -125,7 +132,7 @@ export function useResale(walletAddress?: string) {
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30)
       const nonce = await readContract(config, {
-        address: G_TOKEN_ADDRESS, abi: NONCES_ABI, functionName: 'nonces', args: [walletAddress as `0x${string}`],
+        address: CURRENCY(), abi: NONCES_ABI, functionName: 'nonces', args: [walletAddress as `0x${string}`],
       })
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
@@ -135,12 +142,12 @@ export function useResale(walletAddress?: string) {
           { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
         ] },
         primaryType: 'Permit',
-        message: { owner: walletAddress as `0x${string}`, spender: MARKETPLACE, value: price, nonce, deadline },
+        message: { owner: walletAddress as `0x${string}`, spender: MARKETPLACE(), value: price, nonce, deadline },
       })
       const { v, r, s } = parseSignature(rawSig)
       const hash = await walletClient.writeContract({
         account: walletClient.account, chain: activeChain(),
-        address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'buyResaleWithPermit',
+        address: MARKETPLACE(), abi: MARKETPLACE_ABI, functionName: 'buyResaleWithPermit',
         args: [resaleId, deadline, Number(v), r, s],
       })
       await waitForTransactionReceipt(config, { hash })
@@ -153,7 +160,7 @@ export function useResale(walletAddress?: string) {
   /** All active resale listings on-chain (the marketplace reads this to show what's for sale). */
   const fetchListings = useCallback(async (): Promise<ResaleListing[]> => {
     const [ids, entries] = await readContract(config, {
-      address: MARKETPLACE, abi: MARKETPLACE_ABI, functionName: 'getActiveResales',
+      address: MARKETPLACE(), abi: MARKETPLACE_ABI, functionName: 'getActiveResales',
     }) as [readonly bigint[], readonly { seller: string; itemId: bigint; price: bigint; active: boolean }[]]
     return ids.map((id, i) => ({ resaleId: id, seller: entries[i].seller, itemId: entries[i].itemId, price: entries[i].price }))
   }, [config])
