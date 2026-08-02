@@ -463,6 +463,7 @@ pub async fn settle_referral(
             crate::handlers::ledger::insert_ledger_entry(
                 db, referrer, "referral_reward",
                 rust_decimal::Decimal::from(amount_g), Some(&tx), None,
+                crate::services::chain_id::ChainId::Celo,
             ).await;
             tracing::info!("referral paid: {} recruited {} (+{} G$)", referrer, referred, amount_g);
             "paid"
@@ -984,6 +985,7 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
                 crate::handlers::ledger::insert_ledger_entry(
                     &state.db, &referrer, "referral_reward",
                     rust_decimal::Decimal::from(amount), Some(&tx), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!("referral retry PAID: {} recruited {} (+{} G$) tx={}", referrer, referred, amount, tx);
                 paid_count += 1;

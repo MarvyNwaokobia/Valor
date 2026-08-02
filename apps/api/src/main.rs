@@ -16,6 +16,10 @@ pub struct AppState {
     pub db:                sqlx::PgPool,
     pub rewards:           Option<services::rewards::RewardService>,
     pub chain:             Option<services::chain::ChainWriter>,
+    /// The Avalanche C-Chain relay. `None` until the contracts are deployed and
+    /// AVALANCHE_PRIVATE_KEY + AVALANCHE_GAME_RECORD_CONTRACT are set, which is
+    /// harmless: nothing is written there and the Celo game is unaffected.
+    pub avalanche:         Option<services::avalanche::AvalancheWriter>,
     pub battle_limiter:    services::rate_limiter::RateLimiter,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
@@ -55,6 +59,32 @@ async fn main() -> anyhow::Result<()> {
     let chain = services::chain::ChainWriter::from_env();
     if chain.is_none() {
         tracing::info!("ChainWriter disabled (GAME_RECORD_CONTRACT not set)");
+    }
+
+    let avalanche = services::avalanche::AvalancheWriter::from_env();
+    match &avalanche {
+        None => tracing::info!(
+            "Avalanche relay disabled (AVALANCHE_PRIVATE_KEY / AVALANCHE_GAME_RECORD_CONTRACT not set)"
+        ),
+        Some(av) => {
+            // Read the balance once at boot and say so plainly. The relay running dry
+            // is this project's most repeated production failure, and the version of
+            // it that costs the most time is the silent one — writes simply stop and
+            // nobody knows why. One loud line at startup is cheap insurance.
+            let av = av.clone();
+            tokio::spawn(async move {
+                match av.relay_gas_balance().await {
+                    Some(bal) if av.relay_can_pay().await => tracing::info!(
+                        "Avalanche relay {:?} funded: {} wei AVAX", av.relay_address(), bal
+                    ),
+                    Some(bal) => tracing::error!(
+                        "Avalanche relay {:?} is LOW ({} wei AVAX) — writes will start failing. Top it up.",
+                        av.relay_address(), bal
+                    ),
+                    None => tracing::warn!("Avalanche relay balance unreadable at boot (RPC issue?)"),
+                }
+            });
+        }
     }
 
     // Start event listener as a background task
@@ -113,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
                 db:             db.clone(),
                 rewards:        rewards.clone(),
                 chain:          chain.clone(),
+                avalanche:      avalanche.clone(),
                 battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
