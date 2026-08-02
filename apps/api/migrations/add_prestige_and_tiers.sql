@@ -20,6 +20,20 @@ ALTER TABLE players ADD COLUMN IF NOT EXISTS prestige_level INT NOT NULL DEFAULT
 -- 3. New players now start at IRON, not Bronze.
 ALTER TABLE players ALTER COLUMN rank SET DEFAULT 'Iron';
 
+-- 3b. Make this file self-sufficient. The UPDATE below reads `ranked_xp_lifetime`, but the
+--     migration that CREATES that column (add_ranked_xp_lifetime.sql) sorts AFTER this one,
+--     and alphabetical order is the run order. Against prod that never showed, because prod
+--     was baselined by hand with every column already present. Against a genuinely fresh
+--     database — a new environment, a staging box, a restore from backup — this file used to
+--     abort with `column "ranked_xp_lifetime" does not exist`, and migrate.rs fails boot on a
+--     migration error by design, so the API would not start at all.
+--
+--     Adding the column here rather than reordering the list keeps the alphabetical invariant
+--     that migrate.rs's test enforces. add_ranked_xp_lifetime.sql stays correct and becomes a
+--     no-op for the ALTER; its own backfill only touches rows still at 0, so it cannot undo
+--     the GREATEST() credit below.
+ALTER TABLE players ADD COLUMN IF NOT EXISTS ranked_xp_lifetime INTEGER NOT NULL DEFAULT 0;
+
 -- 4. Re-grandfather the Way-2 anti-forgery tally. ranked_xp_lifetime gates a rank-up's
 --    G$ bonus (a rank pays only when the refereed tally justifies it). The ordinals just
 --    shifted up (Diamond went from the 4th rank-up to the 6th), so without this an honest
