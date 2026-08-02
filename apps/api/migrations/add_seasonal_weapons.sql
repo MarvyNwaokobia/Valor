@@ -25,6 +25,15 @@
 
 ALTER TABLE items ADD COLUMN IF NOT EXISTS sale_ends_at TIMESTAMPTZ;
 
+-- `weapon_stats` exists in the production database but NO migration ever created it: it
+-- was applied by hand and never captured in a file. The INSERT below writes to it, so
+-- against any database built purely from these migrations this file failed with
+-- `column "weapon_stats" of relation "items" does not exist` — which means the migration
+-- set could not rebuild prod's schema at all. That is the whole promise migrate.rs makes,
+-- so the column is declared here, matching prod exactly (jsonb, nullable, no default).
+-- No-op against prod, which already has it.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS weapon_stats JSONB;
+
 INSERT INTO items (id, on_chain_id, name, description, rarity, category, stat_boost, price_g, image_url, weapon_stats)
 VALUES
   ('66666666-6666-4666-8666-666666666666', 29, 'Ashfall Carbine',
