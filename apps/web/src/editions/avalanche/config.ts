@@ -73,6 +73,13 @@ export const AVALANCHE_EDITION: EditionConfig = {
     // address across two chains would have players signing permits against a
     // contract that does not exist on the chain they are transacting on.
     marketplace: '0x751fBFFFc9419BC825645cD69661e51Ae2D529f6',
+
+    // ValorDuel, the staked-duel escrow. Read from env rather than pinned like the
+    // two above, and deliberately so: those were deployed and confirmed before this
+    // file named them, whereas this address is set the moment the contract goes
+    // live. `null` until then, which every duel call site already treats as "staked
+    // duels are unavailable on this chain" rather than substituting something else.
+    duel: (process.env.NEXT_PUBLIC_AVALANCHE_DUEL_CONTRACT as `0x${string}`) ?? null,
   },
 
   // Standard EVM wallets sign typed data fine, so the permit flows work as-is and

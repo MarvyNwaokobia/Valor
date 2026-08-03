@@ -60,6 +60,19 @@ abigen!(
     ]"#
 );
 
+abigen!(
+    AvaxDuel,
+    r#"[
+        function openWithPermit(bytes32 duelId, address challenger, uint256 stake, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+        function acceptWithPermit(bytes32 duelId, address opponent, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+        function resolve(bytes32 duelId, address winner) external
+        function resolveDraw(bytes32 duelId) external
+        function cancel(bytes32 duelId) external
+        function winnerPayout(uint256 stake) external view returns (uint256)
+        function escrowedBalance() external view returns (uint256)
+    ]"#
+);
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 /// Gas headroom for one write, used to decide whether the relay can afford to try.
@@ -75,6 +88,9 @@ pub struct AvalancheWriter {
     game_record: Arc<AvaxGameRecord<ChainClient>>,
     scrip:       Option<Arc<ScripToken<ChainClient>>>,
     marketplace: Option<Arc<AvaxMarketplace<ChainClient>>>,
+    /// The staked-duel escrow. Optional like the others, so a missing address
+    /// disables duels rather than the whole relay.
+    duel:        Option<Arc<AvaxDuel<ChainClient>>>,
     /// Serialises every state-changing send from this signer.
     ///
     /// Same reason as `ChainWriter::tx_lock`, and it is not optional: a fight
@@ -151,11 +167,21 @@ impl AvalancheWriter {
                 .map(|addr| Arc::new(AvaxMarketplace::new(addr, client.clone())))
         });
 
+        // Same treatment again. Duels are the mode this chain exists for, so a bad
+        // address here is worth a loud line in the log rather than a silent absence.
+        let duel = std::env::var("AVALANCHE_DUEL_CONTRACT").ok().and_then(|a| {
+            Address::from_str(&a)
+                .map_err(|e| tracing::warn!("AvalancheWriter: bad AVALANCHE_DUEL_CONTRACT: {}", e))
+                .ok()
+                .map(|addr| Arc::new(AvaxDuel::new(addr, client.clone())))
+        });
+
         tracing::info!(
-            "Avalanche relay ready: {:?} (scrip: {}, marketplace: {})",
+            "Avalanche relay ready: {:?} (scrip: {}, marketplace: {}, duels: {})",
             client.address(),
             if scrip.is_some() { "yes" } else { "NOT SET — claims cannot settle" },
             if marketplace.is_some() { "yes" } else { "NOT SET — SCRP purchases disabled" },
+            if duel.is_some() { "yes" } else { "NOT SET — staked duels disabled" },
         );
 
         Some(Self {
@@ -163,6 +189,7 @@ impl AvalancheWriter {
             client,
             scrip,
             marketplace,
+            duel,
             tx_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -397,5 +424,191 @@ impl AvalancheWriter {
     /// Whether Scrip minting is available.
     pub fn can_mint(&self) -> bool {
         self.scrip.is_some()
+    }
+
+    // ── Staked duels ──────────────────────────────────────────────────────────
+    //
+    // The escrow contract holds both stakes for the duration of a duel, which is
+    // the difference between this and the Celo rail: there, stakes move into the
+    // ValorRewardPool and the backend pays the winner out of it, so player money
+    // sits somewhere the operator controls. Here the relay can only ever tell the
+    // contract WHICH of the two participants won. It cannot direct the pot
+    // anywhere else, and it cannot touch a stake at all if it simply stops
+    // calling. See contracts/src/ValorDuel.sol for the reasoning in full.
+
+    /// Whether staked duels can be settled at all.
+    pub fn can_duel(&self) -> bool {
+        self.duel.is_some()
+    }
+
+    fn duel_contract(&self) -> Result<&Arc<AvaxDuel<ChainClient>>, String> {
+        self.duel
+            .as_ref()
+            .ok_or_else(|| "Staked duels are not configured (AVALANCHE_DUEL_CONTRACT unset)".to_string())
+    }
+
+    /// Escrow the challenger's stake and open a duel on-chain.
+    ///
+    /// `stake` is in SCRP wei and must match the amount the player's permit
+    /// authorised, because the contract passes it straight into `permit()`. A
+    /// mismatch fails the signature check rather than moving the wrong sum.
+    pub async fn duel_open(
+        &self,
+        duel_id: [u8; 32],
+        challenger: Address,
+        stake: U256,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let (r, s) = parse_sig(r_hex, s_hex)?;
+        let call = self.duel_contract()?.open_with_permit(
+            duel_id,
+            challenger,
+            stake,
+            U256::from(deadline),
+            v,
+            r,
+            s,
+        );
+        self.send_and_confirm(call, "duel open").await
+    }
+
+    /// Escrow the opponent's stake against an already-open duel.
+    ///
+    /// The amount is deliberately absent: the contract reads it from the duel it
+    /// already stored, so an opponent can never be signed up for a different
+    /// number than the challenger put down.
+    pub async fn duel_accept(
+        &self,
+        duel_id: [u8; 32],
+        opponent: Address,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let (r, s) = parse_sig(r_hex, s_hex)?;
+        let call = self
+            .duel_contract()?
+            .accept_with_permit(duel_id, opponent, U256::from(deadline), v, r, s);
+        self.send_and_confirm(call, "duel accept").await
+    }
+
+    /// Pay the pot, minus the house cut, to the winner.
+    pub async fn duel_resolve(&self, duel_id: [u8; 32], winner: Address) -> Result<H256, String> {
+        let call = self.duel_contract()?.resolve(duel_id, winner);
+        self.send_and_confirm(call, "duel resolve").await
+    }
+
+    /// Return both stakes on a tie. No cut is taken on a duel nobody won.
+    pub async fn duel_draw(&self, duel_id: [u8; 32]) -> Result<H256, String> {
+        let call = self.duel_contract()?.resolve_draw(duel_id);
+        self.send_and_confirm(call, "duel draw").await
+    }
+
+    /// Refund an unaccepted duel's stake to the challenger.
+    pub async fn duel_cancel(&self, duel_id: [u8; 32]) -> Result<H256, String> {
+        let call = self.duel_contract()?.cancel(duel_id);
+        self.send_and_confirm(call, "duel cancel").await
+    }
+
+    /// What the contract would pay a winner at this stake.
+    ///
+    /// Read from the chain rather than recomputed here so the figure a player is
+    /// shown before staking is the figure the contract will actually transfer. A
+    /// house cut changed on-chain and not mirrored in the backend would otherwise
+    /// quote players a number nothing pays.
+    pub async fn duel_winner_payout(&self, stake: U256) -> Result<U256, String> {
+        self.duel_contract()?
+            .winner_payout(stake)
+            .call()
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Broadcast a duel transaction and make sure it actually landed.
+    ///
+    /// Duel calls move player money, so the ambiguity `confirm` exists to resolve
+    /// matters more here than anywhere else: reporting a failed stake that
+    /// actually succeeded would charge a player and give them nothing, and
+    /// reporting a failed resolve that succeeded would pay a winner twice on retry.
+    async fn send_and_confirm(
+        &self,
+        call: ethers::contract::ContractCall<ChainClient, ()>,
+        what: &str,
+    ) -> Result<H256, String> {
+        // Hold the nonce lock across broadcast only, then release: waiting on a
+        // confirmation must not serialise every other write behind it.
+        let pending = {
+            let _guard = self.tx_lock.lock().await;
+            call.send().await.map_err(|e| {
+                let msg = e.to_string();
+                if is_out_of_gas(&msg) {
+                    format!("{RELAY_OUT_OF_GAS}: Avalanche relay is out of AVAX: {msg}")
+                } else {
+                    format!("{what} failed to submit: {msg}")
+                }
+            })?
+        };
+
+        let hash = pending.tx_hash();
+        match tokio::time::timeout(Duration::from_secs(60), pending.confirmations(1)).await {
+            Ok(Ok(Some(_))) => {
+                tracing::info!("Avalanche {} confirmed: {:?}", what, hash);
+                Ok(hash)
+            }
+            // Timed out, dropped, or no receipt returned. None of those is proof of
+            // failure on a public endpoint, so ask the chain directly.
+            _ => {
+                if self.confirm(hash).await {
+                    tracing::info!("Avalanche {} confirmed on retry: {:?}", what, hash);
+                    Ok(hash)
+                } else {
+                    Err(format!("{what} {hash:?} could not be confirmed"))
+                }
+            }
+        }
+    }
+}
+
+/// Split hex `r` and `s` out of a client-supplied permit signature.
+fn parse_sig(r_hex: &str, s_hex: &str) -> Result<([u8; 32], [u8; 32]), String> {
+    let r: [u8; 32] = H256::from_str(r_hex).map_err(|_| format!("Invalid r: {r_hex}"))?.0;
+    let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {s_hex}"))?.0;
+    Ok((r, s))
+}
+
+/// A duel's on-chain id, derived from its database row id.
+///
+/// The UUID's 16 bytes are left-aligned into a bytes32 and the rest left zero. A
+/// hash would work equally well for uniqueness, but padding is reversible: given a
+/// `DuelOpened` event on Snowtrace, the first 16 bytes ARE the primary key of the
+/// row, so anyone can line the chain up against the database without a lookup
+/// table. That property is worth more than the aesthetics of a hash.
+pub fn duel_id_bytes(id: uuid::Uuid) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..16].copy_from_slice(id.as_bytes());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_duel_id_round_trips_back_to_its_row() {
+        let id = uuid::Uuid::new_v4();
+        let bytes = duel_id_bytes(id);
+        assert_eq!(&bytes[..16], id.as_bytes(), "the row id must be readable off the chain");
+        assert_eq!(&bytes[16..], &[0u8; 16], "the tail is padding, not data");
+    }
+
+    #[test]
+    fn distinct_duels_get_distinct_ids() {
+        let a = duel_id_bytes(uuid::Uuid::new_v4());
+        let b = duel_id_bytes(uuid::Uuid::new_v4());
+        assert_ne!(a, b);
     }
 }

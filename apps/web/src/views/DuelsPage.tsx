@@ -7,7 +7,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Swords, Coins, Loader2, X, AlertTriangle } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
-import { useDuels, duelScore, type DuelRun, type DuelResult } from '@/hooks/useDuels'
+import {
+  useDuels, duelScore, useDuelChainStore, AVALANCHE_CHAIN_ID,
+  type DuelRun, type DuelResult,
+} from '@/hooks/useDuels'
+import { useScripBalance } from '@/hooks/useShopCurrency'
+import { CELO_CHAIN_ID } from '@/lib/constants'
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns'
 import { retryImport } from '@/lib/retryImport'
 import LoadoutModal from '@/components/battle/LoadoutModal'
@@ -61,6 +66,9 @@ export default function DuelsPage() {
   const player = usePlayerStore((s) => s.player)
   const inventory = usePlayerStore((s) => s.inventory)
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
+  const duelChainId = useDuelChainStore((s) => s.chainId)
+  const setDuelChainId = useDuelChainStore((s) => s.setChainId)
+  const { data: scrip = 0 } = useScripBalance(address)
 
   const [stake, setStake] = useState(1000)
   // The pending stake awaiting explicit confirmation. Nothing is charged until
@@ -169,6 +177,20 @@ export default function DuelsPage() {
   const cutLabel = `${(cutBps / 100).toFixed(cutBps % 100 === 0 ? 0 : 1)}%`
   const payoutFor = (s: number) => Math.floor((s * 2 * (10_000 - cutBps)) / 10_000)
   const poolCut = (s: number) => s * 2 - payoutFor(s)
+
+  // What the stakes are denominated in. Read from the server rather than derived
+  // from the toggle, so the ticker on screen always names the currency the API
+  // just quoted tiers for — never the one the UI hopes it is showing.
+  const currency = duels?.currency ?? 'G$'
+
+  // The stake actually in play. `stake` is remembered across a currency switch,
+  // and the two ladders do not overlap — 1,000 is a G$ tier and not a SCRP one —
+  // so a remembered amount would leave nothing highlighted and then be rejected
+  // by the server the moment it was submitted. Snap to a real tier instead.
+  const activeStake = tiers.includes(stake) ? stake : (tiers[Math.floor(tiers.length / 2)] ?? stake)
+  // An older API serves no `escrow_ready`, and for those Celo duels have always
+  // worked. Only treat an explicit `false` as unavailable.
+  const escrowReady = duels?.escrow_ready !== false
   const myOpen = duels?.mine.find((d) => d.status === 'open' && d.challenger.toLowerCase() === address.toLowerCase())
 
   return (
@@ -203,6 +225,58 @@ export default function DuelsPage() {
           )}
         </AnimatePresence>
 
+        {/* ── Which currency to duel in ──────────────────────────────────────
+            Only shown once the player actually holds Scrip. Everyone else sees the
+            lobby exactly as before, rather than a toggle for a currency they have
+            never heard of and hold none of. Same rule as the shop's toggle. */}
+        {scrip > 0 && (
+          <div className="flex gap-2">
+            {[
+              { id: CELO_CHAIN_ID, label: 'G$', hint: 'Earned on Celo' },
+              { id: AVALANCHE_CHAIN_ID, label: 'SCRP', hint: `${scrip.toLocaleString()} available` },
+            ].map((o) => {
+              const active = duelChainId === o.id
+              return (
+                <motion.button
+                  key={o.id}
+                  onClick={() => {
+                    // Clear any half-finished stake: the tiers and the currency are
+                    // about to change underneath it, and a confirmation card left on
+                    // screen would name the old amount in the new ticker.
+                    setConfirm(null)
+                    setError(null)
+                    setDuelChainId(o.id)
+                  }}
+                  whileTap={{ scale: 0.97 }}
+                  className="flex-1 px-3 py-2 rounded-lg border text-left transition-colors"
+                  style={{
+                    background: active ? 'rgba(234,179,8,0.12)' : 'rgba(8,10,16,0.9)',
+                    borderColor: active ? 'rgba(234,179,8,0.6)' : 'rgba(42,42,58,0.8)',
+                  }}
+                >
+                  <span className="block text-sm font-black" style={{ color: active ? '#eab308' : '#94a3b8' }}>
+                    {o.label}
+                  </span>
+                  <span className="block text-[10px] text-slate-500 mt-0.5">{o.hint}</span>
+                </motion.button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* The escrow this lobby needs is not configured. Said BEFORE a stake is
+            picked, because the alternative is failing at the moment a player has
+            already decided to commit money. */}
+        {!escrowReady && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-4 py-3 flex flex-col gap-1">
+            <p className="text-amber-300 text-sm font-bold">{currency} duels aren&apos;t live yet</p>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              The escrow contract for this currency isn&apos;t configured on the server, so
+              staking is off. Nothing has been charged.
+            </p>
+          </div>
+        )}
+
         {/* Signed in, but nothing can sign yet. Shown instead of letting someone
             pick a stake, confirm it, and only then hit a wallet error. */}
         {!signerReady && (
@@ -234,7 +308,7 @@ export default function DuelsPage() {
               <>
                 <p className="font-display font-black text-valor-gold text-lg">You won</p>
                 <p className="text-slate-300 text-sm">
-                  +{result.winnings_g?.toLocaleString()} G$ · {result.challenger_score} vs {result.opponent_score}
+                  +{result.winnings_g?.toLocaleString()} {currency} · {result.challenger_score} vs {result.opponent_score}
                 </p>
               </>
             ) : (
@@ -270,9 +344,9 @@ export default function DuelsPage() {
                 <button
                   key={t}
                   onClick={() => setStake(t)}
-                  aria-pressed={stake === t}
+                  aria-pressed={activeStake === t}
                   className={`min-h-12 rounded-xl border font-bold text-sm transition-colors ${
-                    stake === t
+                    activeStake === t
                       ? 'border-valor-gold bg-valor-gold/15 text-valor-gold'
                       : 'border-valor-border bg-valor-surface-2 text-slate-300 hover:border-valor-gold/50'
                   }`}
@@ -282,7 +356,7 @@ export default function DuelsPage() {
               ))}
             </div>
             <button
-              onClick={() => setConfirm({ mode: 'create', stake })}
+              onClick={() => setConfirm({ mode: 'create', stake: activeStake })}
               disabled={pending || !signerReady}
               className="w-full min-h-12 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
             >
@@ -292,7 +366,7 @@ export default function DuelsPage() {
         )}
 
         {/* ── Stake confirmation ───────────────────────────────────────────────
-            The last screen before real G$ leaves the wallet. It exists so nobody
+            The last screen before real money leaves the wallet. It exists so nobody
             can stake by reflex: the amount, what winning pays, what the pool keeps
             and what happens on a draw are all stated before the button that spends. */}
         {confirm && (
@@ -300,16 +374,16 @@ export default function DuelsPage() {
             <div className="flex items-center gap-2">
               <AlertTriangle className="text-valor-gold shrink-0" size={16} />
               <p className="font-display font-black text-white text-sm uppercase tracking-wider">
-                You are staking real G$
+                You are staking real {currency}
               </p>
             </div>
 
             <div className="rounded-xl bg-valor-surface-2 border border-valor-border divide-y divide-valor-border">
-              <Row label="Your stake" value={`${confirm.stake.toLocaleString()} G$`} strong />
-              <Row label="Opponent stakes" value={`${confirm.stake.toLocaleString()} G$`} />
-              <Row label="If you win" value={`+${payoutFor(confirm.stake).toLocaleString()} G$`} gold strong />
-              <Row label="If you lose" value={`-${confirm.stake.toLocaleString()} G$`} />
-              <Row label={`Valor pool (${cutLabel})`} value={`${poolCut(confirm.stake).toLocaleString()} G$`} />
+              <Row label="Your stake" value={`${confirm.stake.toLocaleString()} ${currency}`} strong />
+              <Row label="Opponent stakes" value={`${confirm.stake.toLocaleString()} ${currency}`} />
+              <Row label="If you win" value={`+${payoutFor(confirm.stake).toLocaleString()} ${currency}`} gold strong />
+              <Row label="If you lose" value={`-${confirm.stake.toLocaleString()} ${currency}`} />
+              <Row label={`Valor pool (${cutLabel})`} value={`${poolCut(confirm.stake).toLocaleString()} ${currency}`} />
             </div>
 
             <p className="text-slate-500 text-xs leading-relaxed">
@@ -337,7 +411,7 @@ export default function DuelsPage() {
               >
                 {pending
                   ? <><Loader2 className="animate-spin" size={16} /> Staking…</>
-                  : <>Stake {confirm.stake.toLocaleString()} G$</>}
+                  : <>Stake {confirm.stake.toLocaleString()} {currency}</>}
               </button>
             </div>
           </div>
@@ -347,7 +421,7 @@ export default function DuelsPage() {
           <div className="rounded-xl border border-valor-gold/30 bg-valor-surface p-5 flex flex-col gap-2">
             <p className="font-display font-black text-white text-sm uppercase tracking-wider">Your open duel</p>
             <p className="text-slate-400 text-sm">
-              {myOpen.stake_g.toLocaleString()} G$ staked — waiting for someone to accept.
+              {myOpen.stake_g.toLocaleString()} {currency} staked — waiting for someone to accept.
             </p>
             {/* Closing is a REFUND, not a payment, so it needs no signature and
                 stays available even when the wallet can't sign. A real button
@@ -377,7 +451,7 @@ export default function DuelsPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-white font-bold text-sm truncate">{who(d.challenger_name, d.challenger)}</p>
                   <p className="text-slate-500 text-[11px]">
-                    {d.stake_g.toLocaleString()} G$ · winner takes {d.winner_takes_g.toLocaleString()}
+                    {d.stake_g.toLocaleString()} {currency} · winner takes {d.winner_takes_g.toLocaleString()}
                   </p>
                 </div>
                 <button
@@ -402,7 +476,7 @@ export default function DuelsPage() {
                 <div key={d.id} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-2.5 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-slate-300 text-sm truncate">
-                      vs {who(d.opponent_name, d.opponent)} · {d.stake_g.toLocaleString()} G$
+                      vs {who(d.opponent_name, d.opponent)} · {d.stake_g.toLocaleString()} {d.currency ?? currency}
                     </p>
                     {d.status === 'resolved' && (
                       <p className="text-slate-500 text-[11px]">{d.challenger_score} — {d.opponent_score}</p>
@@ -424,7 +498,7 @@ export default function DuelsPage() {
         {pickingLoadout && run && (
           <LoadoutModal
             opName="Duel"
-            label={`Loadout · ${run.stake_g.toLocaleString()} G$ staked`}
+            label={`Loadout · ${run.stake_g.toLocaleString()} ${currency} staked`}
             cta="ENTER THE DUEL"
             walletAddress={address}
             onClose={() => setPickingLoadout(false)}

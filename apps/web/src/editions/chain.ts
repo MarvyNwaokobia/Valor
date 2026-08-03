@@ -139,6 +139,47 @@ export function chainSpendConfig(chainId: number): {
 }
 
 /**
+ * Everything needed to stake a duel on a NAMED chain.
+ *
+ * Separate from `chainSpendConfig` because the SPENDER differs, and that is the
+ * one field a permit cannot be wrong about. A shop permit approves the
+ * marketplace; a duel permit approves the escrow contract, which pulls the stake
+ * into its own custody. Signing one and submitting it as the other produces a
+ * signature that verifies in the browser and reverts on-chain, having already
+ * cost the player a wallet prompt.
+ *
+ * Returns `null` for a chain with no duel escrow deployed. On Celo that is
+ * permanent and correct: staked duels there settle through the reward pool with
+ * the relay as spender, which is `chainSpendConfig`'s shape, not this one.
+ */
+export function chainDuelConfig(chainId: number): {
+  currency: `0x${string}`
+  duel: `0x${string}`
+  decimals: number
+  symbol: string
+  permit: { name: string; version: string; chainId: number; verifyingContract: `0x${string}` }
+} | null {
+  const source = [WEB_EDITION, AVALANCHE_EDITION].find((e) => e.chain.id === chainId)
+  if (!source) return null
+
+  const { currency, contracts } = source
+  if (!currency.address || !currency.permit || !contracts.duel) return null
+
+  return {
+    currency: currency.address,
+    duel: contracts.duel,
+    decimals: currency.decimals,
+    symbol: currency.symbol,
+    permit: {
+      name: currency.permit.name,
+      version: currency.permit.version,
+      chainId,
+      verifyingContract: currency.address,
+    },
+  }
+}
+
+/**
  * The ERC-20 players spend in this edition, or a thrown error naming the reason.
  *
  * Replaces call sites that imported `G_TOKEN_ADDRESS` directly. That constant is

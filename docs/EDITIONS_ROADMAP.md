@@ -147,50 +147,55 @@ Reference: `apps/web/src/editions/minipay/README.md` and the celopedia skill's
 
 ## Avalanche
 
-**Deliberately after MiniPay.** Both editions need the same surgery (run without
-GoodDollar identity, run without G$ earning, server-side edition trust), and
-MiniPay is doing it first with real users testing it. Do Avalanche first and you
-do the hard part blind.
+**Shipped ahead of MiniPay, not after it.** The plan below was to do MiniPay
+first and let Avalanche inherit the work. That is not what happened: Avalanche
+went live on 2 Aug 2026 while MiniPay is still blocked on orientation. The
+ordering argument was sound and the outcome is still fine, because the shared
+surgery (run without GoodDollar identity, run without G$ earning, server-side
+edition trust) got done on the Avalanche path instead.
 
-The scaffold exists at `apps/web/src/editions/avalanche/` with `earns_real_money`
-already false. See its README for the full reasoning.
+Live addresses are in `apps/web/src/editions/avalanche/README.md`.
 
-### Phase A — Decide what it is
+### Phase A — Decide what it is ✅
 
-- [ ] Confirm the pitch: **competitive, not redistributive.** Avalanche's gaming
-      community shows up for stakes, tournaments and ownership, not UBI. The
-      already-specced staked PvP duels are the differentiator
-- [ ] Decide whether progress, ranks and inventory are shared with the Celo
-      editions or start fresh. Shared state across two economies is where the
-      hardest bugs will come from
+- [x] Pitch confirmed: **competitive, not redistributive.** Staked SCRP duels are
+      the differentiator, and `features.duels` is on for this edition
+- [x] Progress, ranks and campaign are SHARED across chains (one EVM address, one
+      `players` row). Balances, prices, item registries and duel escrow are
+      SEPARATE. `g_ledger` and `earnings` both carry `chain_id`
 
-### Phase B — Hard blocker before any payout
+### Phase B — Sybil answer ✅
 
-- [ ] **A sybil answer.** GoodDollar is Celo and Fuse only, so this edition has no
-      proof-of-unique-human at all. Required before `earning` is enabled or any
-      pool-funded payout exists. Stake-based play sidesteps this (value moves
-      between players, not from a pool to players), which is a second reason to
-      prefer it
+- [x] SCRP is not redeemable, so there is nothing to farm. Held in
+      `chain_id.rs::is_redeemable`, with a test that fails if anyone flips it
+- [x] Staked duels reinforce it: value moves player-to-player, so no pool is a
+      target. **Do not enable `earning` on this chain without a
+      proof-of-unique-human shipping alongside it**
 
-### Phase C — Make the code chain-agnostic
+### Phase C — Chain-agnostic code ✅
 
-- [ ] Un-hardcode the chain. `celo` is imported directly in ~15 files, and
-      `chainId: 42220` is written literally inside `useMarketplace.ts` and
-      `useResale.ts`. Mechanical but unavoidable. **MiniPay does not cover this**,
-      since MiniPay is also Celo
-- [ ] Contract addresses per edition rather than per env var
+- [x] `editions/chain.ts` resolves chain, permit domain, currency and contracts.
+      `chainSpendConfig` for the shop, `chainDuelConfig` for duel escrow
+- [x] Contract addresses per edition rather than per env var
 
-### Phase D — Deploy and pitch
+### Phase D — Deploy and pitch 🔄
 
-- [ ] Deploy the contracts on Avalanche C-Chain (43114), record real addresses.
-      `currency.address` is `null` on purpose — never guess a token address
-- [ ] Build the staked duel loop
+- [x] Contracts deployed on C-Chain (43114) and verified on Snowtrace
+- [x] Scrip claimable in the Bank, spendable in the shop, matches mirrored
+- [x] Staked duel loop **written and tested** — `ValorDuel.sol` (29 tests), relay
+      calls in `services/avalanche.rs`, chain-aware `handlers/duels.rs`, currency
+      toggle in the duel lobby
+- [ ] **Deploy `ValorDuel`.** Blocked on a Safe address; the deploy script refuses
+      to let the relay own the escrow it settles
+- [ ] **Run `HandOverToSafe`.** One hot key currently owns every contract and can
+      mint. Highest-risk item in a grant review
+- [ ] **Burn the deployer's 1,125 test SCRP** (92% of supply)
 - [ ] Grant application. Same domain (playvalor.app) throughout: committees measure
       contribution from on-chain activity, not from which domain served the page.
-      The strong pitch is "a live game with 120+ existing players, bringing them
-      plus a competitive mode onto Avalanche"
+      The honest pitch is "a live game with 128 players and 2,274 recorded matches,
+      bringing a competitive staked mode onto Avalanche". Mirrored match records
+      are NOT native Avalanche activity and must not be presented as if they were
 
----
 
 ## Sequencing at a glance
 

@@ -1,19 +1,43 @@
 'use client'
 
 import { useCallback, useState } from 'react'
+import { create } from 'zustand'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useConfig } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { parseUnits, parseSignature } from 'viem'
-import { G_TOKEN_ADDRESS } from '@/lib/constants'
+import { createPublicClient, http, parseUnits, parseSignature } from 'viem'
+import { avalanche } from 'viem/chains'
+import { CELO_CHAIN_ID, G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useRelayAddress } from '@/hooks/useTransferOut'
 import { magicCanSign, describeSigningError } from '@/lib/magic'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
-import { requirePermitDomain } from '@/editions/chain'
+import { requirePermitDomain, chainDuelConfig } from '@/editions/chain'
+import { AVALANCHE_EDITION } from '@/editions/avalanche/config'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const G_DECIMALS = 18
+
+/** The chain whose duel lobby is on screen. */
+export const AVALANCHE_CHAIN_ID = AVALANCHE_EDITION.chain.id
+
+interface DuelChainState {
+  chainId: number
+  setChainId: (id: number) => void
+}
+
+/**
+ * Which chain the duel lobby is showing.
+ *
+ * Same reasoning as the shop's currency toggle: the chain is a property of a
+ * duel, not of a player, so one person can hold a G$ duel and a SCRP duel at
+ * once without being forked into two accounts. Defaults to Celo so a player who
+ * has never heard of Scrip sees the lobby they saw yesterday.
+ */
+export const useDuelChainStore = create<DuelChainState>((set) => ({
+  chainId: CELO_CHAIN_ID,
+  setChainId: (id) => set({ chainId: id }),
+}))
 
 const NONCES_ABI = [
   { name: 'nonces', type: 'function', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
@@ -45,6 +69,10 @@ export interface MyDuel {
   winner: string | null
   challenger_score: number | null
   opponent_score: number | null
+  /** The chain this duel was staked on. "Mine" spans both chains, so a row
+   *  carries its own currency rather than inheriting the lobby's. */
+  chain_id?: number
+  currency?: string
 }
 
 export interface DuelsList {
@@ -58,6 +86,13 @@ export interface DuelsList {
   max_stake_g: number
   /** House cut in basis points (50 = 0.5%). */
   house_cut_bps: number
+  /** Which chain this lobby is for. Absent from an API older than SCRP duels. */
+  chain_id?: number
+  /** Ticker for that chain's stake currency. */
+  currency?: string
+  /** Whether staking can actually happen right now. False means the escrow is
+   *  unconfigured, and the UI must say so BEFORE a player picks a stake. */
+  escrow_ready?: boolean
 }
 
 /** Everything needed to play one side of a duel. */
@@ -138,11 +173,16 @@ export function useDuels(walletAddress: string | undefined) {
   const { source } = useResolvedAuth()
   const [pending, setPending] = useState(false)
 
+  const chainId = useDuelChainStore((s) => s.chainId)
+
   const list = useQuery({
-    queryKey: ['duels', walletAddress?.toLowerCase() ?? 'anon'],
+    // The chain is part of the key: switching currency must refetch rather than
+    // show the other chain's lobby until the poll comes round.
+    queryKey: ['duels', walletAddress?.toLowerCase() ?? 'anon', chainId],
     queryFn: async (): Promise<DuelsList> => {
-      const q = walletAddress ? `?wallet=${walletAddress.toLowerCase()}` : ''
-      const res = await fetch(`${API}/duels${q}`)
+      const params = new URLSearchParams({ chain_id: String(chainId) })
+      if (walletAddress) params.set('wallet', walletAddress.toLowerCase())
+      const res = await fetch(`${API}/duels?${params}`)
       if (!res.ok) throw new Error('Could not load duels')
       return res.json()
     },
@@ -160,6 +200,79 @@ export function useDuels(walletAddress: string | undefined) {
   }, [queryClient])
 
   /**
+   * Sign a SCRP stake, approving the ValorDuel escrow contract.
+   *
+   * Balance and nonce are read with a plain Avalanche client rather than through
+   * wagmi. wagmi's config is the ACTIVE edition's chain, which for every player
+   * reaching this today is Celo — reading a SCRP balance through it would query
+   * the Scrip address on Celo, find no contract, and report zero.
+   */
+  const signScripStake = useCallback(async (stake: number) => {
+    if (!walletAddress) throw new Error('Not signed in')
+    if (!walletClient?.account) {
+      throw new Error('Wallet session not ready to sign — reload, or sign out and back in')
+    }
+    const duelCfg = chainDuelConfig(AVALANCHE_CHAIN_ID)
+    if (!duelCfg) throw new Error('SCRP duels are not available yet')
+
+    const amount = parseUnits(stake.toString(), duelCfg.decimals)
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30)
+
+    const avax = createPublicClient({
+      chain: avalanche,
+      transport: http(AVALANCHE_EDITION.chain.rpcUrl),
+    })
+
+    const balance = await avax.readContract({
+      address: duelCfg.currency, abi: BALANCE_ABI, functionName: 'balanceOf',
+      args: [walletAddress as `0x${string}`],
+    })
+    if (balance < amount) {
+      throw new Error(`Not enough ${duelCfg.symbol} for this stake — claim in the Bank first`)
+    }
+
+    const nonce = await avax.readContract({
+      address: duelCfg.currency, abi: NONCES_ABI, functionName: 'nonces',
+      args: [walletAddress as `0x${string}`],
+    })
+
+    if (source === 'magic' && !(await magicCanSign())) {
+      throw new Error('Your wallet session on this device has expired. Sign in again to stake.')
+    }
+
+    let rawSig: `0x${string}`
+    try {
+      rawSig = await walletClient.signTypedData({
+        account: walletClient.account,
+        domain: duelCfg.permit,
+        types: {
+          Permit: [
+            { name: 'owner', type: 'address' },
+            { name: 'spender', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'deadline', type: 'uint256' },
+          ],
+        },
+        primaryType: 'Permit',
+        message: {
+          owner: walletAddress as `0x${string}`,
+          // The escrow, not the relay. See the note in `signStake`.
+          spender: duelCfg.duel,
+          value: amount,
+          nonce,
+          deadline,
+        },
+      })
+    } catch (err) {
+      throw new Error(describeSigningError(err))
+    }
+
+    const { v, r, s } = parseSignature(rawSig)
+    return { deadline: Number(deadline), v: Number(v), r, s }
+  }, [walletAddress, walletClient, source])
+
+  /**
    * Sign an EIP-2612 permit for EXACTLY this stake.
    *
    * One signature per stake, rather than the survival re-arm's standing session
@@ -171,6 +284,14 @@ export function useDuels(walletAddress: string | undefined) {
    * the exact figure the confirmation screen just showed them.
    */
   const signStake = useCallback(async (stakeG: number) => {
+    // SCRP stakes are approved to the ESCROW CONTRACT, not the relay: ValorDuel
+    // pulls the stake into its own custody, so a permit naming the relay would
+    // approve an address that never calls transferFrom. On Celo the relay really
+    // is the spender, because it moves G$ into the reward pool itself. Same
+    // primitive, different spender, and getting it wrong costs the player a
+    // signature and then reverts.
+    if (chainId !== CELO_CHAIN_ID) return signScripStake(stakeG)
+
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) {
       // Being signed in and being able to SIGN are different states. wagmi
@@ -236,18 +357,21 @@ export function useDuels(walletAddress: string | undefined) {
 
     const { v, r, s } = parseSignature(rawSig)
     return { deadline: Number(deadline), v: Number(v), r, s }
-  }, [walletAddress, walletClient, relayAddress, config])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, walletClient, relayAddress, config, chainId, source])
 
   const createDuel = useCallback(async (stakeG: number): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
       const permit = await signStake(stakeG)
-      const run = await post<DuelRun>('/duels', { wallet: walletAddress, stake_g: stakeG, ...permit })
+      const run = await post<DuelRun>('/duels', {
+        wallet: walletAddress, stake_g: stakeG, chain_id: chainId, ...permit,
+      })
       refresh()
       return run
     } finally { setPending(false) }
-  }, [walletAddress, signStake, refresh])
+  }, [walletAddress, signStake, refresh, chainId])
 
   const acceptDuel = useCallback(async (id: string, stakeG: number): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')

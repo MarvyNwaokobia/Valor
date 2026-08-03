@@ -81,6 +81,20 @@ export interface EditionContracts {
    * disable buying rather than fall back to another chain's address.
    */
   marketplace: `0x${string}` | null
+
+  /**
+   * ValorDuel, the staked-duel escrow, on this edition's chain.
+   *
+   * Only Avalanche has one. On Celo staked duels predate it and settle through
+   * the ValorRewardPool instead, so `null` there means "duels work, by the other
+   * mechanism" rather than "duels are unavailable" — see handlers/duels.rs for
+   * why the two chains custody stakes differently.
+   *
+   * When this IS set, it is the permit SPENDER for a stake: the contract pulls
+   * the stake into its own escrow, so a signature naming the relay instead would
+   * approve the wrong address entirely and the stake would revert.
+   */
+  duel?: `0x${string}` | null
 }
 
 export interface EditionConfig {

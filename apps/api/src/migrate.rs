@@ -39,6 +39,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_character_confirmed.sql", include_str!("../migrations/add_character_confirmed.sql")),
     ("add_client_errors.sql",     include_str!("../migrations/add_client_errors.sql")),
     ("add_duels.sql",             include_str!("../migrations/add_duels.sql")),
+    // Must follow add_duels.sql: it ALTERs the table that file creates.
+    ("add_duel_chain.sql",        include_str!("../migrations/add_duel_chain.sql")),
     ("add_earnings_and_claims.sql", include_str!("../migrations/add_earnings_and_claims.sql")),
     ("add_endless_progress.sql",  include_str!("../migrations/add_endless_progress.sql")),
     ("add_endless_rewards.sql",   include_str!("../migrations/add_endless_rewards.sql")),

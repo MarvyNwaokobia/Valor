@@ -1,15 +1,33 @@
-//! B4 — staked async score-duels.
+//! B4 — staked async score-duels, on both chains.
 //!
-//! Two players stake the same G$, both play the SAME seeded run separately, and the
-//! higher server-validated score takes the pot minus a house cut. There is no live
-//! netcode here on purpose: with no shared real-time simulation there is nothing to
-//! desync, and the only thing a client reports is a score the server range-checks
-//! against elapsed time it measured itself.
+//! Two players stake the same amount, both play the SAME seeded run separately, and
+//! the higher server-validated score takes the pot minus a house cut. There is no
+//! live netcode here on purpose: with no shared real-time simulation there is
+//! nothing to desync, and the only thing a client reports is a score the server
+//! range-checks against elapsed time it measured itself.
 //!
-//! Money reuses the proven rails rather than a new contract:
-//!   stake   player -> RewardPool  via `spend_rearm`      (the B1 re-arm allowance rail)
-//!   payout  RewardPool -> winner  via `distribute_reward` (idempotent by reference)
-//! Stakes fund the payout, so a duel emits nothing new and the retained cut is a sink.
+//! TWO CHAINS, TWO CUSTODY MODELS
+//! ------------------------------
+//! The game logic above is identical on Celo and Avalanche. Where the money sits
+//! while a duel is running is not, and the difference is deliberate.
+//!
+//!   Celo (G$)        stake   player -> ValorRewardPool  via `transfer_g_for`
+//!                    payout  ValorRewardPool -> winner  via `distribute_reward`
+//!
+//!     Stakes sit in the reward pool, which the operator controls. That is fine for
+//!     a side mode on a chain whose main business is paying out UBI-funded rewards,
+//!     and it reuses rails that were already proven.
+//!
+//!   Avalanche (SCRP) stake   player -> ValorDuel contract (escrow)
+//!                    payout  ValorDuel -> winner, atomically with the house cut
+//!
+//!     On Avalanche the duel IS the product, so the stake is held by a purpose-built
+//!     escrow contract instead. The backend can tell it who won; it cannot tell it
+//!     to pay anyone outside the duel, cannot withdraw the escrow, and cannot stop a
+//!     player recovering their stake if the backend goes away — `reclaim` is
+//!     permissionless after a timeout. See contracts/src/ValorDuel.sol.
+//!
+//! Everything below that branches on chain branches for that reason and no other.
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
@@ -18,6 +36,8 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::services::avalanche::duel_id_bytes;
+use crate::services::chain_id::ChainId;
 use crate::utils::{is_valid_wallet, normalize_wallet};
 use crate::AppState;
 
@@ -39,11 +59,47 @@ const HOUSE_CUT_BPS: u64 = 50; // 0.5%
 /// how much real money a request is allowed to move.
 const STAKE_TIERS: [i64; 6] = [100, 500, 1_000, 5_000, 25_000, 50_000];
 
+/// The SCRP ladder, two orders of magnitude below the G$ one.
+///
+/// NOT a units conversion — the two currencies are unrelated and SCRP has no
+/// exchange rate at all. It is sized against what a player can actually earn:
+/// `SCRIP_PER_CLEAR` is 100, so clearing one op funds the 100 tier and a full
+/// 15-op campaign funds roughly the top of this ladder. Reusing the G$ tiers would
+/// have offered a 50,000 SCRP duel to a playerbase whose entire circulating supply
+/// is smaller than that, which is a stake nobody could ever cover.
+const SCRIP_STAKE_TIERS: [i64; 6] = [10, 25, 50, 100, 250, 500];
+
+/// The ladder for one chain. Everything downstream reads this rather than the
+/// arrays, so adding a third chain does not mean hunting for hardcoded tiers.
+fn stake_tiers(chain: ChainId) -> &'static [i64] {
+    match chain {
+        ChainId::Celo => &STAKE_TIERS,
+        ChainId::Avalanche => &SCRIP_STAKE_TIERS,
+    }
+}
+
 /// Floor and ceiling, derived from the ladder so they cannot drift apart from it.
 /// The floor keeps dust duels from spamming the chain (every duel costs two escrow
-/// txs plus a payout tx in CELO gas); the ceiling bounds what one bad run can cost.
+/// txs plus a payout tx in native gas); the ceiling bounds what one bad run can cost.
 const MIN_STAKE_G: i64 = STAKE_TIERS[0];
 const MAX_STAKE_G: i64 = STAKE_TIERS[STAKE_TIERS.len() - 1];
+
+/// Which chain a request is asking to duel on.
+///
+/// Defaults to Celo when absent so existing clients — which know nothing about
+/// chains and send no such field — keep working exactly as before. This is the one
+/// place a default is safe: a duel that omits the field is, by definition, a client
+/// built before SCRP duels existed, and those were all G$.
+fn requested_chain(chain_id: Option<i32>) -> Result<ChainId, HttpResponse> {
+    match chain_id {
+        None => Ok(ChainId::Celo),
+        Some(id) => ChainId::from_i32(id).ok_or_else(|| {
+            HttpResponse::BadRequest().json(json!({
+                "error": "Unknown chain", "chain_id": id,
+            }))
+        }),
+    }
+}
 
 /// Anti-cheat anchor, mirroring the Gauntlet's: a score cannot exceed what the
 /// server-measured elapsed time can physically support. A client never supplies
@@ -101,6 +157,19 @@ struct DuelRow {
     opponent_score: Option<i32>,
     status: String,
     winner_wallet: Option<String>,
+    chain_id: i32,
+}
+
+impl DuelRow {
+    /// The chain this duel settles on.
+    ///
+    /// An unrecognised id falls back to Celo rather than refusing to settle. Every
+    /// row that could hit this predates the column and really is Celo, and a duel
+    /// whose stakes are already escrowed must not become unsettleable because a
+    /// future chain id appeared in the column.
+    fn chain(&self) -> ChainId {
+        ChainId::from_i32(self.chain_id).unwrap_or(ChainId::Celo)
+    }
 }
 
 /// Signed authorisation for one stake. A duel stake is a deliberate, one-off,
@@ -118,6 +187,92 @@ pub struct StakePermit {
     pub v: u8,
     pub r: String,
     pub s: String,
+}
+
+/// Escrow one side's stake, on whichever chain the duel lives.
+///
+/// `side` decides which contract call Avalanche makes: opening a duel carries the
+/// stake amount, accepting one reads it from what the challenger already staked.
+/// On Celo both are the same transfer, which is exactly why the branch is here and
+/// not duplicated into the two handlers.
+enum Side {
+    Challenger,
+    Opponent,
+}
+
+async fn escrow_stake_on(
+    state: &AppState,
+    chain: ChainId,
+    duel_id: Uuid,
+    side: Side,
+    wallet: &str,
+    stake: i64,
+    permit: &StakePermit,
+) -> Result<String, HttpResponse> {
+    match chain {
+        ChainId::Celo => escrow_stake(state, wallet, stake, permit).await,
+        ChainId::Avalanche => escrow_scrip(state, duel_id, side, wallet, stake, permit).await,
+    }
+}
+
+/// Escrow SCRP into the ValorDuel contract.
+///
+/// Note what is NOT checked here that the Celo path checks: a balance precondition.
+/// The escrow contract pulls via `transferFrom` after consuming the permit, so an
+/// underfunded player's transaction reverts on-chain and nothing moves. Pre-checking
+/// would be a courtesy, not a safety property, and a courtesy that costs an RPC
+/// round trip on every stake.
+async fn escrow_scrip(
+    state: &AppState,
+    duel_id: Uuid,
+    side: Side,
+    wallet: &str,
+    stake: i64,
+    permit: &StakePermit,
+) -> Result<String, HttpResponse> {
+    let av = state.avalanche.as_ref().ok_or_else(|| {
+        HttpResponse::ServiceUnavailable().json(json!({"error": "Avalanche relay not available"}))
+    })?;
+    if !av.can_duel() {
+        return Err(HttpResponse::ServiceUnavailable()
+            .json(json!({"error": "Staked duels are not configured on Avalanche"})));
+    }
+    let owner: Address = wallet
+        .parse()
+        .map_err(|_| HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})))?;
+
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    if permit.deadline <= now {
+        return Err(HttpResponse::BadRequest().json(json!({"error": "Signature expired — try again"})));
+    }
+
+    let id = duel_id_bytes(duel_id);
+    let amount = g_wei(stake as u64);
+    let result = match side {
+        Side::Challenger => {
+            av.duel_open(id, owner, amount, permit.deadline, permit.v, &permit.r, &permit.s).await
+        }
+        Side::Opponent => {
+            av.duel_accept(id, owner, permit.deadline, permit.v, &permit.r, &permit.s).await
+        }
+    };
+
+    match result {
+        Ok(hash) => {
+            let tx_hash = format!("{hash:?}");
+            crate::handlers::ledger::insert_ledger_entry(
+                &state.db, wallet, "duel_stake",
+                rust_decimal::Decimal::from(-stake), Some(&tx_hash), None,
+                ChainId::Avalanche,
+            ).await;
+            Ok(tx_hash)
+        }
+        Err(e) => {
+            tracing::error!("SCRP duel stake failed for {} on {}: {}", wallet, duel_id, e);
+            Err(HttpResponse::BadGateway()
+                .json(json!({"error": "Stake transfer failed — nothing was charged"})))
+        }
+    }
 }
 
 /// Move `stake` from the player into the RewardPool using their signed permit.
@@ -202,11 +357,152 @@ async fn payout(state: &AppState, wallet: &str, amount_g: u64, ref_key: &str) ->
     }
 }
 
+// ── Settlement, per chain ─────────────────────────────────────────────────────
+//
+// On Celo each of these is a transfer out of the reward pool, made idempotent by an
+// on-chain reference. On Avalanche each is a single call to the escrow contract,
+// made idempotent by the duel's own status: `resolve` on an already-resolved duel
+// reverts, so a replayed request cannot pay twice.
+
+/// Pay the winner. Returns the settlement tx hash.
+async fn settle_win(
+    state: &AppState,
+    chain: ChainId,
+    duel_id: Uuid,
+    winner: &str,
+    stake: i64,
+) -> Option<String> {
+    match chain {
+        ChainId::Celo => {
+            let take = winner_payout(stake);
+            payout(state, winner, take, &format!("duel:{duel_id}:{winner}")).await
+        }
+        ChainId::Avalanche => {
+            let av = state.avalanche.as_ref()?;
+            let addr: Address = winner.parse().ok()?;
+            match av.duel_resolve(duel_id_bytes(duel_id), addr).await {
+                Ok(hash) => {
+                    let tx = format!("{hash:?}");
+                    // The contract computes the payout, so the ledger records what
+                    // it actually pays rather than what we think it should.
+                    let take = winner_payout_on(state, chain, stake).await;
+                    crate::handlers::ledger::insert_ledger_entry(
+                        &state.db, winner, "duel_payout",
+                        rust_decimal::Decimal::from(take), Some(&tx), None,
+                        ChainId::Avalanche,
+                    ).await;
+                    Some(tx)
+                }
+                Err(e) => {
+                    tracing::error!("SCRP duel resolve FAILED for {} ({}): {}", winner, duel_id, e);
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Refund both sides of a drawn duel.
+async fn settle_draw(
+    state: &AppState,
+    chain: ChainId,
+    duel_id: Uuid,
+    challenger: &str,
+    opponent: &str,
+    stake: i64,
+) -> Vec<Option<String>> {
+    match chain {
+        ChainId::Celo => {
+            let a = payout(state, challenger, stake as u64, &format!("duel:{duel_id}:draw:{challenger}")).await;
+            let b = payout(state, opponent, stake as u64, &format!("duel:{duel_id}:draw:{opponent}")).await;
+            vec![a, b]
+        }
+        // One call refunds both, so a draw cannot half-settle the way two separate
+        // transfers can.
+        ChainId::Avalanche => {
+            let Some(av) = state.avalanche.as_ref() else { return vec![None] };
+            match av.duel_draw(duel_id_bytes(duel_id)).await {
+                Ok(hash) => {
+                    let tx = format!("{hash:?}");
+                    for w in [challenger, opponent] {
+                        crate::handlers::ledger::insert_ledger_entry(
+                            &state.db, w, "duel_refund",
+                            rust_decimal::Decimal::from(stake), Some(&tx), None,
+                            ChainId::Avalanche,
+                        ).await;
+                    }
+                    vec![Some(tx)]
+                }
+                Err(e) => {
+                    tracing::error!("SCRP duel draw FAILED ({}): {}", duel_id, e);
+                    vec![None]
+                }
+            }
+        }
+    }
+}
+
+/// Refund a cancelled duel's stake to the challenger.
+async fn settle_cancel(
+    state: &AppState,
+    chain: ChainId,
+    duel_id: Uuid,
+    challenger: &str,
+    stake: i64,
+) -> Option<String> {
+    match chain {
+        ChainId::Celo => payout(state, challenger, stake as u64, &format!("duel:{duel_id}:cancel")).await,
+        ChainId::Avalanche => {
+            let av = state.avalanche.as_ref()?;
+            match av.duel_cancel(duel_id_bytes(duel_id)).await {
+                Ok(hash) => {
+                    let tx = format!("{hash:?}");
+                    crate::handlers::ledger::insert_ledger_entry(
+                        &state.db, challenger, "duel_refund",
+                        rust_decimal::Decimal::from(stake), Some(&tx), None,
+                        ChainId::Avalanche,
+                    ).await;
+                    Some(tx)
+                }
+                Err(e) => {
+                    tracing::error!("SCRP duel cancel FAILED ({}): {}", duel_id, e);
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// What a winner takes from a duel at `stake` per side.
+///
+/// On Avalanche this asks the contract, because the contract is what pays. Quoting
+/// a locally computed figure would let a house cut changed on-chain drift away from
+/// the number players are shown before they stake. Falls back to the local formula
+/// only if the read fails, so an RPC blip degrades the quote rather than the duel.
+async fn winner_payout_on(state: &AppState, chain: ChainId, stake: i64) -> u64 {
+    match chain {
+        ChainId::Celo => winner_payout(stake),
+        ChainId::Avalanche => {
+            let local = winner_payout(stake);
+            let Some(av) = state.avalanche.as_ref() else { return local };
+            match av.duel_winner_payout(g_wei(stake as u64)).await {
+                Ok(wei) => (wei / U256::exp10(18)).as_u64(),
+                Err(e) => {
+                    tracing::warn!("could not read winnerPayout from the duel contract: {}", e);
+                    local
+                }
+            }
+        }
+    }
+}
+
 // ── POST /duels ───────────────────────────────────────────────────────────────
 #[derive(Deserialize)]
 pub struct CreateRequest {
     pub wallet: String,
     pub stake_g: i64,
+    /// Which chain to duel on. Absent means Celo; see `requested_chain`.
+    pub chain_id: Option<i32>,
     #[serde(flatten)]
     pub permit: StakePermit,
 }
@@ -228,33 +524,47 @@ pub async fn create_duel(
     if !is_valid_wallet(&body.wallet) {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
     }
-    if !STAKE_TIERS.contains(&body.stake_g) {
+    let chain = match requested_chain(body.chain_id) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let tiers = stake_tiers(chain);
+    if !tiers.contains(&body.stake_g) {
         return HttpResponse::BadRequest().json(json!({
             "error": "Pick one of the standard stake amounts",
-            "stake_tiers": STAKE_TIERS,
+            "stake_tiers": tiers,
+            "currency": chain.currency_symbol(),
         }));
     }
     let wallet = normalize_wallet(&body.wallet);
 
     // Reject a second open duel BEFORE escrowing, so a duplicate request can never
     // charge a stake it then has nowhere to put (the unique index would reject the
-    // insert and the G$ would already be gone).
+    // insert and the money would already be gone).
+    //
+    // Scoped to the chain, matching the unique index: an open G$ duel must not block
+    // opening a SCRP one, since they draw on entirely different balances.
     let open: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM duels WHERE challenger_wallet = $1 AND status = 'open'",
+        "SELECT id FROM duels WHERE challenger_wallet = $1 AND chain_id = $2 AND status = 'open'",
     )
-    .bind(&wallet).fetch_optional(&state.db).await.unwrap_or(None);
+    .bind(&wallet).bind(chain.as_i32()).fetch_optional(&state.db).await.unwrap_or(None);
     if open.is_some() {
         return HttpResponse::Conflict().json(json!({
             "error": "You already have an open duel — cancel it or wait for someone to accept",
         }));
     }
 
-    let stake_tx = match escrow_stake(&state, &wallet, body.stake_g, &body.permit).await {
-        Ok(tx) => tx,
-        Err(resp) => return resp,
-    };
-
+    // Generated BEFORE the escrow, because on Avalanche this id is the duel's
+    // identity on-chain: the contract is told about the duel as part of taking the
+    // stake, so there is no ordering in which the row could come first.
     let id = Uuid::new_v4();
+
+    let stake_tx =
+        match escrow_stake_on(&state, chain, id, Side::Challenger, &wallet, body.stake_g, &body.permit).await {
+            Ok(tx) => tx,
+            Err(resp) => return resp,
+        };
+
     let token = Uuid::new_v4().to_string();
     // Positive seed only: the client feeds it to a uint-based PRNG.
     let seed = (Uuid::new_v4().as_u128() as i64).abs();
@@ -262,28 +572,38 @@ pub async fn create_duel(
 
     let inserted = sqlx::query(
         "INSERT INTO duels (id, challenger_wallet, stake_g, seed,
-                            challenger_run_token, challenger_started_at, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open')",
+                            challenger_run_token, challenger_started_at, status,
+                            chain_id, challenger_stake_tx)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)",
     )
     .bind(id).bind(&wallet).bind(body.stake_g).bind(seed)
-    .bind(&token).bind(now)
+    .bind(&token).bind(now).bind(chain.as_i32()).bind(&stake_tx)
     .execute(&state.db).await;
 
     if let Err(e) = inserted {
         // The stake is already on-chain. Refund rather than strand it.
+        //
+        // On Avalanche this is a real cancel against the escrow contract, which is
+        // valid precisely because the duel is still `Open` there — the contract
+        // knows about it even though our database does not.
         tracing::error!("duel insert failed after escrow for {}: {} — refunding", wallet, e);
-        let refunded = payout(&state, &wallet, body.stake_g as u64, &format!("duel_refund:{}", stake_tx)).await;
+        let refunded = settle_cancel(&state, chain, id, &wallet, body.stake_g).await;
         return HttpResponse::InternalServerError().json(json!({
             "error": "Could not open the duel — your stake was refunded",
             "refund_tx": refunded,
         }));
     }
 
-    tracing::info!("duel {} opened by {} for {} G$", id, wallet, body.stake_g);
+    let takes = winner_payout_on(&state, chain, body.stake_g).await;
+    tracing::info!(
+        "duel {} opened by {} for {} {}", id, wallet, body.stake_g, chain.currency_symbol()
+    );
     HttpResponse::Ok().json(json!({
         "id": id, "seed": seed, "stake_g": body.stake_g,
         "run_token": token, "stake_tx": stake_tx,
-        "winner_takes_g": winner_payout(body.stake_g),
+        "winner_takes_g": takes,
+        "chain_id": chain.as_i32(),
+        "currency": chain.currency_symbol(),
     }))
 }
 
@@ -319,10 +639,12 @@ pub async fn accept_duel(
         return HttpResponse::BadRequest().json(json!({"error": "You can't accept your own duel"}));
     }
 
-    let stake_tx = match escrow_stake(&state, &wallet, duel.stake_g, &body.permit).await {
-        Ok(tx) => tx,
-        Err(resp) => return resp,
-    };
+    let chain = duel.chain();
+    let stake_tx =
+        match escrow_stake_on(&state, chain, id, Side::Opponent, &wallet, duel.stake_g, &body.permit).await {
+            Ok(tx) => tx,
+            Err(resp) => return resp,
+        };
 
     let token = Uuid::new_v4().to_string();
     let now = Utc::now();
@@ -330,27 +652,47 @@ pub async fn accept_duel(
     // duel; the loser of the race is refunded rather than left staked into nothing.
     let claimed = sqlx::query(
         "UPDATE duels SET opponent_wallet = $1, opponent_run_token = $2,
-                          opponent_started_at = $3, status = 'accepted', accepted_at = $3
+                          opponent_started_at = $3, status = 'accepted', accepted_at = $3,
+                          opponent_stake_tx = $5
          WHERE id = $4 AND status = 'open'",
     )
-    .bind(&wallet).bind(&token).bind(now).bind(id)
+    .bind(&wallet).bind(&token).bind(now).bind(id).bind(&stake_tx)
     .execute(&state.db).await;
 
     let won_race = claimed.map(|r| r.rows_affected() == 1).unwrap_or(false);
     if !won_race {
+        // Losing this race is only possible on Celo. On Avalanche the escrow
+        // contract is itself the lock: a second `acceptWithPermit` against a duel
+        // already in `Accepted` reverts, so the loser's stake never left their
+        // wallet and `escrow_stake_on` above would have returned an error instead.
         tracing::warn!("duel {} accept race lost by {} — refunding", id, wallet);
-        let refunded = payout(&state, &wallet, duel.stake_g as u64, &format!("duel_refund:{}", stake_tx)).await;
+        let refunded = match chain {
+            ChainId::Celo => {
+                payout(&state, &wallet, duel.stake_g as u64, &format!("duel_refund:{stake_tx}")).await
+            }
+            ChainId::Avalanche => {
+                tracing::error!(
+                    "duel {} accept race lost on Avalanche, which should be impossible \
+                     (the escrow contract rejects a second accept) — stake tx {}",
+                    id, stake_tx
+                );
+                None
+            }
+        };
         return HttpResponse::Conflict().json(json!({
             "error": "Someone accepted first — your stake was refunded",
             "refund_tx": refunded,
         }));
     }
 
+    let takes = winner_payout_on(&state, chain, duel.stake_g).await;
     tracing::info!("duel {} accepted by {}", id, wallet);
     HttpResponse::Ok().json(json!({
         "id": id, "seed": duel.seed, "stake_g": duel.stake_g,
         "run_token": token, "stake_tx": stake_tx,
-        "winner_takes_g": winner_payout(duel.stake_g),
+        "winner_takes_g": takes,
+        "chain_id": chain.as_i32(),
+        "currency": chain.currency_symbol(),
     }))
 }
 
@@ -464,32 +806,40 @@ async fn resolve_if_complete(state: &AppState, id: Uuid) -> HttpResponse {
         }));
     }
 
+    let chain = duel.chain();
+
     // A draw refunds both stakes and takes NO cut. Taking a cut from a duel nobody
     // won would be the house charging for a non-result.
     if cs == os {
-        let a = payout(state, &duel.challenger_wallet, duel.stake_g as u64, &format!("duel:{}:draw:{}", id, duel.challenger_wallet)).await;
-        let b = payout(state, &opponent, duel.stake_g as u64, &format!("duel:{}:draw:{}", id, opponent)).await;
+        let txs = settle_draw(state, chain, id, &duel.challenger_wallet, &opponent, duel.stake_g).await;
         tracing::info!("duel {} drawn at {} — both refunded", id, cs);
         return HttpResponse::Ok().json(json!({
             "id": id, "resolved": true, "draw": true,
             "challenger_score": cs, "opponent_score": os,
-            "refund_txs": [a, b],
+            "refund_txs": txs,
+            "chain_id": chain.as_i32(),
+            "currency": chain.currency_symbol(),
         }));
     }
 
     let winner = if cs > os { duel.challenger_wallet.clone() } else { opponent.clone() };
-    let take = winner_payout(duel.stake_g);
-    let tx = payout(state, &winner, take, &format!("duel:{}:{}", id, winner)).await;
+    let take = winner_payout_on(state, chain, duel.stake_g).await;
+    let tx = settle_win(state, chain, id, &winner, duel.stake_g).await;
 
     let _ = sqlx::query("UPDATE duels SET winner_wallet = $1, payout_tx = $2 WHERE id = $3")
         .bind(&winner).bind(&tx).bind(id).execute(&state.db).await;
 
-    tracing::info!("duel {} won by {} ({} vs {}) — paid {} G$", id, winner, cs, os, take);
+    tracing::info!(
+        "duel {} won by {} ({} vs {}) — paid {} {}",
+        id, winner, cs, os, take, chain.currency_symbol()
+    );
     HttpResponse::Ok().json(json!({
         "id": id, "resolved": true, "draw": false,
         "winner": winner, "winnings_g": take,
         "challenger_score": cs, "opponent_score": os,
         "payout_tx": tx,
+        "chain_id": chain.as_i32(),
+        "currency": chain.currency_symbol(),
     }))
 }
 
@@ -530,9 +880,14 @@ pub async fn cancel_duel(
         return HttpResponse::Conflict().json(json!({"error": "That duel can no longer be cancelled"}));
     }
 
-    let tx = payout(&state, &wallet, duel.stake_g as u64, &format!("duel:{}:cancel", id)).await;
+    let chain = duel.chain();
+    let tx = settle_cancel(&state, chain, id, &wallet, duel.stake_g).await;
     tracing::info!("duel {} cancelled by {} — stake refunded", id, wallet);
-    HttpResponse::Ok().json(json!({"id": id, "cancelled": true, "refund_tx": tx}))
+    HttpResponse::Ok().json(json!({
+        "id": id, "cancelled": true, "refund_tx": tx,
+        "chain_id": chain.as_i32(),
+        "currency": chain.currency_symbol(),
+    }))
 }
 
 // ── GET /duels ────────────────────────────────────────────────────────────────
@@ -540,22 +895,33 @@ pub async fn cancel_duel(
 pub struct ListQuery {
     /// Optional wallet — when present, also returns that player's own duels.
     pub wallet: Option<String>,
+    /// Which chain's lobby to show. Absent means Celo.
+    pub chain_id: Option<i32>,
 }
 
 pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) -> HttpResponse {
+    let chain = match requested_chain(q.chain_id) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
     // Join the player so the lobby can show a warrior rather than a hex string —
     // an address tells you nothing about who you are about to stake against.
     // COALESCE order matches how players are named elsewhere: username first,
     // character name as the fallback.
+    //
+    // Filtered by chain: a SCRP duel shown to a G$ player is an offer they cannot
+    // accept, because accepting draws on a balance they do not have.
     let open: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
         "SELECT d.id, d.challenger_wallet,
                 COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
                 d.stake_g, d.created_at
          FROM duels d
          LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
-         WHERE d.status = 'open'
+         WHERE d.status = 'open' AND d.chain_id = $1
          ORDER BY d.created_at DESC LIMIT 50",
     )
+    .bind(chain.as_i32())
     .fetch_all(&state.db).await.unwrap_or_default();
 
     let open_json: Vec<_> = open.into_iter().map(|(id, w, name, stake, at)| json!({
@@ -563,17 +929,20 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
         "winner_takes_g": winner_payout(stake), "created_at": at,
     })).collect();
 
+    // "Mine" is deliberately NOT filtered by chain. A player's own duel history is
+    // theirs wherever it happened, and hiding a resolved SCRP duel because the lobby
+    // is currently showing G$ would look like the duel had vanished.
     let mine_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
         Some(w) => {
             let wallet = normalize_wallet(w);
-            let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>)> =
+            let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>, i32)> =
                 sqlx::query_as(
                     "SELECT d.id, d.challenger_wallet,
                             COALESCE(NULLIF(pc.username, ''), pc.character_name) AS challenger_name,
                             d.opponent_wallet,
                             COALESCE(NULLIF(po.username, ''), po.character_name) AS opponent_name,
                             d.stake_g, d.status, d.winner_wallet,
-                            d.challenger_score, d.opponent_score
+                            d.challenger_score, d.opponent_score, d.chain_id
                      FROM duels d
                      LEFT JOIN players pc ON pc.wallet_address = d.challenger_wallet
                      LEFT JOIN players po ON po.wallet_address = d.opponent_wallet
@@ -581,23 +950,38 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
                      ORDER BY d.created_at DESC LIMIT 25",
                 )
                 .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
-            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os)| json!({
-                "id": id, "challenger": c, "challenger_name": cn,
-                "opponent": o, "opponent_name": on, "stake_g": stake,
-                "status": status, "winner": winner,
-                "challenger_score": cs, "opponent_score": os,
-            })).collect()
+            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os, cid)| {
+                let row_chain = ChainId::from_i32(cid).unwrap_or(ChainId::Celo);
+                json!({
+                    "id": id, "challenger": c, "challenger_name": cn,
+                    "opponent": o, "opponent_name": on, "stake_g": stake,
+                    "status": status, "winner": winner,
+                    "challenger_score": cs, "opponent_score": os,
+                    "chain_id": cid,
+                    "currency": row_chain.currency_symbol(),
+                })
+            }).collect()
         }
         None => vec![],
     };
 
+    let tiers = stake_tiers(chain);
     HttpResponse::Ok().json(json!({
         "open": open_json,
         "mine": mine_json,
-        "stake_tiers": STAKE_TIERS,
-        "min_stake_g": MIN_STAKE_G,
-        "max_stake_g": MAX_STAKE_G,
+        "stake_tiers": tiers,
+        "min_stake_g": tiers.first().copied().unwrap_or(MIN_STAKE_G),
+        "max_stake_g": tiers.last().copied().unwrap_or(MAX_STAKE_G),
         "house_cut_bps": HOUSE_CUT_BPS,
+        "chain_id": chain.as_i32(),
+        "currency": chain.currency_symbol(),
+        // Whether staking is actually available right now. The UI uses this to
+        // explain an unavailable mode instead of failing at the moment a player
+        // has already committed to a stake.
+        "escrow_ready": match chain {
+            ChainId::Celo => state.chain.is_some(),
+            ChainId::Avalanche => state.avalanche.as_ref().map(|a| a.can_duel()).unwrap_or(false),
+        },
     }))
 }
 
@@ -670,5 +1054,128 @@ mod tests {
     fn an_ordinary_run_is_accepted() {
         assert!(validate_score(4_000, 120.0).is_ok());
         assert!(validate_score(0, 30.0).is_ok(), "scoring zero is a legitimate result");
+    }
+
+    // ── multichain ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_missing_chain_means_celo() {
+        // Every client built before SCRP duels sends no chain field, and every duel
+        // those clients ever opened was G$. Defaulting anywhere else would reroute
+        // existing players' stakes onto a chain they hold no balance on.
+        assert_eq!(requested_chain(None).ok(), Some(ChainId::Celo));
+    }
+
+    #[test]
+    fn an_unknown_chain_is_refused_rather_than_defaulted() {
+        // The dangerous direction. Silently treating chain 1 as Celo would escrow
+        // real G$ for a duel the caller believed was happening somewhere else.
+        assert!(requested_chain(Some(1)).is_err());
+        assert!(requested_chain(Some(43113)).is_err(), "Fuji testnet is not mainnet");
+        assert!(requested_chain(Some(0)).is_err());
+    }
+
+    #[test]
+    fn both_chains_resolve_to_their_own_ladder() {
+        assert_eq!(stake_tiers(ChainId::Celo), &STAKE_TIERS);
+        assert_eq!(stake_tiers(ChainId::Avalanche), &SCRIP_STAKE_TIERS);
+    }
+
+    #[test]
+    fn the_scrip_ladder_is_reachable_by_actually_playing() {
+        // SCRIP_PER_CLEAR is 100 and a campaign is 15 ops, so a player who finishes
+        // the campaign has ~1,500 SCRP. A ladder whose entry tier exceeded one op's
+        // reward, or whose top tier exceeded a whole campaign, would be a mode
+        // nobody could enter. This is the check that the economy and the mode agree.
+        const SCRIP_PER_CLEAR: i64 = 100;
+        const CAMPAIGN_OPS: i64 = 15;
+        assert!(
+            SCRIP_STAKE_TIERS[0] <= SCRIP_PER_CLEAR,
+            "the entry stake must be affordable after a single op"
+        );
+        assert!(
+            *SCRIP_STAKE_TIERS.last().unwrap() <= SCRIP_PER_CLEAR * CAMPAIGN_OPS,
+            "the top stake must be reachable inside one campaign"
+        );
+    }
+
+    #[test]
+    fn every_ladder_is_ascending_and_positive() {
+        for chain in [ChainId::Celo, ChainId::Avalanche] {
+            let tiers = stake_tiers(chain);
+            assert!(!tiers.is_empty(), "{chain:?} has no stakes");
+            assert!(tiers[0] > 0, "{chain:?} offers a non-positive stake");
+            let mut sorted = tiers.to_vec();
+            sorted.sort_unstable();
+            assert_eq!(sorted, tiers, "{chain:?} tiers must be ascending for the UI");
+        }
+    }
+
+    #[test]
+    fn the_house_cut_is_a_real_sink_on_the_scrip_ladder_too() {
+        // The G$ ladder is swept above. SCRP stakes are 10x smaller, which is where
+        // a 0.5% cut is most at risk of rounding away to nothing.
+        //
+        // It does not: `winner_payout` floors, so a 10 SCRP stake pays 19 of a 20
+        // pot and retains 1. Worth being explicit that flooring makes the EFFECTIVE
+        // cut larger at small stakes — 1 in 20 is 5%, not 0.5% — because the cut
+        // cannot be finer-grained than one whole SCRP. That is the right direction
+        // for the pool to err in, but it is not the advertised rate, and anyone
+        // reading a rate off this ladder should know it.
+        assert_eq!(winner_payout(10), 19, "flooring keeps a whole unit even at the entry tier");
+        for stake in &SCRIP_STAKE_TIERS[..] {
+            let pot = (*stake as u64) * 2;
+            assert!(
+                winner_payout(*stake) < pot,
+                "stake {stake} pays out {} of a {pot} pot — no cut retained",
+                winner_payout(*stake),
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_stored_chain_still_settles() {
+        // A duel row's chain is read on the settlement path, where the stakes are
+        // ALREADY escrowed. Refusing to recognise the id there would strand real
+        // money, so unlike the request path this one falls back rather than erroring.
+        let row = DuelRow {
+            id: Uuid::new_v4(),
+            challenger_wallet: "0x1".into(),
+            opponent_wallet: None,
+            stake_g: 100,
+            seed: 1,
+            challenger_run_token: None,
+            challenger_started_at: None,
+            challenger_score: None,
+            opponent_run_token: None,
+            opponent_started_at: None,
+            opponent_score: None,
+            status: "open".into(),
+            winner_wallet: None,
+            chain_id: 999,
+        };
+        assert_eq!(row.chain(), ChainId::Celo);
+    }
+
+    #[test]
+    fn a_stored_avalanche_duel_reads_back_as_avalanche() {
+        let row = DuelRow {
+            id: Uuid::new_v4(),
+            challenger_wallet: "0x1".into(),
+            opponent_wallet: None,
+            stake_g: 50,
+            seed: 1,
+            challenger_run_token: None,
+            challenger_started_at: None,
+            challenger_score: None,
+            opponent_run_token: None,
+            opponent_started_at: None,
+            opponent_score: None,
+            status: "open".into(),
+            winner_wallet: None,
+            chain_id: 43114,
+        };
+        assert_eq!(row.chain(), ChainId::Avalanche);
+        assert_eq!(row.chain().currency_symbol(), "SCRP");
     }
 }
