@@ -9,9 +9,9 @@ Version 1.0 · 3 August 2026 · [playvalor.app](https://playvalor.app)
 
 ## 1. Summary
 
-Valor is a browser-based tactical FPS that people already play. It has 128
-registered players, 2,534 recorded battles, 2,274 match records written to chain,
-and 89 item purchases across 43 distinct buyers. It is not a proposal for a game.
+Valor is a browser-based tactical FPS that people already play. It has 131
+registered players, 2,602 recorded battles, 2,274 match records written to chain,
+and 92 item purchases across 44 distinct buyers. It is not a proposal for a game.
 
 It runs on two chains, for two different reasons.
 
@@ -64,11 +64,11 @@ Verified against the production database and both chains on 3 August 2026.
 
 | Metric | Value |
 |---|---|
-| Registered players | 128 |
+| Registered players | 131 |
 | New players, last 7 days | 37 |
-| Battles recorded | 2,534 |
+| Battles recorded | 2,602 |
 | Match records on Celo | 2,274 |
-| Item purchases | 89, across 43 distinct buyers |
+| Item purchases | 92, across 44 distinct buyers |
 | Endless participants | 42 |
 | G$ paid to players in rewards | 644,446 |
 | G$ moved through the marketplace | 73,900 |
@@ -79,16 +79,18 @@ section 8 and the backend relay wallet is the single best "all activity" link,
 because it pays gas for every match record, reward and purchase.
 
 **What Avalanche activity is, honestly.** Contracts went live on C-Chain on
-2 August 2026, with the duel escrow added on 3 August. Activity so far is 26 item
-listings, 14 mirrored match records, 1 Scrip claim, and **zero SCRP purchases and
-zero duels by players**. The mirrored match records are duplicates of matches also
-recorded on Celo and should not be counted as native Avalanche adoption.
+2 August 2026, with the duel escrow added on 3 August. **60 wallets now hold SCRP**,
+34,150 in total, after a backfill that paid out every campaign clear players had
+already earned before the currency existed. Item listings, match records and claims
+are all live on chain.
 
-This deployment is days old and the honest summary is that the rails are built and
-unused. Presenting it as more than that would be easy and would not survive anyone
-clicking the explorer. The gap is distribution, not code: supply is 100 SCRP across
-one wallet, so there is nothing yet for an item economy or a duel ladder to move
-between.
+What has NOT happened yet: **zero SCRP purchases and zero duels by players**. The
+mirrored match records are duplicates of matches also recorded on Celo and should
+not be counted as native Avalanche adoption.
+
+The rails are built and the currency is distributed; what is missing is players
+choosing to spend and stake it. That is a distribution problem, not a code one, and
+presenting it as anything else would not survive one look at the explorer.
 
 ---
 
@@ -300,7 +302,108 @@ Source: [github.com/MarvyNwaokobia/Valor](https://github.com/MarvyNwaokobia/Valo
 
 ---
 
-## 9. What comes next
+## 9. Market
+
+### Who this is for
+
+Two audiences, and they are not the same people.
+
+**On Celo**, Valor reaches players through GoodDollar, a UBI protocol whose users
+are disproportionately in Nigeria, Kenya, the Philippines and Brazil. For many of
+them Valor is the first thing they have played that pays anything, and the sums
+that motivate them are small in dollar terms. That is the audience Valor already
+has: 130 registered players, acquired almost entirely through GoodDollar
+community channels.
+
+**On Avalanche**, the audience is the existing crypto-gaming population: people
+who already hold a wallet, already understand a stake, and turn up for
+competition rather than for income. They do not need to be taught what a
+transaction is. They do need a game worth their time.
+
+The strategic point is that these two need *different products*, which is why
+Valor does not run the same economy on both. Celo gets a redistributive earn
+loop. Avalanche gets stakes. Running the earn loop on Avalanche would be
+competing for the wrong users with a mechanic they do not want.
+
+### The competitive position
+
+Most web3 shooters fail in one of two ways, and Valor is deliberately positioned
+against both.
+
+**They are tokens with a game attached.** The economy launches first, the game
+arrives later or never, and the token's value comes from issuance rather than
+from anyone enjoying themselves. Valor inverts the order: the game shipped, has
+2,599 recorded battles, and the token cannot be sold at all. SCRP has no market
+price to defend, which removes the entire class of failure where the studio ends
+up managing a chart instead of a game.
+
+**They demand an install and a wallet before anything happens.** Valor runs in a
+browser tab on Three.js. No launcher, no download, and a player can be shooting
+before they have connected a wallet. That is the single biggest funnel advantage
+available in this category and it is a consequence of the technical choice, not a
+marketing claim.
+
+Where Valor is genuinely weaker: production values do not match a native-engine
+studio title, and they will not. A browser FPS is competing on accessibility and
+economics, not on fidelity.
+
+### Why the timing works
+
+Avalanche's gaming thesis is built around games having their own economies and,
+increasingly, their own chains. Valor is a live game with a working economy that
+has just deployed here. The realistic path is C-Chain now and a dedicated L1
+later, if activity justifies it, which is the same sequence the ecosystem's
+better games have followed rather than starting with an empty chain.
+
+### Honest assessment of the gap
+
+Valor's 130 players came from Celo and GoodDollar. Not one of them arrived
+because of Avalanche. The product now exists here — contracts, currency, item
+economy, staked duels — and the distribution does not. That is the actual thing
+funding would address, and pretending otherwise would not survive one look at the
+explorer.
+
+## 10. Team
+
+Valor is built by one person.
+
+**Marvy Nwaokobia** — sole developer. 735 commits between 2 June and 3 August
+2026, spanning the Three.js engine, the Rust API, the Solidity contracts on two
+chains, and the infrastructure underneath all of it.
+
+> **[TO FILL IN: background, prior work, location, any relevant credentials, and
+> links — GitHub, X, Telegram. Two or three sentences. Everything above this line
+> is verifiable from the repository; this part is not, and should be written by
+> Marvy rather than inferred.]**
+
+### Why a solo team is worth stating plainly
+
+It is the obvious risk in this application and it should not be buried. One
+person is a single point of failure, and the roadmap in section 11 is bounded by
+one person's throughput.
+
+What offsets it is the delivery record, which is checkable rather than asserted:
+
+- A GoodBuilders Season 4 grant, delivered against milestones
+- 15 campaign operations, an endless mode, a seasonal mode and a duel mode
+- A season that actually ran, with 33 competitors
+- Contracts live on two chains, all verified, all behind a multisig
+- 130 players and 2,599 battles, without a marketing budget
+
+The same day this document was written, a leaked credential was found in the
+repository's history, the affected key was rotated, ownership of every contract
+on both chains was moved behind a multisig, and the incident was written up in
+section 7 rather than quietly fixed. That response is offered as evidence of how
+problems get handled here, since a solo project lives or dies on that.
+
+### What funding changes about this
+
+Not headcount, immediately. The first constraint is distribution, not
+engineering: the product exists and nobody on Avalanche knows it does. Beyond
+that, the honest use is contract review by someone who is not the author, which
+is the one thing a solo builder cannot do for themselves.
+
+## 11. What comes next
 
 **Done, 3 August 2026.** `ValorDuel` deployed behind the Safe, all five contracts
 moved off the relay key, deployer's test SCRP burned.
@@ -325,7 +428,7 @@ activity players chose to generate.
 
 ---
 
-## 10. What Avalanche funding would change
+## 12. What Avalanche funding would change
 
 Concretely, in order of impact:
 
