@@ -6,6 +6,12 @@ solc_version = "0.8.24"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+# MigrateScrip.s.sol reads the live holder list from disk rather than hardcoding
+# it, because the list changes every time a player claims. Scoped to that one
+# file: a blanket read permission would let any script in this repo read keys
+# out of .env.
+fs_permissions = [{ access = "read", path = "./scrip-holders.json" }]
+
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",

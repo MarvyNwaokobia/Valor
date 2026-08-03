@@ -101,12 +101,10 @@ Total supply is **100 SCRP**, held entirely by players. The 1,125 SCRP minted
 during deployment testing was burned on 3 August 2026, so the holder list shows
 no team allocation at all.
 
-One caveat stated up front, because a reviewer will find it: unlike every other
-Valor contract, the live token is not behind a proxy. It was deployed on 2 August
-2026 as a plain contract, before that rule was settled, and bytecode cannot be
-moved behind a proxy after the fact. Making it upgradeable means redeploying at a
-new address and moving holders across. That migration is written and not yet run.
-With one holder it is a one-address job today and gets harder every week.
+It was migrated on 3 August 2026. The first deployment was a plain contract,
+before that rule was settled, and bytecode cannot be moved behind a proxy after
+the fact — so the token was redeployed and all 60 holders re-minted, with every
+balance verified against chain afterwards. The old address is abandoned.
 
 Military scrip is currency a force issues to its own people, spendable at its own
 store and not legal tender anywhere else. That is exactly what this is, and the
@@ -281,11 +279,11 @@ between a proposed upgrade and a live one.
 
 | Contract | Address |
 |---|---|
-| Scrip (SCRP) | `0x9e3cFd517111D6d458e0Aa51deCAC66413388537` |
+| Scrip (SCRP) | `0xc5D41940D3EAa734895574a53b8bD4F61CF173b6` |
 | ValorItems | `0x9a7890532b7581c7fea587f01ca6b876cd017677` |
 | ValorMarketplace | `0x751fBFFFc9419BC825645cD69661e51Ae2D529f6` |
 | ValorGameRecord | `0xb6394d320e941674292a5c8db48f069f46bc77a6` |
-| ValorDuel | `0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c` |
+| ValorDuel | `0x82C3d4a6C0595bA7B97E83c6B49925519766615d` |
 
 **Celo (42220)**
 

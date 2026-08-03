@@ -139,18 +139,20 @@ Storage rules, in order of how expensive they are to break:
 
 | Contract | Proxy | Upgradeable? |
 |---|---|---|
-| Scrip (SCRP) | `0x9e3cFd517111D6d458e0Aa51deCAC66413388537` | ⚠️ **no, see below** |
+| Scrip (SCRP) | `0xc5D41940D3EAa734895574a53b8bD4F61CF173b6` | yes |
 | ValorItems | `0x9a7890532b7581c7fea587f01ca6b876cd017677` | yes |
 | ValorMarketplace | `0x751fBFFFc9419BC825645cD69661e51Ae2D529f6` | yes |
 | ValorGameRecord | `0xb6394d320e941674292a5c8db48f069f46bc77a6` | yes |
-| ValorDuel | `0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c` | yes |
+| ValorDuel | `0x82C3d4a6C0595bA7B97E83c6B49925519766615d` | yes |
 
-⚠️ **Scrip is the exception and the repo currently disagrees with the chain.**
-The live token was deployed on 2 Aug 2026 as a plain contract, before this rule
-existed. `src/Scrip.sol` is now upgradeable, but existing bytecode cannot be moved
-behind a proxy after the fact, so the deployed token is still the old immutable
-one. `script/MigrateScrip.s.sol` replaces it at a new address and moves the one
-real holder across. Until that runs, **the chain is what counts**.
+✅ **All of them, as of 2026-08-03.** Scrip was the last holdout: the original was
+a plain contract, and bytecode cannot be moved behind a proxy after the fact, so
+`MigrateScrip.s.sol` redeployed it and re-minted all 60 holders. Every balance was
+checked against chain afterwards and none mismatched. `ValorDuel` was redeployed in
+the same run, because its token is fixed at initialize with no setter.
+
+The old token `0x9e3cFd517111D6d458e0Aa51deCAC66413388537` is abandoned. Nothing
+references it and nothing should.
 
 ---
 
