@@ -225,7 +225,13 @@ export default function AdminPage() {
         const res = await authedFetch('/admin/scrip/settle-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm, limit: 200 }),
+          // Small batches ON PURPOSE. Each wallet is a real transaction taking a
+          // couple of seconds, so a large batch outruns the request timeout and the
+          // handler is cancelled mid-run — which is exactly what happened on the
+          // first live run: 38 of 59 wallets minted, then the client gave up. The
+          // work is idempotent, so the honest UX is a batch that finishes plus a
+          // remaining count you can click again.
+          body: JSON.stringify({ confirm, limit: 15 }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(data.error ?? 'Request failed')
@@ -244,7 +250,7 @@ export default function AdminPage() {
           const again = await authedFetch('/admin/scrip/settle-all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confirm: false, limit: 200 }),
+            body: JSON.stringify({ confirm: false, limit: 200 }), // preview is a query, not mints — it can look at everything
           })
           if (again.ok) {
             const d = await again.json()
@@ -783,7 +789,7 @@ export default function AdminPage() {
             <span className="text-valor-gold font-bold">
               {Number(settlePreview.total_scrip).toLocaleString()} SCRP
             </span>
-            {settlePreview.wallets > 0 && ' — one transaction each.'}
+            {settlePreview.wallets > 0 && ' — minted 15 at a time; click again until it reaches zero.'}
           </p>
         )}
         {settleResult && <p className="text-xs text-emerald-400">{settleResult}</p>}
