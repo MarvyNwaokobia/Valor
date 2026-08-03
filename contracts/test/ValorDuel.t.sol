@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/Scrip.sol";
 import "../src/ValorDuel.sol";
 
@@ -30,13 +31,16 @@ contract ValorDuelTest is Test {
         alice = vm.addr(aliceKey);
         bob   = vm.addr(bobKey);
 
-        scrip = new Scrip(scripOwner);
+        Scrip scripImpl = new Scrip();
+        scrip = Scrip(address(new ERC1967Proxy(
+            address(scripImpl), abi.encodeCall(Scrip.initialize, (scripOwner))
+        )));
         vm.prank(scripOwner);
         scrip.setMinter(address(this), true);
         scrip.mint(alice, 10_000e18);
         scrip.mint(bob, 10_000e18);
 
-        duel = new ValorDuel(address(scrip), resolver, owner, CUT_BPS);
+        duel = _deployDuel(address(scrip), resolver, owner, CUT_BPS);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -347,9 +351,60 @@ contract ValorDuelTest is Test {
         duel.setHouseCutBps(tooHigh);
     }
 
-    function test_ConstructorRejectsAnAbusiveCut() public {
+    function test_InitializeRejectsAnAbusiveCut() public {
+        ValorDuel impl = new ValorDuel();
         vm.expectRevert(ValorDuel.CutTooHigh.selector);
-        new ValorDuel(address(scrip), resolver, owner, 5_000);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorDuel.initialize, (address(scrip), resolver, owner, 5_000))
+        );
+    }
+
+    /// An escrow whose logic contract anyone can seize is not an escrow: the
+    /// implementation is what every proxy delegates to.
+    function test_ImplementationCannotBeInitialised() public {
+        ValorDuel impl = new ValorDuel();
+        vm.expectRevert();
+        impl.initialize(address(scrip), resolver, owner, CUT_BPS);
+    }
+
+    /// Upgrading is the owner\'s right and nobody else\'s. The resolver settles
+    /// duels from a hot key on a server; letting it swap the escrow logic would
+    /// hand that key everything the multisig exists to keep away from it.
+    function test_OnlyTheOwnerCanUpgrade() public {
+        ValorDuel next = new ValorDuel();
+
+        vm.expectRevert();
+        vm.prank(resolver);
+        duel.upgradeToAndCall(address(next), "");
+
+        vm.expectRevert();
+        vm.prank(rando);
+        duel.upgradeToAndCall(address(next), "");
+
+        vm.prank(owner);
+        duel.upgradeToAndCall(address(next), "");
+    }
+
+    /// An upgrade must not disturb live escrow or the duel it belongs to.
+    function test_EscrowSurvivesAnUpgrade() public {
+        _openAndAccept();
+        uint256 held = scrip.balanceOf(address(duel));
+
+        ValorDuel next = new ValorDuel();
+        vm.prank(owner);
+        duel.upgradeToAndCall(address(next), "");
+
+        assertEq(scrip.balanceOf(address(duel)), held, "escrow moved during an upgrade");
+        (address challenger,, uint128 stake, ValorDuel.Status status,,) = duel.duels(DUEL);
+        assertEq(challenger, alice);
+        assertEq(uint256(stake), STAKE);
+        assertEq(uint8(status), uint8(ValorDuel.Status.Accepted));
+
+        // And it still settles afterwards.
+        vm.prank(resolver);
+        duel.resolve(DUEL, alice);
+        assertEq(duel.escrowedBalance(), 0);
     }
 
     /// Rotating the key is only worth anything if the retired one stops working —
@@ -415,5 +470,17 @@ contract ValorDuelTest is Test {
         _open(DUEL, stake);
         _accept(DUEL, stake);
         assertGe(duel.escrowedBalance(), uint256(stake) * 2);
+    }
+
+    /// Deploy ValorDuel the way production does: implementation plus ERC1967 proxy.
+    function _deployDuel(address scrip_, address resolver_, address owner_, uint16 cut)
+        internal
+        returns (ValorDuel)
+    {
+        ValorDuel impl = new ValorDuel();
+        return ValorDuel(address(new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(ValorDuel.initialize, (scrip_, resolver_, owner_, cut))
+        )));
     }
 }

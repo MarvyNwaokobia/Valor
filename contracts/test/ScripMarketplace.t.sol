@@ -36,7 +36,10 @@ contract ScripMarketplaceTest is Test {
     function setUp() public {
         buyer = vm.addr(buyerKey);
 
-        scrip = new Scrip(owner);
+        Scrip scripImpl = new Scrip();
+        scrip = Scrip(address(new ERC1967Proxy(
+            address(scripImpl), abi.encodeCall(Scrip.initialize, (owner))
+        )));
         vm.prank(owner);
         scrip.setMinter(relay, true);
 
@@ -141,6 +144,51 @@ contract ScripMarketplaceTest is Test {
             )
         );
         assertEq(scrip.DOMAIN_SEPARATOR(), expected, "config.ts permit domain is wrong");
+    }
+
+    // ── setCurrency, the Scrip-migration escape hatch ─────────────────────────
+
+    /// The guard that matters. `accumulatedRevenue` is one number, not a balance
+    /// per token, so switching currency with revenue outstanding would leave it
+    /// denominated in the old token while withdrawRevenue pays out in the new one.
+    function test_CurrencyCannotBeSwitchedWhileRevenueIsOutstanding() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _signPermit(address(marketplace), PRICE, deadline);
+        vm.prank(relay);
+        marketplace.purchaseWithPermit(buyer, ITEM_ID, deadline, v, r, s);
+        assertGt(marketplace.accumulatedRevenue(), 0, "the purchase should have banked revenue");
+
+        Scrip newScrip = _freshScrip();
+        vm.expectRevert(bytes("withdraw revenue before switching currency"));
+        vm.prank(owner);
+        marketplace.setCurrency(address(newScrip));
+    }
+
+    function test_CurrencySwitchesOnceRevenueIsClear() public {
+        Scrip newScrip = _freshScrip();
+        vm.prank(owner);
+        marketplace.setCurrency(address(newScrip));
+        assertEq(address(marketplace.gToken()), address(newScrip));
+    }
+
+    function test_OnlyOwnerCanSwitchCurrency() public {
+        Scrip newScrip = _freshScrip();
+        vm.expectRevert();
+        vm.prank(relay);
+        marketplace.setCurrency(address(newScrip));
+    }
+
+    function test_CurrencyCannotBeSetToNothing() public {
+        vm.expectRevert(ValorMarketplace.InvalidItemData.selector);
+        vm.prank(owner);
+        marketplace.setCurrency(address(0));
+    }
+
+    function _freshScrip() internal returns (Scrip) {
+        Scrip impl = new Scrip();
+        return Scrip(address(new ERC1967Proxy(
+            address(impl), abi.encodeCall(Scrip.initialize, (owner))
+        )));
     }
 
     function _signPermit(address spender, uint256 value, uint256 deadline)

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ValorDuel.sol";
 
 /// @notice Deploys the staked-duel escrow onto Avalanche C-Chain (43114).
@@ -66,12 +67,20 @@ contract DeployValorDuel is Script {
         console.log("House cut (bps):    ", cutBps);
 
         vm.startBroadcast(deployerKey);
-        ValorDuel duel = new ValorDuel(scrip, resolver, safe, cutBps);
+        // UUPS, like every other Valor contract. The proxy address is the one that
+        // goes in config; the implementation is an implementation detail that will
+        // change on the first upgrade.
+        ValorDuel duelImpl = new ValorDuel();
+        ValorDuel duel = ValorDuel(address(new ERC1967Proxy(
+            address(duelImpl),
+            abi.encodeCall(ValorDuel.initialize, (scrip, resolver, safe, cutBps))
+        )));
         vm.stopBroadcast();
 
         console.log("");
         console.log("=== ValorDuel deployed ===");
-        console.log("ValorDuel:", address(duel));
+        console.log("ValorDuel (proxy, USE THIS):", address(duel));
+        console.log("ValorDuel (implementation): ", address(duelImpl));
         console.log("");
         console.log("Next:");
         console.log("  1. Set AVALANCHE_DUEL_CONTRACT in the API env and redeploy the backend.");

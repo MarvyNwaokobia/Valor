@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/Scrip.sol";
 
 contract ScripTest is Test {
@@ -12,7 +13,7 @@ contract ScripTest is Test {
     address rando  = makeAddr("rando");
 
     function setUp() public {
-        scrip = new Scrip(owner);
+        scrip = _deployScrip(owner);
         vm.prank(owner);
         scrip.setMinter(relay, true);
     }
@@ -146,8 +147,36 @@ contract ScripTest is Test {
         scrip.permit(signer, relay, 1e18, deadline, v, r, s);
     }
 
-    function test_ConstructorRejectsZeroOwner() public {
+    function test_InitializeRejectsZeroOwner() public {
+        Scrip impl = new Scrip();
         vm.expectRevert();
-        new Scrip(address(0));
+        new ERC1967Proxy(address(impl), abi.encodeCall(Scrip.initialize, (address(0))));
+    }
+
+    /// The implementation must never be usable directly. Left initialisable, anyone
+    /// could take ownership of it and — because it is the UUPS logic contract —
+    /// call `upgradeToAndCall` on themselves to self-destruct the logic every proxy
+    /// delegates to.
+    function test_ImplementationCannotBeInitialised() public {
+        Scrip impl = new Scrip();
+        vm.expectRevert();
+        impl.initialize(owner);
+    }
+
+    /// Behind a proxy the token must still be the token: a wrong name or version
+    /// silently breaks every EIP-2612 signature, because both feed the domain.
+    function test_PermitDomainSurvivesTheProxy() public view {
+        assertEq(scrip.name(), "Scrip");
+        (, string memory name, string memory version,,,,) = scrip.eip712Domain();
+        assertEq(name, "Scrip");
+        assertEq(version, "1");
+    }
+
+    /// Deploy Scrip the way production does: implementation plus ERC1967 proxy.
+    function _deployScrip(address owner_) internal returns (Scrip) {
+        Scrip impl = new Scrip();
+        return Scrip(address(new ERC1967Proxy(
+            address(impl), abi.encodeCall(Scrip.initialize, (owner_))
+        )));
     }
 }

@@ -92,6 +92,31 @@ contract ValorMarketplace is IERC677Receiver, OwnableUpgradeable, ReentrancyGuar
         feeBps = 500;
     }
 
+    /// @notice Point the marketplace at a different payment token.
+    ///
+    /// @dev    Exists for exactly one job: Avalanche's Scrip was first deployed as a
+    ///         plain contract and had to be redeployed behind a proxy, which changes
+    ///         its address. Without this the only way to repoint the marketplace
+    ///         would be another upgrade carrying a hand-written storage write.
+    ///
+    ///         DANGEROUS IN THE OBVIOUS WAY. `accumulatedRevenue` is a bare number,
+    ///         not a per-token balance, so switching the currency while revenue is
+    ///         outstanding leaves that figure denominated in the OLD token while
+    ///         `withdrawRevenue` pays in the new one. The require below refuses that
+    ///         case rather than trusting an operator to remember it: withdraw first,
+    ///         then switch.
+    ///
+    ///         Any resale listing priced in the old token also becomes mispriced, so
+    ///         this is a maintenance-window operation, not a routine one.
+    function setCurrency(address token) external onlyOwner {
+        if (token == address(0)) revert InvalidItemData();
+        require(accumulatedRevenue == 0, "withdraw revenue before switching currency");
+        gToken = IGoodDollar(token);
+        emit CurrencySet(token);
+    }
+
+    event CurrencySet(address indexed token);
+
     /// @notice Owner can tune the resale platform fee (max 20%).
     function setFeeBps(uint256 _bps) external onlyOwner {
         if (_bps > 2000) revert FeeTooHigh();

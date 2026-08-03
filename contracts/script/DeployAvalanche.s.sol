@@ -80,10 +80,19 @@ contract DeployAvalanche is Script {
 
         vm.startBroadcast(deployerKey);
 
-        // 1. Currency. Plain contract, not a proxy: a token whose logic can be
-        //    swapped underneath holders is a much bigger trust ask than an
-        //    upgradeable game contract, and this one has no reason to change.
-        Scrip scrip = new Scrip(deployer);
+        // 1. Currency. A UUPS proxy like everything else here.
+        //
+        //    This WAS a plain contract, on the argument that a token whose logic can
+        //    be swapped underneath holders is a bigger trust ask than an upgradeable
+        //    game contract. That argument is still true, and the cost is accepted so
+        //    that a bug in the token does not mean migrating every holder. It is only
+        //    acceptable while the upgrade authority is the Safe: a hot relay key with
+        //    upgrade rights over the currency is strictly worse than no upgrades.
+        Scrip scripImpl = new Scrip();
+        Scrip scrip = Scrip(address(new ERC1967Proxy(
+            address(scripImpl),
+            abi.encodeCall(Scrip.initialize, (deployer))
+        )));
         scrip.setMinter(backend, true);
 
         // 2. Item registry.

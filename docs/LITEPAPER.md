@@ -91,7 +91,15 @@ and would not survive anyone clicking the explorer.
 ## 4. Scrip (SCRP)
 
 The in-game currency on Avalanche. An ERC-20 with a 1,000,000,000 hard cap,
-minted on demand as players earn it.
+minted on demand as players earn it, deployed as a UUPS proxy owned by the Safe.
+
+One caveat stated up front, because a reviewer will find it: the token live on
+chain today was deployed on 2 August 2026 as a plain non-upgradeable contract,
+before that rule was settled. Bytecode cannot be moved behind a proxy after the
+fact, so making it upgradeable means redeploying at a new address and moving
+holders across. That migration is written and not yet run. Supply is 1,225 SCRP
+with exactly one real holder, so it is a one-address migration today and gets
+harder every week it waits.
 
 Military scrip is currency a force issues to its own people, spendable at its own
 store and not legal tender anywhere else. That is exactly what this is, and the
@@ -179,15 +187,25 @@ still be recoverable by the people who staked it. There is a test that abandons
 three duels in three different states, throws the resolver key away, and asserts
 the contract drains to zero.
 
-### Why it is not upgradeable
+### Upgradeability, and what it costs
 
-Every other Valor contract is a UUPS proxy. This one deliberately is not. A
-contract whose entire promise is "we cannot touch your escrowed stake" does not
-also get to say "and we can rewrite the rules whenever we like."
+`ValorDuel` is a UUPS proxy, like every other Valor contract, owned by the Safe.
 
-The escape hatch is what makes immutability safe. Even if a bug made `resolve`
-permanently unusable, `reclaim` still returns every stake, so the worst case is
-that duels stop working and no money is lost.
+The honest reading of that: the three properties above are guarantees of the
+current code, not of the address. Whoever holds the upgrade key can replace this
+logic with logic that moves escrowed stakes anywhere. What protects them is that
+`_authorizeUpgrade` is `onlyOwner`, the owner is a multisig, and changing them
+therefore takes several people signing something publicly visible on chain rather
+than one compromised server key.
+
+`reclaim` remains the strongest single line of defence, because it needs no key
+at all. A timelock on the upgrade path is the obvious next hardening step and is
+not done yet.
+
+This was originally written immutable, on the argument that a contract promising
+"we cannot touch your stake" should not also be able to rewrite its own rules.
+That argument is real, and the trade was made deliberately in favour of being
+able to fix a bug in an escrow holding player money rather than only watch it.
 
 ### Why staking is the right economic design here
 

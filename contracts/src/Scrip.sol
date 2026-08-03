@@ -1,16 +1,30 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-/// @title Scrip — Valor's in-game currency on Avalanche C-Chain
+/// @title Scrip — Valor's in-game currency on Avalanche C-Chain (UUPS upgradeable)
 /// @notice Military scrip: currency a force issues to its own people, spendable at
 ///         its own store and not legal tender anywhere else. That is exactly what
 ///         this is, and the name is deliberate. Players earn SCRP by playing and
 ///         spend it in the marketplace, on re-arms and on duel stakes.
+///
+/// @dev UPGRADEABLE, AND WHAT THAT COSTS
+///      The first Scrip deployment was a plain contract. This one is a UUPS proxy,
+///      matching every other Valor contract, so bugs and new mechanics do not
+///      require migrating holders.
+///
+///      Be honest about the trade: an upgradeable token means whoever holds the
+///      upgrade key can rewrite balances, minting rules and the supply cap. "The
+///      studio cannot print without limit" stops being a property of the code and
+///      becomes a property of who holds that key. That is why the upgrade
+///      authority MUST be the Safe and never the relay — see HandOverToSafe.s.sol.
+///      A hot key with upgrade rights over the token is strictly worse than the
+///      immutable contract this replaces.
 ///
 /// @dev WHY THIS IS NOT REDEEMABLE AT LAUNCH
 ///      GoodDollar lives on Celo and Fuse, so Avalanche has no proof-of-unique-human
@@ -26,21 +40,26 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 ///      than a function quietly bolted onto the token.
 ///
 /// @dev SUPPLY
-///      Fixed ceiling, minted on demand up to it. A hard cap is what makes the token
-///      credible to a player and to a grant committee: "the studio can print without
-///      limit" is a much worse thing to have to defend than a number anyone can check.
-///      Rewards are issued from minting until the cap, and thereafter from what flows
-///      back through sinks.
+///      Fixed ceiling, minted on demand up to it. Rewards are issued from minting
+///      until the cap, and thereafter from what flows back through sinks.
 ///
 /// @dev PERMIT
-///      ERC20Permit (EIP-2612) is included because Valor's marketplace already checks
-///      out via a signed permit relayed by the backend, so the player never needs gas.
-///      Keeping the same interface means those flows work here unchanged. Note the
-///      EIP-712 domain is THIS token's own (name "Scrip", version "1") — it is not
-///      G$'s, and copying G$'s domain would produce signatures that verify locally
-///      and then revert on-chain.
-contract Scrip is ERC20, ERC20Permit, ERC20Burnable, Ownable {
+///      ERC20Permit (EIP-2612) is included because Valor's marketplace and duel
+///      escrow both check out via a signed permit relayed by the backend, so the
+///      player never needs gas. The EIP-712 domain is THIS token's own (name
+///      "Scrip", version "1") — it is not G$'s, and copying G$'s domain would
+///      produce signatures that verify locally and then revert on-chain.
+contract Scrip is
+    ERC20Upgradeable,
+    ERC20PermitUpgradeable,
+    ERC20BurnableUpgradeable,
+    OwnableUpgradeable,
+    UUPSUpgradeable
+{
     /// @notice Hard ceiling on total supply. 1 billion SCRP.
+    /// @dev    A `constant` lives in bytecode, not storage, so it costs no slot and
+    ///         cannot collide across an upgrade. It is also, therefore, changeable by
+    ///         an upgrade — see the note on upgradeability above.
     uint256 public constant MAX_SUPPLY = 1_000_000_000e18;
 
     /// @notice Addresses allowed to mint rewards. The backend relay wallet, and
@@ -61,10 +80,22 @@ contract Scrip is ERC20, ERC20Permit, ERC20Burnable, Ownable {
         _;
     }
 
-    /// @param owner_ Contract owner: can add and remove minters.
-    constructor(address owner_) ERC20("Scrip", "SCRP") ERC20Permit("Scrip") Ownable(owner_) {
-        if (owner_ == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
+
+    /// @param owner_ Contract owner: can add and remove minters, and authorise
+    ///               upgrades. Must be the Safe, not the relay.
+    function initialize(address owner_) public initializer {
+        if (owner_ == address(0)) revert ZeroAddress();
+        __ERC20_init("Scrip", "SCRP");
+        __ERC20Permit_init("Scrip");
+        __ERC20Burnable_init();
+        __Ownable_init(owner_);
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// @notice Allow or revoke an address's ability to mint.
     function setMinter(address account, bool allowed) external onlyOwner {
@@ -83,4 +114,17 @@ contract Scrip is ERC20, ERC20Permit, ERC20Burnable, Ownable {
         if (amount > remaining) revert MaxSupplyExceeded(amount, remaining);
         _mint(to, amount);
     }
+
+    /// @dev Both parents define this hook; Solidity requires the override to be
+    ///      explicit about which linearisation to use.
+    function _update(address from, address to, uint256 value)
+        internal
+        override(ERC20Upgradeable)
+    {
+        super._update(from, to, value);
+    }
+
+    /// @dev Reserved storage so a future upgrade can add state without colliding
+    ///      with anything a child contract or a later version puts here.
+    uint256[48] private __gap;
 }

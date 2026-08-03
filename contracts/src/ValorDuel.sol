@@ -4,7 +4,8 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /// @title ValorDuel — staked player-versus-player escrow in Scrip, on Avalanche C-Chain
 /// @notice Two players stake the same amount of SCRP on the same seeded run. The
@@ -30,13 +31,26 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 ///           permissionlessly, after a fixed window. Nobody's stake depends on us
 ///           staying online, staying solvent, or staying honest.
 ///
-/// @dev WHY IT IS NOT UPGRADEABLE
-///      Every other Valor contract is a UUPS proxy, and this one deliberately is not.
-///      A contract whose entire promise is "we cannot touch your escrowed stake" does
-///      not get to also say "and we can rewrite the rules whenever we like". The
-///      escape hatch is what makes immutability safe here: even if a bug made
-///      `resolve` permanently unusable, `reclaim` still returns every stake, so the
-///      worst case is that duels stop working and no money is lost.
+/// @dev UPGRADEABLE, AND WHAT THAT COSTS
+///      This was originally written immutable, on the argument that a contract whose
+///      promise is "we cannot touch your escrowed stake" should not also be able to
+///      rewrite its own rules. It is now a UUPS proxy, for consistency with every
+///      other Valor contract and so a bug in an escrow holding player money can be
+///      fixed rather than only drained.
+///
+///      That is a real trade and it should be stated plainly rather than glossed:
+///      whoever holds the upgrade key CAN replace this logic with logic that moves
+///      escrowed stakes anywhere. The three properties below are guarantees of the
+///      current code, not of the address. What protects them is that
+///      `_authorizeUpgrade` is `onlyOwner` and the owner is a Safe multisig, so
+///      changing them requires several people to sign something publicly visible on
+///      chain — not one compromised server key.
+///
+///      `reclaim` still matters and is still the strongest single line of defence:
+///      it needs no key at all, so a project that simply stops running cannot strand
+///      anyone's stake. Adding a timelock to the upgrade path is the obvious next
+///      hardening step and is deliberately left as a follow-up rather than pretended
+///      at here.
 ///
 /// @dev WHY THE OWNER AND THE RESOLVER ARE DIFFERENT ADDRESSES
 ///      The resolver is the backend relay, which is a hot key on a server signing
@@ -44,10 +58,13 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 ///      can rotate the resolver and withdraw accrued house cut; it cannot touch a
 ///      live escrow. Resolver can settle duels; it cannot withdraw revenue, change
 ///      the cut, or point payouts anywhere. Neither role alone can take player funds.
-contract ValorDuel is ReentrancyGuard, Ownable {
-    /// @notice The staked token. Scrip on C-Chain. Immutable: a duel escrow that can
-    ///         switch out the asset it is holding is not an escrow.
-    IERC20 public immutable scrip;
+contract ValorDuel is ReentrancyGuard, OwnableUpgradeable, UUPSUpgradeable {
+    /// @notice The staked token. Scrip on C-Chain.
+    /// @dev    Set once at initialisation and never given a setter: a duel escrow
+    ///         that can switch out the asset it is holding mid-duel is not an
+    ///         escrow. (An upgrade could still change it, which is the cost noted
+    ///         above. The absence of a setter means it cannot happen by accident.)
+    IERC20 public scrip;
 
     /// @notice Backend key allowed to settle duels. Never holds funds.
     address public resolver;
@@ -130,19 +147,31 @@ contract ValorDuel is ReentrancyGuard, Ownable {
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /// @param scrip_    The Scrip token.
     /// @param resolver_ Backend relay allowed to settle duels.
-    /// @param owner_    Cold wallet or Safe. Should NOT equal `resolver_`; see the
-    ///                  note on role separation above.
-    constructor(address scrip_, address resolver_, address owner_, uint16 houseCutBps_) Ownable(owner_) {
+    /// @param owner_    Safe multisig. Must NOT equal `resolver_`: the owner holds
+    ///                  the upgrade key, and handing that to the server key would
+    ///                  undo every guarantee documented above.
+    function initialize(address scrip_, address resolver_, address owner_, uint16 houseCutBps_)
+        public
+        initializer
+    {
         if (scrip_ == address(0) || resolver_ == address(0) || owner_ == address(0)) revert ZeroAddress();
         if (houseCutBps_ > MAX_HOUSE_CUT_BPS) revert CutTooHigh();
+        __Ownable_init(owner_);
         scrip = IERC20(scrip_);
         resolver = resolver_;
         houseCutBps = houseCutBps_;
         emit ResolverSet(resolver_);
         emit HouseCutSet(houseCutBps_);
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ── Staking ───────────────────────────────────────────────────────────────
 
@@ -366,4 +395,8 @@ contract ValorDuel is ReentrancyGuard, Ownable {
         bool ok = scrip.transferFrom(from, address(this), amount);
         require(ok, "SCRP transferFrom failed");
     }
+
+    /// @dev Reserved storage so a future upgrade can add state without colliding
+    ///      with whatever a later version puts here.
+    uint256[45] private __gap;
 }
