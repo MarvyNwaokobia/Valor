@@ -5,6 +5,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::utils::{is_valid_wallet, normalize_wallet};
@@ -563,4 +564,121 @@ pub async fn reset_season_progress(
             HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
         }
     }
+}
+
+// ── POST /admin/scrip/settle-all ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SettleAllRequest {
+    /// Safety valve. Without it this reports what it WOULD do and mints nothing.
+    #[serde(default)]
+    pub confirm: bool,
+    /// Stop after this many wallets. Defaults to 25 so one call cannot empty the
+    /// relay: every settle is a transaction, and a relay that runs dry mid-run
+    /// leaves the rest of the queue silently unpaid.
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// Mint every player's outstanding Scrip balance for them.
+///
+/// WHY THIS EXISTS
+/// The backfill in `backfill_scrip_first_clears.sql` credited 32,500 SCRP across
+/// 60 wallets for campaign clears that predated Scrip. Those are accrued balances,
+/// which is a number in our database that no contract has heard of. Until they are
+/// minted, the marketplace has no buyers and the duel ladder has no entrants,
+/// because a permit can only move tokens a wallet actually holds.
+///
+/// `auto_claim_first_balance` handles this going forward, but it only fires when a
+/// player next clears an op. This delivers to everyone who is already owed.
+///
+/// SAFE TO RUN REPEATEDLY. Every settle goes through `settle_scrip_for`, which
+/// opens a claim inside a transaction filtering on `claim_id IS NULL`. A wallet
+/// with nothing outstanding is skipped, so a second run mints nothing.
+pub async fn settle_all_scrip(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<SettleAllRequest>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+
+    let Some(av) = state.avalanche.as_ref().cloned() else {
+        return HttpResponse::ServiceUnavailable()
+            .json(json!({"error": "Avalanche relay not configured"}));
+    };
+    if !av.can_mint() {
+        return HttpResponse::ServiceUnavailable()
+            .json(json!({"error": "Scrip minting is not configured"}));
+    }
+
+    let limit = body.limit.unwrap_or(25).clamp(1, 200);
+    let chain = crate::services::chain_id::ChainId::Avalanche;
+
+    let owed: Vec<(String, Decimal)> = sqlx::query_as(
+        "SELECT wallet_address, SUM(amount)::numeric
+           FROM earnings
+          WHERE chain_id = $1 AND claim_id IS NULL
+          GROUP BY wallet_address
+         HAVING SUM(amount) > 0
+          ORDER BY SUM(amount) DESC
+          LIMIT $2",
+    )
+    .bind(chain.as_i32())
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let total: Decimal = owed.iter().map(|(_, a)| *a).sum();
+
+    // Dry run by default. Minting to dozens of wallets is not something anyone
+    // should be able to trigger by curling a URL without meaning it.
+    if !body.confirm {
+        return HttpResponse::Ok().json(json!({
+            "dry_run": true,
+            "wallets": owed.len(),
+            "total_scrip": total,
+            "note": "Pass {\"confirm\": true} to actually mint.",
+        }));
+    }
+
+    let mut paid = 0usize;
+    let mut failed = 0usize;
+    let mut minted = Decimal::ZERO;
+
+    for (wallet, _) in &owed {
+        // Re-checked every iteration, not once up front: this loop spends real gas
+        // per wallet, and the balance that was fine for wallet 1 may not be by
+        // wallet 40. Stopping early leaves the rest claimable rather than failed.
+        if !av.relay_can_pay().await {
+            tracing::error!(
+                "{}: settle-all stopping early — relay cannot pay gas",
+                crate::services::chain::RELAY_OUT_OF_GAS
+            );
+            break;
+        }
+        let Ok(to) = Address::from_str(wallet) else {
+            failed += 1;
+            continue;
+        };
+        match crate::handlers::claims::settle_scrip_for(&state.db, &av, wallet, to).await {
+            Ok(Some(s)) => {
+                paid += 1;
+                minted += s.amount;
+            }
+            Ok(None) => {}
+            Err(_) => failed += 1,
+        }
+    }
+
+    tracing::info!("settle-all: {} paid, {} failed, {} SCRP minted", paid, failed, minted);
+    HttpResponse::Ok().json(json!({
+        "dry_run": false,
+        "wallets_considered": owed.len(),
+        "paid": paid,
+        "failed": failed,
+        "scrip_minted": minted,
+    }))
 }

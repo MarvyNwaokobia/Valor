@@ -1259,6 +1259,11 @@ async fn award_scrip_for_clear(state: &AppState, wallet: &str, level: i32) {
         &ref_key,
     )
     .await;
+
+    // Mint their FIRST balance for them, so a player who has never opened the Bank
+    // still ends up actually holding SCRP. Every claim after this one is theirs to
+    // make. Spawns and returns immediately; the clear never waits on a mint.
+    crate::handlers::claims::auto_claim_first_balance(state, wallet);
 }
 
 fn pay_op_play_bounty(state: &AppState, battle_id: Uuid, wallet: String, level: i32, amount: u64) {

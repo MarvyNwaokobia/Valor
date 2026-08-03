@@ -134,60 +134,161 @@ pub async fn claim(state: web::Data<AppState>, path: web::Path<String>) -> HttpR
         Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),
     };
 
-    let chain = ChainId::Avalanche;
-    let Some(open) = earnings::open_claim(&state.db, &wallet, chain).await else {
-        return HttpResponse::Ok().json(json!({
+    match settle_scrip_for(&state.db, &av, &wallet, to).await {
+        Ok(None) => HttpResponse::Ok().json(json!({
             "claimed": false,
             "reason": "Nothing to claim",
-        }));
+        })),
+        Ok(Some(settled)) => HttpResponse::Ok().json(json!({
+            "claimed":  true,
+            "amount":   settled.amount,
+            "symbol":   ChainId::Avalanche.currency_symbol(),
+            "tx_hash":  settled.tx_hash,
+            "chain_id": ChainId::Avalanche.as_i32(),
+        })),
+        Err(Settlement::BadAmount) => HttpResponse::InternalServerError()
+            .json(json!({"error": "Could not process that amount — nothing was charged"})),
+        Err(Settlement::MintFailed) => HttpResponse::BadGateway().json(json!({
+            "error": "The payout did not go through. Your balance is unchanged — try again shortly."
+        })),
+    }
+}
+
+/// A claim that settled on-chain.
+pub struct Settled {
+    pub amount: Decimal,
+    pub tx_hash: String,
+}
+
+/// Why a settlement did not happen. Separated from "nothing to claim", which is
+/// an ordinary outcome rather than a failure.
+pub enum Settlement {
+    BadAmount,
+    MintFailed,
+}
+
+/// Open a claim, mint it, and settle it. The single place Scrip is turned into
+/// tokens.
+///
+/// Extracted from the `claim` handler so the auto-claim path and the admin bulk
+/// settle cannot drift from it. That matters more than the usual DRY argument:
+/// this function is the one that decides money has moved, and three subtly
+/// different copies of it is how a player ends up paid twice or not at all.
+///
+/// Returns `Ok(None)` when there is simply nothing owed. Once `open_claim`
+/// returns, the player's earnings are ATTACHED, so every path below must either
+/// settle the claim or fail it. Returning without doing one strands their balance.
+pub async fn settle_scrip_for(
+    db: &sqlx::PgPool,
+    av: &crate::services::avalanche::AvalancheWriter,
+    wallet: &str,
+    to: Address,
+) -> Result<Option<Settled>, Settlement> {
+    let chain = ChainId::Avalanche;
+    let Some(open) = earnings::open_claim(db, wallet, chain).await else {
+        return Ok(None);
     };
 
-    // From here the player's earnings are ATTACHED. Every path below must either
-    // settle the claim or fail it; returning without doing one of those strands
-    // their money.
     let Some(amount_wei) = to_wei(open.amount) else {
-        earnings::fail_claim(&state.db, open.id, "amount could not be converted to wei").await;
+        earnings::fail_claim(db, open.id, "amount could not be converted to wei").await;
         tracing::error!("claim {} for {}: bad amount {}", open.id, wallet, open.amount);
-        return HttpResponse::InternalServerError()
-            .json(json!({"error": "Could not process that amount — nothing was charged"}));
+        return Err(Settlement::BadAmount);
     };
 
     match av.mint_scrip(to, amount_wei).await {
         Ok(hash) => {
-            let hash_str = format!("{:?}", hash);
-            earnings::settle_claim(&state.db, open.id, &hash_str).await;
+            let hash_str = format!("{hash:?}");
+            earnings::settle_claim(db, open.id, &hash_str).await;
 
             // Mirror into the ledger so per-chain volume reporting sees it. Best
             // effort: the money has already moved, and a missing ledger row is a
             // reporting gap rather than a lost payout.
             crate::handlers::ledger::insert_ledger_entry(
-                &state.db,
-                &wallet,
-                "claim",
-                open.amount,
-                Some(&hash_str),
-                None,
-                chain,
+                db, wallet, "claim", open.amount, Some(&hash_str), None, chain,
             )
             .await;
 
             tracing::info!("claim paid: {} +{} SCRP tx={}", wallet, open.amount, hash_str);
-            HttpResponse::Ok().json(json!({
-                "claimed":  true,
-                "amount":   open.amount,
-                "symbol":   chain.currency_symbol(),
-                "tx_hash":  hash_str,
-                "chain_id": chain.as_i32(),
-            }))
+            Ok(Some(Settled { amount: open.amount, tx_hash: hash_str }))
         }
         Err(e) => {
-            earnings::fail_claim(&state.db, open.id, &e).await;
+            earnings::fail_claim(db, open.id, &e).await;
             tracing::error!("claim {} for {} failed: {}", open.id, wallet, e);
-            HttpResponse::BadGateway().json(json!({
-                "error": "The payout did not go through. Your balance is unchanged — try again shortly."
-            }))
+            Err(Settlement::MintFailed)
         }
     }
+}
+
+/// Has this wallet ever had Scrip minted to it?
+///
+/// The question behind auto-claim. A player who has claimed before knows the
+/// Bank exists and can decide for themselves; a player who never has holds a
+/// balance they may not know is there, and cannot spend or stake it.
+async fn has_ever_claimed(db: &sqlx::PgPool, wallet: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM claims
+          WHERE wallet_address = $1 AND chain_id = $2 AND status = 'paid'",
+    )
+    .bind(wallet)
+    .bind(ChainId::Avalanche.as_i32())
+    .fetch_one(db)
+    .await
+    .map(|n| n > 0)
+    .unwrap_or(true) // on error, assume yes: skipping a mint is cheaper than a surprise one
+}
+
+/// Mint a player's FIRST Scrip balance for them, in the background.
+///
+/// WHY THIS EXISTS
+/// Accrue-then-claim is the right shape — it is what stops the relay spending a
+/// transaction on every single win — but it has a failure mode that is invisible
+/// from inside the design: a player who never visits the Bank never holds any
+/// SCRP at all. Empirically that was ALL of them. On 2026-08-03 the economy had
+/// 32,500 SCRP accrued across 60 wallets and 100 SCRP actually minted, to one
+/// person. An item economy and a duel ladder both need tokens in wallets, not
+/// numbers in our database.
+///
+/// So the FIRST claim is automatic and every claim after it is not. One extra
+/// transaction per player, ever, in exchange for every player actually holding
+/// the currency. After that they have a balance, they have seen the Bank, and
+/// the normal flow takes over.
+///
+/// Deliberately fire-and-forget: this is called from the battle path, and a
+/// player finishing an op must never wait on a mint, nor have their clear fail
+/// because the relay is out of gas. `settle_scrip_for` is idempotent, so the
+/// worst case of a lost spawn is that they claim manually like everyone else.
+pub fn auto_claim_first_balance(state: &AppState, wallet: &str) {
+    let Some(av) = state.avalanche.as_ref().cloned() else { return };
+    if !av.can_mint() {
+        return;
+    }
+    let db = state.db.clone();
+    let wallet = wallet.to_string();
+
+    tokio::spawn(async move {
+        if has_ever_claimed(&db, &wallet).await {
+            return;
+        }
+        // Checked here rather than at the call site so a dry relay costs nothing
+        // but a log line, instead of a failed claim the player has to retry.
+        if !av.relay_can_pay().await {
+            tracing::warn!(
+                "{}: skipping auto-claim for {} — Avalanche relay cannot pay gas",
+                crate::services::chain::RELAY_OUT_OF_GAS,
+                wallet,
+            );
+            return;
+        }
+        let Ok(to) = Address::from_str(&wallet) else { return };
+
+        match settle_scrip_for(&db, &av, &wallet, to).await {
+            Ok(Some(s)) => tracing::info!(
+                "auto-claimed first balance for {}: +{} SCRP tx={}", wallet, s.amount, s.tx_hash
+            ),
+            Ok(None) => {}
+            Err(_) => tracing::warn!("auto-claim failed for {}; they can still claim manually", wallet),
+        }
+    });
 }
 
 /// Whole currency units to 18-decimal wei.
