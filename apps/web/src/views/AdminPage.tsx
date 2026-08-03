@@ -151,6 +151,10 @@ export default function AdminPage() {
   const walletClient = useActiveWalletClient()
 
   const [session, setSession] = useState<AdminSession | null>(null)
+  const [settling, setSettling] = useState(false)
+  const [settlePreview, setSettlePreview] = useState<{ wallets: number; total_scrip: number } | null>(null)
+  const [settleResult, setSettleResult] = useState<string | null>(null)
+  const [settleError, setSettleError] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
 
@@ -208,6 +212,52 @@ export default function AdminPage() {
       })
     },
     [session],
+  )
+
+  /// Preview, then mint. `confirm: false` is the server's default, so a request
+  /// that somehow loses the flag reports rather than spends.
+  const runSettle = useCallback(
+    async (confirm: boolean) => {
+      setSettling(true)
+      setSettleError(null)
+      setSettleResult(null)
+      try {
+        const res = await authedFetch('/admin/scrip/settle-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm, limit: 200 }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error ?? 'Request failed')
+
+        if (data.dry_run) {
+          setSettlePreview({ wallets: data.wallets ?? 0, total_scrip: data.total_scrip ?? 0 })
+        } else {
+          setSettleResult(
+            `Minted ${Number(data.scrip_minted ?? 0).toLocaleString()} SCRP to ${data.paid} wallet(s)` +
+              (data.failed ? `, ${data.failed} failed` : '') +
+              '.',
+          )
+          // Re-preview so the remaining count is honest rather than stale. The run
+          // stops early if the relay runs low, so "0 paid, done" is not a safe
+          // assumption to render.
+          const again = await authedFetch('/admin/scrip/settle-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: false, limit: 200 }),
+          })
+          if (again.ok) {
+            const d = await again.json()
+            setSettlePreview({ wallets: d.wallets ?? 0, total_scrip: d.total_scrip ?? 0 })
+          }
+        }
+      } catch (err) {
+        setSettleError(err instanceof Error ? err.message : 'Could not reach the server')
+      } finally {
+        setSettling(false)
+      }
+    },
+    [authedFetch],
   )
 
   const refreshSeasons = useCallback(async () => {
@@ -690,6 +740,54 @@ export default function AdminPage() {
           </div>
           </>)}
         </div>
+      </div>
+
+      {/* Scrip delivery — turns accrued balances into tokens people can spend.
+          Two steps on purpose: this mints to dozens of wallets and spends relay
+          gas per wallet, so the count and total are shown BEFORE anything moves. */}
+      <div className="bg-valor-surface border border-valor-border rounded-xl p-4 flex flex-col gap-3">
+        <div>
+          <h3 className="font-display font-bold text-white text-sm">Scrip delivery</h3>
+          <p className="text-slate-400 text-xs mt-1 leading-relaxed">
+            Players accrue Scrip as they play, but it only becomes spendable once it is
+            minted. This mints every outstanding balance. Safe to run repeatedly: a wallet
+            with nothing owed is skipped.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => void runSettle(false)}
+            disabled={settling}
+            className="px-3 py-2 rounded-lg text-xs font-bold border border-valor-border text-slate-200 hover:border-slate-500 disabled:opacity-50 transition-colors"
+          >
+            {settling ? 'Checking…' : 'Preview (mints nothing)'}
+          </button>
+          <button
+            onClick={() => void runSettle(true)}
+            // Deliberately gated on having previewed first. The preview is the only
+            // thing that tells you how many wallets and how much this is about to move.
+            disabled={settling || !settlePreview || settlePreview.wallets === 0}
+            className="px-3 py-2 rounded-lg text-xs font-bold bg-valor-gold text-black disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {settlePreview
+              ? `Mint to ${settlePreview.wallets} wallet${settlePreview.wallets === 1 ? '' : 's'}`
+              : 'Preview first'}
+          </button>
+        </div>
+
+        {settlePreview && (
+          <p className="text-xs text-slate-300">
+            <span className="text-white font-bold">{settlePreview.wallets}</span> wallet
+            {settlePreview.wallets === 1 ? '' : 's'} owed{' '}
+            <span className="text-valor-gold font-bold">
+              {Number(settlePreview.total_scrip).toLocaleString()} SCRP
+            </span>
+            {settlePreview.wallets > 0 && ' — one transaction each.'}
+          </p>
+        )}
+        {settleResult && <p className="text-xs text-emerald-400">{settleResult}</p>}
+        {settleError && <p className="text-xs text-red-400">{settleError}</p>}
       </div>
 
       {/* Stats */}
