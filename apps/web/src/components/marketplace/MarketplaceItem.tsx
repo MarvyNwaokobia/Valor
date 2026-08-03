@@ -8,6 +8,7 @@ import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useShopCurrencyStore, itemPriceOn, currencySymbolFor } from '@/hooks/useShopCurrency'
 import { useGBalance } from '@/hooks/useGBalance'
 import { gunIdFromItemId } from './GunIcons'
 import { ItemArt } from './ItemArt'
@@ -71,6 +72,15 @@ interface Props {
 }
 
 export default function MarketplaceItem({ item, walletAddress }: Props) {
+  // Price in whatever currency the shop is set to. `null` means this item is not
+  // sold on that chain, and buying MUST be disabled rather than falling back to
+  // the other chain's number — that substitution is what makes a signed permit
+  // disagree with the on-chain listing and revert.
+  const shopChainId = useShopCurrencyStore((s) => s.chainId)
+  const price = itemPriceOn(item, shopChainId)
+  const symbol = currencySymbolFor(shopChainId)
+  const notSoldHere = price === null
+
   const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
   const inventory = usePlayerStore((s) => s.inventory)
   const { refetch: refetchBalance } = useGBalance(walletAddress as `0x${string}` | undefined)
@@ -203,7 +213,9 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
 
         {/* Price */}
         <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid rgba(42,42,58,0.4)' }}>
-          <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)} G$</span>
+          <span className="font-bold" style={{ color: notSoldHere ? '#64748b' : '#eab308' }}>
+            {notSoldHere ? `Not sold for ${symbol}` : `${formatGDollarNumber(price)} ${symbol}`}
+          </span>
           {(() => {
             const gid = gunIdFromItemId(item.id)
             if (gid) {
@@ -233,15 +245,23 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
         ) : (
           <motion.button
             onClick={() => { setError(null); setShowConfirm(true) }}
-            disabled={!walletAddress || isSoldOut}
-            whileTap={!isSoldOut ? { scale: 0.97 } : {}}
+            disabled={!walletAddress || isSoldOut || notSoldHere}
+            whileTap={!isSoldOut && !notSoldHere ? { scale: 0.97 } : {}}
             className="w-full py-2.5 text-sm font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
-              background: isSoldOut ? '#374151' : rarityColor,
-              color: isSoldOut ? '#6b7280' : '#000',
+              background: isSoldOut || notSoldHere ? '#374151' : rarityColor,
+              color: isSoldOut || notSoldHere ? '#6b7280' : '#000',
             }}
           >
-            {isSoldOut ? 'Sold Out' : !walletAddress ? 'Sign in to buy' : 'Buy with G$'}
+            {isSoldOut
+              ? 'Sold Out'
+              : notSoldHere
+                // Disabled, not hidden. The item exists and is buyable in the
+                // other currency, so saying why is more useful than vanishing it.
+                ? `Not sold for ${symbol}`
+                : !walletAddress
+                  ? 'Sign in to buy'
+                  : `Buy with ${symbol}`}
           </motion.button>
         )}
       </motion.div>
@@ -321,7 +341,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               {/* Price row */}
               <div className="flex items-center justify-between py-2 border-t" style={{ borderColor: '#2a2a3a' }}>
                 <span className="text-slate-400 text-sm">Total</span>
-                <span className="font-black text-valor-gold text-lg">{formatGDollarNumber(item.price_g)} G$</span>
+                <span className="font-black text-valor-gold text-lg">{formatGDollarNumber(price ?? 0)} {symbol}</span>
               </div>
 
               {error && <p className="text-red-400 text-xs -mt-2">{error}</p>}

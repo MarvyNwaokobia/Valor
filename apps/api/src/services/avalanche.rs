@@ -53,6 +53,13 @@ abigen!(
     ]"#
 );
 
+abigen!(
+    AvaxMarketplace,
+    r#"[
+        function purchaseWithPermit(address buyer, uint256 itemId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external
+    ]"#
+);
+
 type ChainClient = SignerMiddleware<Provider<Http>, LocalWallet>;
 
 /// Gas headroom for one write, used to decide whether the relay can afford to try.
@@ -67,6 +74,7 @@ pub struct AvalancheWriter {
     client:      Arc<ChainClient>,
     game_record: Arc<AvaxGameRecord<ChainClient>>,
     scrip:       Option<Arc<ScripToken<ChainClient>>>,
+    marketplace: Option<Arc<AvaxMarketplace<ChainClient>>>,
     /// Serialises every state-changing send from this signer.
     ///
     /// Same reason as `ChainWriter::tx_lock`, and it is not optional: a fight
@@ -134,16 +142,27 @@ impl AvalancheWriter {
                 .map(|addr| Arc::new(ScripToken::new(addr, client.clone())))
         });
 
+        // Same treatment as Scrip: parsed separately so a bad address disables ONE
+        // capability rather than taking match recording down with it.
+        let marketplace = std::env::var("AVALANCHE_MARKETPLACE_CONTRACT").ok().and_then(|a| {
+            Address::from_str(&a)
+                .map_err(|e| tracing::warn!("AvalancheWriter: bad AVALANCHE_MARKETPLACE_CONTRACT: {}", e))
+                .ok()
+                .map(|addr| Arc::new(AvaxMarketplace::new(addr, client.clone())))
+        });
+
         tracing::info!(
-            "Avalanche relay ready: {:?} (scrip: {})",
+            "Avalanche relay ready: {:?} (scrip: {}, marketplace: {})",
             client.address(),
             if scrip.is_some() { "yes" } else { "NOT SET — claims cannot settle" },
+            if marketplace.is_some() { "yes" } else { "NOT SET — SCRP purchases disabled" },
         );
 
         Some(Self {
             game_record: Arc::new(AvaxGameRecord::new(record, client.clone())),
             client,
             scrip,
+            marketplace,
             tx_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -249,6 +268,71 @@ impl AvalancheWriter {
             Ok(None) => Err("mint sent but no receipt returned".to_string()),
             Err(e) => Err(format!("mint receipt failed: {e}")),
         }
+    }
+
+    /// Relays a SCRP marketplace purchase, so the player needs no AVAX for gas.
+    ///
+    /// Mirrors `ChainWriter::purchase_item_for`. The permit the buyer signed must be
+    /// for the price THIS chain's marketplace holds — 6,000 SCRP where Celo says
+    /// 1,200 G$ — or `permit()` rejects the signature and the whole thing reverts
+    /// after they have already approved it. That is why the items API serves
+    /// per-chain prices rather than one number.
+    pub async fn purchase_item_for(
+        &self,
+        buyer: Address,
+        item_id: u64,
+        deadline: u64,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+    ) -> Result<H256, String> {
+        let marketplace = self.marketplace.as_ref().ok_or_else(|| {
+            "SCRP purchases are not configured (AVALANCHE_MARKETPLACE_CONTRACT unset)".to_string()
+        })?;
+
+        let r: [u8; 32] = H256::from_str(r_hex).map_err(|_| format!("Invalid r: {r_hex}"))?.0;
+        let s: [u8; 32] = H256::from_str(s_hex).map_err(|_| format!("Invalid s: {s_hex}"))?.0;
+
+        let call = marketplace.purchase_with_permit(
+            buyer,
+            U256::from(item_id),
+            U256::from(deadline),
+            v,
+            r,
+            s,
+        );
+
+        // Hold the nonce lock only across broadcast, then release so the confirmation
+        // wait does not serialize match mirroring behind a purchase.
+        let pending = {
+            let _guard = self.tx_lock.lock().await;
+            call.send().await.map_err(|e| {
+                let msg = e.to_string();
+                if is_out_of_gas(&msg) {
+                    format!("{RELAY_OUT_OF_GAS}: Avalanche relay is out of AVAX: {msg}")
+                } else {
+                    format!("TX submission failed: {msg}")
+                }
+            })?
+        };
+
+        let hash = pending.tx_hash();
+        tracing::info!("SCRP purchaseWithPermit submitted: {:?}", hash);
+
+        // C-Chain finalises in ~2s, so 60s is generous rather than tight.
+        tokio::time::timeout(Duration::from_secs(60), pending.confirmations(1))
+            .await
+            .map_err(|_| "Transaction timed out waiting for confirmation".to_string())?
+            .map_err(|e| format!("Transaction failed on-chain: {e}"))?
+            .ok_or_else(|| "Transaction was dropped from mempool".to_string())?;
+
+        tracing::info!("SCRP purchaseWithPermit confirmed: {:?}", hash);
+        Ok(hash)
+    }
+
+    /// Whether SCRP purchases can be relayed at all.
+    pub fn can_sell(&self) -> bool {
+        self.marketplace.is_some()
     }
 
     /// The relay's own address, for logging and balance alerts.

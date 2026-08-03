@@ -5,6 +5,7 @@ import { ShoppingBag } from 'lucide-react'
 import MarketplaceGrid from '@/components/marketplace/MarketplaceGrid'
 import ResaleBrowse from '@/components/marketplace/ResaleBrowse'
 import { useGBalance } from '@/hooks/useGBalance'
+import CurrencyToggle from '@/components/marketplace/CurrencyToggle'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 
 export default function MarketplacePage() {
@@ -54,6 +55,10 @@ export default function MarketplacePage() {
           )}
         </div>
       </motion.div>
+
+      {/* Renders nothing until the player actually holds Scrip. Until then this
+          is a shop for the one currency they have, exactly as it was. */}
+      <CurrencyToggle walletAddress={address} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}

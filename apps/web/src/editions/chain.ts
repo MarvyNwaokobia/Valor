@@ -24,6 +24,8 @@
 
 import { avalanche, celo, type Chain } from 'viem/chains'
 import { edition } from './index'
+import { WEB_EDITION } from './web/config'
+import { AVALANCHE_EDITION } from './avalanche/config'
 
 /** Every chain any edition can run on, by chain id. */
 const CHAINS: Record<number, Chain> = {
@@ -91,6 +93,48 @@ export function permitDomain(): {
     version: currency.permit.version,
     chainId: chain.id,
     verifyingContract: currency.address,
+  }
+}
+
+/**
+ * Everything needed to transact on a NAMED chain, regardless of which edition is
+ * running.
+ *
+ * The `require*` helpers below resolve from the ACTIVE edition, which is right
+ * for anything tied to the session. The shop is not: a player picks which
+ * currency to spend, so it needs the currency, marketplace and permit domain for
+ * the chain they CHOSE, not the one their edition defaults to.
+ *
+ * Returns `null` for a chain Valor does not sell on, and every caller must treat
+ * that as "cannot buy here" rather than substituting another chain's values.
+ */
+export function chainSpendConfig(chainId: number): {
+  currency: `0x${string}`
+  marketplace: `0x${string}`
+  decimals: number
+  symbol: string
+  permit: { name: string; version: string; chainId: number; verifyingContract: `0x${string}` }
+} | null {
+  const source = [WEB_EDITION, AVALANCHE_EDITION].find((e) => e.chain.id === chainId)
+  if (!source) return null
+
+  const { currency, contracts } = source
+  if (!currency.address || !currency.permit || !contracts.marketplace) return null
+
+  return {
+    currency: currency.address,
+    marketplace: contracts.marketplace,
+    decimals: currency.decimals,
+    symbol: currency.symbol,
+    permit: {
+      name: currency.permit.name,
+      version: currency.permit.version,
+      chainId,
+      // The token's OWN address, never a copy. A permit domain naming the wrong
+      // verifying contract produces a signature that validates in the browser
+      // and is rejected on-chain.
+      verifyingContract: currency.address,
+    },
   }
 }
 

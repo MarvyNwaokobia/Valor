@@ -7,7 +7,8 @@ import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
-import { requireCurrencyAddress, requireMarketplaceAddress, requirePermitDomain } from '@/editions/chain'
+import { chainSpendConfig } from '@/editions/chain'
+import { useShopCurrencyStore, itemPriceOn } from '@/hooks/useShopCurrency'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 // Both the marketplace and the spend currency now come from the ACTIVE EDITION
@@ -19,8 +20,6 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 // Resolved per call, not at module load: `edition()` reads the host at first use,
 // and a module-level constant would freeze whatever the first import saw.
 
-// Every currency Valor uses is 18 decimals (G$, USDm, SCRP).
-const CURRENCY_DECIMALS = 18
 
 const NONCES_ABI = [
   {
@@ -66,15 +65,28 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const purchase = async (item: Item): Promise<string> => {
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) throw new Error('Wallet not connected')
-    // Both throw with an edition-specific message if this edition has no
-    // marketplace or no spend currency, which is a clearer failure than a
-    // transaction reverting against an address that holds no code.
-    const MARKETPLACE_CONTRACT = requireMarketplaceAddress()
-    const CURRENCY = requireCurrencyAddress()
+
+    // The chain the player chose to PAY on, not the one their edition defaults
+    // to. Everything below — token, marketplace, permit domain, price — has to
+    // come from the same chain or the signature will not match the listing.
+    const spendChainId = useShopCurrencyStore.getState().chainId
+    const spend = chainSpendConfig(spendChainId)
+    if (!spend) throw new Error('That currency is not available right now')
+
+    // The guard that matters. An item with no price on this chain is not sold
+    // here, and quoting the other chain's number would produce a permit the
+    // marketplace rejects — after the player has already signed it.
+    const unitPrice = itemPriceOn(item, spendChainId)
+    if (unitPrice === null) {
+      throw new Error(`${item.name} is not sold for ${spend.symbol}`)
+    }
+
+    const MARKETPLACE_CONTRACT = spend.marketplace
+    const CURRENCY = spend.currency
 
     setPendingItemId(item.id)
     try {
-      const amount   = parseUnits(item.price_g.toString(), CURRENCY_DECIMALS)
+      const amount   = parseUnits(unitPrice.toString(), spend.decimals)
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30) // 30-min window
 
       // Check G$ balance before attempting — surface a clear error instead of contract revert
@@ -85,7 +97,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
         args: [walletAddress as `0x${string}`],
       })
       if (balance < amount) {
-        throw new Error('Insufficient G$ balance')
+        throw new Error(`Insufficient ${spend.symbol} balance`)
       }
 
       // Read player's current permit nonce from the G$ token contract
@@ -99,7 +111,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       // Sign EIP-2612 permit — wallet shows "Sign message", zero gas for player
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: requirePermitDomain(),
+        domain: spend.permit,
         types: {
           Permit: [
             { name: 'owner',    type: 'address' },
@@ -132,6 +144,9 @@ export function usePurchaseItem(walletAddress: string | undefined) {
           v: Number(v),
           r,
           s,
+          // Tells the relay which marketplace to submit against. Not a trust
+          // boundary: a wrong value just fails to verify and reverts.
+          chain_id: spendChainId,
         }),
       })
 
