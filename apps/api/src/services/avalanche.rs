@@ -186,6 +186,45 @@ impl AvalancheWriter {
         balance >= price * U256::from(WRITE_GAS_ESTIMATE) * U256::from(3u64)
     }
 
+    /// Confirms a broadcast transaction actually succeeded, polling past a missing
+    /// receipt.
+    ///
+    /// WHY THIS EXISTS. ethers' pending-transaction future resolves to `Ok(None)`
+    /// when the RPC does not hand back a receipt, and the obvious reading of that
+    /// is "the transaction was dropped". It usually is not: public endpoints
+    /// intermittently fail to return a receipt for a transaction that mined
+    /// perfectly well. Trusting that reading cost us 3 of 14 mirrored matches —
+    /// they landed on-chain, we concluded they had not, and never recorded them.
+    ///
+    /// The fix is NOT to assume the opposite and record the hash on broadcast.
+    /// That trades an undercount for an overcount: a reverted transaction would be
+    /// filed as a real match, and match counts are exactly the figure a grant
+    /// reviewer checks against the chain. So this asks the chain directly, a few
+    /// times, and only reports success when a receipt says `status == 1`.
+    async fn confirm(&self, hash: H256) -> bool {
+        for attempt in 0..5 {
+            // C-Chain finalises in ~2s. Waiting first, then asking, avoids
+            // querying for a receipt that cannot exist yet.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            match self.client.get_transaction_receipt(hash).await {
+                Ok(Some(r)) => {
+                    let ok = r.status.map(|s| s.as_u64() == 1).unwrap_or(false);
+                    if !ok {
+                        tracing::warn!("Avalanche tx {:?} mined but REVERTED", hash);
+                    }
+                    return ok;
+                }
+                Ok(None) => continue, // not mined yet, or the RPC is lagging
+                Err(e) => {
+                    tracing::debug!("receipt lookup {} for {:?} failed: {}", attempt, hash, e);
+                    continue;
+                }
+            }
+        }
+        tracing::warn!("Avalanche tx {:?} still unconfirmed after polling; not recording", hash);
+        false
+    }
+
     /// Mirrors a match onto Avalanche. `None` on any failure.
     ///
     /// Failing here must never fail the fight: the match already happened, the
@@ -207,17 +246,24 @@ impl AvalancheWriter {
             .record_battle(battle_id, winner, loser, xp_winner, xp_loser, is_bot);
 
         match call.send().await {
-            Ok(pending) => match pending.await {
-                Ok(Some(receipt)) => Some(receipt.transaction_hash),
-                Ok(None) => {
-                    tracing::warn!("Avalanche recordBattle: no receipt (dropped?)");
-                    None
+            Ok(pending) => {
+                // Captured at broadcast so it survives a receipt the RPC never
+                // returns. The hash is known the moment the transaction is signed.
+                let hash = pending.tx_hash();
+                match pending.await {
+                    Ok(Some(receipt)) => Some(receipt.transaction_hash),
+                    // No receipt is NOT proof it was dropped — see `confirm`. Ask the
+                    // chain rather than guessing either way.
+                    Ok(None) | Err(_) => {
+                        if self.confirm(hash).await {
+                            tracing::info!("Avalanche recordBattle confirmed on retry: {:?}", hash);
+                            Some(hash)
+                        } else {
+                            None
+                        }
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Avalanche recordBattle receipt failed: {}", e);
-                    None
-                }
-            },
+            }
             Err(e) => {
                 let msg = e.to_string();
                 if is_out_of_gas(&msg) {
@@ -259,14 +305,22 @@ impl AvalancheWriter {
             }
         })?;
 
+        let hash = pending.tx_hash();
         match pending.await {
             Ok(Some(receipt)) => Ok(receipt.transaction_hash),
-            // No receipt is NOT proof the mint did not happen — it may still be
-            // mined later. The caller releases the earnings, which risks paying
-            // twice rather than never, and that is the right way round for a
-            // token we mint ourselves and can reconcile against on-chain balance.
-            Ok(None) => Err("mint sent but no receipt returned".to_string()),
-            Err(e) => Err(format!("mint receipt failed: {e}")),
+            // A missing receipt is NOT proof the mint failed, and here that
+            // distinction costs real balance: the caller responds to an error by
+            // releasing the earnings, so a mint that actually succeeded would let
+            // the player claim the same Scrip a second time and mint it twice.
+            // Ask the chain before concluding anything.
+            Ok(None) | Err(_) => {
+                if self.confirm(hash).await {
+                    tracing::info!("SCRP mint confirmed on retry: {:?}", hash);
+                    Ok(hash)
+                } else {
+                    Err(format!("mint {hash:?} could not be confirmed"))
+                }
+            }
         }
     }
 

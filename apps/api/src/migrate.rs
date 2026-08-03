@@ -78,6 +78,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // partial that only shows up as an unbuyable gun on Avalanche.
     ("add_avalanche_item_prices.sql", include_str!("../migrations/add_avalanche_item_prices.sql")),
     ("add_survival_rearms.sql",   include_str!("../migrations/add_survival_rearms.sql")),
+    // Must follow add_avalanche_item_prices.sql: it UPDATEs the rows that file
+    // inserts. Named "rescale_" rather than "fix_" so the ordering reads by intent.
+    ("rescale_avalanche_prices.sql", include_str!("../migrations/rescale_avalanche_prices.sql")),
     ("fix_decimal_columns.sql",   include_str!("../migrations/fix_decimal_columns.sql")),
     ("fix_ledger_categories.sql", include_str!("../migrations/fix_ledger_categories.sql")),
     ("fix_xp_cap.sql",            include_str!("../migrations/fix_xp_cap.sql")),
