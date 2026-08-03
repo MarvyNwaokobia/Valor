@@ -22,7 +22,8 @@ fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
 /// ONE REAL EVENT, TWO LEDGERS. The fight happened once; Valor runs on two chains
 /// and keeps a record on each. That is bookkeeping, not invented activity, and the
 /// distinction matters because inflating a transaction count is exactly what
-/// docs/ONCHAIN_TRANSACTIONS.md warns makes a grant application look like spam.
+/// would be transaction volume for its own sake, which is the thing that makes an
+/// on-chain activity claim look like spam rather than usage.
 ///
 /// A no-op when the relay is unconfigured, which is the normal state until the
 /// contracts are deployed.

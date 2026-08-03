@@ -123,3 +123,30 @@ apps/web/probe-out/
 apps/web/public/characters/Berserkers.png
 apps/web/public/characters/Sentinel.png
 apps/web/public/characters/Phanthom.png
+
+# ── Private docs: kept locally, deliberately not published ───────────────────
+# Untracked 2026-08-03. These stay on disk and out of the repository.
+#
+# Grant and strategy material. GRANT_EVIDENCE.md in particular contains candid
+# internal assessments ("THIS IS WRONG" against a milestone marked complete),
+# written as honest bookkeeping but readable by a grant committee as coaching on
+# how to present numbers. ONCHAIN_TRANSACTIONS.md describes where new on-chain
+# volume could come from "for grant reporting", which reads as gaming the metric
+# whatever the intent was.
+docs/GRANT_EVIDENCE.md
+docs/ONCHAIN_TRANSACTIONS.md
+docs/LITEPAPER.md
+docs/EDITIONS_ROADMAP.md
+docs/C5_SHIP_GATE.md
+docs/B0_ECONOMY_DEPLOY.md
+
+# Deployment runbooks. Not secret, but they describe the infrastructure.
+docs/CAPACITOR.md
+docs/RAILWAY_MIGRATION.md
+
+# 60 players' wallet addresses and balances. All of it is derivable from chain,
+# but a curated list of a game's players is a different thing from data being
+# public on an explorer. Regenerate it from Transfer events when MigrateScrip
+# needs it — which is what the script's header tells you to do anyway, because a
+# stale list short-changes real players.
+contracts/scrip-holders.json

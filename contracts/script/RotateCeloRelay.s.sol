@@ -66,7 +66,7 @@ interface ISignerRole {
 ///   CELO_NEW_RELAY_ADDRESS    — the new hot relay (operations only).
 ///   CELO_COLD_OWNER           — takes ownership. Must not be the relay, old or new.
 contract RotateCeloRelay is Script {
-    // Celo mainnet, from docs/GRANT_EVIDENCE.md.
+    // Celo mainnet. Cross-check against the deployment records before editing.
     address constant REWARD_POOL  = 0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4;
     address constant ENDLESS_POOL = 0xd44D31645e3abBDc48a6Fc5E6E1bCd894db77Ba0;
     address constant MARKETPLACE  = 0x95D167f569cf05C967C0432e3123baeac5D8d78D;
