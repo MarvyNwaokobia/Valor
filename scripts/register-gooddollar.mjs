@@ -11,9 +11,20 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { celo } from 'viem/chains'
 import { EngagementRewardsSDK } from '@goodsdks/engagement-sdk'
 
-const PRIVATE_KEY    = 'REDACTED_ROTATED_KEY_SEE_COMMIT_4d35a65'
+// SECURITY: this was a hardcoded private key, committed 2026-06-06 in 84784ce and
+// public on GitHub until 2026-08-03. That key (0x43a5...2D82) owned the reward
+// pools, was the backend signer, and was a Safe signer. It has been rotated and
+// must never be used again. Read from the environment; never inline a key here.
+//
+//   DEPLOYER_PRIVATE_KEY=0x... node scripts/register-gooddollar.mjs
+const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY
 const APP_ADDRESS    = '0x43a5BA0da132b21bdACfBc4392b72EeBaF6f2D82'
 const REWARDS_CONTRACT = '0x25db74CF4E7BA120526fd87e159CF656d94bAE43'
+
+if (!PRIVATE_KEY) {
+  console.error('DEPLOYER_PRIVATE_KEY is not set. Refusing to run.')
+  process.exit(1)
+}
 
 const account = privateKeyToAccount(PRIVATE_KEY)
 
