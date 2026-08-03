@@ -143,7 +143,7 @@ Storage rules, in order of how expensive they are to break:
 | ValorItems | `0x9a7890532b7581c7fea587f01ca6b876cd017677` | yes |
 | ValorMarketplace | `0x751fBFFFc9419BC825645cD69661e51Ae2D529f6` | yes |
 | ValorGameRecord | `0xb6394d320e941674292a5c8db48f069f46bc77a6` | yes |
-| ValorDuel | not deployed | yes, once deployed |
+| ValorDuel | `0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c` | yes |
 
 ⚠️ **Scrip is the exception and the repo currently disagrees with the chain.**
 The live token was deployed on 2 Aug 2026 as a plain contract, before this rule

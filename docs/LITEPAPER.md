@@ -79,27 +79,34 @@ section 8 and the backend relay wallet is the single best "all activity" link,
 because it pays gas for every match record, reward and purchase.
 
 **What Avalanche activity is, honestly.** Contracts went live on C-Chain on
-2 August 2026. Since then there are 109 transactions touching Valor contracts:
-26 item listings, 14 mirrored match records, 1 Scrip claim, and zero SCRP
-purchases by players. The mirrored match records are duplicates of matches also
-recorded on Celo, and they should not be counted as native Avalanche adoption.
-This deployment is one day old. Presenting it as more than that would be easy
-and would not survive anyone clicking the explorer.
+2 August 2026, with the duel escrow added on 3 August. Activity so far is 26 item
+listings, 14 mirrored match records, 1 Scrip claim, and **zero SCRP purchases and
+zero duels by players**. The mirrored match records are duplicates of matches also
+recorded on Celo and should not be counted as native Avalanche adoption.
+
+This deployment is days old and the honest summary is that the rails are built and
+unused. Presenting it as more than that would be easy and would not survive anyone
+clicking the explorer. The gap is distribution, not code: supply is 100 SCRP across
+one wallet, so there is nothing yet for an item economy or a duel ladder to move
+between.
 
 ---
 
 ## 4. Scrip (SCRP)
 
 The in-game currency on Avalanche. An ERC-20 with a 1,000,000,000 hard cap,
-minted on demand as players earn it, deployed as a UUPS proxy owned by the Safe.
+minted on demand as players earn it, owned by the Safe.
 
-One caveat stated up front, because a reviewer will find it: the token live on
-chain today was deployed on 2 August 2026 as a plain non-upgradeable contract,
-before that rule was settled. Bytecode cannot be moved behind a proxy after the
-fact, so making it upgradeable means redeploying at a new address and moving
-holders across. That migration is written and not yet run. Supply is 1,225 SCRP
-with exactly one real holder, so it is a one-address migration today and gets
-harder every week it waits.
+Total supply is **100 SCRP**, held entirely by players. The 1,125 SCRP minted
+during deployment testing was burned on 3 August 2026, so the holder list shows
+no team allocation at all.
+
+One caveat stated up front, because a reviewer will find it: unlike every other
+Valor contract, the live token is not behind a proxy. It was deployed on 2 August
+2026 as a plain contract, before that rule was settled, and bytecode cannot be
+moved behind a proxy after the fact. Making it upgradeable means redeploying at a
+new address and moving holders across. That migration is written and not yet run.
+With one holder it is a one-address job today and gets harder every week.
 
 Military scrip is currency a force issues to its own people, spendable at its own
 store and not legal tender anywhere else. That is exactly what this is, and the
@@ -249,18 +256,22 @@ neither key alone can take player funds. Rewards route through a single
 attribution is a required argument rather than a defaulted one, so a payout
 cannot be silently misfiled to the wrong chain.
 
-**Wrong today, being fixed.** One hot relay key currently owns Scrip, ValorItems,
-ValorMarketplace and ValorGameRecord on Avalanche, which makes it simultaneously
-the minter, the minter-appointer and the UUPS upgrade authority, while also
-signing automated transactions from a live server. A Safe multisig is being
-created and `script/HandOverToSafe.s.sol` moves every ownership to it, leaving
-the relay with only what it needs to run the game: minting rewards, writing match
-records, and settling duels. After that handover the Safe can revoke the relay's
-minter status in one transaction without the relay's cooperation, which it cannot
-do today.
+**Fixed on 3 August 2026.** Until that date a single hot relay key owned Scrip,
+ValorItems, ValorMarketplace and ValorGameRecord, making it at once the minter,
+the minter-appointer and the UUPS upgrade authority, while also signing automated
+transactions from a live server. All five contracts are now owned by a Safe
+multisig (`0x08e684eb39FD115919C509273cdcA2BcF132688F`, Avalanche C-Chain). The
+relay keeps only what running the game requires: minting claimed rewards, writing
+match records, and settling duels. The Safe can now revoke even that in one
+transaction without the relay's cooperation.
 
-Also outstanding: 1,125 of the 1,225 SCRP in existence sit in the deploy wallet
-from deployment testing and will be burned.
+The 1,125 SCRP of deployment-test minting was burned the same day.
+
+**Still outstanding, stated rather than buried.** Two of the Safe's four signers
+are operational keys rather than cold ones, which weakens the separation the Safe
+exists to create; replacing them is a configuration change requiring no redeploy.
+There is no timelock on the upgrade path yet, so the multisig is the only thing
+between a proposed upgrade and a live one.
 
 ---
 
@@ -274,7 +285,7 @@ from deployment testing and will be burned.
 | ValorItems | `0x9a7890532b7581c7fea587f01ca6b876cd017677` |
 | ValorMarketplace | `0x751fBFFFc9419BC825645cD69661e51Ae2D529f6` |
 | ValorGameRecord | `0xb6394d320e941674292a5c8db48f069f46bc77a6` |
-| ValorDuel | pending deploy |
+| ValorDuel | `0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c` |
 
 **Celo (42220)**
 
@@ -293,8 +304,12 @@ Source: [github.com/MarvyNwaokobia/Valor](https://github.com/MarvyNwaokobia/Valo
 
 ## 9. What comes next
 
-**Immediate.** Deploy `ValorDuel` behind a Safe, move all ownership off the relay
-key, burn the deployer's test SCRP, and run the first real staked duels.
+**Done, 3 August 2026.** `ValorDuel` deployed behind the Safe, all five contracts
+moved off the relay key, deployer's test SCRP burned.
+
+**Immediate.** Run the first real staked duels, and get SCRP into enough wallets
+that there is a ladder to climb. Replace the two operational Safe signers with
+cold wallets, and migrate Scrip behind a proxy while it is still a one-holder job.
 
 **Near term.** Tournaments with SCRP prize pools funded from the house cut rather
 than from minting. Seasonal competition on Avalanche alongside Celo. Getting SCRP

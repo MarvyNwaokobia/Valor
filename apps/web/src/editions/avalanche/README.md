@@ -1,8 +1,8 @@
 # Avalanche edition
 
-**Status: live on C-Chain since 2 Aug 2026.** Scrip, the item registry, the
-marketplace and the match-record contract are deployed and verified. Staked duels
-are written and tested; the escrow contract is not deployed yet (see below).
+**Status: live on C-Chain.** Contracts deployed 2 Aug 2026, staked-duel escrow
+added 3 Aug 2026. Every contract is verified on Snowtrace and owned by a Safe
+multisig rather than the backend relay.
 
 Everything Avalanche-specific lives in this folder. Same rule as the MiniPay
 edition: this folder may import from `engine/`, `components/`, `hooks/`,
@@ -16,7 +16,7 @@ edition: this folder may import from `engine/`, `components/`, `hooks/`,
 | ValorItems | `0x9a7890532b7581c7fea587f01ca6b876cd017677` |
 | ValorMarketplace | `0x751fBFFFc9419BC825645cD69661e51Ae2D529f6` |
 | ValorGameRecord | `0xb6394d320e941674292a5c8db48f069f46bc77a6` |
-| ValorDuel | **not deployed** — see `script/DeployValorDuel.s.sol` |
+| ValorDuel | `0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c` |
 
 All proxies and implementations are verified on Snowtrace.
 
@@ -52,16 +52,6 @@ The strong version of the pitch is: *"a live game with 120+ existing players,
 plus a competitive mode built for your ecosystem, bringing both onto
 Avalanche."* Not: *"a new game with no users on a new domain."*
 
-## What this edition should be
-
-Not the G$ earn loop with different-coloured money. That loop cannot exist
-here — GoodDollar is Celo and Fuse only.
-
-Lean competitive instead: **staked duels, tournaments, seasons, prizes.**
-Already specced, never built. That is the Avalanche differentiator, and see
-the sybil note in `config.ts` for why stake-based play is also the safer
-design when there is no proof-of-unique-human available.
-
 ## Done
 
 - [x] **Sybil answer.** SCRP has no exit, so there is nothing to farm. This is
@@ -79,14 +69,21 @@ design when there is no proof-of-unique-human available.
       and `earnings` both carry `chain_id`, and `ChainId` is a required argument
       rather than a defaulted one so a payout cannot be misfiled.
 
+- [x] **ValorDuel deployed** and owned by the Safe.
+- [x] **Ownership moved off the relay** (3 Aug 2026). All five contracts are owned
+      by the Safe `0x08e684eb39FD115919C509273cdcA2BcF132688F`. The relay keeps
+      only Scrip minting, match-record writing and duel resolving.
+- [x] **Test SCRP burned.** 1,125 destroyed; total supply is 100, all player-held.
+
 ## Left to do
 
-- [ ] **Deploy ValorDuel** (`script/DeployValorDuel.s.sol`). Needs a Safe address
-      for the owner — the script refuses to let the relay own it.
-- [ ] **Move ownership off the relay** (`script/HandOverToSafe.s.sol`). Today one
-      hot key owns Scrip, both proxies and the record contract, and can mint.
-- [ ] **Burn the deployer's test SCRP.** 1,125 of 1,225 supply sits in
-      `0x9283f1…` from deploy-time testing.
+- [ ] **Migrate Scrip behind a proxy** (`script/MigrateScrip.s.sol`). The live
+      token is still the original non-upgradeable contract; `src/Scrip.sol` in the
+      repo is upgradeable and the two disagree until this runs. One holder to move.
+- [ ] **Get SCRP into more hands.** Supply is 100 across one wallet, so the item
+      economy and the duel ladder have nobody to move between yet.
+- [ ] **Replace the two operational Safe signers** with cold wallets. `0x43a5…`
+      is the live Celo relay and `0x9283f1…` is a deployer key on a laptop.
 
 ## Why staked duels are the point of this edition
 

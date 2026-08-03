@@ -74,12 +74,18 @@ export const AVALANCHE_EDITION: EditionConfig = {
     // contract that does not exist on the chain they are transacting on.
     marketplace: '0x751fBFFFc9419BC825645cD69661e51Ae2D529f6',
 
-    // ValorDuel, the staked-duel escrow. Read from env rather than pinned like the
-    // two above, and deliberately so: those were deployed and confirmed before this
-    // file named them, whereas this address is set the moment the contract goes
-    // live. `null` until then, which every duel call site already treats as "staked
-    // duels are unavailable on this chain" rather than substituting something else.
-    duel: (process.env.NEXT_PUBLIC_AVALANCHE_DUEL_CONTRACT as `0x${string}`) ?? null,
+    // ValorDuel, the staked-duel escrow. Deployed 2026-08-03 and confirmed against
+    // Snowtrace, so it is pinned here like the two above rather than read from env:
+    // a mainnet address is a fixed fact, and one fewer variable is one fewer thing
+    // that can be set wrong in a deploy dashboard.
+    //
+    // This is the PROXY. The implementation behind it (0x2201133…) will change on
+    // the first upgrade and must never be used here.
+    //
+    // It is also the permit SPENDER for a stake: the contract pulls the stake into
+    // its own escrow, so a signature naming the relay instead would approve an
+    // address that never calls transferFrom. See hooks/useDuels.ts.
+    duel: '0xFF4Dc5B5BbBa2Af0163964069A11124B2964419c',
   },
 
   // Standard EVM wallets sign typed data fine, so the permit flows work as-is and
