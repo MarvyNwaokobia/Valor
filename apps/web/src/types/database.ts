@@ -137,6 +137,15 @@ export interface Item {
   total_supply: number | null
   remaining_supply: number | null
   weapon_stats: Record<string, unknown> | null
+  /**
+   * Price on each non-Celo chain, keyed by chain id (`{ "43114": 800 }`).
+   * `price_g` above stays the Celo price.
+   *
+   * Absent or missing a chain means the item is NOT sold there, and buying must
+   * be disabled rather than falling back to `price_g` — the two are different
+   * numbers, and signing a permit for the wrong one reverts on-chain.
+   */
+  chain_prices?: Record<string, number>
 }
 
 export interface InventoryItem {

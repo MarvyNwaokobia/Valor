@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render as rtlRender, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactElement } from 'react'
 import type { Player } from '@/types'
 import PlayerCard from '@/components/player-card/PlayerCard'
 
@@ -19,6 +21,22 @@ vi.mock('@/components/player-card/AchievementSlots', () => ({
 vi.mock('@/components/player-card/DecayOverlay', () => ({
   default: () => <div data-testid="decay-overlay" />,
 }))
+
+/**
+ * PlayerCard calls `useQuery` to show a player's recruit count (added in
+ * 98dbdbe), and a react-query hook throws "No QueryClient set" without a
+ * provider above it. Every render here goes through this wrapper instead of
+ * bare `render`.
+ *
+ * `retry: false` so a failing query surfaces immediately rather than being
+ * retried three times against a network that does not exist in the test env.
+ */
+function render(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+}
 
 const basePlayer: Player = {
   wallet_address:          '0xdeadbeef',
