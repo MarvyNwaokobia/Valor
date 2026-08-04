@@ -7,16 +7,19 @@ import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import { edition } from '@/editions'
+import type { IdentityMode } from '@/editions/types'
 
 import IdentityVerification from '@/components/onboarding/IdentityVerification'
 import CharacterSelectScreen from '@/components/onboarding/CharacterSelectScreen'
 import TutorialArena from '@/components/onboarding/TutorialArena'
+import { TELEGRAM_URL } from '@/lib/constants'
 import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/classes'
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { ConnectButton } from '@/components/ui/ConnectButton'
 
-type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
+type Step = 'verify' | 'covenant' | 'telegram' | 'select' | 'confirm' | 'tutorial'
 
 const PREFIXES = ['Iron','Dark','Storm','Ash','Void','Flame','Shadow','Silver','Crimson','Frost','Thunder','Ember','Blood','Death','War']
 const SUFFIXES = ['Blade','Fist','Heart','Walker','Strike','Guard','Born','Wolf','Hawk','Bane','Forge','Rift','Claw','Rage','Fire']
@@ -48,6 +51,24 @@ export default function OnboardingPage() {
   const [referrerName,  setReferrerName]  = useState<string | null>(null)
   const [inviterInput,  setInviterInput]  = useState('')
   const [lookingUp,     setLookingUp]     = useState(false)
+
+  // Which identity provider this edition gates on, or 'none'.
+  //
+  // Resolved in an effect rather than at render because `edition()` reads
+  // `window` — deciding this during render would make the server HTML and the
+  // first client render disagree. `null` means "not resolved yet" and holds the
+  // loading screen below, so the GoodDollar gate can never flash in an edition
+  // that doesn't use it.
+  const [identityMode, setIdentityMode] = useState<IdentityMode | null>(null)
+  useEffect(() => {
+    const mode = edition().identity
+    setIdentityMode(mode)
+    // No identity provider means no gate to pass. MiniPay is the case this
+    // exists for: nothing pays out there, so there is nothing to verify, and
+    // an identity wall on a wallet's Mini App is exactly the onboarding
+    // friction that makes people close it.
+    if (mode === 'none') setStep((s) => (s === 'verify' ? 'covenant' : s))
+  }, [])
 
   // A player rebuilt from chain after the migration hasn't CONFIRMED their class
   // yet (it may be wrong). They're already a recognized user, so skip verify and
@@ -94,8 +115,9 @@ export default function OnboardingPage() {
     }
   }, [confirming, player])
 
-  // Auth session still resolving — wait; don't flash the sign-in screen.
-  if (status === 'loading') return <LoadingScreen />
+  // Auth session still resolving, or the edition not yet known — wait; don't
+  // flash the sign-in screen, and don't flash a verify step this edition skips.
+  if (status === 'loading' || identityMode === null) return <LoadingScreen />
 
   // Player sync in progress — wait; don't flash the verify screen.
   if (address && !playerSynced) return <LoadingScreen />
@@ -117,7 +139,12 @@ export default function OnboardingPage() {
   }
 
   // ── Step: VERIFY — GoodDollar identity gate ───────────────────────────────────
+  // Skipped entirely when the edition has no identity provider; the mount
+  // effect above has already advanced the step, so this only guards the frame
+  // between the two. Mounting IdentityVerification here would fire its own
+  // on-mount whitelist check against a chain the edition may not even use.
   if (step === 'verify') {
+    if (identityMode === 'none') return <LoadingScreen />
     return (
       <IdentityVerification
         walletAddress={address as `0x${string}`}
@@ -126,9 +153,18 @@ export default function OnboardingPage() {
     )
   }
 
-  // ── Step: COVENANT — permanent identity intro (auto-advance to 'select') ──────
+  // ── Step: COVENANT — permanent identity intro (auto-advance to 'telegram') ────
   if (step === 'covenant') {
-    return <CovenantIntro onComplete={() => setStep('select')} />
+    return <CovenantIntro onComplete={() => setStep('telegram')} />
+  }
+
+  // ── Step: TELEGRAM — join the community ───────────────────────────────────────
+  // Placed here, between the covenant and class select, rather than immediately
+  // before the claim: picking a class and naming it flows straight into forging,
+  // and interrupting that with an ask would land at the worst moment. Here it
+  // still reads as part of setup.
+  if (step === 'telegram') {
+    return <JoinTelegram onContinue={() => setStep('select')} />
   }
 
   // ── Step: SELECT ──────────────────────────────────────────────────────────────
@@ -209,6 +245,11 @@ export default function OnboardingPage() {
         // Best-effort attribution. The server re-validates it and pays at most
         // once per new player, so a wrong or stale value costs nothing.
         referred_by:             referrer || null,
+        // Which door this player came through. Recorded once and never updated,
+        // and it is what the server reads before paying anything — a MiniPay
+        // player earns no real G$ and credits no referral, because they passed
+        // no identity check on the way in. See apps/api/src/services/edition.rs.
+        edition:                 edition().id,
       }
       const res = await fetch(`${API}/players`, {
         method: 'POST',
@@ -437,6 +478,81 @@ export default function OnboardingPage() {
   }
 
   return null
+}
+
+// ── Join Telegram ─────────────────────────────────────────────────────────────
+//
+// Deliberately UNVERIFIED. We never ask Telegram whether they joined and we
+// store nothing: "I've joined" is the whole gate, and it is tappable from the
+// first frame.
+//
+// That is not laziness, it is the only workable design. Plenty of people are in
+// the group before they ever open the site, and plenty do not have Telegram
+// installed at all — gating the button on a click-through would strand both, at
+// the one point in onboarding where dropping out costs us the player entirely.
+// The ask is worth making; blocking on it is not.
+
+function JoinTelegram({ onContinue }: { onContinue: () => void }) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-70 flex flex-col items-center justify-center px-6"
+      style={{ background: '#04030c' }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+    >
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse 60% 50% at 50% 45%, rgba(42,171,238,0.10), transparent)' }}
+      />
+
+      <motion.div
+        className="relative z-10 w-full max-w-sm flex flex-col items-center text-center gap-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.15 }}
+      >
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center"
+          style={{ background: 'rgba(42,171,238,0.12)', border: '1px solid rgba(42,171,238,0.35)' }}
+        >
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="#2AABEE" aria-hidden>
+            <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+          </svg>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h1 className="font-display font-black text-white text-2xl tracking-wide">Join the Telegram</h1>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Season news, payout updates and the people you&apos;ll be fighting. It&apos;s where
+            everything about Valor gets announced first.
+          </p>
+        </div>
+
+        <a
+          href={TELEGRAM_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="w-full py-3.5 rounded-xl font-black text-sm text-center transition-transform active:scale-[0.98]"
+          style={{ background: '#2AABEE', color: '#04030c' }}
+        >
+          Open Telegram
+        </a>
+
+        <button
+          onClick={onContinue}
+          className="w-full py-3 rounded-xl font-bold text-sm border text-slate-300 hover:text-white transition-colors"
+          style={{ borderColor: 'rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.03)' }}
+        >
+          I&apos;ve joined
+        </button>
+
+        <p className="text-[11px] text-slate-600">
+          Already in the group, or no Telegram? Carry on — nothing here is checked.
+        </p>
+      </motion.div>
+    </motion.div>
+  )
 }
 
 // ── Covenant intro — "One human. One warrior." ────────────────────────────────

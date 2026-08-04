@@ -17,6 +17,52 @@ fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
     bytes
 }
 
+/// Records that a battle's on-chain match record landed, on a named chain.
+///
+/// `battle_chain_records` is the authoritative row. `battles.game_record_tx` is a
+/// legacy single-hash column that three read paths still depend on (admin.rs's
+/// activity feed, players.rs's battle history, BattleHistory.tsx), so it keeps
+/// being written for Celo.
+///
+/// Both writes live here so the two cannot drift apart.
+///
+/// Best-effort, matching the surrounding call sites: the transaction is already
+/// mined by the time this runs, so failing to note it down must not look like
+/// the battle failed.
+async fn record_battle_chain_tx(
+    db: &sqlx::PgPool,
+    battle_id: Uuid,
+    chain: crate::services::chain_id::ChainId,
+    tx_hash: &str,
+) {
+    use crate::services::chain_id::ChainId;
+
+    if let Err(e) = sqlx::query(
+        "INSERT INTO battle_chain_records (battle_id, chain_id, tx_hash)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (battle_id, chain_id) DO NOTHING",
+    )
+    .bind(battle_id)
+    .bind(chain.as_i32())
+    .bind(tx_hash)
+    .execute(db)
+    .await
+    {
+        tracing::error!("Failed to record battle_chain_records for {} on {:?}: {}", battle_id, chain, e);
+    }
+
+    if chain == ChainId::Celo {
+        if let Err(e) = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
+            .bind(tx_hash)
+            .bind(battle_id)
+            .execute(db)
+            .await
+        {
+            tracing::error!("Failed to set game_record_tx for {}: {}", battle_id, e);
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct EquippedBoost {
     stat_boost: i32,
@@ -148,9 +194,10 @@ fn next_rank(rank: &str) -> Option<&'static str> {
 /// averaged 3,712 paid against 7,500 owed), which is a cap doing a payout curve's job
 /// and telling players a number that then does not arrive.
 ///
-/// Flat pays 3,000 G$ for the full fifteen-op campaign instead of 60,000, and the
-/// number a player is promised is the number they get at every op.
-const FIRST_CLEAR_BOUNTY_G: u64 = 200;
+/// Cut again 200 -> 10 on 2026-07-31: the full fifteen-op campaign now pays 150 G$,
+/// down from 3,000 and from 60,000 before that. Same shape, same promise at every op —
+/// only the size changed.
+const FIRST_CLEAR_BOUNTY_G: u64 = 10;
 
 /// The op RATE, ignoring whether earning is currently paused. Flat, so the level no
 /// longer changes the amount. Clamped to the on-chain per-payout ceiling, since a
@@ -491,12 +538,15 @@ pub(crate) async fn persist_battle(
         let loser_addr = loser_wallet.parse::<Address>().unwrap_or_else(|_| Address::zero());
         let battle_bytes = uuid_to_bytes32(battle_id);
         let xp_u8 = xp_challenger.max(xp_opponent).min(255) as u8;
+        // Cloned here rather than read inside the task: `state` is a reference and
+        // the spawned future outlives this call.
         let db = state.db.clone();
         tokio::spawn(async move {
             if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_u8, 0, is_bot).await {
                 let hash_str = format!("{:?}", hash);
-                let _ = sqlx::query("UPDATE battles SET game_record_tx = $1 WHERE id = $2")
-                    .bind(hash_str).bind(battle_id).execute(&db).await;
+                record_battle_chain_tx(
+                    &db, battle_id, crate::services::chain_id::ChainId::Celo, &hash_str,
+                ).await;
             }
         });
     }
@@ -1073,6 +1123,7 @@ async fn settle_first_clear_bounty(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!(
                     "first-clear bounty paid: {} op{} +{} G${}",
@@ -1101,7 +1152,6 @@ async fn settle_first_clear_bounty(
 /// `settle_op_play_bounty`, which is shared with the reconcile job.
 /// Retired 2026-07-26 (ops pay once, on first clear) but kept so pay-per-play can be
 /// toggled back on without rewiring the settle rail.
-#[allow(dead_code)]
 fn pay_op_play_bounty(state: &AppState, battle_id: Uuid, wallet: String, level: i32, amount: u64) {
     let Some(chain) = state.chain.as_ref().cloned() else { return; };
     let db = state.db.clone();
@@ -1156,6 +1206,7 @@ async fn settle_op_play_bounty(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!("op-play bounty paid: {} op{} +{} G$ (battle {})", wallet, level, amount, battle_id);
             }
@@ -1225,6 +1276,7 @@ async fn settle_rank_up_reward(
                 log_write_failure("g_earned_lifetime credit", wallet, &credited_locally);
                 crate::handlers::ledger::insert_ledger_entry(
                     db, wallet, "battle_reward", rust_decimal::Decimal::from(amount), tx_hash.as_deref(), None,
+                    crate::services::chain_id::ChainId::Celo,
                 ).await;
                 tracing::info!(
                     "rank-up reward paid: {} {} +{} G${}",
@@ -1591,13 +1643,9 @@ pub async fn challenge_player(
                 let (winner_addr, loser_addr) = if ch_won { (ch, op) } else { (op, ch) };
                 if let Some(hash) = chain.record_battle(battle_bytes, winner_addr, loser_addr, xp_ch, xp_op, false).await {
                     let hash_str = format!("{:?}", hash);
-                    let _ = sqlx::query(
-                        "UPDATE battles SET game_record_tx = $1 WHERE id = $2",
-                    )
-                    .bind(hash_str)
-                    .bind(battle_uuid)
-                    .execute(&db)
-                    .await;
+                    record_battle_chain_tx(
+                        &db, battle_uuid, crate::services::chain_id::ChainId::Celo, &hash_str,
+                    ).await;
                 }
             }
         });
@@ -1622,7 +1670,7 @@ mod reward_amount_tests {
         // reach the on-chain ceiling — which is the point: the old curve's deep ops were
         // most of the pool's outflow, and the weekly cap was silently trimming them.
         for level in [1, 5, 15, 20, 30] {
-            assert_eq!(op_bounty_rate_g(level), 200, "op {level} should pay the flat rate");
+            assert_eq!(op_bounty_rate_g(level), 10, "op {level} should pay the flat rate");
         }
     }
 

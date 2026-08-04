@@ -20,6 +20,12 @@ import { injected } from 'wagmi/connectors'
 // dApp browsers inject one; a plain mobile browser doesn't, so SignInModal
 // deep-links those users into their wallet's own browser, where one exists.
 // wagmi additionally auto-discovers named extensions via EIP-6963.
+// Every chain ANY edition can run on, listed unconditionally rather than picked
+// from the active edition. This config is built at module load, and resolving
+// the edition there would read `window` during import — the server would build
+// one chain list and the client another, which is exactly the hydration mismatch
+// `ssr: true` below exists to avoid. Listing all of them costs a transport entry
+// and keeps the config identical on both sides.
 export const wagmiConfig = createConfig({
   chains: [celo, celoAlfajores],
   connectors: [injected()],

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { shareCard } from '@/lib/shareCard'
@@ -7,6 +8,8 @@ import { xpForNextRank } from '@/lib/constants'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import { RANK_DEFINITIONS } from '@/lib/ranks'
 import { getDecayStatus } from '@/utils/decay'
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 import { formatGDollarNumber, formatTimeAgo } from '@/utils/format'
 import { useGBalance } from '@/hooks/useGBalance'
 import XpMeter from './XpMeter'
@@ -38,6 +41,25 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
   const { address } = useResolvedAuth()
   const isOwner = !isPublic && address?.toLowerCase() === player.wallet_address.toLowerCase()
   const { formatted: liveBalance } = useGBalance(isOwner ? (player.wallet_address as `0x${string}`) : undefined)
+
+  // Recruits are the one purely SOCIAL stat on the card. Rank and record say how
+  // good you are; this says how much of the game you built. It is also the number
+  // that makes someone share again, and until now only the recruiter could see it
+  // — on their own profile, never on the card they actually send people.
+  //
+  // The endpoint has been public from the start ("a boast, not a secret"); it was
+  // simply never wired in here.
+  const { data: referrals } = useQuery<{ recruited: number; earned_g: number }>({
+    queryKey: ['referrals', player.wallet_address],
+    queryFn: async () => {
+      const res = await fetch(`${API}/players/${player.wallet_address}/referrals`)
+      if (!res.ok) throw new Error(String(res.status))
+      return res.json()
+    },
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+  const recruited = referrals?.recruited ?? 0
 
   return (
     <>
@@ -181,7 +203,17 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
 
         {/* Footer */}
         <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-          <span>Active {formatTimeAgo(player.last_active)}</span>
+          <span className="flex items-center gap-1.5">
+            <span>Active {formatTimeAgo(player.last_active)}</span>
+            {recruited > 0 && (
+              <>
+                <span className="text-slate-700">·</span>
+                <span className="text-valor-gold font-bold">
+                  {recruited} recruited
+                </span>
+              </>
+            )}
+          </span>
           {showShareLink && !isPublic && (
             <button
               onClick={() => { void shareCard(player.wallet_address, player.username || player.character_name) }}
@@ -192,7 +224,12 @@ export default function PlayerCard({ player, isPublic = false, showShareLink = f
             </button>
           )}
           {isPublic && (
-            <span className="text-slate-600">valorapp.xyz</span>
+            /* The player's OWN link, not a bare domain — and not the stale
+               `valorapp.xyz`, which is not a domain Valor runs. A card that gets
+               screenshotted should still tell you where to find the player. */
+            <span className="text-slate-600">
+              playvalor.app{player.username ? `/${player.username}` : ''}
+            </span>
           )}
         </div>
       </div>

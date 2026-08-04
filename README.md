@@ -42,7 +42,7 @@ Players verify their identity via GoodDollar, pick a class + callsign, and drop 
 | Identity | GoodDollar Citizen SDK (ERC-725 whitelist) |
 | Contracts | Foundry (Forge), OpenZeppelin UUPS upgradeable, ERC1155 + ERC677 |
 
-> The stack briefly ran on Render + Neon (mid-2026) but consolidated back onto a single Railway Hobby project (API + Postgres) — see [docs/RAILWAY_MIGRATION.md](docs/RAILWAY_MIGRATION.md). Money + identity are all on-chain, so no funds were ever at risk during platform moves; `scripts/reconstruct-players.mjs` can rebuild off-chain rows from on-chain `ValorGameRecord` events if ever needed.
+> The stack briefly ran on Render + Neon (mid-2026) but consolidated back onto a single Railway Hobby project (API + Postgres). Money + identity are all on-chain, so no funds were ever at risk during platform moves; `scripts/reconstruct-players.mjs` can rebuild off-chain rows from on-chain `ValorGameRecord` events if ever needed.
 
 ---
 
@@ -72,7 +72,7 @@ Used for: marketplace `purchaseWithPermit`, player-to-player transfers (`permit`
 
 ### On-chain transaction surface
 
-Valor writes to Celo mainnet constantly — every fight, rank-up, reward, purchase, transfer and re-arm is a real transaction. See **[docs/ONCHAIN_TRANSACTIONS.md](docs/ONCHAIN_TRANSACTIONS.md)** for the full catalog of what triggers a transaction, who pays gas, and the ideas for driving more on-chain volume.
+Valor writes to Celo mainnet constantly — every fight, rank-up, reward, purchase, transfer and re-arm is a real transaction. Transactions are a consequence of players doing things, not a target: the backend pays gas so a player never has to, which means every write has to earn its cost.
 
 ---
 
@@ -331,7 +331,7 @@ Valor/
 │       └── src/handlers/         # players, battles, survival, gauntlet, seasons, items, admin, decay, ledger…
 │       └── migrations/           # SQL migrations
 ├── contracts/                    # Foundry: ValorItems / Marketplace / RewardPool / GameRecord
-├── docs/                         # B0_ECONOMY_DEPLOY, C5_SHIP_GATE, GAME_DESIGN…
+├── docs/                         # GAME_DESIGN, DIFFICULTY_TIERS, PVP_NETCODE…
 └── scripts/                      # bootstrap-db.mjs, reconstruct-players.mjs, generate-vo.mjs…
 ```
 

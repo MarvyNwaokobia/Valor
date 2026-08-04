@@ -8,6 +8,7 @@ import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { formatGDollarNumber } from '@/utils/format'
 import { usePurchaseItem } from '@/hooks/useMarketplace'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { edition } from '@/editions'
 import { useGBalance } from '@/hooks/useGBalance'
 import { gunIdFromItemId } from './GunIcons'
 import { ItemArt } from './ItemArt'
@@ -71,6 +72,12 @@ interface Props {
 }
 
 export default function MarketplaceItem({ item, walletAddress }: Props) {
+  // The price the marketplace contract holds, in the active edition's currency.
+  // Both have to come from the same place: a quote the on-chain listing does not
+  // agree with makes a signed permit revert.
+  const price = item.price_g
+  const symbol = edition().currency.symbol
+
   const { purchase, pendingItemId } = usePurchaseItem(walletAddress)
   const inventory = usePlayerStore((s) => s.inventory)
   const { refetch: refetchBalance } = useGBalance(walletAddress as `0x${string}` | undefined)
@@ -203,7 +210,9 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
 
         {/* Price */}
         <div className="flex items-center justify-between mt-auto pt-2" style={{ borderTop: '1px solid rgba(42,42,58,0.4)' }}>
-          <span className="font-bold text-valor-gold">{formatGDollarNumber(item.price_g)} G$</span>
+          <span className="font-bold" style={{ color: '#eab308' }}>
+            {`${formatGDollarNumber(price)} ${symbol}`}
+          </span>
           {(() => {
             const gid = gunIdFromItemId(item.id)
             if (gid) {
@@ -241,7 +250,11 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               color: isSoldOut ? '#6b7280' : '#000',
             }}
           >
-            {isSoldOut ? 'Sold Out' : !walletAddress ? 'Sign in to buy' : 'Buy with G$'}
+            {isSoldOut
+              ? 'Sold Out'
+              : !walletAddress
+                ? 'Sign in to buy'
+                : `Buy with ${symbol}`}
           </motion.button>
         )}
       </motion.div>
@@ -321,7 +334,7 @@ export default function MarketplaceItem({ item, walletAddress }: Props) {
               {/* Price row */}
               <div className="flex items-center justify-between py-2 border-t" style={{ borderColor: '#2a2a3a' }}>
                 <span className="text-slate-400 text-sm">Total</span>
-                <span className="font-black text-valor-gold text-lg">{formatGDollarNumber(item.price_g)} G$</span>
+                <span className="font-black text-valor-gold text-lg">{formatGDollarNumber(price)} {symbol}</span>
               </div>
 
               {error && <p className="text-red-400 text-xs -mt-2">{error}</p>}

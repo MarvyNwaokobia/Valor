@@ -3,17 +3,22 @@ import { useConfig } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { parseUnits, parseSignature } from 'viem'
 import { useState } from 'react'
-import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import type { Item, InventoryItem } from '@/types'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useAchievements } from '@/hooks/useAchievements'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { chainSpendConfig } from '@/editions/chain'
+import { edition } from '@/editions'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
-const MARKETPLACE_CONTRACT = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT as `0x${string}`
+// Both the marketplace and the spend currency come from the ACTIVE EDITION
+// rather than from a global. Valor deploys its own marketplace to every chain it
+// runs on, at a different address each time, and the currency differs too (G$ on
+// Celo, USDm in MiniPay).
+//
+// Resolved per call, not at module load: `edition()` reads the host at first use,
+// and a module-level constant would freeze whatever the first import saw.
 
-// G$ is 18 decimals on Celo mainnet (SuperToken)
-const G_DECIMALS = 18
 
 const NONCES_ABI = [
   {
@@ -59,27 +64,37 @@ export function usePurchaseItem(walletAddress: string | undefined) {
   const purchase = async (item: Item): Promise<string> => {
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) throw new Error('Wallet not connected')
-    if (!MARKETPLACE_CONTRACT) throw new Error('Marketplace not configured')
+
+    // Everything below — token, marketplace, permit domain, price — has to come
+    // from the same chain or the signature will not match the listing.
+    const spendChainId = edition().chain.id
+    const spend = chainSpendConfig(spendChainId)
+    if (!spend) throw new Error('That currency is not available right now')
+
+    const unitPrice = item.price_g
+
+    const MARKETPLACE_CONTRACT = spend.marketplace
+    const CURRENCY = spend.currency
 
     setPendingItemId(item.id)
     try {
-      const amount   = parseUnits(item.price_g.toString(), G_DECIMALS)
+      const amount   = parseUnits(unitPrice.toString(), spend.decimals)
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30) // 30-min window
 
       // Check G$ balance before attempting — surface a clear error instead of contract revert
       const balance = await readContract(config, {
-        address: G_TOKEN_ADDRESS,
+        address: CURRENCY,
         abi: BALANCE_ABI,
         functionName: 'balanceOf',
         args: [walletAddress as `0x${string}`],
       })
       if (balance < amount) {
-        throw new Error('Insufficient G$ balance')
+        throw new Error(`Insufficient ${spend.symbol} balance`)
       }
 
       // Read player's current permit nonce from the G$ token contract
       const nonce = await readContract(config, {
-        address: G_TOKEN_ADDRESS,
+        address: CURRENCY,
         abi: NONCES_ABI,
         functionName: 'nonces',
         args: [walletAddress as `0x${string}`],
@@ -88,12 +103,7 @@ export function usePurchaseItem(walletAddress: string | undefined) {
       // Sign EIP-2612 permit — wallet shows "Sign message", zero gas for player
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: {
-          name: 'GoodDollar',
-          version: '1',
-          chainId: 42220,
-          verifyingContract: G_TOKEN_ADDRESS,
-        },
+        domain: spend.permit,
         types: {
           Permit: [
             { name: 'owner',    type: 'address' },

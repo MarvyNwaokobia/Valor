@@ -3701,22 +3701,59 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
 
         {/* zone / op label (operations are chosen outside the game now). On touch it
             shifts right to clear the top-left EXIT button. */}
-        <div style={{ position: 'absolute', left: isTouch ? 90 : 26, top: 20 }}>
+        <div style={{ position: 'absolute', left: isTouch ? 90 : 150, top: 20 }}>
           <span style={{ fontSize: 12, letterSpacing: 2, color: '#6f7d8c' }}>{mode === 'endless' ? `Valor · ${seasonal ? 'SEASONAL CAMPAIGN' : 'ENDLESS'} · ${mission.name}` : mode === 'gauntlet' ? 'Valor · GAUNTLET · RANKED' : mode === 'survival' ? 'Valor · SURVIVAL · THE KILL-HOUSE' : `Valor · ${mission.zone} · OP ${missionIndex + 1}/${CAMPAIGN.length}`}</span>
         </div>
         {!isTouch && (
           <div style={{ position: 'absolute', right: 26, top: 20, fontSize: 11, lineHeight: 1.7, textAlign: 'right', color: '#6f7d8c' }}>
-            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · T target · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops · ESC pause
+            WASD move · MOUSE / ARROWS look<br />SPACE fire · SHIFT ads · T target · Q/E lean · C crouch · R reload · B fire-mode<br />1 / 2 or X swap weapon · N nvg · F light · L laser · O optic · M ops · ESC release mouse
           </div>
         )}
 
         {/* aim hint — desktop only (mobile has visible controls) */}
         {!isTouch && (
           <div ref={(r) => { hud.current.lock = r; }} style={{ position: 'absolute', left: '50%', top: '44%', transform: 'translate(-50%,0)', fontSize: 13, color: '#9fb4c8', background: 'rgba(0,0,0,.45)', padding: '8px 14px', borderRadius: 6 }}>
-            AIM UP/DOWN: move the mouse (captures on your first keypress) · or use the ARROW KEYS · Esc releases the mouse
+            AIM UP/DOWN: move the mouse (captures on your first keypress) · or use the ARROW KEYS · Esc releases the mouse, then EXIT / ⏸ are top-left
           </div>
         )}
       </div>
+
+      {/* ── Desktop EXIT / PAUSE — top-left, mirroring the touch cluster ──
+          Desktop used to have NO visible way out: the pause button and the EXIT
+          button were both `isTouch`-only, leaving Esc as the sole route. But while
+          the pointer is locked the browser consumes Escape to release the lock and
+          never delivers the keydown to the page, so Esc appeared to do nothing and
+          the only way out of a fight was the browser's back button.
+
+          Rendering them here fixes both halves: Esc still releases the mouse (the
+          browser's own behaviour), and the moment it does, these are sitting there
+          to be clicked.
+
+          onMouseDown stops propagation because the window-level `mdown` handler
+          re-requests pointer lock on ANY click — without this, clicking PAUSE would
+          grab the mouse again on the way in. */}
+      {!isTouch && !selectOpen && !portrait && !paused && !debrief && (
+        <div style={{ position: 'absolute', left: 26, top: 16, zIndex: 20, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto' }}>
+          {onExit && (
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={onExit}
+              title="Leave the fight"
+              style={{ height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, backdropFilter: 'blur(6px)', cursor: 'pointer' }}
+            >
+              <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+            </button>
+          )}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={openPause}
+            title="Pause (Esc)"
+            style={{ width: 40, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(255,255,255,.18)', color: '#cfe0ea', backdropFilter: 'blur(6px)', cursor: 'pointer' }}
+          >
+            <Icon name="pause" size={18} />
+          </button>
+        </div>
+      )}
 
       {/* ── Mobile touch controls — glassy, tucked to the corners ── */}
       {isTouch && !selectOpen && !portrait && !paused && (
@@ -3798,6 +3835,16 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ color: '#37d0e0', animation: 'none' }}><Icon name="rotate" size={64} /></div>
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 5, marginTop: 22 }}>ROTATE YOUR DEVICE</div>
           <div style={{ fontSize: 13, color: '#7f8c99', letterSpacing: 3, marginTop: 10 }}>VALOR IS PLAYED IN LANDSCAPE</div>
+          {/* This screen covers everything at z-index 60, including the EXIT button in
+              the HUD beneath it. Without its own way out, a player who opened a fight
+              and DIDN'T want to rotate had no exit at all — rotate or kill the app.
+              A refusal to turn the phone is a legitimate answer, so give it one. */}
+          {onExit && (
+            <div onTouchStart={(e) => { e.stopPropagation(); onExit(); }} onClick={onExit}
+              style={{ marginTop: 34, display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px 10px 14px', borderRadius: 10, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontSize: 12, letterSpacing: 3, pointerEvents: 'auto' }}>
+              <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+            </div>
+          )}
         </div>
       )}
 

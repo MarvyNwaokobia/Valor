@@ -15,13 +15,15 @@ pub async fn list_items(state: web::Data<AppState>) -> HttpResponse {
     .fetch_all(&state.db)
     .await;
 
-    match result {
-        Ok(items) => HttpResponse::Ok().json(items),
+    let mut items = match result {
+        Ok(i) => i,
         Err(e) => {
             tracing::error!("Failed to fetch items: {}", e);
-            HttpResponse::InternalServerError().json(json!({"error": "Failed to fetch items"}))
+            return HttpResponse::InternalServerError().json(json!({"error": "Failed to fetch items"}));
         }
-    }
+    };
+
+    HttpResponse::Ok().json(items)
 }
 
 // ── POST /items/:id/purchase ──────────────────────────────────────────────────
@@ -133,40 +135,50 @@ pub async fn purchase_item_relay(
         return HttpResponse::Conflict().json(json!({"error": "Already owned"}));
     }
 
+    let target = crate::services::chain_id::ChainId::Celo;
+
+    // This is only used for the LEDGER — the contract charges from its own listing
+    // — but the two must agree or reporting drifts away from what actually moved.
+    let charged_price: rust_decimal::Decimal = item.price_g;
+
     let tx_hash: String;
 
     if let Some(on_chain_id) = item.on_chain_id {
-        // On-chain item — relay the permit to the marketplace contract
-        let chain = match state.chain.as_ref() {
-            Some(c) => c,
-            None => return HttpResponse::ServiceUnavailable()
-                .json(json!({"error": "Chain relay not available"})),
-        };
-
         let buyer: Address = match wallet.parse() {
             Ok(a) => a,
             Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),
         };
 
-        // Same as transfer-out: check the tank before spending the buyer's
-        // signature, so a relay with no gas doesn't burn a permit nonce and send
-        // them round the "signature invalid" loop.
-        if !chain.relay_can_pay().await {
-            tracing::error!("RELAY OUT OF GAS — refusing purchase for {} before taking the signature", wallet);
-            return HttpResponse::ServiceUnavailable().json(json!({
+        // Check the tank before spending the buyer's signature, so a relay with no
+        // gas doesn't burn a permit nonce and send them round the "signature
+        // invalid" loop.
+        let relay_dry_error = || {
+            HttpResponse::ServiceUnavailable().json(json!({
                 "error": "Valor can't process purchases right now — our relay is out of gas. \
                           You have not been charged. This is on us, not your wallet.",
                 "code": crate::services::chain::RELAY_OUT_OF_GAS,
-            }));
-        }
+            }))
+        };
 
-        tx_hash = match chain
-            .purchase_item_for(buyer, on_chain_id as u64, body.deadline, body.v, &body.r, &body.s)
-            .await
-        {
+        let relay_result = {
+            let chain = match state.chain.as_ref() {
+                Some(c) => c,
+                None => return HttpResponse::ServiceUnavailable()
+                    .json(json!({"error": "Chain relay not available"})),
+            };
+            if !chain.relay_can_pay().await {
+                tracing::error!("RELAY OUT OF GAS — refusing purchase for {} before taking the signature", wallet);
+                return relay_dry_error();
+            }
+            chain
+                .purchase_item_for(buyer, on_chain_id as u64, body.deadline, body.v, &body.r, &body.s)
+                .await
+        };
+
+        tx_hash = match relay_result {
             Ok(hash) => format!("{:?}", hash),
             Err(e) => {
-                tracing::warn!("purchase relay failed for {}: {}", wallet, e);
+                tracing::warn!("purchase relay failed for {} on {:?}: {}", wallet, target, e);
                 if crate::services::chain::is_out_of_gas(&e) {
                     return HttpResponse::ServiceUnavailable().json(json!({
                         "error": "Valor's relay ran out of gas mid-purchase. You have not been \
@@ -202,7 +214,8 @@ pub async fn purchase_item_relay(
     .await;
 
     crate::handlers::ledger::insert_ledger_entry(
-        &state.db, &wallet, "marketplace_purchase", item.price_g, Some(&tx_hash), None,
+        &state.db, &wallet, "marketplace_purchase", charged_price, Some(&tx_hash), None,
+        target,
     ).await;
 
     // Recirculate shop revenue: sweep what this purchase just added into the reward

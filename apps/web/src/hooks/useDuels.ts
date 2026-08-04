@@ -10,6 +10,7 @@ import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useRelayAddress } from '@/hooks/useTransferOut'
 import { magicCanSign, describeSigningError } from '@/lib/magic'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { requirePermitDomain } from '@/editions/chain'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const G_DECIMALS = 18
@@ -140,8 +141,9 @@ export function useDuels(walletAddress: string | undefined) {
   const list = useQuery({
     queryKey: ['duels', walletAddress?.toLowerCase() ?? 'anon'],
     queryFn: async (): Promise<DuelsList> => {
-      const q = walletAddress ? `?wallet=${walletAddress.toLowerCase()}` : ''
-      const res = await fetch(`${API}/duels${q}`)
+      const params = new URLSearchParams()
+      if (walletAddress) params.set('wallet', walletAddress.toLowerCase())
+      const res = await fetch(`${API}/duels?${params}`)
       if (!res.ok) throw new Error('Could not load duels')
       return res.json()
     },
@@ -170,6 +172,8 @@ export function useDuels(walletAddress: string | undefined) {
    * the exact figure the confirmation screen just showed them.
    */
   const signStake = useCallback(async (stakeG: number) => {
+    // The relay is the spender: it moves the staked G$ into the reward pool
+    // itself, which is where stakes sit for the duration of a duel.
     if (!walletAddress) throw new Error('Not signed in')
     if (!walletClient?.account) {
       // Being signed in and being able to SIGN are different states. wagmi
@@ -210,7 +214,7 @@ export function useDuels(walletAddress: string | undefined) {
     try {
       rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
+        domain: requirePermitDomain(),
         types: {
           Permit: [
             { name: 'owner', type: 'address' },
@@ -235,14 +239,17 @@ export function useDuels(walletAddress: string | undefined) {
 
     const { v, r, s } = parseSignature(rawSig)
     return { deadline: Number(deadline), v: Number(v), r, s }
-  }, [walletAddress, walletClient, relayAddress, config])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, walletClient, relayAddress, config, source])
 
   const createDuel = useCallback(async (stakeG: number): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
       const permit = await signStake(stakeG)
-      const run = await post<DuelRun>('/duels', { wallet: walletAddress, stake_g: stakeG, ...permit })
+      const run = await post<DuelRun>('/duels', {
+        wallet: walletAddress, stake_g: stakeG, ...permit,
+      })
       refresh()
       return run
     } finally { setPending(false) }

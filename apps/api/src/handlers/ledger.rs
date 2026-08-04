@@ -5,13 +5,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::str::FromStr;
 
+use crate::services::chain_id::ChainId;
 use crate::utils::{is_valid_wallet, normalize_wallet};
 use crate::AppState;
 
-/// Records one row in the G$ ledger. Best-effort — a failed insert here must
+/// Records one row in the ledger. Best-effort — a failed insert here must
 /// never roll back or fail the caller's real on-chain/DB work that already
 /// happened, so errors are logged and swallowed like the rest of this codebase's
 /// background chain-write call sites.
+///
+/// `chain` is REQUIRED rather than defaulted. The column has a SQL default of
+/// Celo so historical rows backfill correctly, but relying on that default for
+/// new writes is how a payout on some future chain ends up silently counted as
+/// Celo volume. Making the compiler ask is cheap; auditing a mislabelled ledger
+/// after the fact is not. See services::chain_id.
 pub async fn insert_ledger_entry(
     db: &sqlx::PgPool,
     wallet: &str,
@@ -19,16 +26,18 @@ pub async fn insert_ledger_entry(
     amount: Decimal,
     tx_hash: Option<&str>,
     counterparty: Option<&str>,
+    chain: ChainId,
 ) {
     let result = sqlx::query(
-        "INSERT INTO g_ledger (wallet_address, category, amount, tx_hash, counterparty)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO g_ledger (wallet_address, category, amount, tx_hash, counterparty, chain_id)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(wallet)
     .bind(category)
     .bind(amount)
     .bind(tx_hash)
     .bind(counterparty)
+    .bind(chain.as_i32())
     .execute(db)
     .await;
 
@@ -211,7 +220,8 @@ pub async fn record_ubi_claim(db: &sqlx::PgPool, wallet: &str, body: &DailyClaim
     if amount <= Decimal::ZERO {
         return;
     }
-    insert_ledger_entry(db, wallet, "ubi_claim", amount, body.tx_hash.as_deref(), None).await;
+    // GoodDollar's UBI is a Celo protocol claim by definition — it exists nowhere else.
+    insert_ledger_entry(db, wallet, "ubi_claim", amount, body.tx_hash.as_deref(), None, ChainId::Celo).await;
 }
 
 // ── POST /players/:wallet/transfer ────────────────────────────────────────────
@@ -321,6 +331,7 @@ pub async fn transfer_out(
         wei_to_g(net),
         Some(&hash_str),
         Some(&normalize_wallet(&body.to)),
+        ChainId::Celo,
     )
     .await;
     if !fee.is_zero() {
@@ -331,6 +342,7 @@ pub async fn transfer_out(
             wei_to_g(fee),
             Some(&hash_str),
             Some(&normalize_wallet(&withdraw_fee_address())),
+            ChainId::Celo,
         )
         .await;
     }

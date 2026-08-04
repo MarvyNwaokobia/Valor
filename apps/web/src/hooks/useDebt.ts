@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useRelayAddress } from '@/hooks/useTransferOut'
+import { requirePermitDomain } from '@/editions/chain'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const G_DECIMALS = 18
@@ -69,7 +70,7 @@ export function useSettleDebt(walletAddress: string | undefined) {
 
       const rawSig = await walletClient.signTypedData({
         account: walletClient.account,
-        domain: { name: 'GoodDollar', version: '1', chainId: 42220, verifyingContract: G_TOKEN_ADDRESS },
+        domain: requirePermitDomain(),
         types: {
           Permit: [
             { name: 'owner', type: 'address' },

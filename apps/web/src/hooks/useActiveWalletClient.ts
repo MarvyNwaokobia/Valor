@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { createWalletClient, custom, type WalletClient } from 'viem'
-import { celo } from 'viem/chains'
+import { activeChain } from '@/editions/chain'
 import { useWalletClient as useWagmiWalletClient } from 'wagmi'
 import { getBridgedProvider } from '@/lib/walletBridge'
 import { useResolvedAuth } from './useResolvedAuth'
@@ -39,7 +39,7 @@ export function useActiveWalletClient(): WalletClient | undefined {
     // can never drift from the session the provider will actually sign with.
     return createWalletClient({
       account: bridged.address,
-      chain: celo,
+      chain: activeChain(),
       transport: custom(bridged.provider),
     })
   }, [status, address, source, wagmiWalletClient])

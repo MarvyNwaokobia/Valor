@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, ChevronDown, HelpCircle, Send, BookOpen } from 'lucide-react'
 
-const TELEGRAM = 'https://t.me/playvalor'
+import { TELEGRAM_URL as TELEGRAM } from '@/lib/constants'
 
 interface QA { q: string; a: string }
 interface Category { title: string; items: QA[] }
@@ -41,7 +41,7 @@ const FAQ: Category[] = [
   {
     title: 'Earning & ranks',
     items: [
-      { q: 'How do I earn G$ by playing?', a: 'Three ways, all paying a flat 200 G$: clearing a campaign operation for the first time, every rank-up, and every wave you clear in Endless survival. Daily UBI is on top of all that.' },
+      { q: 'How do I earn G$ by playing?', a: 'Three ways: clearing a campaign operation for the first time pays 10 G$, every wave you clear in Endless pays 10 G$, and every rank-up pays 200 G$. Daily UBI is on top of all that.' },
       { q: 'How do ranks work?', a: 'The ladder is Iron → Bronze → Silver → Gold → Platinum → Emerald → Diamond, and each rank-up pays 200 G$. Later ranks take more XP than earlier ones, so the climb gets longer as you go. Past Diamond you prestige (Diamond II, III, and up). Your XP never stops counting or paying.' },
       { q: 'How much XP do fights give?', a: 'Non-campaign fights: Win = +100 XP, Loss = +30 XP. Campaign operations have their own XP per op. You never walk away with nothing.' },
       { q: 'Why did replaying an operation pay no G$?', a: 'The first-clear bounty pays once per operation, the first time you clear it. Replays still give XP, but not the bounty again. To earn more op bounties, clear the next operation.' },

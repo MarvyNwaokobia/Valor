@@ -1,15 +1,19 @@
-//! B4 — staked async score-duels.
+//! B4 — staked async score-duels on Celo.
 //!
-//! Two players stake the same G$, both play the SAME seeded run separately, and the
-//! higher server-validated score takes the pot minus a house cut. There is no live
-//! netcode here on purpose: with no shared real-time simulation there is nothing to
-//! desync, and the only thing a client reports is a score the server range-checks
-//! against elapsed time it measured itself.
+//! Two players stake the same amount, both play the SAME seeded run separately, and
+//! the higher server-validated score takes the pot minus a house cut. There is no
+//! live netcode here on purpose: with no shared real-time simulation there is
+//! nothing to desync, and the only thing a client reports is a score the server
+//! range-checks against elapsed time it measured itself.
 //!
-//! Money reuses the proven rails rather than a new contract:
-//!   stake   player -> RewardPool  via `spend_rearm`      (the B1 re-arm allowance rail)
-//!   payout  RewardPool -> winner  via `distribute_reward` (idempotent by reference)
-//! Stakes fund the payout, so a duel emits nothing new and the retained cut is a sink.
+//! WHERE THE MONEY SITS
+//! --------------------
+//!   stake   player -> ValorRewardPool  via `transfer_g_for`
+//!   payout  ValorRewardPool -> winner  via `distribute_reward`
+//!
+//! Stakes sit in the reward pool, which the operator controls. That is fine for a
+//! side mode on a chain whose main business is paying out UBI-funded rewards, and
+//! it reuses rails that were already proven.
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
@@ -39,9 +43,15 @@ const HOUSE_CUT_BPS: u64 = 50; // 0.5%
 /// how much real money a request is allowed to move.
 const STAKE_TIERS: [i64; 6] = [100, 500, 1_000, 5_000, 25_000, 50_000];
 
+/// The ladder. Everything downstream reads this rather than the array directly, so
+/// a second ladder later does not mean hunting for hardcoded tiers.
+fn stake_tiers() -> &'static [i64] {
+    &STAKE_TIERS
+}
+
 /// Floor and ceiling, derived from the ladder so they cannot drift apart from it.
 /// The floor keeps dust duels from spamming the chain (every duel costs two escrow
-/// txs plus a payout tx in CELO gas); the ceiling bounds what one bad run can cost.
+/// txs plus a payout tx in native gas); the ceiling bounds what one bad run can cost.
 const MIN_STAKE_G: i64 = STAKE_TIERS[0];
 const MAX_STAKE_G: i64 = STAKE_TIERS[STAKE_TIERS.len() - 1];
 
@@ -162,6 +172,7 @@ async fn escrow_stake(
             crate::handlers::ledger::insert_ledger_entry(
                 &state.db, wallet, "duel_stake",
                 rust_decimal::Decimal::from(-stake_g), Some(&tx_hash), None,
+                crate::services::chain_id::ChainId::Celo,
             ).await;
             Ok(tx_hash)
         }
@@ -189,6 +200,7 @@ async fn payout(state: &AppState, wallet: &str, amount_g: u64, ref_key: &str) ->
             crate::handlers::ledger::insert_ledger_entry(
                 &state.db, wallet, "duel_payout",
                 rust_decimal::Decimal::from(amount_g), Some(&tx), None,
+                crate::services::chain_id::ChainId::Celo,
             ).await;
             Some(tx)
         }
@@ -198,6 +210,35 @@ async fn payout(state: &AppState, wallet: &str, amount_g: u64, ref_key: &str) ->
             None
         }
     }
+}
+
+// ── Settlement ────────────────────────────────────────────────────────────────
+//
+// Each of these is a transfer out of the reward pool, made idempotent by an
+// on-chain reference, so a replayed request cannot pay twice.
+
+/// Pay the winner. Returns the settlement tx hash.
+async fn settle_win(state: &AppState, duel_id: Uuid, winner: &str, stake: i64) -> Option<String> {
+    let take = winner_payout(stake);
+    payout(state, winner, take, &format!("duel:{duel_id}:{winner}")).await
+}
+
+/// Refund both sides of a drawn duel.
+async fn settle_draw(
+    state: &AppState,
+    duel_id: Uuid,
+    challenger: &str,
+    opponent: &str,
+    stake: i64,
+) -> Vec<Option<String>> {
+    let a = payout(state, challenger, stake as u64, &format!("duel:{duel_id}:draw:{challenger}")).await;
+    let b = payout(state, opponent, stake as u64, &format!("duel:{duel_id}:draw:{opponent}")).await;
+    vec![a, b]
+}
+
+/// Refund a cancelled duel's stake to the challenger.
+async fn settle_cancel(state: &AppState, duel_id: Uuid, challenger: &str, stake: i64) -> Option<String> {
+    payout(state, challenger, stake as u64, &format!("duel:{duel_id}:cancel")).await
 }
 
 // ── POST /duels ───────────────────────────────────────────────────────────────
@@ -226,17 +267,18 @@ pub async fn create_duel(
     if !is_valid_wallet(&body.wallet) {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
     }
-    if !STAKE_TIERS.contains(&body.stake_g) {
+    let tiers = stake_tiers();
+    if !tiers.contains(&body.stake_g) {
         return HttpResponse::BadRequest().json(json!({
             "error": "Pick one of the standard stake amounts",
-            "stake_tiers": STAKE_TIERS,
+            "stake_tiers": tiers,
         }));
     }
     let wallet = normalize_wallet(&body.wallet);
 
     // Reject a second open duel BEFORE escrowing, so a duplicate request can never
     // charge a stake it then has nowhere to put (the unique index would reject the
-    // insert and the G$ would already be gone).
+    // insert and the money would already be gone).
     let open: Option<(Uuid,)> = sqlx::query_as(
         "SELECT id FROM duels WHERE challenger_wallet = $1 AND status = 'open'",
     )
@@ -247,12 +289,13 @@ pub async fn create_duel(
         }));
     }
 
+    let id = Uuid::new_v4();
+
     let stake_tx = match escrow_stake(&state, &wallet, body.stake_g, &body.permit).await {
         Ok(tx) => tx,
         Err(resp) => return resp,
     };
 
-    let id = Uuid::new_v4();
     let token = Uuid::new_v4().to_string();
     // Positive seed only: the client feeds it to a uint-based PRNG.
     let seed = (Uuid::new_v4().as_u128() as i64).abs();
@@ -260,28 +303,30 @@ pub async fn create_duel(
 
     let inserted = sqlx::query(
         "INSERT INTO duels (id, challenger_wallet, stake_g, seed,
-                            challenger_run_token, challenger_started_at, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open')",
+                            challenger_run_token, challenger_started_at, status,
+                            challenger_stake_tx)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)",
     )
     .bind(id).bind(&wallet).bind(body.stake_g).bind(seed)
-    .bind(&token).bind(now)
+    .bind(&token).bind(now).bind(&stake_tx)
     .execute(&state.db).await;
 
     if let Err(e) = inserted {
         // The stake is already on-chain. Refund rather than strand it.
         tracing::error!("duel insert failed after escrow for {}: {} — refunding", wallet, e);
-        let refunded = payout(&state, &wallet, body.stake_g as u64, &format!("duel_refund:{}", stake_tx)).await;
+        let refunded = settle_cancel(&state, id, &wallet, body.stake_g).await;
         return HttpResponse::InternalServerError().json(json!({
             "error": "Could not open the duel — your stake was refunded",
             "refund_tx": refunded,
         }));
     }
 
+    let takes = winner_payout(body.stake_g);
     tracing::info!("duel {} opened by {} for {} G$", id, wallet, body.stake_g);
     HttpResponse::Ok().json(json!({
         "id": id, "seed": seed, "stake_g": body.stake_g,
         "run_token": token, "stake_tx": stake_tx,
-        "winner_takes_g": winner_payout(body.stake_g),
+        "winner_takes_g": takes,
     }))
 }
 
@@ -328,27 +373,30 @@ pub async fn accept_duel(
     // duel; the loser of the race is refunded rather than left staked into nothing.
     let claimed = sqlx::query(
         "UPDATE duels SET opponent_wallet = $1, opponent_run_token = $2,
-                          opponent_started_at = $3, status = 'accepted', accepted_at = $3
+                          opponent_started_at = $3, status = 'accepted', accepted_at = $3,
+                          opponent_stake_tx = $5
          WHERE id = $4 AND status = 'open'",
     )
-    .bind(&wallet).bind(&token).bind(now).bind(id)
+    .bind(&wallet).bind(&token).bind(now).bind(id).bind(&stake_tx)
     .execute(&state.db).await;
 
     let won_race = claimed.map(|r| r.rows_affected() == 1).unwrap_or(false);
     if !won_race {
         tracing::warn!("duel {} accept race lost by {} — refunding", id, wallet);
-        let refunded = payout(&state, &wallet, duel.stake_g as u64, &format!("duel_refund:{}", stake_tx)).await;
+        let refunded =
+            payout(&state, &wallet, duel.stake_g as u64, &format!("duel_refund:{stake_tx}")).await;
         return HttpResponse::Conflict().json(json!({
             "error": "Someone accepted first — your stake was refunded",
             "refund_tx": refunded,
         }));
     }
 
+    let takes = winner_payout(duel.stake_g);
     tracing::info!("duel {} accepted by {}", id, wallet);
     HttpResponse::Ok().json(json!({
         "id": id, "seed": duel.seed, "stake_g": duel.stake_g,
         "run_token": token, "stake_tx": stake_tx,
-        "winner_takes_g": winner_payout(duel.stake_g),
+        "winner_takes_g": takes,
     }))
 }
 
@@ -462,27 +510,30 @@ async fn resolve_if_complete(state: &AppState, id: Uuid) -> HttpResponse {
         }));
     }
 
+
     // A draw refunds both stakes and takes NO cut. Taking a cut from a duel nobody
     // won would be the house charging for a non-result.
     if cs == os {
-        let a = payout(state, &duel.challenger_wallet, duel.stake_g as u64, &format!("duel:{}:draw:{}", id, duel.challenger_wallet)).await;
-        let b = payout(state, &opponent, duel.stake_g as u64, &format!("duel:{}:draw:{}", id, opponent)).await;
+        let txs = settle_draw(state, id, &duel.challenger_wallet, &opponent, duel.stake_g).await;
         tracing::info!("duel {} drawn at {} — both refunded", id, cs);
         return HttpResponse::Ok().json(json!({
             "id": id, "resolved": true, "draw": true,
             "challenger_score": cs, "opponent_score": os,
-            "refund_txs": [a, b],
+            "refund_txs": txs,
         }));
     }
 
     let winner = if cs > os { duel.challenger_wallet.clone() } else { opponent.clone() };
     let take = winner_payout(duel.stake_g);
-    let tx = payout(state, &winner, take, &format!("duel:{}:{}", id, winner)).await;
+    let tx = settle_win(state, id, &winner, duel.stake_g).await;
 
     let _ = sqlx::query("UPDATE duels SET winner_wallet = $1, payout_tx = $2 WHERE id = $3")
         .bind(&winner).bind(&tx).bind(id).execute(&state.db).await;
 
-    tracing::info!("duel {} won by {} ({} vs {}) — paid {} G$", id, winner, cs, os, take);
+    tracing::info!(
+        "duel {} won by {} ({} vs {}) — paid {} G$",
+        id, winner, cs, os, take
+    );
     HttpResponse::Ok().json(json!({
         "id": id, "resolved": true, "draw": false,
         "winner": winner, "winnings_g": take,
@@ -528,9 +579,11 @@ pub async fn cancel_duel(
         return HttpResponse::Conflict().json(json!({"error": "That duel can no longer be cancelled"}));
     }
 
-    let tx = payout(&state, &wallet, duel.stake_g as u64, &format!("duel:{}:cancel", id)).await;
+    let tx = settle_cancel(&state, id, &wallet, duel.stake_g).await;
     tracing::info!("duel {} cancelled by {} — stake refunded", id, wallet);
-    HttpResponse::Ok().json(json!({"id": id, "cancelled": true, "refund_tx": tx}))
+    HttpResponse::Ok().json(json!({
+        "id": id, "cancelled": true, "refund_tx": tx,
+    }))
 }
 
 // ── GET /duels ────────────────────────────────────────────────────────────────
@@ -579,22 +632,25 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
                      ORDER BY d.created_at DESC LIMIT 25",
                 )
                 .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
-            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os)| json!({
-                "id": id, "challenger": c, "challenger_name": cn,
-                "opponent": o, "opponent_name": on, "stake_g": stake,
-                "status": status, "winner": winner,
-                "challenger_score": cs, "opponent_score": os,
-            })).collect()
+            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os)| {
+                json!({
+                    "id": id, "challenger": c, "challenger_name": cn,
+                    "opponent": o, "opponent_name": on, "stake_g": stake,
+                    "status": status, "winner": winner,
+                    "challenger_score": cs, "opponent_score": os,
+                })
+            }).collect()
         }
         None => vec![],
     };
 
+    let tiers = stake_tiers();
     HttpResponse::Ok().json(json!({
         "open": open_json,
         "mine": mine_json,
-        "stake_tiers": STAKE_TIERS,
-        "min_stake_g": MIN_STAKE_G,
-        "max_stake_g": MAX_STAKE_G,
+        "stake_tiers": tiers,
+        "min_stake_g": tiers.first().copied().unwrap_or(MIN_STAKE_G),
+        "max_stake_g": tiers.last().copied().unwrap_or(MAX_STAKE_G),
         "house_cut_bps": HOUSE_CUT_BPS,
     }))
 }

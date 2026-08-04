@@ -5,6 +5,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::utils::{is_valid_wallet, normalize_wallet};
@@ -564,3 +565,4 @@ pub async fn reset_season_progress(
         }
     }
 }
+

@@ -29,24 +29,30 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use sqlx::PgPool;
 
-/// GAMEPLAY EARNING PAUSE — deliberate, temporary, owner's decision (2026-07-30).
+/// GAMEPLAY EARNING PAUSE — the switch, currently OFF.
 ///
-/// While this is on, the two GRINDABLE surfaces pay nothing: Campaign op clears
-/// and Endless waves. Rank-up bonuses and referrals are untouched and keep
-/// paying, so progression still has a reward attached and recruiting still
-/// works. Play itself is unaffected — XP, ranks, unlocks, leaderboards and
-/// scores all continue exactly as before; only the G$ stops.
+/// While ON, the two GRINDABLE surfaces pay nothing: Campaign op clears and
+/// Endless waves. Rank-up bonuses and referrals are never covered by it, so
+/// progression and recruiting keep paying either way. Play itself is untouched
+/// in both states — XP, ranks, unlocks, leaderboards and scores all continue;
+/// only the G$ stops.
 ///
-/// Defaults to PAUSED in code rather than relying on an env var being set,
-/// because an unset var silently resuming payouts is the failure that costs
-/// real money. To resume: set `EARNING_PAUSED=false` on the host, or flip this
-/// default and deploy.
+/// Ran 2026-07-30 to 2026-07-31 and is now lifted, so the default is NOT paused.
+///
+/// The default was PAUSED while the pause was live, on the reasoning that an
+/// unset var silently resuming payouts is the failure that costs real money.
+/// That logic inverts once earning is meant to be on: an unset var must not
+/// silently STOP everyone earning either. Whichever way it points, the default
+/// has to match the intended state rather than fail in one fixed direction.
+///
+/// To pause again: set `EARNING_PAUSED=true` on the host — no deploy needed —
+/// or flip this default back.
 ///
 /// NOTE ON OPS CLEARED DURING THE PAUSE: an op bounty is once-per-(wallet, op)
-/// and `first_clear` is `level > pve_level`, so an op cleared now advances the
-/// unlock and will never re-qualify. Those clears are therefore forfeited, not
+/// and `first_clear` is `level > pve_level`, so an op cleared while paused
+/// advanced the unlock and can never re-qualify. Those clears are forfeited, not
 /// deferred. They stay reconstructible from the `battles` table if a goodwill
-/// backpay is ever wanted — that is why each skip is logged with wallet and
+/// backpay is ever wanted — that is why each skip was logged with wallet and
 /// level rather than passed over in silence.
 pub fn earning_paused() -> bool {
     paused_from(std::env::var("EARNING_PAUSED").ok().as_deref())
@@ -57,7 +63,7 @@ pub fn earning_paused() -> bool {
 fn paused_from(value: Option<&str>) -> bool {
     match value {
         Some(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no" | "off"),
-        None => true, // unset means PAUSED, never "quietly resume"
+        None => false, // unset means EARNING IS ON — see the note above
     }
 }
 
@@ -228,6 +234,29 @@ pub async fn cap_reward(
     source: RewardSource,
 ) -> u64 {
     if proposed == 0 { return 0; }
+
+    // Brake 0: does this player's EDITION pay real money at all?
+    //
+    // Ahead of both other brakes because it is not a taper, it is a hard no. A
+    // MiniPay player earns an in-game balance and spends real stablecoins in the
+    // shop; they never bank withdrawable G$, and they passed no GoodDollar identity
+    // check on the way in because there was nothing to gate.
+    //
+    // Returning 0 rather than gating each call site keeps this on the same path the
+    // earning pause already uses, and every caller already handles a 0 correctly:
+    // each guards its INSERT with `amount > 0`, so no payout row is written and no
+    // once-per-slot claim is burnt. Play is untouched — XP, ranks, unlocks and
+    // leaderboards all continue.
+    //
+    // Referrals do not pass through here (they are exempt from the weekly cap by
+    // design) and are gated separately in handlers::players::credit_referral.
+    if !crate::services::edition::wallet_earns(&state.db, wallet).await {
+        tracing::info!(
+            "non-earning edition: {} G$ skipped for {} (progression unaffected)",
+            proposed, wallet,
+        );
+        return 0;
+    }
 
     // Brake 1: this wallet's weekly allowance. Not a flat rate — a reward straddling
     // the boundary is split, so this is computed rather than derived from a percentage.
@@ -400,11 +429,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_pause_var_means_paused() {
-        // The important direction. An unset var resuming payouts is the failure that
-        // costs real money and goes unnoticed until the pool moves, so "no answer"
-        // must read as "paused".
-        assert!(paused_from(None));
+    fn an_unset_pause_var_means_earning_is_on() {
+        // The default tracks the INTENDED state, and the pause is lifted. While it was
+        // running this asserted the opposite, for the symmetric reason: an unset var
+        // must never silently flip the economy in either direction, so the assertion
+        // moves with the decision rather than staying pinned one way.
+        assert!(!paused_from(None));
     }
 
     #[test]
