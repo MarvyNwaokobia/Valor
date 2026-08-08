@@ -949,6 +949,26 @@ export class FpsSim {
     e.z = Math.max(b.minZ, Math.min(b.maxZ, nz));
   }
 
+  /**
+   * SECOND WIND: back on your feet where you fell, at full health, with the fight
+   * exactly as you left it.
+   *
+   * Distinct from both of its neighbours. `resetEncounter` throws the whole
+   * encounter back to the start; `revive` (the survival re-arm you pay G$ for)
+   * clears the swarm that killed you. This one changes nothing but you — the room
+   * you were losing is still the room you have to win.
+   *
+   * The mercy window is the point of it: you went down inside someone's burst, and
+   * standing up into the rest of that same burst would spend the second wind for
+   * nothing.
+   */
+  secondWind(mercySecs = 1.6): void {
+    if (this.playerAlive) return;
+    this.playerAlive = true;
+    this.playerHp = FPS_TUNING.PLAYER_HP;
+    this.mercyUntil = this.time + mercySecs;
+  }
+
   /** Reset the encounter (player + enemies) — the scene calls this after a DOWN beat. */
   resetEncounter(): void {
     this.playerHp = FPS_TUNING.PLAYER_HP;
@@ -1059,7 +1079,9 @@ export class FpsSim {
 
   /** Survival re-arm · REVIVE: bring the player back from death at full health
    *  with a longer mercy window, and clear the swarm that downed them so the
-   *  restart is fair. The scene resumes the wave loop from here. No-op if alive. */
+   *  restart is fair. The scene resumes the wave loop from here. No-op if alive.
+   *  This one is PAID for in G$ — the free version is `secondWind`, which leaves
+   *  the enemies exactly where they are. */
   revive(): void {
     if (this.playerAlive) return;
     this.playerAlive = true;
@@ -1093,11 +1115,21 @@ export class FpsSim {
     }
   }
 
-  /** Debug: kill the PLAYER outright (probe hook for headless verification of the
-   *  death path — waiting to be shot down takes minutes under software rendering). */
+  /**
+   * Debug: kill the PLAYER outright (probe hook for headless verification of the
+   * death path — waiting to be shot down takes minutes under software rendering).
+   *
+   * Emits `playerDown` like a real killing shot does. It used to just zero the
+   * health and flip the flag, which meant the hook silently skipped everything the
+   * scene hangs off that event — the down card, the dropped weapon, the loss
+   * report, the second wind — so a probe using it "verified" a death path that no
+   * real death takes.
+   */
   debugKillPlayer(): void {
+    if (!this.playerAlive) return;
     this.playerHp = 0;
     this.playerAlive = false;
+    this.events.push({ kind: 'playerDown' });
   }
 
   /** Debug: drop every enemy now (probe hook for headless verification). */

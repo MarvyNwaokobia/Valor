@@ -309,6 +309,10 @@ const DROP_REST_Y = 0.07;
 /** Metres between footfalls — one puff of dust per stride walked. */
 const STRIDE = 0.95;
 
+/** Sim-seconds on the deck before a second wind puts you back up. Long enough to
+ *  register that you went down, short enough that it never feels like a load. */
+const REVIVE_DELAY = 1.5;
+
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
 const FLOOR_W = 22, FLOOR_D = 38;
@@ -402,6 +406,7 @@ interface Hud {
   lock: HTMLDivElement | null;
   kills: HTMLDivElement | null;
   healthFill: HTMLDivElement | null;
+  refills: HTMLDivElement | null;   // second-wind pips under the health bar
   vignette: HTMLDivElement | null;
   hitDir: HTMLDivElement | null;
   down: HTMLDivElement | null;
@@ -597,6 +602,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    */
   function restartWave(wave: number) {
     holsterWeapon();               // pick the rifle back up
+    // Both second winds come back with the wave — they are per attempt at it, not
+    // per run, or a long run would spend them in wave 1 and never see them again.
+    refills.current = REFILLS;
+    reviveAt.current = 0;
+    paintRefills();
     const seed = endlessOpts?.seed ?? 1;
     const first = firstRoomOfWave(wave);
     const startZ = zForWaveStart(wave, seed);
@@ -741,6 +751,27 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const caOffset = useMemo(() => new THREE.Vector2(lowSpec ? 0.0003 : 0.0007, lowSpec ? 0.0004 : 0.0009), [lowSpec]);
   const heartbeatAt = useRef(0);
   const downAt = useRef(-99);
+  /**
+   * Second wind. Going down doesn't end the attempt while you have one of these:
+   * you get back up where you fell, at full health, with a moment of grace.
+   *
+   * One per op — a single mistake shouldn't cost you a whole clear. Two per endless
+   * wave, because a wave is much longer and losing it to one unlucky corner is a
+   * worse trade there.
+   *
+   * NONE in survival / the Gauntlet: that mode already sells a revive for G$, and
+   * handing out free ones would undercut one of the few real sinks in the economy.
+   *
+   * A refilled death is NOT reported to `onDeath`. In campaign that call is what
+   * writes the loss on-chain, and in endless it is what tells the page the run has
+   * ENDED (Seasonal submits the score on it) — neither is true of a death you got
+   * back up from. Only the final one counts.
+   */
+  const REFILLS = survival ? 0 : endless ? 2 : 1;
+  const refills = useRef(REFILLS);
+  /** Sim-time at which a downed player stands back up; 0 = no revive pending. */
+  const reviveAt = useRef(0);
+  const refillsShown = useRef(-1);   // last count painted to the HUD
   const vignetteHit = useRef(0); // decaying red damage-flash intensity
   const bossFlash = useRef(0);   // decaying pulse when a boss crosses a phase threshold
   // getting shot knocks the camera about (slice 8): stagger + shake
@@ -1045,7 +1076,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     w.__valorKillPlayer = () => sim.debugKillPlayer();
     w.__valorAim = () => ({ pitch: pitch.current, yaw: yaw.current });
     w.__valorAudio = () => audio.stats();
-    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills });
+    // `alive` / `refills` / `reviving` make the second wind observable: a mission
+    // RESTART and a second wind both put health back to full, so the health bar
+    // alone cannot tell you which one happened.
+    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills, simTime: sim.time, alive: sim.snapshot().playerAlive, hp: sim.snapshot().playerHp, refills: refills.current, reviving: reviveAt.current > 0, weaponDown: dropPhysics.current.active, weaponLanded: dropPhysics.current.landed });
     // Endless chain state, for headless verification of the streamed room chain:
     // which room the player is in, how many are live, and whether the room is clear.
     w.__valorEndless = () => {
@@ -1595,10 +1629,21 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       } else if (ev.kind === 'playerDown') {
         downAt.current = now;
         dropWeapon(cam);            // your hands let go of it
-        if (hud.current.down) hud.current.down.style.opacity = '1';
-        // Record the death (once per down event, before the op auto-restarts). The
-        // scene reports it only for a campaign op; other modes ignore it.
-        onDeath?.(sim.snapshot().stats);
+        if (refills.current > 0) {
+          // Second wind: this attempt is not over. The endless and campaign
+          // death paths below both stand down while a revive is pending.
+          refills.current--;
+          reviveAt.current = now + REVIVE_DELAY;
+          showDown(refills.current > 0 ? `SECOND WIND · ${refills.current} LEFT` : 'SECOND WIND · LAST', '#ffb454');
+          paintRefills();
+        } else {
+          reviveAt.current = 0;
+          showDown('DOWN', '#ff5a47');
+          // Record the death — only a FINAL one. In campaign this writes the loss;
+          // firing it on a death you got back up from would log a loss for an op
+          // you may still go on to clear.
+          onDeath?.(sim.snapshot().stats);
+        }
       } else if (ev.kind === 'bossPhase') {
         // The boss just escalated: pulse it, jolt the view, and let Valor mark it.
         bossFlash.current = 1;
@@ -1638,6 +1683,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     }
     impactFx.update(dt);
     stepDroppedWeapon(dt);
+
+    // Second wind: stand back up where you fell. Runs before either death path
+    // below, both of which are gated on there being no revive pending.
+    if (reviveAt.current > 0 && now >= reviveAt.current) {
+      reviveAt.current = 0;
+      sim.secondWind();
+      holsterWeapon();                   // the rifle is back in your hands
+      if (hud.current.down) hud.current.down.style.opacity = '0';
+      vignetteHit.current = 0;
+      staggerP.current = 0; staggerY.current = 0; shake.current = 0;
+      shoveX.current = 0; shoveZ.current = 0;
+    }
     for (let i = 0; i < EFLASH; i++) {
       const m = eFlashRefs.current[i];
       if (m && m.visible && now > eFlashUntil.current[i]) m.visible = false;
@@ -1929,7 +1986,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // never further. You lose the rooms you had cleared inside this wave and nothing
       // else, so a death costs real ground without undoing a session's work. The run
       // itself continues — there is no run-over screen out here.
-      if (!snap.playerAlive && !c.dying) {
+      // A pending second wind holds the wave restart off entirely — you are getting
+      // back up, so the run has not ended and endlessOpts.onDeath (which is what
+      // banks the checkpoint / submits a Seasonal score) must not fire.
+      if (!snap.playerAlive && !c.dying && reviveAt.current === 0) {
         c.dying = true;
         waveDoneUntil.current = 0;
         if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
@@ -2059,7 +2119,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
     }
     // DOWN or COMPLETE → restart the operation after a beat
-    if (!snap.playerAlive && now - downAt.current > 2.2) restartMission();
+    if (!snap.playerAlive && reviveAt.current === 0 && now - downAt.current > 2.2) restartMission();
     // MISSION COMPLETE holds for a beat, then hands off to the debrief interstitial.
     if (completeAt.current > 0 && performance.now() - completeWallAt.current > 2200 && !advanced.current) {
       advanced.current = true;
@@ -2246,6 +2306,27 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     }
   }
 
+  /** The full-screen down card. Reads SECOND WIND when the attempt continues, so
+   *  you know in the moment whether to expect to get back up or to start over. */
+  function showDown(text: string, color: string) {
+    const el = hud.current.down;
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = color;
+    el.style.fontSize = text.length > 8 ? '30px' : '46px';
+    el.style.opacity = '1';
+  }
+
+  /** Pips for the second winds left in this attempt, beside the health bar. Only
+   *  touches the DOM when the count actually changes — this is called per frame. */
+  function paintRefills() {
+    const el = hud.current.refills;
+    if (!el || refillsShown.current === refills.current) return;
+    refillsShown.current = refills.current;
+    el.innerHTML = Array.from({ length: REFILLS }, (_, i) =>
+      `<span style="color:${i < refills.current ? '#5fe0a8' : '#39434d'}">&#9679;</span>`).join(' ');
+  }
+
   function flashHitmarker(killed: boolean, crit = false) {
     const el = hud.current.hit;
     if (!el) return;
@@ -2323,6 +2404,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     if (l) l.style.transform = `translate(${-gap - 8}px, -50%)`;
     if (r) r.style.transform = `translate(${gap}px, -50%)`;
 
+    paintRefills();   // no-ops unless the count moved
     // health bar + damage vignette (red flash on hit, and a base tint when low)
     if (h.healthFill) {
       const frac = Math.max(0, snap.playerHp / snap.maxPlayerHp);
@@ -2480,6 +2562,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
   function restartMission() {
     holsterWeapon();               // pick the rifle back up
+    // A fresh attempt gets a fresh second wind.
+    refills.current = REFILLS;
+    reviveAt.current = 0;
+    paintRefills();
     storyFired.current.clear();
     voQueue.current.length = 0;
     voUntil.current = 0;
@@ -3187,7 +3273,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
   const hud = useRef<Hud>({
     root: null, ammo: null, fireMode: null, weapon: null, loadout: null, attachments: null, nvgTint: null, scope: null, reload: null, reloadBar: null, reloadHint: null, hit: null,
     ch: { t: null, b: null, l: null, r: null }, lock: null, kills: null,
-    healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
+    healthFill: null, refills: null, vignette: null, hitDir: null, down: null, arrows: [],
     objText: null, survEnd: null, survEndText: null, waveHud: null, waveLabel: null, waveRooms: null, waveDone: null, waveDoneText: null, waveDoneSub: null, objArrow: null, briefing: null, complete: null, perf: null,
     lockReticle: null,
     adsBtn: null,
@@ -3773,6 +3859,11 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         <div style={{ position: 'absolute', left: isTouch ? 14 : 26, width: isTouch ? 150 : 220, height: 9, background: 'rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.15)', ...(isTouch ? { top: 40 } : { bottom: 46 }) }}>
           <div ref={(r) => { hud.current.healthFill = r; }} style={{ width: '100%', height: '100%', background: '#5fd08a', transition: 'width .12s, background .2s' }} />
         </div>
+        {/* second winds left in this attempt — a lit pip each. Sits just under the
+            health bar, because it IS a health stat: it is how many more times this
+            bar can come back. */}
+        <div ref={(r) => { hud.current.refills = r; }}
+          style={{ position: 'absolute', left: isTouch ? 14 : 26, fontSize: 11, letterSpacing: 3, lineHeight: 1, ...(isTouch ? { top: 54 } : { bottom: 30 }) }} />
 
         {/* damage vignette (red edges on hit / when low) */}
         <div ref={(r) => { hud.current.vignette = r; }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', boxShadow: 'inset 0 0 150px 44px rgba(200,20,10,.85)', transition: 'opacity .09s' }} />
