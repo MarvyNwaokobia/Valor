@@ -20,8 +20,10 @@ export interface DroppedWeaponOptions {
   /** Where it comes to rest. Not 0: the models are centred on the gun's body, so a
    *  receiver lying on the deck sits a few centimetres up. */
   restY?: number;
-  /** Downward acceleration. Above real gravity on purpose — a dropped rifle should
-   *  read as heavy, and 9.8 floats at this scale. */
+  /** Downward acceleration. Under real gravity on purpose: the drop is a beat you
+   *  are meant to WATCH — the weapon leaving your hands is how the death reads —
+   *  and at true 9.8 (let alone the 15 this used to run) it is on the deck before
+   *  the camera has finished falling with you. */
   gravity?: number;
   rng?: () => number;
 }
@@ -49,7 +51,7 @@ export class DroppedWeapon {
 
   constructor(opts: DroppedWeaponOptions = {}) {
     this.restY = opts.restY ?? 0.07;
-    this.gravity = opts.gravity ?? 15;
+    this.gravity = opts.gravity ?? 6.5;
     this.rng = opts.rng ?? Math.random;
   }
 

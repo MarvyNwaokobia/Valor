@@ -34,6 +34,16 @@ describe('DroppedWeapon', () => {
     expect(w.position.y).toBeLessThan(EYE.y);          // and a little low
   });
 
+  it('falls slowly enough to be watched, not straight onto the deck', () => {
+    // The drop is a beat you are meant to SEE, so half a second in it should still
+    // be in the air. Pins the gentle gravity: at a realistic 9.8 (or the 15 this
+    // once used) it has already landed by here.
+    const w = drop();
+    run(w, 0.5);
+    expect(w.landed).toBe(false);
+    expect(w.position.y).toBeGreaterThan(0.5);
+  });
+
   it('falls, lands on the deck and comes to a complete stop', () => {
     const w = drop();
     run(w, 4);
