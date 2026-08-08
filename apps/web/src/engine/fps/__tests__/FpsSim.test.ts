@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FpsSim, FPS_TUNING, raySphere, rayAABB, jitter, slideMove, type FpsInput, type Vec3, type CoverBox } from '../FpsSim';
+import { FpsSim, FPS_TUNING, raySphere, rayAABB, rayGround, aabbFaceNormal, jitter, slideMove, type FpsInput, type Vec3, type CoverBox } from '../FpsSim';
 import { getGun } from '../../combat/GunStats';
 
 // A shooter at the origin, eye height 1.6, looking straight down -Z. rng=0 makes
@@ -24,6 +24,22 @@ describe('FpsSim geometry helpers', () => {
     expect(rayAABB(EYE, FWD, [[-0.5, 1.4, -6], [0.5, 1.8, -4]])).toBeCloseTo(4, 1);
     expect(rayAABB(EYE, FWD, [[5, 1.4, -6], [6, 1.8, -4]])).toBeNull();
   });
+  it('rayGround meets the floor where a downward shot would land', () => {
+    // From 1.6m up, angled 45° down: it reaches y=0 after 1.6m of drop.
+    const down: Vec3 = [0, -Math.SQRT1_2, -Math.SQRT1_2];
+    expect(rayGround(EYE, down)).toBeCloseTo(1.6 * Math.SQRT2, 3);
+    expect(rayGround(EYE, FWD)).toBeNull();          // level: never comes down
+    expect(rayGround(EYE, [0, 1, 0])).toBeNull();    // climbing
+  });
+
+  it('aabbFaceNormal names the face the round actually struck', () => {
+    const box: [Vec3, Vec3] = [[-1, 0, -1], [1, 2, 1]];
+    expect(aabbFaceNormal([-1, 1, 0], box)).toEqual([-1, 0, 0]);  // west face
+    expect(aabbFaceNormal([1, 1, 0], box)).toEqual([1, 0, 0]);    // east face
+    expect(aabbFaceNormal([0, 2, 0], box)).toEqual([0, 1, 0]);    // top
+    expect(aabbFaceNormal([0, 1, 1], box)).toEqual([0, 0, 1]);    // south face
+  });
+
   it('jitter with zero spread returns the same direction', () => {
     expect(jitter(FWD, 0, () => 0.5)).toEqual(FWD);
   });
@@ -238,6 +254,31 @@ describe('FpsSim firing', () => {
     const evs = sim.step(1 / 60, input());
     expect(evs.some((e) => e.kind === 'wall')).toBe(true);
     expect(evs.some((e) => e.kind === 'hit')).toBe(false);
+  });
+
+  it('a wall hit reports the face it struck, so the impact can spark back out of it', () => {
+    const sim = new FpsSim({
+      gunId: 'sidearm',
+      enemies: [{ pos: [0, -8] }],
+      cover: [{ x: 0, z: -4, w: 2, d: 1, h: 2 }],
+      rng: () => 0,
+    });
+    const wall = sim.step(1 / 60, input()).find((e) => e.kind === 'wall');
+    // Shooting down -Z into the crate's near face: the normal points back at you.
+    expect(wall && wall.kind === 'wall' && wall.normal).toEqual([0, 0, 1]);
+  });
+
+  it('a round aimed at the floor lands ON the floor instead of missing into the sky', () => {
+    // Steeply down and forward, with nothing in the way but the ground.
+    const sim = new FpsSim({ gunId: 'sidearm', enemies: [], rng: () => 0 });
+    const evs = sim.step(1 / 60, input({ dir: [0, -0.6, -0.8] }));
+    const wall = evs.find((e) => e.kind === 'wall');
+    expect(wall).toBeDefined();
+    expect(evs.some((e) => e.kind === 'miss')).toBe(false);
+    if (wall && wall.kind === 'wall') {
+      expect(wall.point[1]).toBeCloseTo(0, 5);   // on the deck
+      expect(wall.normal).toEqual([0, 1, 0]);    // facing up out of it
+    }
   });
 
   it('ADS spread is tighter than hip spread for the same gun', () => {

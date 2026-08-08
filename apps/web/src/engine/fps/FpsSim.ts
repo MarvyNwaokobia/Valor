@@ -86,7 +86,10 @@ export type FpsEvent =
   | { kind: 'empty' }
   | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean; crit: boolean }
   | { kind: 'kill'; enemyId: number }
-  | { kind: 'wall'; point: Vec3 }
+  // The round struck a surface. `normal` points OUT of whatever it hit (the face of
+  // a wall or crate, or straight up off the ground) — impact VFX needs it to throw
+  // sparks back the right way and to lay a bullet hole flat against the surface.
+  | { kind: 'wall'; point: Vec3; normal: Vec3 }
   | { kind: 'miss'; point: Vec3 }
   | { kind: 'fireModeChanged'; mode: FireMode }
   | { kind: 'weaponSwitch'; gunId: GunId; slot: number; name: string }
@@ -97,7 +100,8 @@ export type FpsEvent =
   | { kind: 'enemyAim'; enemyId: number; from: Vec3 }               // windup tell begins
   // A real round: leaves the MUZZLE, flies along `dir`, and stops at `impact`.
   // `part` is the piece of the player it struck (null = it hit cover or air).
-  | { kind: 'enemyFire'; enemyId: number; from: Vec3; dir: Vec3; impact: Vec3; hit: boolean; part: HitPart | null }
+  // `normal` is the face it struck, or null when it struck YOU (or nothing at all).
+  | { kind: 'enemyFire'; enemyId: number; from: Vec3; dir: Vec3; impact: Vec3; hit: boolean; part: HitPart | null; normal: Vec3 | null }
   | { kind: 'playerHit'; damage: number; part: HitPart; from: Vec3; fromDir: Vec3; hp: number }
   | { kind: 'playerDown' }
   // A boss crossed a health threshold and escalated (2 = wounded, 3 = enraged).
@@ -641,14 +645,31 @@ export class FpsSim {
     let bestT: number = FPS_TUNING.MAX_RAY;
     let hitEnemy: FpsEnemy | null = null;
     let hitPart: HitPart = 'torso';
+    // What the round struck, so the impact can be given a surface normal.
+    let hitBox: [Vec3, Vec3] | null = null;
+    let hitGround = false;
 
     // Cover first — a crate closer than an enemy eats the round.
     for (const c of this.cover) {
-      const t = rayAABB(origin, ray, aabbOfCover(c));
+      const box = aabbOfCover(c);
+      const t = rayAABB(origin, ray, box);
       if (t !== null && t < bestT) {
         bestT = t;
         hitEnemy = null;
+        hitBox = box;
+        hitGround = false;
       }
+    }
+
+    // The ground is a surface too. Without it, a round aimed at someone's feet
+    // reported a `miss` and sparked 60m away in mid-air instead of kicking up dirt
+    // where it actually landed.
+    const tg = rayGround(origin, ray);
+    if (tg !== null && tg < bestT) {
+      bestT = tg;
+      hitEnemy = null;
+      hitBox = null;
+      hitGround = true;
     }
 
     for (const e of this.enemies) {
@@ -658,6 +679,8 @@ export class FpsSim {
         bestT = th;
         hitEnemy = e;
         hitPart = 'head';
+        hitBox = null;
+        hitGround = false;
       }
       for (const zone of bodyZones(e)) {
         const t = rayAABB(origin, ray, [zone.min, zone.max]);
@@ -665,6 +688,8 @@ export class FpsSim {
           bestT = t;
           hitEnemy = e;
           hitPart = zone.part;
+          hitBox = null;
+          hitGround = false;
         }
       }
     }
@@ -699,7 +724,8 @@ export class FpsSim {
       this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed, crit });
       if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id });
     } else if (bestT < FPS_TUNING.MAX_RAY) {
-      this.push(out, { kind: 'wall', point });
+      const normal: Vec3 = hitGround ? UP : hitBox ? aabbFaceNormal(point, hitBox) : negate(ray);
+      this.push(out, { kind: 'wall', point, normal });
     } else {
       this.push(out, { kind: 'miss', point });
     }
@@ -829,20 +855,31 @@ export class FpsSim {
     // Trace it: cover eats rounds, otherwise find which part of you it strikes.
     let bestT: number = FPS_TUNING.MAX_RAY;
     let part: HitPart | null = null;
+    let hitBox: [Vec3, Vec3] | null = null;
+    let hitGround = false;
     for (const c of this.cover) {
-      const tc = rayAABB(from, dir, aabbOfCover(c));
-      if (tc !== null && tc < bestT) { bestT = tc; part = null; }
+      const box = aabbOfCover(c);
+      const tc = rayAABB(from, dir, box);
+      if (tc !== null && tc < bestT) { bestT = tc; part = null; hitBox = box; hitGround = false; }
     }
+    const tg = rayGround(from, dir);
+    if (tg !== null && tg < bestT) { bestT = tg; part = null; hitBox = null; hitGround = true; }
     for (const z of playerHitZones(px, pz, eyeY)) {
       const tz = z.sphere
         ? raySphere(from, dir, z.sphere.c, z.sphere.r)
         : rayAABB(from, dir, [z.min!, z.max!]);
-      if (tz !== null && tz < bestT) { bestT = tz; part = z.part; }
+      if (tz !== null && tz < bestT) { bestT = tz; part = z.part; hitBox = null; hitGround = false; }
     }
     const impact: Vec3 = [from[0] + dir[0] * bestT, from[1] + dir[1] * bestT, from[2] + dir[2] * bestT];
+    // A round that struck YOU has no surface to spark off; one that missed into the
+    // scenery does, and that near-miss splash is most of what sells incoming fire.
+    const normal: Vec3 | null = part !== null ? null
+      : hitGround ? UP
+      : hitBox ? aabbFaceNormal(impact, hitBox)
+      : null;
 
     this.enemyShots++;
-    this.push(out, { kind: 'enemyFire', enemyId: e.id, from, dir, impact, hit: part !== null, part });
+    this.push(out, { kind: 'enemyFire', enemyId: e.id, from, dir, impact, hit: part !== null, part, normal });
 
     if (part && this.playerAlive && this.time >= this.mercyUntil) {
       this.mercyUntil = this.time + E.MERCY_MS;
@@ -1268,6 +1305,39 @@ export function raySphere(o: Vec3, d: Vec3, center: Vec3, r: number): number | n
   return t1 >= 0 ? t1 : null;
 }
 
+/** Distance at which the ray meets the ground plane (y = 0), or null if it is level
+ *  or climbing (it never comes down) or the ground is beyond the weapon's reach. */
+export function rayGround(o: Vec3, d: Vec3): number | null {
+  if (d[1] >= -1e-6 || o[1] <= 0) return null;
+  const t = -o[1] / d[1];
+  return t > 0 && t < FPS_TUNING.MAX_RAY ? t : null;
+}
+
+/**
+ * The outward normal of the box face that `p` lies on. `p` comes off a ray-AABB
+ * hit, so it is ON the surface by construction and the nearest face is the one it
+ * struck; ties (a corner shot) resolve to whichever axis is checked first, which is
+ * as good an answer as any.
+ */
+export function aabbFaceNormal(p: Vec3, box: [Vec3, Vec3]): Vec3 {
+  const [min, max] = box;
+  let best = Infinity;
+  let normal: Vec3 = UP;
+  for (let i = 0; i < 3; i++) {
+    const dLo = Math.abs(p[i] - min[i]);
+    if (dLo < best) {
+      best = dLo;
+      normal = i === 0 ? [-1, 0, 0] : i === 1 ? [0, -1, 0] : [0, 0, -1];
+    }
+    const dHi = Math.abs(p[i] - max[i]);
+    if (dHi < best) {
+      best = dHi;
+      normal = i === 0 ? [1, 0, 0] : i === 1 ? UP : [0, 0, 1];
+    }
+  }
+  return normal;
+}
+
 /** Nearest positive ray-AABB (slab method) hit distance, or null. */
 export function rayAABB(o: Vec3, d: Vec3, box: [Vec3, Vec3]): number | null {
   const [min, max] = box;
@@ -1315,6 +1385,9 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 function normalize(v: Vec3): Vec3 {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / l, v[1] / l, v[2] / l];
+}
+function negate(v: Vec3): Vec3 {
+  return [-v[0], -v[1], -v[2]];
 }
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;

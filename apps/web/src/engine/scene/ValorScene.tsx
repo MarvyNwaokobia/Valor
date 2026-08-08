@@ -7,6 +7,9 @@ import { EffectComposer, Bloom, Noise, Vignette, ChromaticAberration, N8AO } fro
 import { BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
 import { usePbr } from './usePbr';
+import { makeTriplanarMaterial } from './triplanar';
+import { ImpactFX, type ImpactSurface } from '../vfx/ImpactFX';
+import { useImpactTextures } from '../vfx/useImpactTextures';
 import {
   FpsSim,
   xpForKill, rankForXp, xpIntoRank, xpBarSize, rankUpsBetween, gReward, careerXpFor, XP_REWARD, rayAABB, aabbOfCover, slideMove, type FpsInput, type Vec3, type Rank, type Attachment,
@@ -666,12 +669,47 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const footstepAt = useRef(0);
   const swayT = useRef(0); // bodycam handheld drift (slice 7)
 
-  // ── Slice 7 surfaces: Poly Haven CC0 PBR. One base per surface, because drei
-  // caches textures by URL and a shared base would stomp the other's tiling.
+  // ── Slice 7 surfaces: Poly Haven CC0 PBR. The `repeat` passed here no longer
+  // decides anything — the materials below are triplanar and derive their texture
+  // coordinates from world position — but it is still what a non-triplanar reader
+  // of these maps would get, so it stays truthful.
   const floorMaps = usePbr('burned_ground_01', [12, 20]);
   const brickMaps = usePbr('broken_brick_wall', [7, 1.6]);
   const plasterMaps = usePbr('damaged_plaster', [4, 1.4]);
   const plankMaps = usePbr('black_painted_planks', [1, 1]);
+
+  /**
+   * World-space materials for the level shell.
+   *
+   * Every wall and crate is the same UNIT_BOX scaled to size, so UV texturing gave
+   * each one the whole texture across its face however big it was: brick smeared
+   * six times wider on a long wall than on the crate next to it, mortar lines that
+   * changed thickness per mesh. Triplanar sizes the texture in METRES instead, so a
+   * `metresPerTile` slab of brick is the same slab of brick everywhere.
+   *
+   * Sizes below match what the old repeats worked out to on a typical wall, so the
+   * surfaces read at the density they were art-directed at — they are just
+   * consistent now. One material each, shared by every mesh of that surface, which
+   * also retires the per-wall <meshStandardMaterial> the JSX used to allocate.
+   */
+  const shellMaterials = useMemo(() => ({
+    floor: makeTriplanarMaterial(floorMaps, { color: theme.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9 }),
+    brick: makeTriplanarMaterial(brickMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7 }),
+    plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8 }),
+    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 1.2 }),
+  }), [floorMaps, brickMaps, plasterMaps, plankMaps, theme.floorTint, theme.wallTint]);
+
+  useEffect(() => () => { for (const m of Object.values(shellMaterials)) m.dispose(); }, [shellMaterials]);
+
+  // ── Impact VFX: sparks, dust, debris and the holes they leave behind ──
+  const impactMaps = useImpactTextures();
+  const impactFx = useMemo(
+    // Same tier that drops the postprocessing stack and the set dressing: half the
+    // particles, shorter-lived and fewer decals.
+    () => new ImpactFX(impactMaps, { quality: minimal || lowSpec ? 'lean' : 'full' }),
+    [impactMaps, minimal, lowSpec],
+  );
+  useEffect(() => () => impactFx.dispose(), [impactFx]);
   const caOffset = useMemo(() => new THREE.Vector2(lowSpec ? 0.0003 : 0.0007, lowSpec ? 0.0004 : 0.0009), [lowSpec]);
   const heartbeatAt = useRef(0);
   const downAt = useRef(-99);
@@ -767,7 +805,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const bulletRefs = useRef<Array<THREE.Mesh | null>>([]);
   const bulletHead = useRef(0);
   const bullets = useRef(Array.from({ length: 28 }, () => ({
-    active: false, t: 0, dur: 0, hit: false,
+    // `normal` is the face the round is flying into, carried along so the burst on
+    // arrival can throw its sparks back out of the wall rather than into it. Null
+    // when the round is on its way to a body.
+    active: false, t: 0, dur: 0, hit: false, normal: null as Vec3 | null,
     from: new THREE.Vector3(), to: new THREE.Vector3(),
   })));
 
@@ -778,10 +819,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const beamUntil = useRef<number[]>(Array(16).fill(0));
   const beamHead = useRef(0);
 
-  const IMPACTS = 14;
-  const impactRefs = useRef<Array<THREE.Mesh | null>>([]);
-  const impactUntil = useRef<number[]>(Array(IMPACTS).fill(0));
-  const impactHead = useRef(0);
+  // (Impacts themselves are ImpactFX — a pooled particle + decal system, built above.)
 
   // enemy muzzle flashes (a bright, visible "they fired" pop) + a shared light
   const EFLASH = 6;
@@ -1426,7 +1464,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       } else if (ev.kind === 'hit' || ev.kind === 'wall' || ev.kind === 'miss') {
         muzzleRef.current.getWorldPosition(tmp2);
         spawnBeam(tmp2, ev.point, false);                       // your tracer line, restored
-        spawnImpact(ev.point, ev.kind === 'hit');
+        // A `miss` struck nothing at all — it is the round still travelling at the
+        // end of the weapon's reach, so there is no surface to spark off. It used to
+        // get one anyway, which put a puff of dust in mid-air 60m out.
+        if (ev.kind === 'hit') spawnFleshImpact(ev.point, tmp2);
+        else if (ev.kind === 'wall') spawnImpact(ev.point, ev.normal, surfaceAt(ev.point, ev.normal), impactPower());
         if (ev.kind === 'hit') {
           audio.impact('flesh', ev.point);
           audio.hitmarker(ev.killed);
@@ -1458,8 +1500,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         // The sim traced this round from their barrel to whatever it struck —
         // your head, your leg, a crate. Fly it exactly along that ray.
         const from = tmp2.set(ev.from[0], ev.from[1], ev.from[2]);
-        spawnBeam(from, ev.impact, true);              // the line from their gun to you
-        spawnBullet(from, ev.impact, ev.hit, true);    // and the round travelling down it
+        spawnBeam(from, ev.impact, true);                          // the line from their gun to you
+        spawnBullet(from, ev.impact, ev.hit, true, ev.normal);     // and the round travelling down it
         audio.enemyShot(ev.from); // spatialised: you hear the direction
       } else if (ev.kind === 'playerHit') {
         // A round landing should MOVE you: the head snaps, the view rolls, and
@@ -1514,17 +1556,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       if (u >= 1) {
         st.active = false;
         m.visible = false;
-        spawnImpact([st.to.x, st.to.y, st.to.z], st.hit); // the spark lands with the round
+        // The burst lands WITH the round, not when it was fired. A round that
+        // struck the player gets none: at that range it would be a faceful of
+        // sprite, and the red vignette + shake already say you were hit.
+        if (!st.hit && st.normal) {
+          const at: Vec3 = [st.to.x, st.to.y, st.to.z];
+          spawnImpact(at, st.normal, surfaceAt(at, st.normal), 0.9);
+        }
       }
     }
-    for (let i = 0; i < IMPACTS; i++) {
-      const m = impactRefs.current[i];
-      if (m && m.visible) {
-        const life = impactUntil.current[i] - now;
-        if (life <= 0) m.visible = false;
-        else m.scale.setScalar(0.02 + (0.35 - life) * 0.18);
-      }
-    }
+    impactFx.update(dt);
     for (let i = 0; i < EFLASH; i++) {
       const m = eFlashRefs.current[i];
       if (m && m.visible && now > eFlashUntil.current[i]) m.visible = false;
@@ -2015,7 +2056,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   }
 
   /** Launch a visible round from `from` to `to`. It sparks on arrival, not on fire. */
-  function spawnBullet(from: THREE.Vector3, to: Vec3, isHit: boolean, enemyRound: boolean) {
+  function spawnBullet(from: THREE.Vector3, to: Vec3, isHit: boolean, enemyRound: boolean, normal: Vec3 | null = null) {
     const i = bulletHead.current = (bulletHead.current + 1) % BULLETS;
     const m = bulletRefs.current[i];
     const st = bullets.current[i];
@@ -2024,22 +2065,46 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     st.to.set(to[0], to[1], to[2]);
     const speed = enemyRound ? ENEMY_BULLET_SPEED : PLAYER_BULLET_SPEED;
     st.dur = Math.max(0.02, st.from.distanceTo(st.to) / speed);
-    st.t = 0; st.active = true; st.hit = isHit;
+    st.t = 0; st.active = true; st.hit = isHit; st.normal = normal;
     m.scale.set(enemyRound ? 1.1 : 1, enemyRound ? 1.1 : 1, enemyRound ? 0.8 : 1);
     (m.material as THREE.MeshBasicMaterial).color.setHex(enemyRound ? 0xff6a3a : 0xffe6a8);
     m.position.copy(st.from);
     m.visible = true;
   }
 
-  function spawnImpact(at: Vec3, isHit: boolean) {
-    const i = impactHead.current = (impactHead.current + 1) % IMPACTS;
-    const m = impactRefs.current[i];
-    if (!m) return;
-    m.position.set(at[0], at[1], at[2]);
-    (m.material as THREE.MeshBasicMaterial).color.set(isHit ? 0xff5533 : 0xdcc6a0);
-    m.visible = true;
-    m.scale.setScalar(0.05);
-    impactUntil.current[i] = sim.time + 0.35;
+  /** What a round landing here is going through. The sim only knows "a box" — the
+   *  scene is what knows that the boxes in LEVEL_COVER are scorched planking and
+   *  everything else is the compound's brick and plaster. */
+  function surfaceAt(at: Vec3, normal: Vec3): ImpactSurface {
+    if (normal[1] > 0.9 && at[1] < 0.06) return 'dirt';
+    for (const c of LEVEL_COVER) {
+      if (
+        Math.abs(at[0] - c.x) <= c.w / 2 + 0.08
+        && Math.abs(at[2] - c.z) <= c.d / 2 + 0.08
+        && at[1] <= c.h + 0.08
+      ) return 'wood';
+    }
+    return 'concrete';
+  }
+
+  /** How big a burst the ACTIVE weapon throws. Rides the muzzle-flash scale each gun
+   *  is already tuned with, so a new gun gets a matching impact for free. */
+  function impactPower(): number {
+    const f = GUN_FEEL[sim.gun.id] ?? feel;
+    return Math.max(0.7, Math.min(1.5, f.flashScale));
+  }
+
+  /** A round lands: flash, sparks, dust, chips, and a hole left in the surface. */
+  function spawnImpact(at: Vec3, normal: Vec3, surface: ImpactSurface, power = 1) {
+    impactFx.burst(at, normal, surface, power);
+  }
+
+  /** A hit on a BODY sprays back toward whoever fired it, so the mist is visible to
+   *  the shooter instead of being hidden behind the target. */
+  function spawnFleshImpact(at: Vec3, shotFrom: THREE.Vector3) {
+    const dx = shotFrom.x - at[0], dy = shotFrom.y - at[1], dz = shotFrom.z - at[2];
+    const len = Math.hypot(dx, dy, dz) || 1;
+    impactFx.burst(at, [dx / len, dy / len, dz / len], 'flesh', 1);
   }
 
   function flashHit(enemyId: number, killed = false) {
@@ -2366,7 +2431,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           the chain can run to -Z forever without an enormous floor */}
       <mesh ref={floorRef} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[FLOOR_W, endless ? ENDLESS_FLOOR_D : FLOOR_D]} />
-        <meshStandardMaterial {...floorMaps} color={theme.floorTint} roughness={1} metalness={0} />
+        {/* World-space texturing pins the ground to the WORLD, not to the plane, so
+            the endless floor can jump along Z to follow the player without the
+            texture visibly sliding under their feet. */}
+        <primitive object={shellMaterials.floor} attach="material" />
       </mesh>
 
       {/* compound walls: brick perimeter, plastered interior dividers, each capped
@@ -2382,7 +2450,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
               a fixed mission, but endless streams rooms in and out continuously, so it
               meant churning ~10 GPU buffers every time the player crossed a doorway. */}
           <mesh geometry={UNIT_BOX} position={[c.x, c.h / 2, c.z]} scale={[c.w, c.h, c.d]} castShadow receiveShadow>
-            <meshStandardMaterial {...(i < 3 ? brickMaps : plasterMaps)} color={theme.wallTint} roughness={1} metalness={0} />
+            <primitive object={i < 3 ? shellMaterials.brick : shellMaterials.plaster} attach="material" />
           </mesh>
           {/* The coping is a decorative cap on top of a wall. Endless drops it entirely:
               it doubles the wall mesh count and every one of those is a draw call, for a
@@ -2398,7 +2466,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       {/* cover: scorched planking */}
       {LEVEL_COVER.map((c) => (
         <mesh key={`c${c.x}_${c.z}_${c.w}_${c.d}`} geometry={UNIT_BOX} position={[c.x, c.h / 2, c.z]} scale={[c.w, c.h, c.d]} castShadow receiveShadow>
-          <meshStandardMaterial {...plankMaps} color="#6b6055" roughness={0.95} metalness={0.05} />
+          <primitive object={shellMaterials.plank} attach="material" />
         </mesh>
       ))}
 
@@ -2494,13 +2562,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         </mesh>
       ))}
 
-      {/* impact pool */}
-      {Array.from({ length: IMPACTS }).map((_, i) => (
-        <mesh key={i} ref={(m) => { impactRefs.current[i] = m; }} visible={false}>
-          <sphereGeometry args={[1, 8, 6]} />
-          <meshBasicMaterial color="#dcc6a0" />
-        </mesh>
-      ))}
+      {/* impacts: sparks, dust, debris and the bullet holes they leave behind.
+          Five instanced draw calls for the whole firefight, however heavy it gets. */}
+      <primitive object={impactFx.group} />
 
       {/* ── bodycam post ── C3: the LIGHT stack drops N8AO (a whole normal re-render
           pass) and Bloom (a mipmap blur) — the two priciest effects — keeping only the

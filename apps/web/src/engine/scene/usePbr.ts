@@ -11,7 +11,13 @@ import * as THREE from 'three';
  *
  * NOTE: drei caches textures by URL, so two calls with the same `base` share the
  * SAME texture objects (and therefore the same `repeat`). Give each surface its
- * own base, or the tiling of one will stomp the other.
+ * own base, or the tiling of one will stomp the other. (Materials built with
+ * `makeTriplanarMaterial` are exempt: they never read `repeat`.)
+ *
+ * The returned object is stable across renders as long as the textures are, which
+ * matters because callers memoise materials on it — `useTexture` itself rebuilds
+ * its result object every single render, so keying anything on that directly
+ * rebuilds it every render too.
  */
 
 const T = '/textures/ashfall';
@@ -29,14 +35,18 @@ export function usePbr(base: string, repeat: [number, number]): PbrMaps {
     roughnessMap: `${T}/${base}_rough_1k.jpg`,
   }) as unknown as PbrMaps;
 
+  const { map, normalMap, roughnessMap } = maps;
   return useMemo(() => {
-    for (const [key, tex] of Object.entries(maps) as [keyof PbrMaps, THREE.Texture][]) {
+    const configured: PbrMaps = { map, normalMap, roughnessMap };
+    for (const [key, tex] of Object.entries(configured) as [keyof PbrMaps, THREE.Texture][]) {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
       tex.repeat.set(repeat[0], repeat[1]);
       tex.colorSpace = key === 'map' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       tex.anisotropy = 4;
     }
-    return maps;
+    return configured;
+    // Keyed on the TEXTURES (stable, cached by URL), not on useTexture's result
+    // object (new every render).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [maps]);
+  }, [map, normalMap, roughnessMap, repeat[0], repeat[1]]);
 }
