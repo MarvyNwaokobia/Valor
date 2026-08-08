@@ -3,9 +3,16 @@
  * @description Set-dressing placement (A5) — pure so it's testable without three.
  *
  * Scatters believable clutter (barrels / crates / sandbags / rubble) that HUGS the
- * compound walls, deterministic per layout. Props are DECORATION, never sim
- * colliders, so they can't block movement; they're kept clear of every
- * enemy / objective / the start so they can never hide a target from the player.
+ * compound walls, deterministic per layout, kept clear of every enemy / objective
+ * / the start so it can never hide a target from the player.
+ *
+ * Props are SOLID: `propCollider` gives each one a footprint, and the scene feeds
+ * those to the sim alongside the walls and cover. They used to be pure decoration
+ * that nothing collided with, which is what let people and enemies walk through a
+ * stack of barrels as if it were fog.
+ *
+ * The debris scatter is the exception and stays walk-through: it is ankle-high
+ * rubble, and being stopped dead by a brick reads as a bug, not as cover.
  */
 import type { Mission } from '../fps/campaign';
 import type { CoverBox } from '../fps';
@@ -60,4 +67,33 @@ export function dressingFor(mission: Mission): PropSpec[] {
     props.push({ kind: KINDS[(rng() * KINDS.length) | 0], x, z, rot: rng() * Math.PI * 2 });
   }
   return props;
+}
+
+/**
+ * The footprint a prop blocks, or null if you should be able to walk over it.
+ *
+ * Square, and sized to the prop's widest span rather than its exact silhouette,
+ * because CoverBox is axis-aligned and every prop is placed at a random yaw — a
+ * tight box would poke out of the mesh at 45°. A shade generous is the right error
+ * here: brushing to a stop just before a barrel reads fine, clipping into one does
+ * not. Heights are the real ones, so a crate you can shoot over still stops a body.
+ */
+export function propCollider(p: PropSpec): CoverBox | null {
+  switch (p.kind) {
+    // Three 0.56-wide barrels spread over a ~0.6 cluster.
+    case 'barrels': return { x: p.x, z: p.z, w: 1.15, d: 1.15, h: 0.9 };
+    // A 0.66 crate with a smaller one stacked on it.
+    case 'crates': return { x: p.x, z: p.z, w: 0.95, d: 0.95, h: 1.05 };
+    // A row of bags about 1.1 across and two courses high. Square like the rest,
+    // not 1.1 x 0.5: the row is laid at a random yaw, and an oblong axis-aligned
+    // box would be plain wrong half the time.
+    case 'sandbags': return { x: p.x, z: p.z, w: 1.1, d: 1.1, h: 0.68 };
+    // Rubble: ankle height. You step over it.
+    case 'debris': return null;
+  }
+}
+
+/** Every solid footprint in a mission's dressing, ready to hand to the sim. */
+export function dressingColliders(props: readonly PropSpec[]): CoverBox[] {
+  return props.map(propCollider).filter((c): c is CoverBox => c !== null);
 }

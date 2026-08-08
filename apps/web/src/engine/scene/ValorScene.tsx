@@ -29,7 +29,7 @@ import {
   buildChain, generateRoom, entryCap, spawnPointFor, zForWaveStart, firstRoomOfWave, roomsForWave, ROOM_W,
   type GeneratedRoom,
 } from '../fps/endless';
-import { dressingFor, type PropSpec } from './setDressing';
+import { dressingFor, dressingColliders, type PropSpec } from './setDressing';
 import { useSurvivalRearm, NeedArmError, type RearmAction } from '@/hooks/useSurvivalRearm';
 import { useGauntlet, type GauntletBoardRow, type SeasonInfo } from '@/hooks/useGauntlet';
 
@@ -204,8 +204,9 @@ function Prop({ kind, x, z, rot }: PropSpec) {
   );
 }
 
-function SetDressing({ mission }: { mission: Mission }) {
-  const props = useMemo(() => dressingFor(mission), [mission]);
+/** Takes the prop list rather than deriving it, so the meshes you see and the
+ *  colliders the sim was built with can never be two different scatters. */
+function SetDressing({ props }: { props: PropSpec[] }) {
   return <>{props.map((p, i) => <Prop key={i} {...p} />)}</>;
 }
 
@@ -304,6 +305,9 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
 // Where a dropped weapon comes to rest. Not 0: the models are centred on the body
 // of the gun, so a receiver lying on the deck sits a few centimetres up.
 const DROP_REST_Y = 0.07;
+
+/** Metres between footfalls — one puff of dust per stride walked. */
+const STRIDE = 0.95;
 
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
@@ -537,7 +541,24 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // In endless the collider set is LIVE: rooms are appended ahead of the player and
   // pruned behind them, so this array is mutated in place rather than rebuilt. Every
   // per-frame loop below already re-reads it, so they pick up new geometry for free.
-  const COLLIDERS = useMemo(() => [...mission.walls, ...mission.cover], [mission]);
+  // The clutter hugging the walls. Authored missions only — survival and endless
+  // don't dress their rooms.
+  const DRESSING = useMemo(
+    () => (mission.survival || mission.endless ? [] : dressingFor(mission)),
+    [mission],
+  );
+  // Barrels, crates and sandbags are SOLID, alongside the walls and cover. They were
+  // decoration that nothing collided with, so people and enemies walked through
+  // them. Debris is excluded by propCollider — ankle-high rubble you step over.
+  //
+  // Note these go in whatever the visual tier is. `minimal` drops the prop MESHES
+  // to save draw calls, and a collider set that changed with the framerate would be
+  // worse than an unlit corner you can't walk into: the sim is handed this list
+  // once at construction, and collision must not depend on how fast the phone is.
+  const COLLIDERS = useMemo(
+    () => [...mission.walls, ...mission.cover, ...dressingColliders(DRESSING)],
+    [mission, DRESSING],
+  );
   const theme = themeForMission(mission);
   const isFinale = !endless && mission.id === CAMPAIGN[CAMPAIGN.length - 1].id;
   const survival = !!mission.survival;
@@ -803,6 +824,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const dummyRefs = useRef<Array<THREE.Group | null>>([]);
   const dummyFlash = useRef<number[]>(ENEMY_SLOTS.map(() => 0));
   const rigApis = useRef<Array<OperatorApi | null>>([]);
+  // Ground covered by each enemy since its last footfall, and where it was last
+  // sampled — a puff of dust is spent per STRIDE walked (see the rig loop).
+  const enemyStepDist = useRef<number[]>(ENEMY_SLOTS.map(() => 0));
+  const enemyStepPos = useRef<[number, number][]>(ENEMY_SLOTS.map((e) => [e.pos[0], e.pos[1]]));
 
   // Rounds you can SEE. Slow enough to read (a real bullet would be invisible),
   // fast enough to feel lethal. Yours fly out; theirs come at you.
@@ -1334,6 +1359,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     if (moving && sim.time - footstepAt.current > (adsCur.current > 0.5 ? 0.62 : 0.42)) {
       audio.footstep();
       footstepAt.current = sim.time;
+      // Your own boot lifting the ash. Behind and below the eye, so it puffs out
+      // around your feet at the edge of frame instead of in the middle of your view.
+      impactFx.scuff([nx, 0, nz], 0.85);
     }
 
     // ── Drive the camera ──
@@ -1648,6 +1676,25 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       const shown = e.alive || e.deadAt >= 0;
       const dz = Math.abs(e.z - pos.current.z);
       g.visible = shown && (!endless || dz < (e.active ? ENDLESS_CULL_ACTIVE : ENDLESS_CULL_DORMANT));
+      // Boots lifting the ash. Measured by DISTANCE COVERED rather than on a timer,
+      // so a puff means a step was actually taken: a man holding still never smokes,
+      // and one sprinting past leaves a trail at the right spacing. Only for the
+      // ones on screen, so an unseen room isn't spending particles.
+      if (e.alive && g.visible) {
+        const prev = enemyStepPos.current[i];
+        const moved = Math.hypot(e.x - prev[0], e.z - prev[1]);
+        if (moved > 0.001) {
+          prev[0] = e.x; prev[1] = e.z;
+          enemyStepDist.current[i] += moved;
+          if (enemyStepDist.current[i] >= STRIDE) {
+            enemyStepDist.current[i] = 0;
+            impactFx.scuff([e.x, 0, e.z], 0.7);
+          }
+        }
+      } else {
+        enemyStepPos.current[i][0] = e.x;
+        enemyStepPos.current[i][1] = e.z;
+      }
       g.position.set(e.x, 0, e.z);
       g.rotation.set(0, e.facing, 0); // face the player
       g.scale.set(1, 1, 1);
@@ -2554,9 +2601,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         </mesh>
       ))}
 
-      {/* set dressing: barrels, crates, sandbags, rubble hugging the walls.
-          Dropped on `minimal` (struggling desktop/laptop) to cut draw calls. */}
-      {!survival && !endless && !minimal && <SetDressing mission={mission} />}
+      {/* set dressing: barrels, crates, sandbags, rubble hugging the walls. Solid
+          now — the footprints went into COLLIDERS above. Dropped on `minimal`
+          (struggling desktop/laptop) to cut draw calls; the colliders stay, so on
+          that tier alone the clutter is felt rather than seen. */}
+      {!minimal && <SetDressing props={DRESSING} />}
 
       {/* waypoint beacon at the current objective */}
       <group ref={waypointRef}>

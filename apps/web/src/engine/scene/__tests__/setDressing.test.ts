@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { dressingFor, PROP_CLEAR, PROP_WALL_MIN, PROP_WALL_MAX } from '../setDressing';
+import { dressingFor, dressingColliders, propCollider, PROP_CLEAR, PROP_WALL_MIN, PROP_WALL_MAX } from '../setDressing';
 import { CAMPAIGN } from '../../fps/campaign';
+import { slideMove, FPS_TUNING } from '../../fps';
 import type { CoverBox } from '../../fps';
 
 const inBox = (x: number, z: number, b: CoverBox, pad: number) => Math.abs(x - b.x) < b.w / 2 + pad && Math.abs(z - b.z) < b.d / 2 + pad;
@@ -12,6 +13,39 @@ const wallDist = (x: number, z: number, walls: CoverBox[]) => {
   }
   return m;
 };
+
+describe('set dressing is SOLID', () => {
+  it('gives barrels, crates and sandbags a footprint, and leaves rubble walkable', () => {
+    expect(propCollider({ kind: 'barrels', x: 1, z: 2, rot: 0 })).toMatchObject({ x: 1, z: 2 });
+    expect(propCollider({ kind: 'crates', x: 0, z: 0, rot: 0 })).not.toBeNull();
+    expect(propCollider({ kind: 'sandbags', x: 0, z: 0, rot: 0 })).not.toBeNull();
+    // Ankle-high rubble: being stopped dead by a brick reads as a bug.
+    expect(propCollider({ kind: 'debris', x: 0, z: 0, rot: 0 })).toBeNull();
+  });
+
+  it('a body cannot walk through a barrel stack', () => {
+    const prop = { kind: 'barrels' as const, x: 0, z: 0, rot: 0.7 };
+    const boxes = dressingColliders([prop]);
+    const R = FPS_TUNING.ENEMY.BODY_R;
+    let x = 0, z = 4;
+    for (let s = 0; s < 300; s++) [x, z] = slideMove(x, z, x, z - 0.05, R, boxes);
+    // Walked straight at it for 15m of travel and it is still on the near side.
+    expect(z).toBeGreaterThan(0);
+  });
+
+  it('every mission dressing produces colliders the sim can take', () => {
+    for (const m of CAMPAIGN) {
+      const props = dressingFor(m);
+      const boxes = dressingColliders(props);
+      expect(boxes.length).toBe(props.filter((p) => p.kind !== 'debris').length);
+      for (const b of boxes) {
+        expect(b.w).toBeGreaterThan(0);
+        expect(b.d).toBeGreaterThan(0);
+        expect(b.h).toBeGreaterThan(0);
+      }
+    }
+  });
+});
 
 describe('set dressing (A5)', () => {
   it('is deterministic for a given op', () => {

@@ -699,6 +699,26 @@ export class ImpactFX {
     }
   }
 
+  /**
+   * Dust kicked up by a boot. Small, low and brief — a footfall, not an impact.
+   *
+   * Deliberately cheap: this fires for every character on every step, so a room
+   * with eight enemies in it is running a dozen of these a second. One or two
+   * billboards each, no sparks, no decal.
+   */
+  scuff(at: Vec3, power = 1) {
+    const q = this.lean ? 0.5 : 1;
+    // Drifts up and slightly outward, the way disturbed dust actually behaves,
+    // rather than being thrown — a walking boot displaces air, it doesn't blast.
+    this.dust.emit({
+      origin: [at[0], at[1] + 0.04, at[2]],
+      dir: UP, spread: 1.1, count: this.lean ? 1 : 2,
+      speed: [0.25, 0.9], life: [0.35, 0.75], size: [0.1, 0.2],
+      color: SURFACES.dirt.dust, alpha: 0.42 * power * q,
+      gravity: -0.35, drag: 0.88, grow: 2.6, jitter: 0.14, spin: 0.9,
+    });
+  }
+
   update(dt: number) {
     // Clamped: a tab restored after a long stall must not teleport every spark to
     // the other side of the map in one step.

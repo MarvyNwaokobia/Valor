@@ -1191,24 +1191,51 @@ function sweepBox(
   return { t: entry, nx: 0, nz: dz < 0 ? 1 : -1 };
 }
 
-/** Least-penetration eject for a body that is ALREADY embedded (spawned inside a wall,
- *  or shoved in off a corpse). Two passes because leaving one box can enter another.
- *  For a thin slab this pushes out along the thin axis, which is the correct direction. */
+/**
+ * Free a body that is ALREADY embedded (spawned inside a wall, shoved in off a
+ * corpse, or clamped into one by the arena bounds).
+ *
+ * Pushes out along the shallowest axis, but takes the SIDE from `fromX/fromZ` —
+ * the last position the body is known to have been legal at. That is what stops
+ * this from being an exit through the far face: a body a few centimetres into a
+ * wall is, by least-penetration alone, just as close to the outside of the far
+ * side once the box is inflated by a big radius, and picking wrong teleports it
+ * through.
+ *
+ * Iterates rather than running a fixed two passes, because leaving one box can
+ * enter another and an inside corner needs several rounds to converge. This is
+ * exactly where it used to fail: pass one pushed the body out of wall A and into
+ * wall B, pass two pushed it out of B — through it — and nothing rechecked A.
+ */
 function ejectEmbedded(
   x: number, z: number, r: number, boxes: readonly CoverBox[],
+  fromX: number, fromZ: number,
 ): [number, number] {
   let nx = x, nz = z;
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < 8; pass++) {
+    let moved = false;
     for (const c of boxes) {
       const hx = c.w / 2 + r, hz = c.d / 2 + r;
       const dx = nx - c.x, dz = nz - c.z;
-      if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
-        if (hx - Math.abs(dx) < hz - Math.abs(dz)) nx = c.x + Math.sign(dx || 1) * hx;
-        else nz = c.z + Math.sign(dz || 1) * hz;
+      if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) continue;
+      if (hx - Math.abs(dx) < hz - Math.abs(dz)) {
+        nx = c.x + Math.sign((fromX - c.x) || dx || 1) * hx;
+      } else {
+        nz = c.z + Math.sign((fromZ - c.z) || dz || 1) * hz;
       }
+      moved = true;
     }
+    if (!moved) break; // free of everything
   }
   return [nx, nz];
+}
+
+/** Push a body out of any geometry it is standing inside. Used at spawn, where a
+ *  hand-authored position can sit inside a crate nobody measured against. */
+export function ejectFromCover(
+  x: number, z: number, r: number, boxes: readonly CoverBox[],
+): [number, number] {
+  return ejectEmbedded(x, z, r, boxes, x, z);
 }
 
 /**
@@ -1222,8 +1249,13 @@ export function slideMove(
   ox: number, oz: number, tx: number, tz: number, r: number, boxes: readonly CoverBox[],
 ): [number, number] {
   const SKIN = 1e-3; // stop a hair short of the face so the next frame isn't "inside"
-  let px = ox, pz = oz;
-  let dx = tx - ox, dz = tz - oz;
+  // Free the START before sweeping. A sweep that begins inside a box reports no
+  // hit at all (see sweepBox — an entry test cannot fire from within), so a body
+  // that is embedded for any reason would move through that box unopposed for the
+  // whole frame, and only get ejected after the fact — by then possibly out the
+  // far side. Nothing downstream can recover from that, so it is fixed up front.
+  let [px, pz] = ejectEmbedded(ox, oz, r, boxes, ox, oz);
+  let dx = tx - px, dz = tz - pz;
   for (let iter = 0; iter < 2 && (dx !== 0 || dz !== 0); iter++) {
     let best: { t: number; nx: number; nz: number } | null = null;
     for (const c of boxes) {
@@ -1238,7 +1270,9 @@ export function slideMove(
     dx = best.nx !== 0 ? 0 : dx * rem;
     dz = best.nz !== 0 ? 0 : dz * rem;
   }
-  return ejectEmbedded(px, pz, r, boxes);
+  // The origin is the reference side: whatever happened during the sweep, the body
+  // comes to rest on the side of each wall it started this frame on.
+  return ejectEmbedded(px, pz, r, boxes, ox, oz);
 }
 
 export function aabbOfCover(c: CoverBox): [Vec3, Vec3] {
