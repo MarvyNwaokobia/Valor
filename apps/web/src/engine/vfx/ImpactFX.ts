@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DECAL_TILES, makeImpactDecalAtlas } from './impactDecalTexture';
+import { DECAL_TILES, makeBloodDecalAtlas, makeImpactDecalAtlas } from './impactDecalTexture';
 
 /**
  * Everything that happens where a round lands: a hot flash, sparks, a dust puff,
@@ -13,9 +13,11 @@ import { DECAL_TILES, makeImpactDecalAtlas } from './impactDecalTexture';
  *   sparks  additive streaks, velocity-aligned, thrown back off the surface
  *   dust    the smoke puff that hangs and drifts after the sparks have gone
  *   debris  chips of the surface, heavier, arcing down under gravity
- *   decals  a bullet hole that STAYS, so a firefight writes itself onto the walls
+ *   blood   liquid thrown out of a body: fat droplets that arc, land and stick
+ *   decals  a bullet hole (or a blood splat) that STAYS, so a firefight writes
+ *           itself onto the walls and floor
  *
- * Costs five draw calls total no matter how much lead is in the air, because every
+ * Costs seven draw calls total no matter how much lead is in the air, because every
  * layer is one instanced quad mesh whose per-instance data is rewritten each frame.
  * Nothing allocates after construction: emitting past capacity recycles the oldest
  * particle instead of growing the pool.
@@ -33,6 +35,7 @@ export interface ImpactTextures {
   smoke: THREE.Texture;
   debris: THREE.Texture;
   flash: THREE.Texture;
+  droplet: THREE.Texture;
 }
 
 export interface ImpactFXOptions {
@@ -74,6 +77,9 @@ interface LayerOptions {
   cool?: boolean;
   /** Stop at the floor and skid instead of sinking through it. */
   bounce?: boolean;
+  /** Fraction of speed kept on hitting the floor. Low = it lands wet and stays
+   *  put (blood); high = it skitters away (stone chips). */
+  damp?: number;
 }
 
 class BillboardLayer {
@@ -245,9 +251,10 @@ class BillboardLayer {
       this.rot[i] += this.spin[i] * dt;
 
       if (this.opts.bounce && this.py[i] < 0.01) {
+        const keep = this.opts.damp ?? 0.7;
         this.py[i] = 0.01;
-        this.vy[i] *= -0.28;
-        this.vx[i] *= 0.7; this.vz[i] *= 0.7;
+        this.vy[i] *= -keep * 0.4;
+        this.vx[i] *= keep; this.vz[i] *= keep;
       }
     }
 
@@ -537,9 +544,10 @@ const SURFACES: Record<ImpactSurface, SurfaceLook> = {
   wood: { dust: new THREE.Color('#a08054'), spark: 3, debris: 7, puffs: 4, puffSize: [0.14, 0.26], decal: true, decalSize: [0.14, 0.22] },
   // Steel: almost all spark, barely any dust.
   metal: { dust: new THREE.Color('#9aa0a6'), spark: 16, debris: 2, puffs: 2, puffSize: [0.10, 0.18], decal: true, decalSize: [0.10, 0.16] },
-  // Flesh: a red mist and nothing else. No decal — it would be stamped onto a body
-  // that is about to walk away from it.
-  flesh: { dust: new THREE.Color('#8e1410'), spark: 0, debris: 5, puffs: 5, puffSize: [0.12, 0.22], decal: false, decalSize: [0, 0] },
+  // Flesh: a red mist, plus the liquid handled separately in `burst`. No bullet
+  // hole — it would be stamped onto a body that is about to walk away from it;
+  // the blood goes on the GROUND, which stays put.
+  flesh: { dust: new THREE.Color('#8e1410'), spark: 0, debris: 0, puffs: 6, puffSize: [0.14, 0.26], decal: false, decalSize: [0, 0] },
 };
 
 // Sparks and the flash are EMISSIVE, so they are pushed past 1 on purpose: the
@@ -549,6 +557,9 @@ const SURFACES: Record<ImpactSurface, SurfaceLook> = {
 const SPARK_COLOR = new THREE.Color('#ffd9a0').multiplyScalar(2.6);
 const FLASH_COLOR = new THREE.Color('#fff1cf').multiplyScalar(2.2);
 const BLOOD_COLOR = new THREE.Color('#6d0f0c');
+// What lands and dries is darker than what's still in the air.
+const BLOOD_WET = new THREE.Color('#8c0f0b');
+const BLOOD_POOL = new THREE.Color('#5a0a08');
 
 // ── The system ────────────────────────────────────────────────────────────────
 
@@ -559,8 +570,11 @@ export class ImpactFX {
   private readonly dust: BillboardLayer;
   private readonly debris: BillboardLayer;
   private readonly flash: BillboardLayer;
+  private readonly blood: BillboardLayer;
   private readonly decals: DecalPool;
+  private readonly bloodDecals: DecalPool;
   private readonly atlas: THREE.CanvasTexture | null;
+  private readonly bloodAtlas: THREE.CanvasTexture | null;
   private readonly lean: boolean;
 
   constructor(textures: ImpactTextures, opts: ImpactFXOptions = {}) {
@@ -571,11 +585,22 @@ export class ImpactFX {
     this.flash = new BillboardLayer({ texture: textures.flash, capacity: cap(32), additive: true });
     this.dust = new BillboardLayer({ texture: textures.smoke, capacity: cap(240), additive: false, fadeIn: 0.16 });
     this.debris = new BillboardLayer({ texture: textures.debris, capacity: cap(200), additive: false, bounce: true });
+    // Blood is its own layer rather than borrowing the debris one: it needs a round
+    // dense sprite to read as liquid, and it has to STOP where it lands instead of
+    // skidding on like a stone chip.
+    this.blood = new BillboardLayer({ texture: textures.droplet, capacity: cap(260), additive: false, bounce: true, damp: 0.25 });
 
     this.atlas = makeImpactDecalAtlas();
+    this.bloodAtlas = makeBloodDecalAtlas();
     this.decals = new DecalPool(this.atlas, lean ? 48 : 112, lean ? 12 : 24);
+    // Fewer and shorter-lived than bullet holes: blood is a big stamp, and a floor
+    // tiled with it stops reading as shocking and starts reading as carpet.
+    this.bloodDecals = new DecalPool(this.bloodAtlas, lean ? 20 : 44, lean ? 10 : 20);
 
-    this.group.add(this.dust.mesh, this.debris.mesh, this.sparks.mesh, this.flash.mesh, this.decals.mesh);
+    this.group.add(
+      this.dust.mesh, this.debris.mesh, this.blood.mesh, this.sparks.mesh, this.flash.mesh,
+      this.decals.mesh, this.bloodDecals.mesh,
+    );
     this.group.matrixAutoUpdate = false;
   }
 
@@ -633,8 +658,44 @@ export class ImpactFX {
       });
     }
 
+    if (surface === 'flesh') this.bloodSplash(from, n, scale, point);
+
     if (look.decal) {
       this.decals.place(point, n, rand(look.decalSize[0], look.decalSize[1]) * (0.8 + power * 0.2), look.dust);
+    }
+  }
+
+  /**
+   * The wet half of a body hit: liquid thrown out of the wound, and what it leaves
+   * on the floor.
+   *
+   * Sprayed in BOTH directions on purpose. The back-spray along `n` (which points
+   * at whoever fired) is the half the shooter actually sees, so it carries the
+   * read; the exit spray the other way is faster and tighter, which is what sells
+   * a round having gone through something rather than splashing off it.
+   */
+  private bloodSplash(from: Vec3, n: Vec3, scale: number, hit: Vec3) {
+    const back = Math.max(2, Math.round(11 * scale));
+    this.blood.emit({
+      origin: from, dir: n, spread: 0.95, count: back,
+      speed: [1.6, 5.5], life: [0.5, 1.1], size: [0.035, 0.085],
+      color: BLOOD_WET, alpha: 1, gravity: -17, drag: 0.985, jitter: 0.07,
+    });
+
+    const through = Math.max(1, Math.round(7 * scale));
+    this.blood.emit({
+      origin: from, dir: [-n[0], -n[1], -n[2]], spread: 0.45, count: through,
+      speed: [3.5, 9], life: [0.45, 0.95], size: [0.03, 0.07],
+      color: BLOOD_COLOR, alpha: 1, gravity: -17, drag: 0.985, jitter: 0.05,
+    });
+
+    // What hits the deck. Not every round: a burst into one body would otherwise
+    // lay four overlapping stamps in the same square metre.
+    if (Math.random() < 0.55) {
+      // Downstream of the round, roughly where the spray would actually land.
+      const throwOut = rand(0.25, 1.15);
+      const at: Vec3 = [hit[0] - n[0] * throwOut, 0, hit[2] - n[2] * throwOut];
+      this.bloodDecals.place(at, UP, rand(0.35, 0.7) * (0.7 + scale * 0.3), BLOOD_POOL);
     }
   }
 
@@ -645,22 +706,27 @@ export class ImpactFX {
     this.sparks.update(d);
     this.dust.update(d);
     this.debris.update(d);
+    this.blood.update(d);
     this.flash.update(d);
     this.decals.update(d);
+    this.bloodDecals.update(d);
   }
 
   /** Live particle count across every layer — for the perf HUD / tests. */
   get particleCount(): number {
-    return this.sparks.live + this.dust.live + this.debris.live + this.flash.live;
+    return this.sparks.live + this.dust.live + this.debris.live + this.blood.live + this.flash.live;
   }
 
   dispose() {
     this.sparks.dispose();
     this.dust.dispose();
     this.debris.dispose();
+    this.blood.dispose();
     this.flash.dispose();
     this.decals.dispose();
+    this.bloodDecals.dispose();
     this.atlas?.dispose();
+    this.bloodAtlas?.dispose();
   }
 }
 
@@ -669,6 +735,8 @@ export class ImpactFX {
 function rand(a: number, b: number): number {
   return a + (b - a) * Math.random();
 }
+
+const UP: Vec3 = [0, 1, 0];
 
 function norm(v: Vec3): Vec3 {
   const l = Math.hypot(v[0], v[1], v[2]);

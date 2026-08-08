@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * The bullet-hole decal sheet: a 2x2 atlas of four hand-drawn impact scars.
+ * The decal sheets: 2x2 atlases of four hand-drawn stamps each — bullet-hole
+ * scars for hard surfaces, blood splats for what comes out of a body.
  *
  * Drawn on a canvas rather than shipped as an image, unlike the particle sprites
  * next door. A hole is the one part of an impact that is NOT soft: it wants a hard
@@ -117,8 +118,84 @@ function drawHole(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: ()
   ctx.restore();
 }
 
-/** Build the 2x2 sheet. Client-only (needs a canvas); returns null under SSR. */
-export function makeImpactDecalAtlas(): THREE.CanvasTexture | null {
+/**
+ * One blood splat: a ragged pool with a directional throw, satellite droplets and
+ * a darker centre. Painted in near-white with alpha, because the decal material
+ * tints per instance — that keeps one sheet usable for fresh red and dried brown.
+ */
+function drawSplat(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: () => number) {
+  const c = TILE / 2;
+  const cx = ox + c;
+  const cy = oy + c;
+  // Every splat gets thrown in some direction; the pool elongates along it and the
+  // droplets scatter downstream, so a stamp never reads as a tidy circle.
+  const throwAngle = rnd() * Math.PI * 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ox, oy, TILE, TILE);
+  ctx.clip();
+
+  // 1. Main pool — a lobed blob, stretched along the throw.
+  ctx.translate(cx, cy);
+  ctx.rotate(throwAngle);
+  ctx.scale(1, 0.72);
+  ctx.beginPath();
+  const lobes = 9 + Math.floor(rnd() * 4);
+  for (let i = 0; i < lobes; i++) {
+    const a = (i / lobes) * Math.PI * 2;
+    // Fatter on the downstream side (cos(a) > 0), so the pool has a direction.
+    const bias = 1 + Math.max(0, Math.cos(a)) * 0.5;
+    const r = c * (0.24 + rnd() * 0.2) * bias;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else {
+      // Quadratic between lobes so the edge is wet and rounded, not a polygon.
+      const pa = ((i - 0.5) / lobes) * Math.PI * 2;
+      const pr = c * (0.3 + rnd() * 0.3) * bias;
+      ctx.quadraticCurveTo(Math.cos(pa) * pr, Math.sin(pa) * pr, x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,244,244,0.93)';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ox, oy, TILE, TILE);
+  ctx.clip();
+
+  // 2. Droplets thrown downstream, tapering off with distance.
+  const dx = Math.cos(throwAngle);
+  const dy = Math.sin(throwAngle);
+  for (let i = 0; i < 26; i++) {
+    const t = rnd();
+    const dist = c * (0.28 + t * 0.68);
+    const spread = (rnd() - 0.5) * c * 0.6 * (0.3 + t);
+    const x = cx + dx * dist - dy * spread;
+    const y = cy + dy * dist + dx * spread;
+    const r = (1 + rnd() * 3.6) * (1 - t * 0.55);
+    ctx.fillStyle = `rgba(255,240,240,${0.5 + rnd() * 0.45})`;
+    ctx.beginPath();
+    // Slightly elliptical, long side along the throw — a drop that was moving.
+    ctx.ellipse(x, y, r * (1 + rnd() * 0.7), r, throwAngle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 3. A darker heart, so the pool has depth instead of reading as flat paint.
+  const deep = ctx.createRadialGradient(cx, cy, 0, cx, cy, c * 0.3);
+  deep.addColorStop(0, 'rgba(120,60,60,0.55)');
+  deep.addColorStop(1, 'rgba(160,90,90,0)');
+  ctx.fillStyle = deep;
+  ctx.beginPath();
+  ctx.arc(cx, cy, c * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function buildAtlas(draw: (ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: () => number) => void, seed: number): THREE.CanvasTexture | null {
   if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = ATLAS;
@@ -126,7 +203,7 @@ export function makeImpactDecalAtlas(): THREE.CanvasTexture | null {
   if (!ctx) return null;
 
   for (let i = 0; i < DECAL_TILES; i++) {
-    drawHole(ctx, (i % 2) * TILE, Math.floor(i / 2) * TILE, mulberry32(0x5eed + i * 977));
+    draw(ctx, (i % 2) * TILE, Math.floor(i / 2) * TILE, mulberry32(seed + i * 977));
   }
 
   const tex = new THREE.CanvasTexture(canvas);
@@ -135,4 +212,14 @@ export function makeImpactDecalAtlas(): THREE.CanvasTexture | null {
   // Clamped: a decal quad samples one tile and must never wrap into its neighbour.
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;
+}
+
+/** The 2x2 bullet-hole sheet. Client-only (needs a canvas); null under SSR. */
+export function makeImpactDecalAtlas(): THREE.CanvasTexture | null {
+  return buildAtlas(drawHole, 0x5eed);
+}
+
+/** The 2x2 blood-splat sheet. Client-only (needs a canvas); null under SSR. */
+export function makeBloodDecalAtlas(): THREE.CanvasTexture | null {
+  return buildAtlas(drawSplat, 0xb100d);
 }

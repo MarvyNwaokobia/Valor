@@ -10,6 +10,7 @@ import { usePbr } from './usePbr';
 import { makeTriplanarMaterial } from './triplanar';
 import { ImpactFX, type ImpactSurface } from '../vfx/ImpactFX';
 import { useImpactTextures } from '../vfx/useImpactTextures';
+import { DroppedWeapon } from '../vfx/DroppedWeapon';
 import {
   FpsSim,
   xpForKill, rankForXp, xpIntoRank, xpBarSize, rankUpsBetween, gReward, careerXpFor, XP_REWARD, rayAABB, aabbOfCover, slideMove, type FpsInput, type Vec3, type Rank, type Attachment,
@@ -300,6 +301,10 @@ const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
   ember_halo:      { scale: 1.0, z: -0.02, y: 0.008 },
 };
 
+// Where a dropped weapon comes to rest. Not 0: the models are centred on the body
+// of the gun, so a receiver lying on the deck sits a few centimetres up.
+const DROP_REST_Y = 0.07;
+
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
 const FLOOR_W = 22, FLOOR_D = 38;
@@ -412,6 +417,7 @@ interface Hud {
   complete: HTMLDivElement | null;
   perf: HTMLDivElement | null;
   lockReticle: HTMLDivElement | null; // bracket drawn over the locked-on enemy
+  adsBtn: HTMLDivElement | null;      // mobile ADS toggle, lit while aiming
   attachChips: Record<string, HTMLDivElement | null>; // mobile kit chips, lit while active
   rankText: HTMLDivElement | null;
   xpBar: HTMLDivElement | null;
@@ -569,6 +575,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    * rooms they had cleared inside it are re-run but every earlier wave stands.
    */
   function restartWave(wave: number) {
+    holsterWeapon();               // pick the rifle back up
     const seed = endlessOpts?.seed ?? 1;
     const first = firstRoomOfWave(wave);
     const startZ = zForWaveStart(wave, seed);
@@ -848,6 +855,39 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     }
     return out;
   }, [gunProtos]);
+  /**
+   * A second set of clones, in WORLD space: when you go down, the weapon leaves
+   * your hands and hits the deck in front of you.
+   *
+   * Clones rather than re-parenting the viewmodel's own mesh. Re-parenting is one
+   * missed restart path away from a run where you hold nothing at all, and there
+   * are several ways an op can restart (death timeout, pause menu, wave reset).
+   * A clone costs a node hierarchy — geometry and materials are shared by
+   * THREE.Object3D.clone — and cannot break the gun you play with.
+   *
+   * No rotateY(PI) here, unlike the viewmodel: that turn exists to cancel out the
+   * CAMERA's -Z facing, and a weapon lying on the floor is not parented to a
+   * camera.
+   */
+  const dropMeshes = useMemo(() => {
+    const out = {} as Record<GunId, THREE.Group>;
+    for (const id of ALL_GUN_IDS) {
+      const g = gunProtos[id].clone(true);
+      g.scale.setScalar(WEAPON_VIEW[id].scale);
+      g.visible = false;
+      // castShadow is per-MESH, not per-group: setting it on the clone's root does
+      // nothing. A gun on the deck with no shadow floats.
+      g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
+      out[id] = g;
+    }
+    return out;
+  }, [gunProtos]);
+
+  // The falling weapon's physics (engine/vfx/DroppedWeapon). `active` also drives
+  // whether the viewmodel is drawn, so the gun is never in two places at once.
+  const dropPhysics = useRef(new DroppedWeapon({ restY: DROP_REST_Y }));
+  const dropId = useRef<GunId | null>(null);
+
   // The active weapon's muzzle (tracers / flash / laser spawn here); repointed on
   // a weapon switch in the frame loop.
   // Falls back to the rifle rather than dereferencing whatever the player has
@@ -1365,6 +1405,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     muzzleRef.current = activeMesh.getObjectByName('muzzle') ?? activeMesh;
     swapRaise.current = Math.max(0, swapRaise.current - dt * 2.4);
     const vm = vmRef.current;
+    // While the weapon is on the deck it must not also be in your hands.
+    if (vm) vm.visible = !dropPhysics.current.active;
     if (vm) {
       const local = tmp.copy(HIP_POS).lerp(ADS_POS, adsCur.current);
       local.z += view.z; local.y += view.y;                 // where this weapon sits
@@ -1524,6 +1566,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         showHitDir(ev.fromDir);
       } else if (ev.kind === 'playerDown') {
         downAt.current = now;
+        dropWeapon(cam);            // your hands let go of it
         if (hud.current.down) hud.current.down.style.opacity = '1';
         // Record the death (once per down event, before the op auto-restarts). The
         // scene reports it only for a campaign op; other modes ignore it.
@@ -1566,6 +1609,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
     }
     impactFx.update(dt);
+    stepDroppedWeapon(dt);
     for (let i = 0; i < EFLASH; i++) {
       const m = eFlashRefs.current[i];
       if (m && m.visible && now > eFlashUntil.current[i]) m.visible = false;
@@ -2072,6 +2116,45 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     m.visible = true;
   }
 
+  /** You went down: the weapon leaves your hands, tumbles, and lands on the deck
+   *  where it stays until the op restarts. Thrown roughly the way you were facing,
+   *  because a rifle dropped by a falling body carries their momentum. */
+  function dropWeapon(cam: THREE.Camera) {
+    const id = sim.gun.id;
+    if (!dropMeshes[id]) return;
+    for (const gid of ALL_GUN_IDS) dropMeshes[gid].visible = gid === id;
+    dropId.current = id;
+    // Own vector, not the frame loop's shared scratch: this runs from the event
+    // drain, where `tmp`/`tmp2` are live with the muzzle position.
+    const fwd = new THREE.Vector3();
+    cam.getWorldDirection(fwd);
+    dropPhysics.current.throwFrom(cam.position, fwd, cam.quaternion);
+  }
+
+  /** Put the weapon back in your hands (a restart, a new wave, a new op). */
+  function holsterWeapon() {
+    dropPhysics.current.clear();
+    dropId.current = null;
+    for (const gid of ALL_GUN_IDS) dropMeshes[gid].visible = false;
+  }
+
+  /** Ballistic tumble → clatter → lie still, then copy onto the mesh. */
+  function stepDroppedWeapon(dt: number) {
+    const d = dropPhysics.current;
+    const id = dropId.current;
+    if (!d.active || !id) return;
+    d.step(
+      dt,
+      // Stopped by exactly the geometry the player is: a gun thrown at a crate
+      // lands in front of it, not inside it.
+      (x, z, nx, nz) => slideMove(x, z, nx, nz, 0.12, COLLIDERS),
+      (x, y, z) => audio.impact('wall', [x, y, z]),
+    );
+    const mesh = dropMeshes[id];
+    mesh.position.copy(d.position);
+    mesh.quaternion.copy(d.quaternion);
+  }
+
   /** What a round landing here is going through. The sim only knows "a box" — the
    *  scene is what knows that the boxes in LEVEL_COVER are scorched planking and
    *  everything else is the compound's brick and plaster. */
@@ -2349,6 +2432,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   }
 
   function restartMission() {
+    holsterWeapon();               // pick the rifle back up
     storyFired.current.clear();
     voQueue.current.length = 0;
     voUntil.current = 0;
@@ -2522,6 +2606,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           <boxGeometry args={[0.06, 0.06, 0.14]} />
           <meshStandardMaterial color="#6b5b4d" roughness={0.8} />
         </mesh>
+      </group>
+
+      {/* the weapon after you go down: in the world, not in your hands */}
+      <group>
+        {ALL_GUN_IDS.map((id) => (
+          <primitive key={id} object={dropMeshes[id]} />
+        ))}
       </group>
 
       {/* attachments: flashlight cone + laser line/dot (positioned each frame) */}
@@ -3050,6 +3141,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     healthFill: null, vignette: null, hitDir: null, down: null, arrows: [],
     objText: null, survEnd: null, survEndText: null, waveHud: null, waveLabel: null, waveRooms: null, waveDone: null, waveDoneText: null, waveDoneSub: null, objArrow: null, briefing: null, complete: null, perf: null,
     lockReticle: null,
+    adsBtn: null,
     attachChips: {},
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
@@ -3498,6 +3590,24 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     onPointerCancel: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
   });
 
+  /** Latched state for the mobile ADS toggle. `pressFx` restores the resting look
+   *  on release, so the lit state has to be repainted after it, not instead. */
+  const paintAdsBtn = (on: boolean) => {
+    const el = hud.current.adsBtn;
+    if (!el) return;
+    el.style.background = on
+      ? 'radial-gradient(circle at 50% 40%, rgba(207,224,234,.4), rgba(120,160,180,.22))'
+      : '';
+    el.style.borderColor = on ? 'rgba(207,224,234,.95)' : '';
+    el.style.color = on ? '#04141a' : '';
+    el.style.fontWeight = on ? '800' : '';
+  };
+  const toggleAds = () => {
+    const on = !controls.current.ads;
+    controls.current.ads = on;
+    paintAdsBtn(on);
+  };
+
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
   return (
     <div ref={(r) => { hud.current.root = r; }} style={{ position: 'fixed', inset: 0, background: '#000', cursor: 'none', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}>
@@ -3865,11 +3975,17 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
             style={{ ...touchBtn('#eab308', 60), right: 108, bottom: 92, background: 'radial-gradient(circle at 50% 40%, rgba(234,179,8,.16), rgba(6,10,16,.5))', border: '1.5px solid rgba(234,179,8,.5)' }}>
             <Icon name="lock" size={22} />
           </div>
-          {/* ADS (hold) — left of fire. Pointer-captured so the release still fires
-              if the finger/cursor slides off the button while aiming. */}
-          <div onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); controls.current.ads = true; }}
-            onPointerUp={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
-            onPointerCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); controls.current.ads = false; }}
+          {/* ADS (TOGGLE) — left of fire. Held-to-aim asks for three thumbs on a
+              phone: one on the move stick, one pinning this, and a third for the
+              fire pad. Tapping it latches instead, so aiming and shooting need one
+              thumb each. The button stays lit while it's on, because a toggle you
+              can't see the state of is a toggle you fight. Desktop keeps hold
+              (Shift / right mouse) — a key you can hold costs no thumbs. */}
+          <div ref={(r) => { hud.current.adsBtn = r; paintAdsBtn(controls.current.ads); }}
+            onPointerDown={(e) => { e.preventDefault(); pressFx(e.currentTarget as HTMLElement, true, '#cfe0ea'); toggleAds(); }}
+            onPointerUp={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); paintAdsBtn(controls.current.ads); }}
+            onPointerLeave={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); paintAdsBtn(controls.current.ads); }}
+            onPointerCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); paintAdsBtn(controls.current.ads); }}
             style={{ ...touchBtn('#cfe0ea', 52), right: 108, bottom: 30, fontSize: 11 }}>ADS</div>
           {/* secondary actions — a slim column hugging the right edge, up off the gun */}
           <div {...tap('#ffb454', () => { controls.current.reload = true; })}

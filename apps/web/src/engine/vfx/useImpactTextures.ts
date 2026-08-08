@@ -22,8 +22,12 @@ export function useImpactTextures(): ImpactTextures {
     smoke: `${VFX}/smoke.png`,
     debris: `${VFX}/debris.png`,
     flash: `${VFX}/flash.png`,
+    droplet: `${VFX}/droplet.png`,
   }) as unknown as Record<keyof ImpactTextures, THREE.Texture>;
 
-  const { spark, smoke, debris, flash } = loaded;
-  return useMemo(() => ({ spark, smoke, debris, flash }), [spark, smoke, debris, flash]);
+  const { spark, smoke, debris, flash, droplet } = loaded;
+  return useMemo(
+    () => ({ spark, smoke, debris, flash, droplet }),
+    [spark, smoke, debris, flash, droplet],
+  );
 }

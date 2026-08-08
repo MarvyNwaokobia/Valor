@@ -12,14 +12,18 @@ mirror and downscaled from 512px with `sips`:
 - `debris.png` (128px, from `dirt_02`) — a gravel spray, one sprite = many chunks.
 - `flash.png` (64px, from `light_01`) — the single-frame hot flash at the point
   of contact.
+- `droplet.png` (64px, from `circle_05`) — a round blob, used for the blood
+  thrown out of a body. Round and dense on purpose: the smoke sprite is too
+  diffuse to read as liquid and the debris sprite is visibly gravel.
 
 All four are white/greyscale by design; ImpactFX tints them per surface
 (concrete grey, dirt brown, wood tan, blood red), so one sprite serves every
 material. Drop-in replacements just need to keep that convention.
 
-The bullet-hole **decal** is NOT here — it is drawn procedurally on a canvas at
-runtime (`vfx/impactDecalTexture.ts`), because a hole wants a hard dark core and
-crisp cracks that a soft particle sprite cannot give.
+The **decals** are NOT here — the bullet hole and the blood splat are both drawn
+procedurally on a canvas at runtime (`vfx/impactDecalTexture.ts`). A hole wants a
+hard dark core and crisp cracks, and a splat wants a ragged edge with satellite
+droplets; soft particle sprites cannot give either.
 
 Note on itch.io: most of the free "bullet impact" packs there are pixel-art
 sprite sheets (16x16/32x32, e.g. BDragon1727's Retro Impact packs) meant for 2D
