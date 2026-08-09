@@ -13,7 +13,7 @@ import { useImpactTextures } from '@/engine/vfx/useImpactTextures';
  * Surface + impact sandbox (dev only, same rule as /dev/verb: nothing here is
  * wired into a live route).
  *
- * TWO things to look at:
+ * THREE things to look at:
  *
  *  1. The wall pair. Both are the SAME unit cube scaled to size, textured with the
  *     same brick maps. The left one is UV-mapped the way the arena used to be, so
@@ -22,9 +22,16 @@ import { useImpactTextures } from '@/engine/vfx/useImpactTextures';
  *     Look along the row: the left bricks change size per block, the right ones
  *     don't.
  *
- *  2. Impacts. Rounds land on the wall and the ground on a loop: flash, sparks,
- *     dust, chips, and a bullet hole that stays. This is where to tune the look —
- *     the numbers all live in ImpactFX's SURFACES table.
+ *  2. The OCTAVES toggle, on the triplanar wall. Off, it is one tiling texture and
+ *     the narrow pillar in the middle — the closest thing here to what the player
+ *     stands next to in the compound — is a magnified blur. On, a fine octave puts
+ *     grain back at the pixel scale and a coarse one breaks up the repeat. Orbit in
+ *     close to the pillar and toggle it; that is the comparison this exists for.
+ *
+ *  3. Impacts. Rounds land on the wall and the ground on a loop: flash, sparks,
+ *     embers, the dust ring that runs out along the face, chips, hanging smoke and
+ *     a bullet hole that stays. This is where to tune the look — the numbers all
+ *     live in ImpactFX's SURFACES table.
  */
 
 // Deliberately mismatched: one long low wall, one narrow pillar, one small crate.
@@ -38,13 +45,17 @@ const BLOCKS: { x: number; w: number; h: number; d: number }[] = [
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 
-function Walls({ x, triplanar }: { x: number; triplanar: boolean }) {
+function Walls({ x, triplanar, octaves }: { x: number; triplanar: boolean; octaves?: boolean }) {
   const brick = usePbr('broken_brick_wall', [1, 1]);
   const material = useMemo(() => (
     triplanar
-      ? makeTriplanarMaterial(brick, { roughness: 1, metalness: 0 }, { metresPerTile: 1.7 })
+      ? makeTriplanarMaterial(brick, { roughness: 1, metalness: 0 }, {
+        metresPerTile: 1.7,
+        // The numbers the compound's brick actually ships with.
+        ...(octaves ? { detail: 9.3, detailAmount: 0.62, macro: 0.13, macroAmount: 0.3 } : {}),
+      })
       : new THREE.MeshStandardMaterial({ ...brick, roughness: 1, metalness: 0 })
-  ), [brick, triplanar]);
+  ), [brick, triplanar, octaves]);
   useEffect(() => () => material.dispose(), [material]);
 
   return (
@@ -80,7 +91,10 @@ function Impacts({ surface, running }: { surface: ImpactSurface; running: boolea
   useEffect(() => () => fx.dispose(), [fx]);
 
   const next = useRef(0);
-  useFrame((_, dt) => {
+  useFrame((state, dt) => {
+    // Ambient ash, the same call the scene makes every frame. Runs whether or not
+    // fire is paused — it is atmosphere, not an impact.
+    fx.ambient(dt, [state.camera.position.x, state.camera.position.y, state.camera.position.z]);
     fx.update(dt);
     if (!running) return;
     next.current -= dt;
@@ -110,6 +124,7 @@ function Impacts({ surface, running }: { surface: ImpactSurface; running: boolea
 export default function ImpactSandboxPage() {
   const [surface, setSurface] = useState<ImpactSurface>('concrete');
   const [running, setRunning] = useState(true);
+  const [octaves, setOctaves] = useState(true);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0b0e12' }}>
@@ -123,7 +138,7 @@ export default function ImpactSandboxPage() {
           <Ground />
           {/* left: the old UV mapping. right: triplanar. Same boxes, same maps. */}
           <Walls x={-3.4} triplanar={false} />
-          <Walls x={3.4} triplanar />
+          <Walls x={3.4} triplanar octaves={octaves} />
           <Impacts surface={surface} running={running} />
         </Suspense>
         <OrbitControls target={[0, 1.2, 0]} />
@@ -153,6 +168,15 @@ export default function ImpactSandboxPage() {
         >
           {running ? 'PAUSE FIRE' : 'RESUME FIRE'}
         </button>
+        <button
+          onClick={() => setOctaves((o) => !o)}
+          style={{
+            padding: '6px 10px', cursor: 'pointer', borderRadius: 4, border: '1px solid #2a3440',
+            background: octaves ? '#37d0e0' : '#1b232c', color: octaves ? '#04141a' : '#8ea3b6',
+          }}
+        >
+          OCTAVES {octaves ? 'ON' : 'OFF'}
+        </button>
       </div>
 
       <div style={{
@@ -161,8 +185,9 @@ export default function ImpactSandboxPage() {
       }}>
         LEFT = UV mapping: the same brick texture stretched to fit each box, so the
         courses change size and shape per block. RIGHT = triplanar: brick sized in
-        metres, identical on all three. Impacts land on the right-hand wall and the
-        deck. Drag to orbit.
+        metres, identical on all three. OCTAVES adds the fine detail + coarse macro
+        passes to the right wall — orbit in close to the middle pillar to judge it.
+        Impacts land on the right-hand wall and the deck. Drag to orbit.
       </div>
     </div>
   );

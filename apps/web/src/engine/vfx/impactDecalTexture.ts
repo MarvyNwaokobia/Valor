@@ -15,7 +15,10 @@ import * as THREE from 'three';
  * ImpactFX picks one per hit and rolls it to a random angle on top.
  */
 
-const TILE = 128;           // px per variant
+// 192, not the 128 this started at: a hole is stamped at up to ~0.36m and you can
+// walk right up to one, so at 128 the crisp core it is built around was the first
+// thing to turn to mush. The whole sheet is still under half a megabyte on the GPU.
+const TILE = 192;           // px per variant
 const ATLAS = TILE * 2;     // 2x2
 export const DECAL_TILES = 4;
 
@@ -56,7 +59,28 @@ function drawHole(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: ()
   ctx.rect(ox, oy, TILE, TILE);
   ctx.clip();
 
-  // 1. Dust bloom — pale powdered material thrown out around the hole.
+  // 1. Scorch — the soot ring a round burns into whatever it goes through, drawn
+  //    FIRST so everything else sits on top of it. This is the layer that makes a
+  //    hole read as a hole from across the room: the bright dust bloom and the dark
+  //    core are both small and both wash out at range, and without something dirty
+  //    and wide underneath them a wall taking a magazine looked freckled rather
+  //    than shot up. Deliberately ragged and off-centre, because a clean grey
+  //    circle reads as a sticker.
+  const soot = ctx.createRadialGradient(cx, cy, c * 0.1, cx, cy, c * 0.98);
+  soot.addColorStop(0, 'rgba(38,32,28,0.42)');
+  soot.addColorStop(0.42, 'rgba(46,39,34,0.22)');
+  soot.addColorStop(0.75, 'rgba(52,45,39,0.08)');
+  soot.addColorStop(1, 'rgba(52,45,39,0)');
+  ctx.fillStyle = soot;
+  ctx.save();
+  ctx.translate(cx + (rnd() - 0.5) * c * 0.16, cy + (rnd() - 0.5) * c * 0.16);
+  ctx.rotate(rnd() * Math.PI);
+  ctx.scale(1, 0.78 + rnd() * 0.3);
+  jaggedPath(ctx, 0, 0, c * 0.6, c * 0.98, 26, rnd);
+  ctx.fill();
+  ctx.restore();
+
+  // 2. Dust bloom — pale powdered material thrown out around the hole.
   const dust = ctx.createRadialGradient(cx, cy, c * 0.06, cx, cy, c * 0.9);
   dust.addColorStop(0, 'rgba(206,199,185,0.34)');
   dust.addColorStop(0.5, 'rgba(196,189,176,0.17)');
@@ -65,7 +89,7 @@ function drawHole(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: ()
   jaggedPath(ctx, cx, cy, c * 0.52, c * 0.86, 22, rnd);
   ctx.fill();
 
-  // 2. Cracks — short radial splits, tapering and fading as they run out.
+  // 3. Cracks — short radial splits, tapering and fading as they run out.
   const cracks = 7 + Math.floor(rnd() * 5);
   for (let i = 0; i < cracks; i++) {
     const a = (i / cracks) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
@@ -89,14 +113,14 @@ function drawHole(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: ()
     }
   }
 
-  // 3. Chipped rim — the bright lip of fresh material around the crater, drawn
+  // 4. Chipped rim — the bright lip of fresh material around the crater, drawn
   //    before the core so the core covers its inner half.
   jaggedPath(ctx, cx, cy, c * 0.2, c * 0.3, 14, rnd);
   ctx.strokeStyle = 'rgba(232,226,212,0.5)';
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  // 4. Core — the hole itself. Nearly opaque, so it reads as a void at any range.
+  // 5. Core — the hole itself. Nearly opaque, so it reads as a void at any range.
   const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, c * 0.26);
   core.addColorStop(0, 'rgba(10,9,8,0.98)');
   core.addColorStop(0.62, 'rgba(22,19,16,0.92)');
@@ -105,7 +129,7 @@ function drawHole(ctx: CanvasRenderingContext2D, ox: number, oy: number, rnd: ()
   jaggedPath(ctx, cx, cy, c * 0.16, c * 0.26, 16, rnd);
   ctx.fill();
 
-  // 5. Spall — a few dark flecks so the edge isn't a clean silhouette.
+  // 6. Spall — a few dark flecks so the edge isn't a clean silhouette.
   for (let i = 0; i < 14; i++) {
     const a = rnd() * Math.PI * 2;
     const r = c * (0.28 + rnd() * 0.45);
@@ -208,7 +232,7 @@ function buildAtlas(draw: (ctx: CanvasRenderingContext2D, ox: number, oy: number
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   // Clamped: a decal quad samples one tile and must never wrap into its neighbour.
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;

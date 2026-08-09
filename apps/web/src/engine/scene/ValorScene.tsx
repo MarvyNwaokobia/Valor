@@ -151,15 +151,21 @@ function SkyDome({ top, bottom }: { top: string; bottom: string }) {
   );
 }
 
-function Prop({ kind, x, z, rot }: PropSpec) {
+/** The world-space materials the clutter wears. Built in FpsWorld (they need the
+ *  loaded PBR maps) and passed down, so one material serves every prop of a kind. */
+type PropMaterials = Record<'barrelA' | 'barrelB' | 'crate' | 'sandbag' | 'rubble', THREE.Material>;
+
+function Prop({ kind, x, z, rot, mats }: PropSpec & { mats: PropMaterials }) {
   if (kind === 'barrels') {
-    const cols = ['#5c4a34', '#4a5240', '#6a4838'];
+    const drums = [mats.barrelA, mats.barrelB, mats.barrelA];
     return (
       <group position={[x, 0, z]} rotation={[0, rot, 0]}>
         {[[0, 0], [0.34, 0.06], [0.16, 0.34]].map(([dx, dz], i) => (
           <mesh key={i} position={[dx, 0.45, dz]} castShadow receiveShadow>
-            <cylinderGeometry args={[0.26, 0.28, 0.9, 12]} />
-            <meshStandardMaterial color={cols[i]} metalness={0.5} roughness={0.55} />
+            {/* 12 sides was a graybox count and read as a hexagonal bin up close;
+                18 is still cheap and the silhouette is round. */}
+            <cylinderGeometry args={[0.26, 0.28, 0.9, 18]} />
+            <primitive object={drums[i]} attach="material" />
           </mesh>
         ))}
       </group>
@@ -170,11 +176,11 @@ function Prop({ kind, x, z, rot }: PropSpec) {
       <group position={[x, 0, z]} rotation={[0, rot, 0]}>
         <mesh position={[0, 0.32, 0]} castShadow receiveShadow>
           <boxGeometry args={[0.66, 0.64, 0.66]} />
-          <meshStandardMaterial color="#6b5539" roughness={0.9} metalness={0.02} />
+          <primitive object={mats.crate} attach="material" />
         </mesh>
         <mesh position={[0.12, 0.82, -0.1]} rotation={[0, 0.4, 0]} castShadow receiveShadow>
           <boxGeometry args={[0.5, 0.46, 0.5]} />
-          <meshStandardMaterial color="#5f4c34" roughness={0.9} metalness={0.02} />
+          <primitive object={mats.crate} attach="material" />
         </mesh>
       </group>
     );
@@ -185,7 +191,7 @@ function Prop({ kind, x, z, rot }: PropSpec) {
         {[[-0.34, 0, 0.16], [0.34, 0, 0.16], [0, 0, 0.16], [-0.17, 0.28, 0.16], [0.17, 0.28, 0.16]].map(([dx, dy, h], i) => (
           <mesh key={i} position={[dx, 0.14 + dy, 0]} rotation={[0, (i % 2) * 0.3, 0]} castShadow receiveShadow>
             <boxGeometry args={[0.42, 0.26, h + 0.3]} />
-            <meshStandardMaterial color={i % 2 ? '#877a5b' : '#7d7052'} roughness={1} metalness={0} />
+            <primitive object={mats.sandbag} attach="material" />
           </mesh>
         ))}
       </group>
@@ -197,7 +203,7 @@ function Prop({ kind, x, z, rot }: PropSpec) {
       {[[0, 0.12, 0, 0.5], [0.3, 0.08, 0.2, 0.3], [-0.25, 0.1, -0.15, 0.34]].map(([dx, s, dz, w], i) => (
         <mesh key={i} position={[dx, s, dz]} rotation={[rot * 0.3, i, 0]} castShadow receiveShadow>
           <boxGeometry args={[w, s * 2, w * 0.8]} />
-          <meshStandardMaterial color="#565259" roughness={0.95} metalness={0.03} />
+          <primitive object={mats.rubble} attach="material" />
         </mesh>
       ))}
     </group>
@@ -206,8 +212,8 @@ function Prop({ kind, x, z, rot }: PropSpec) {
 
 /** Takes the prop list rather than deriving it, so the meshes you see and the
  *  colliders the sim was built with can never be two different scatters. */
-function SetDressing({ props }: { props: PropSpec[] }) {
-  return <>{props.map((p, i) => <Prop key={i} {...p} />)}</>;
+function SetDressing({ props, mats }: { props: PropSpec[]; mats: PropMaterials }) {
+  return <>{props.map((p, i) => <Prop key={i} {...p} mats={mats} />)}</>;
 }
 
 function angleDiff(a: number, b: number): number {
@@ -731,13 +737,51 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    * also retires the per-wall <meshStandardMaterial> the JSX used to allocate.
    */
   const shellMaterials = useMemo(() => ({
-    floor: makeTriplanarMaterial(floorMaps, { color: theme.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9 }),
-    brick: makeTriplanarMaterial(brickMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7 }),
-    plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8 }),
-    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 1.2 }),
+    floor: makeTriplanarMaterial(floorMaps, { color: theme.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9, detail: 9.7, detailAmount: 0.6, macro: 0.11, macroAmount: 0.4 }),
+    brick: makeTriplanarMaterial(brickMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7, detail: 9.3, detailAmount: 0.62, macro: 0.13, macroAmount: 0.3 }),
+    plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8, detail: 8.7, detailAmount: 0.68, macro: 0.13, macroAmount: 0.32 }),
+    // Cover boxes are the surface you are most often pressed right up against —
+    // the compound's pillars are these — so the detail octave bites hardest here
+    // and the base tile is smaller, which puts the planks at a believable board
+    // width instead of one 1.2m plank per pillar face.
+    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.95, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26 }),
+    // The cap on top of a wall. Was a flat grey box, which read as the graybox it
+    // was; concrete at a coarse tile makes it a poured coping instead.
+    coping: makeTriplanarMaterial(plasterMaps, { color: '#59565e', roughness: 0.9, metalness: 0 }, { metresPerTile: 1.3, detail: 9.1, detailAmount: 0.5 }),
   }), [floorMaps, brickMaps, plasterMaps, plankMaps, theme.floorTint, theme.wallTint]);
 
-  useEffect(() => () => { for (const m of Object.values(shellMaterials)) m.dispose(); }, [shellMaterials]);
+  /**
+   * Set-dressing surfaces.
+   *
+   * The clutter was the last thing in the compound still wearing flat vertex
+   * colours: barrels, crates, sandbags and rubble were untextured plastic sat in
+   * a scene where everything around them is PBR, which is most of why the corner
+   * of a room reads as a prototype. They reuse the four map sets the shell already
+   * has loaded — no extra downloads — retinted and retiled per material.
+   *
+   * `blend` on every one of them, unlike the shell. Props are placed at a RANDOM
+   * yaw (and the barrels are cylinders), so there is no axis for hard projection to
+   * pick that is actually perpendicular to the face: at 45° it stretches the texture
+   * by √2 and smears visibly around the curve of a drum. Three fetches is the right
+   * price on eleven small props; it would not be on every wall in the level.
+   */
+  const propMaterials = useMemo(() => ({
+    // Two drum finishes so a cluster of three isn't a colour-matched set. World-space
+    // texturing already gives each barrel a different patch of map; this varies the
+    // tint on top of that.
+    barrelA: makeTriplanarMaterial(plankMaps, { color: '#6d5a46', roughness: 0.5, metalness: 0.45 }, { metresPerTile: 0.7, blend: true, detail: 7.7, detailAmount: 0.7 }),
+    barrelB: makeTriplanarMaterial(plankMaps, { color: '#54604c', roughness: 0.55, metalness: 0.4 }, { metresPerTile: 0.7, blend: true, detail: 7.7, detailAmount: 0.7 }),
+    crate: makeTriplanarMaterial(plankMaps, { color: '#9c7a4c', roughness: 0.9, metalness: 0.02 }, { metresPerTile: 0.5, blend: true, detail: 7.3, detailAmount: 0.75 }),
+    sandbag: makeTriplanarMaterial(plasterMaps, { color: '#a2946c', roughness: 1, metalness: 0 }, { metresPerTile: 0.4, blend: true, detail: 7.1, detailAmount: 0.8 }),
+    rubble: makeTriplanarMaterial(brickMaps, { color: '#7c7880', roughness: 0.95, metalness: 0.03 }, { metresPerTile: 0.45, blend: true, detail: 7.7, detailAmount: 0.7 }),
+  }), [plankMaps, plasterMaps, brickMaps]);
+
+  useEffect(() => () => {
+    for (const m of Object.values(shellMaterials)) m.dispose();
+  }, [shellMaterials]);
+  useEffect(() => () => {
+    for (const m of Object.values(propMaterials)) m.dispose();
+  }, [propMaterials]);
 
   // ── Impact VFX: sparks, dust, debris and the holes they leave behind ──
   const impactMaps = useImpactTextures();
@@ -1578,7 +1622,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           audio.hitmarker(ev.killed);
           flashHit(ev.enemyId, ev.killed);
           flashHitmarker(ev.killed, ev.crit);
-          if (ev.killed) addXp(xpForKill(ev.part)); // earn loop: XP per kill
+          if (ev.killed) {
+            addXp(xpForKill(ev.part)); // earn loop: XP per kill
+            spawnDeathPool(ev.enemyId);
+          }
         } else if (ev.kind === 'wall') {
           audio.impact('wall', ev.point);
         }
@@ -1681,6 +1728,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         }
       }
     }
+    // Ash in the air, spawned around the player so it follows them through an
+    // endless run without needing a world-sized pool. Dropped on `minimal` with
+    // the rest of the atmosphere — it is the definition of a nice-to-have.
+    if (!minimal) impactFx.ambient(dt, [pos.current.x, pos.current.y, pos.current.z]);
     impactFx.update(dt);
     stepDroppedWeapon(dt);
 
@@ -2297,6 +2348,14 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     impactFx.burst(at, [dx / len, dy / len, dz / len], 'flesh', 1);
   }
 
+  /** The blood a body leaves where it went down. Read off the SIM rather than the
+   *  rig, because the rig for a dead enemy is about to be recycled onto whoever
+   *  spawns next — by the time it moves, the pool has to already be on the floor. */
+  function spawnDeathPool(enemyId: number) {
+    const e = sim.getEnemies().find((en) => en.id === enemyId);
+    if (e) impactFx.pool([e.x, 0, e.z], 1);
+  }
+
   function flashHit(enemyId: number, killed = false) {
     const idx = sim.getEnemies().findIndex((e) => e.id === enemyId);
     if (idx >= 0) {
@@ -2674,7 +2733,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
               detail you do not read at all in a procedurally generated corridor. */}
           {!endless && (
             <mesh geometry={UNIT_BOX} position={[c.x, c.h + 0.02, c.z]} scale={[c.w + 0.14, 0.18, c.d + 0.14]} castShadow receiveShadow>
-              <meshStandardMaterial color="#3b3a3e" roughness={0.85} metalness={0} />
+              <primitive object={shellMaterials.coping} attach="material" />
             </mesh>
           )}
         </group>
@@ -2691,7 +2750,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           now — the footprints went into COLLIDERS above. Dropped on `minimal`
           (struggling desktop/laptop) to cut draw calls; the colliders stay, so on
           that tier alone the clutter is felt rather than seen. */}
-      {!minimal && <SetDressing props={DRESSING} />}
+      {!minimal && <SetDressing props={DRESSING} mats={propMaterials} />}
 
       {/* waypoint beacon at the current objective */}
       <group ref={waypointRef}>

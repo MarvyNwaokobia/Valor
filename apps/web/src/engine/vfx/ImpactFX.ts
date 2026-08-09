@@ -10,14 +10,19 @@ import { DECAL_TILES, makeBloodDecalAtlas, makeImpactDecalAtlas } from './impact
  * at all. This replaces it with four pooled billboard layers plus a decal pool:
  *
  *   flash   additive, one frame of white heat at the point of contact
- *   sparks  additive streaks, velocity-aligned, thrown back off the surface
- *   dust    the smoke puff that hangs and drifts after the sparks have gone
+ *   sparks  additive streaks, velocity-aligned, thrown back off the surface, plus
+ *           the slow embers that fall out of the shower and cool on the way down
+ *   dust    everything airborne and soft: the puff off the strike, the ring that
+ *           runs OUTWARD along the face that was hit, and the wisp that hangs
+ *           afterwards
  *   debris  chips of the surface, heavier, arcing down under gravity
  *   blood   liquid thrown out of a body: fat droplets that arc, land and stick
+ *   motes   the slow ash drifting through the whole compound, nothing to do with
+ *           gunfire — it is what gives the air depth between firefights
  *   decals  a bullet hole (or a blood splat) that STAYS, so a firefight writes
  *           itself onto the walls and floor
  *
- * Costs seven draw calls total no matter how much lead is in the air, because every
+ * Costs eight draw calls total no matter how much lead is in the air, because every
  * layer is one instanced quad mesh whose per-instance data is rewritten each frame.
  * Nothing allocates after construction: emitting past capacity recycles the oldest
  * particle instead of growing the pool.
@@ -50,8 +55,14 @@ type Vec3 = readonly [number, number, number];
 interface EmitSpec {
   origin: Vec3;
   dir: Vec3;
-  spread: number;          // 0 = a beam, 1 = a full hemisphere off `dir`
+  spread: number;          // 0 = a beam, 1 = a full hemisphere off `dir`; with
+                           // `disc` set it becomes the wobble either side of the ring
   count: number;
+  /** Throw the particles around the RING perpendicular to `dir` instead of into a
+   *  cone along it, tilted this far out of that plane (0 = flat against the surface).
+   *  What a round actually does to a wall: the ejecta runs out along the face, it
+   *  does not come back at the shooter in a neat cone. */
+  disc?: number;
   speed: [number, number];
   life: [number, number];
   size: [number, number];
@@ -181,12 +192,18 @@ class BillboardLayer {
     const jitter = spec.jitter ?? 0;
     const spin = spec.spin ?? 0;
     const stretch = spec.stretch ?? 0;
+    // The ring basis is a property of the emission, not of the particle, so it is
+    // built once per call rather than once per grain.
+    const axis = spec.disc !== undefined ? norm(spec.dir) : null;
+    const tangents = axis ? basis(axis) : null;
 
     for (let n = 0; n < spec.count; n++) {
       // At capacity, the oldest particle is the one worth losing.
       const i = this.count < this.cap ? this.count++ : this.oldest();
 
-      const dir = coneSample(spec.dir, spec.spread);
+      const dir = tangents && axis
+        ? discSample(axis, tangents[0], tangents[1], spec.disc!, spec.spread)
+        : coneSample(spec.dir, spec.spread);
       const speed = rand(spec.speed[0], spec.speed[1]);
       const size = rand(spec.size[0], spec.size[1]);
 
@@ -528,8 +545,11 @@ class DecalPool {
 interface SurfaceLook {
   dust: THREE.Color;
   spark: number;      // sparks per hit
+  ember: number;      // slow cooling embers that fall out of the shower
   debris: number;     // chips per hit
   puffs: number;      // dust billboards per hit
+  ring: number;       // ejecta thrown OUTWARD along the face that was struck
+  wisp: number;       // slow smoke left hanging after the puff has gone
   puffSize: [number, number];
   decal: boolean;
   decalSize: [number, number];
@@ -537,17 +557,17 @@ interface SurfaceLook {
 
 const SURFACES: Record<ImpactSurface, SurfaceLook> = {
   // Masonry: pale powder, a decent shower of sparks off the aggregate.
-  concrete: { dust: new THREE.Color('#b8b1a3'), spark: 7, debris: 4, puffs: 5, puffSize: [0.16, 0.30], decal: true, decalSize: [0.16, 0.24] },
+  concrete: { dust: new THREE.Color('#b8b1a3'), spark: 11, ember: 3, debris: 8, puffs: 9, ring: 6, wisp: 2, puffSize: [0.16, 0.32], decal: true, decalSize: [0.19, 0.29] },
   // Ground: little spark, a lot of kicked-up earth.
-  dirt: { dust: new THREE.Color('#8b7355'), spark: 2, debris: 6, puffs: 7, puffSize: [0.20, 0.38], decal: true, decalSize: [0.20, 0.30] },
+  dirt: { dust: new THREE.Color('#8b7355'), spark: 3, ember: 1, debris: 11, puffs: 13, ring: 8, wisp: 2, puffSize: [0.20, 0.40], decal: true, decalSize: [0.24, 0.36] },
   // Timber: splinters over sparks, warmer dust.
-  wood: { dust: new THREE.Color('#a08054'), spark: 3, debris: 7, puffs: 4, puffSize: [0.14, 0.26], decal: true, decalSize: [0.14, 0.22] },
+  wood: { dust: new THREE.Color('#a08054'), spark: 4, ember: 3, debris: 12, puffs: 8, ring: 5, wisp: 1, puffSize: [0.14, 0.28], decal: true, decalSize: [0.17, 0.27] },
   // Steel: almost all spark, barely any dust.
-  metal: { dust: new THREE.Color('#9aa0a6'), spark: 16, debris: 2, puffs: 2, puffSize: [0.10, 0.18], decal: true, decalSize: [0.10, 0.16] },
+  metal: { dust: new THREE.Color('#9aa0a6'), spark: 24, ember: 6, debris: 5, puffs: 4, ring: 3, wisp: 1, puffSize: [0.10, 0.19], decal: true, decalSize: [0.13, 0.20] },
   // Flesh: a red mist, plus the liquid handled separately in `burst`. No bullet
   // hole — it would be stamped onto a body that is about to walk away from it;
   // the blood goes on the GROUND, which stays put.
-  flesh: { dust: new THREE.Color('#8e1410'), spark: 0, debris: 0, puffs: 6, puffSize: [0.14, 0.26], decal: false, decalSize: [0, 0] },
+  flesh: { dust: new THREE.Color('#8e1410'), spark: 0, ember: 0, debris: 0, puffs: 10, ring: 0, wisp: 0, puffSize: [0.14, 0.28], decal: false, decalSize: [0, 0] },
 };
 
 // Sparks and the flash are EMISSIVE, so they are pushed past 1 on purpose: the
@@ -560,6 +580,9 @@ const BLOOD_COLOR = new THREE.Color('#6d0f0c');
 // What lands and dries is darker than what's still in the air.
 const BLOOD_WET = new THREE.Color('#8c0f0b');
 const BLOOD_POOL = new THREE.Color('#5a0a08');
+// Ash hanging in the compound air. Warm and dim: it is lit, not emissive, and a
+// mote bright enough to notice individually reads as snow.
+const MOTE_COLOR = new THREE.Color('#cbb69a').multiplyScalar(0.9);
 
 // ── The system ────────────────────────────────────────────────────────────────
 
@@ -571,34 +594,46 @@ export class ImpactFX {
   private readonly debris: BillboardLayer;
   private readonly flash: BillboardLayer;
   private readonly blood: BillboardLayer;
+  private readonly motes: BillboardLayer;
   private readonly decals: DecalPool;
   private readonly bloodDecals: DecalPool;
   private readonly atlas: THREE.CanvasTexture | null;
   private readonly bloodAtlas: THREE.CanvasTexture | null;
   private readonly lean: boolean;
+  /** Fractional motes owed since the last frame — ambient emission is a RATE, and
+   *  at 14/s a 60Hz frame is owed less than one. */
+  private moteDebt = 0;
 
   constructor(textures: ImpactTextures, opts: ImpactFXOptions = {}) {
     const lean = this.lean = opts.quality === 'lean';
     const cap = (full: number) => (lean ? Math.round(full * 0.45) : full);
 
-    this.sparks = new BillboardLayer({ texture: textures.spark, capacity: cap(420), additive: true, alignVelocity: true, cool: true });
-    this.flash = new BillboardLayer({ texture: textures.flash, capacity: cap(32), additive: true });
-    this.dust = new BillboardLayer({ texture: textures.smoke, capacity: cap(240), additive: false, fadeIn: 0.16 });
-    this.debris = new BillboardLayer({ texture: textures.debris, capacity: cap(200), additive: false, bounce: true });
+    this.sparks = new BillboardLayer({ texture: textures.spark, capacity: cap(700), additive: true, alignVelocity: true, cool: true });
+    this.flash = new BillboardLayer({ texture: textures.flash, capacity: cap(40), additive: true });
+    this.dust = new BillboardLayer({ texture: textures.smoke, capacity: cap(460), additive: false, fadeIn: 0.16 });
+    this.debris = new BillboardLayer({ texture: textures.debris, capacity: cap(320), additive: false, bounce: true });
     // Blood is its own layer rather than borrowing the debris one: it needs a round
     // dense sprite to read as liquid, and it has to STOP where it lands instead of
     // skidding on like a stone chip.
-    this.blood = new BillboardLayer({ texture: textures.droplet, capacity: cap(260), additive: false, bounce: true, damp: 0.25 });
+    this.blood = new BillboardLayer({ texture: textures.droplet, capacity: cap(420), additive: false, bounce: true, damp: 0.25 });
+    // Ambient ash. Its own layer because it must not compete with combat for pool
+    // slots: motes live for seconds and there are always some, so sharing the dust
+    // pool would mean a long burst of fire quietly deleting the atmosphere — or the
+    // atmosphere quietly deleting the impacts. `fadeIn` is long because a mote
+    // popping into existence two feet from the lens is the one way this reads as a
+    // particle system rather than as air.
+    this.motes = new BillboardLayer({ texture: textures.droplet, capacity: cap(180), additive: false, fadeIn: 0.35 });
 
     this.atlas = makeImpactDecalAtlas();
     this.bloodAtlas = makeBloodDecalAtlas();
-    this.decals = new DecalPool(this.atlas, lean ? 48 : 112, lean ? 12 : 24);
+    this.decals = new DecalPool(this.atlas, lean ? 64 : 160, lean ? 14 : 28);
     // Fewer and shorter-lived than bullet holes: blood is a big stamp, and a floor
-    // tiled with it stops reading as shocking and starts reading as carpet.
-    this.bloodDecals = new DecalPool(this.bloodAtlas, lean ? 20 : 44, lean ? 10 : 20);
+    // tiled with it stops reading as shocking and starts reading as carpet. Still
+    // generous enough that a cleared room shows where the fight happened.
+    this.bloodDecals = new DecalPool(this.bloodAtlas, lean ? 32 : 76, lean ? 14 : 30);
 
     this.group.add(
-      this.dust.mesh, this.debris.mesh, this.blood.mesh, this.sparks.mesh, this.flash.mesh,
+      this.motes.mesh, this.dust.mesh, this.debris.mesh, this.blood.mesh, this.sparks.mesh, this.flash.mesh,
       this.decals.mesh, this.bloodDecals.mesh,
     );
     this.group.matrixAutoUpdate = false;
@@ -637,6 +672,21 @@ export class ImpactFX {
       });
     }
 
+    // Embers: the tail of the shower. The fast sparks are gone in a fifth of a
+    // second, which is barely long enough to see them; these are the few that come
+    // off slowly, fall, and cool from white through orange on the way down (the
+    // spark layer's `cool` ramp does that for free over a longer life). They are
+    // what makes an impact still be there when you look back at it.
+    const embers = Math.round(look.ember * scale);
+    if (embers > 0) {
+      this.sparks.emit({
+        origin: from, dir: n, spread: 1, count: embers,
+        speed: [0.6, 2.8], life: [0.55, 1.5], size: [0.016, 0.034],
+        color: SPARK_COLOR, alpha: 0.95, gravity: -7, drag: 0.985,
+        stretch: 0.18, jitter: 0.05,
+      });
+    }
+
     const puffs = Math.max(1, Math.round(look.puffs * scale));
     this.dust.emit({
       origin: from, dir: n, spread: 0.9, count: puffs,
@@ -647,6 +697,36 @@ export class ImpactFX {
       gravity: surface === 'flesh' ? -3.5 : -0.5, drag: 0.9,
       grow: 2.2, jitter: 0.06, spin: 1.2,
     });
+
+    // The ejecta ring. A cone along the normal throws everything back at the
+    // shooter, which is not what a round does to a wall — the pulverised material
+    // sprays out ALONG the face, fastest right at the surface. Tilted 0.35 out of
+    // the plane so it lifts off the wall instead of z-fighting with it, and short
+    // lived because it is the sharp, fast part of the puff.
+    const ring = Math.round(look.ring * scale);
+    if (ring > 0) {
+      this.dust.emit({
+        origin: from, dir: n, disc: 0.35, spread: 0.3, count: ring,
+        speed: [2.2, 5.5], life: [0.28, 0.7],
+        size: [look.puffSize[0] * 0.7, look.puffSize[1] * 0.8],
+        color: look.dust, alpha: 0.7, gravity: -1.2, drag: 0.86,
+        grow: 2.8, jitter: 0.04, spin: 2.2,
+      });
+    }
+
+    // What is still hanging a second later. Big, slow, faint, and rising: a room
+    // being fought in should end up with air you can see, not a series of puffs
+    // that each vanish cleanly.
+    const wisps = Math.round(look.wisp * scale);
+    if (wisps > 0) {
+      this.dust.emit({
+        origin: from, dir: n, spread: 1, count: wisps,
+        speed: [0.15, 0.7], life: [1.5, 3.2],
+        size: [look.puffSize[1] * 0.9, look.puffSize[1] * 1.6],
+        color: look.dust, alpha: 0.3, gravity: 0.22, drag: 0.94,
+        grow: 3.4, jitter: 0.1, spin: 0.5,
+      });
+    }
 
     const chips = Math.round(look.debris * scale);
     if (chips > 0) {
@@ -675,28 +755,74 @@ export class ImpactFX {
    * a round having gone through something rather than splashing off it.
    */
   private bloodSplash(from: Vec3, n: Vec3, scale: number, hit: Vec3) {
-    const back = Math.max(2, Math.round(11 * scale));
+    const back = Math.max(3, Math.round(18 * scale));
     this.blood.emit({
       origin: from, dir: n, spread: 0.95, count: back,
-      speed: [1.6, 5.5], life: [0.5, 1.1], size: [0.035, 0.085],
+      speed: [1.6, 5.5], life: [0.5, 1.2], size: [0.035, 0.1],
       color: BLOOD_WET, alpha: 1, gravity: -17, drag: 0.985, jitter: 0.07,
     });
 
-    const through = Math.max(1, Math.round(7 * scale));
+    const through = Math.max(2, Math.round(12 * scale));
     this.blood.emit({
       origin: from, dir: [-n[0], -n[1], -n[2]], spread: 0.45, count: through,
-      speed: [3.5, 9], life: [0.45, 0.95], size: [0.03, 0.07],
+      speed: [3.5, 9], life: [0.45, 1.0], size: [0.03, 0.08],
       color: BLOOD_COLOR, alpha: 1, gravity: -17, drag: 0.985, jitter: 0.05,
+    });
+
+    // Atomised blood — the part that never lands. Tiny, slow and short-lived, so it
+    // reads as a haze around the wound rather than as more droplets. Sprayed out
+    // sideways off the wound channel, which is where a mist actually goes.
+    this.blood.emit({
+      origin: from, dir: n, disc: 0.2, spread: 0.5, count: Math.max(2, Math.round(9 * scale)),
+      speed: [0.6, 2.4], life: [0.25, 0.6], size: [0.012, 0.03],
+      color: BLOOD_WET, alpha: 0.85, gravity: -4, drag: 0.9, jitter: 0.05,
     });
 
     // What hits the deck. Not every round: a burst into one body would otherwise
     // lay four overlapping stamps in the same square metre.
-    if (Math.random() < 0.55) {
+    if (Math.random() < 0.8) {
       // Downstream of the round, roughly where the spray would actually land.
       const throwOut = rand(0.25, 1.15);
       const at: Vec3 = [hit[0] - n[0] * throwOut, 0, hit[2] - n[2] * throwOut];
       this.bloodDecals.place(at, UP, rand(0.35, 0.7) * (0.7 + scale * 0.3), BLOOD_POOL);
+      // A satellite cast further out, so the floor shows a THROW with a direction
+      // rather than one tidy circle per hit.
+      if (Math.random() < 0.5) {
+        const far = throwOut + rand(0.4, 1.1);
+        this.bloodDecals.place(
+          [hit[0] - n[0] * far + rand(-0.3, 0.3), 0, hit[2] - n[2] * far + rand(-0.3, 0.3)],
+          UP, rand(0.18, 0.36), BLOOD_POOL,
+        );
+      }
     }
+  }
+
+  /**
+   * A body coming to rest. Lays the pool it bleeds out into and throws a last low
+   * spatter, so a cleared room is legible afterwards: you can see where each of
+   * them went down instead of the floor resetting to clean ash the moment the
+   * ragdoll despawns.
+   *
+   * Several overlapping stamps rather than one big one — a single scaled-up splat
+   * reads as a sticker, three at different sizes and rolls reads as spread.
+   */
+  pool(at: Vec3, scale = 1) {
+    const q = this.lean ? 0.6 : 1;
+    const s = scale * q;
+    this.bloodDecals.place([at[0], 0, at[2]], UP, rand(0.55, 0.95) * s, BLOOD_POOL);
+    const satellites = this.lean ? 1 : 2;
+    for (let i = 0; i < satellites; i++) {
+      this.bloodDecals.place(
+        [at[0] + rand(-0.45, 0.45), 0, at[2] + rand(-0.45, 0.45)],
+        UP, rand(0.25, 0.55) * s, BLOOD_POOL,
+      );
+    }
+    this.blood.emit({
+      origin: [at[0], 0.35, at[2]], dir: UP, disc: 0.45, spread: 0.4,
+      count: Math.round(14 * q),
+      speed: [0.8, 2.6], life: [0.4, 0.9], size: [0.03, 0.075],
+      color: BLOOD_WET, alpha: 1, gravity: -16, drag: 0.97, jitter: 0.12,
+    });
   }
 
   /**
@@ -710,13 +836,59 @@ export class ImpactFX {
     const q = this.lean ? 0.5 : 1;
     // Drifts up and slightly outward, the way disturbed dust actually behaves,
     // rather than being thrown — a walking boot displaces air, it doesn't blast.
+    // A ring rather than a cone: dust escapes around the sole, not out of the top
+    // of the boot, so it fans low across the ground.
     this.dust.emit({
       origin: [at[0], at[1] + 0.04, at[2]],
-      dir: UP, spread: 1.1, count: this.lean ? 1 : 2,
-      speed: [0.25, 0.9], life: [0.35, 0.75], size: [0.1, 0.2],
+      dir: UP, disc: 0.55, spread: 0.6, count: this.lean ? 2 : 4,
+      speed: [0.35, 1.3], life: [0.4, 0.95], size: [0.11, 0.24],
       color: SURFACES.dirt.dust, alpha: 0.42 * power * q,
-      gravity: -0.35, drag: 0.88, grow: 2.6, jitter: 0.14, spin: 0.9,
+      gravity: -0.35, drag: 0.86, grow: 3, jitter: 0.16, spin: 0.9,
     });
+    // Every few strides a boot also flicks grit. Cheap (one or two chips, and only
+    // sometimes) but it is what stops a footfall being a puff of nothing.
+    if (!this.lean && Math.random() < 0.45) {
+      this.debris.emit({
+        origin: [at[0], at[1] + 0.03, at[2]],
+        dir: UP, disc: 0.5, spread: 0.5, count: 2,
+        speed: [0.9, 2.4], life: [0.35, 0.7], size: [0.03, 0.06],
+        color: SURFACES.dirt.dust, alpha: 0.8 * power,
+        gravity: -14, drag: 0.97, spin: 5, jitter: 0.08,
+      });
+    }
+  }
+
+  /**
+   * The ash that is always in the air. Call it every frame with the camera's
+   * position: motes are spawned in a box AROUND the listener and left to drift, so
+   * the effect follows the player through a level of any size (and through an
+   * endless run that walks hundreds of metres) without ever needing a world-sized
+   * pool of them.
+   *
+   * Rate-based rather than per-frame-count, so it looks the same at 30fps and at
+   * 144, and it is throttled hard on the lean tier — this is atmosphere, and it is
+   * the first thing that should go when a device is struggling.
+   */
+  ambient(dt: number, around: Vec3, rate = 16) {
+    const r = this.lean ? rate * 0.4 : rate;
+    this.moteDebt += r * Math.min(dt, 0.1);
+    const n = Math.floor(this.moteDebt);
+    if (n < 1) return;
+    this.moteDebt -= n;
+
+    // A box wide enough that motes enter frame from the sides rather than blinking
+    // in ahead of you, and tall enough to sit above eye line.
+    for (let i = 0; i < n; i++) {
+      this.motes.emit({
+        origin: [around[0] + rand(-7, 7), rand(0.15, 3.6), around[2] + rand(-7, 7)],
+        // Near-still air with a slight prevailing drift, so the whole field moves
+        // together instead of each mote wandering on its own.
+        dir: [0.35, -0.1, 0.2], spread: 0.9, count: 1,
+        speed: [0.06, 0.32], life: [3.5, 8], size: [0.012, 0.032],
+        color: MOTE_COLOR, alpha: 0.5, gravity: -0.05, drag: 0.995,
+        spin: 0.6,
+      });
+    }
   }
 
   update(dt: number) {
@@ -727,6 +899,7 @@ export class ImpactFX {
     this.dust.update(d);
     this.debris.update(d);
     this.blood.update(d);
+    this.motes.update(d);
     this.flash.update(d);
     this.decals.update(d);
     this.bloodDecals.update(d);
@@ -734,7 +907,8 @@ export class ImpactFX {
 
   /** Live particle count across every layer — for the perf HUD / tests. */
   get particleCount(): number {
-    return this.sparks.live + this.dust.live + this.debris.live + this.blood.live + this.flash.live;
+    return this.sparks.live + this.dust.live + this.debris.live + this.blood.live
+      + this.motes.live + this.flash.live;
   }
 
   dispose() {
@@ -742,6 +916,7 @@ export class ImpactFX {
     this.dust.dispose();
     this.debris.dispose();
     this.blood.dispose();
+    this.motes.dispose();
     this.flash.dispose();
     this.decals.dispose();
     this.bloodDecals.dispose();
@@ -761,6 +936,37 @@ const UP: Vec3 = [0, 1, 0];
 function norm(v: Vec3): Vec3 {
   const l = Math.hypot(v[0], v[1], v[2]);
   return l > 1e-6 ? [v[0] / l, v[1] / l, v[2] / l] : [0, 1, 0];
+}
+
+/** Two unit vectors perpendicular to `n` and to each other. The seed axis is chosen
+ *  to be the one `n` points along least, so the cross product is never degenerate. */
+function basis(n: Vec3): [Vec3, Vec3] {
+  const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+  const seed: Vec3 = ax <= ay && ax <= az ? [1, 0, 0] : ay <= az ? [0, 1, 0] : [0, 0, 1];
+  const t1 = norm([
+    n[1] * seed[2] - n[2] * seed[1],
+    n[2] * seed[0] - n[0] * seed[2],
+    n[0] * seed[1] - n[1] * seed[0],
+  ]);
+  const t2: Vec3 = [
+    n[1] * t1[2] - n[2] * t1[1],
+    n[2] * t1[0] - n[0] * t1[2],
+    n[0] * t1[1] - n[1] * t1[0],
+  ];
+  return [t1, t2];
+}
+
+/** A random direction around the ring perpendicular to `n` (spanned by `t1`/`t2`),
+ *  tilted `out` toward `n` and wobbled either side of the plane by `wobble`. */
+function discSample(n: Vec3, t1: Vec3, t2: Vec3, out: number, wobble: number): Vec3 {
+  const a = Math.random() * Math.PI * 2;
+  const c = Math.cos(a), s = Math.sin(a);
+  const lift = out + (Math.random() - 0.5) * wobble;
+  return norm([
+    t1[0] * c + t2[0] * s + n[0] * lift,
+    t1[1] * c + t2[1] * s + n[1] * lift,
+    t1[2] * c + t2[2] * s + n[2] * lift,
+  ]);
 }
 
 /** A random direction within a cone around `dir`. `spread` 0 = straight along it,

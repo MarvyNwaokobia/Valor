@@ -38,6 +38,24 @@ import type { PbrMaps } from './usePbr';
  * with the mesh's tangents (which describe the WRONG parameterisation once the UVs
  * are gone): `hard` rebuilds the tangent frame of the chosen axis, `blend` uses the
  * standard whiteout blend.
+ *
+ * TWO EXTRA OCTAVES fix what one tiling texture can never do on its own, and they
+ * are the reason a 1k map holds up on a pillar you can put your face against:
+ *
+ *  - `detail` samples the SAME map again several times finer and modulates the base
+ *    with it, fading out with distance. Up close, a 1k texture stretched over
+ *    ~2 metres is being magnified perhaps eight times — every texel is a soft blob,
+ *    which is exactly the mush the wood pillar in the compound showed. The fine
+ *    octave puts grain back at the pixel scale, so the surface reads as material
+ *    rather than as a blurred photograph, without loading a second texture.
+ *  - `macro` samples it MUCH coarser and tints by that, which breaks up the obvious
+ *    repeat over a long wall or the floor. Tiling reads as tiling because every tile
+ *    has identical average brightness; a slow blotch across many tiles hides the grid
+ *    the eye was locking onto.
+ *
+ * Both are multiplicative deviations around mid-grey (`1 + (sample - 0.5) * amount`),
+ * so they add texture without shifting the surface's overall exposure, and both cost
+ * one fetch each on the diffuse only — the normal and roughness maps stay single-tap.
  */
 
 export interface TriplanarOptions {
@@ -48,6 +66,19 @@ export interface TriplanarOptions {
   blend?: boolean;
   /** How tightly `blend` favours the dominant axis (higher = narrower seam). */
   sharpness?: number;
+  /** Frequency of the close-range detail octave, as a multiple of the base tiling.
+   *  Wants to be non-integer so it never lines up with the base. 0 = off. */
+  detail?: number;
+  /** How hard the detail octave bites, 0..1. */
+  detailAmount?: number;
+  /** View distance in metres over which detail fades out: [full, gone]. Past `gone`
+   *  the octave is below a pixel anyway, and sampling it there is just aliasing. */
+  detailFade?: [number, number];
+  /** Frequency of the macro-variation octave, as a fraction of the base tiling
+   *  (0.1 ≈ one blotch per ten tiles). 0 = off. */
+  macro?: number;
+  /** How strongly macro variation tints, 0..1. */
+  macroAmount?: number;
 }
 
 type StandardParams = THREE.MeshStandardMaterialParameters;
@@ -65,6 +96,9 @@ export function makeTriplanarMaterial(
   const metresPerTile = opts.metresPerTile ?? 2;
   const blend = opts.blend ?? false;
   const sharpness = opts.sharpness ?? 8;
+  const detail = opts.detail ?? 0;
+  const macro = opts.macro ?? 0;
+  const detailFade = opts.detailFade ?? [7, 16];
 
   const mat = new THREE.MeshStandardMaterial({ ...maps, ...params });
 
@@ -83,7 +117,20 @@ export function makeTriplanarMaterial(
     // swimming). An exact multiple of the tile size, so the wrap is seamless.
     uTriWrap: { value: metresPerTile * 32 },
     uTriSharpness: { value: sharpness },
+    // Both extra octaves are expressed relative to the base tiling, so retuning
+    // `metresPerTile` keeps their relationship to it and nothing has to be redialled.
+    uTriDetail: { value: detail },
+    uTriDetailAmt: { value: opts.detailAmount ?? 0.7 },
+    uTriFade: { value: new THREE.Vector2(detailFade[0], detailFade[1]) },
+    uTriMacro: { value: macro },
+    uTriMacroAmt: { value: opts.macroAmount ?? 0.34 },
   };
+
+  const defines = [
+    blend ? 'blend' : 'hard',
+    detail > 0 ? 'detail' : '',
+    macro > 0 ? 'macro' : '',
+  ].filter(Boolean).join('+');
 
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -97,21 +144,34 @@ export function makeTriplanarMaterial(
         // Non-uniform scale is fine here: every mesh using this material is an
         // axis-aligned box or plane, so scaling a face normal cannot rotate it.
         vTriNrm = normalize( mat3( modelMatrix ) * objectNormal );`,
-      );
+      )
+      // <project_vertex> is where three builds mvPosition; -z out of it is the
+      // view distance the detail octave fades over.
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvTriDepth = - mvPosition.z;');
+
+    // The hard-projection helpers are always present, even in `blend` mode: the
+    // detail and macro octaves are a MODULATION, not the surface, so taking them
+    // off the dominant axis alone is indistinguishable and keeps them at one fetch
+    // apiece instead of three.
+    const helpers = blend ? `${HARD_HELPERS}\n${BLEND_HELPERS}` : HARD_HELPERS;
+    const modulation = detail > 0 || macro > 0
+      ? OCTAVES.replace('/*DETAIL*/', detail > 0 ? DETAIL_OCTAVE : '').replace('/*MACRO*/', macro > 0 ? MACRO_OCTAVE : '')
+      : '';
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${VARYINGS}\n${FRAG_UNIFORMS}`)
       // Helpers go in just above main(), where every sampler uniform is declared.
-      .replace('void main() {', `${blend ? BLEND_HELPERS : HARD_HELPERS}\nvoid main() {`)
-      .replace('#include <map_fragment>', blend ? BLEND_MAP : HARD_MAP)
+      .replace('void main() {', `${helpers}\nvoid main() {`)
+      .replace('#include <map_fragment>', (blend ? BLEND_MAP : HARD_MAP).replace('/*OCTAVES*/', modulation))
       .replace('#include <roughnessmap_fragment>', blend ? BLEND_ROUGH : HARD_ROUGH)
       .replace('#include <normal_fragment_maps>', blend ? BLEND_NORMAL : HARD_NORMAL);
   };
 
   // three caches compiled programs by material properties, and onBeforeCompile edits
   // are invisible to that key. Without this, a `hard` and a `blend` material with
-  // otherwise identical settings would be handed each other's program.
-  mat.customProgramCacheKey = () => `triplanar:${blend ? 'blend' : 'hard'}`;
+  // otherwise identical settings would be handed each other's program — and so would
+  // two that differ only in which extra octaves they compile in.
+  mat.customProgramCacheKey = () => `triplanar:${defines}`;
 
   return mat;
 }
@@ -119,12 +179,18 @@ export function makeTriplanarMaterial(
 const VARYINGS = /* glsl */`
 varying vec3 vTriPos;
 varying vec3 vTriNrm;
+varying float vTriDepth;
 `;
 
 const FRAG_UNIFORMS = /* glsl */`
 uniform float uTriScale;
 uniform float uTriWrap;
 uniform float uTriSharpness;
+uniform float uTriDetail;
+uniform float uTriDetailAmt;
+uniform vec2 uTriFade;
+uniform float uTriMacro;
+uniform float uTriMacroAmt;
 
 // Wrapped world position, in texture units.
 vec3 triPos() {
@@ -195,6 +261,7 @@ const HARD_MAP = /* glsl */`
   vec3 triN = normalize( vTriNrm );
   int triA = triAxis( triN );
   diffuseColor *= texture2D( map, triUv( triP, triN, triA ) );
+  /*OCTAVES*/
 #endif
 `;
 
@@ -204,7 +271,40 @@ const BLEND_MAP = /* glsl */`
   vec3 triN = normalize( vTriNrm );
   vec3 triW = triWeights( triN );
   diffuseColor *= triSample( map, triP, triN, triW );
+  /*OCTAVES*/
 #endif
+`;
+
+// ── Extra octaves ──────────────────────────────────────────────────────────────
+// Both take the SAME map at a different frequency and modulate what was already
+// sampled. Written as a deviation around mid-grey so the surface's average
+// brightness survives: a map whose mean is 0.45 shifts the result by 2-3% at these
+// amounts, not by the map's whole exposure.
+//
+// The offsets are there so neither octave lands in phase with the base sample at
+// the world origin, which would otherwise put a visible sharp cross right where the
+// player starts.
+
+const OCTAVES = /* glsl */`
+  vec3 triOctN = normalize( vTriNrm );
+  vec2 triOctUv = triUv( triPos(), triOctN, triAxis( triOctN ) );
+  /*DETAIL*/
+  /*MACRO*/
+`;
+
+const DETAIL_OCTAVE = /* glsl */`
+  // Below a pixel at range, so it is faded out rather than left to alias.
+  float triDetW = ( 1.0 - smoothstep( uTriFade.x, uTriFade.y, vTriDepth ) ) * uTriDetailAmt;
+  if ( triDetW > 0.002 ) {
+    vec3 triDet = texture2D( map, triOctUv * uTriDetail + vec2( 0.37, 0.11 ) ).rgb;
+    diffuseColor.rgb *= 1.0 + ( triDet - 0.5 ) * triDetW;
+  }
+`;
+
+const MACRO_OCTAVE = /* glsl */`
+  // One channel is enough: this is a slow brightness blotch, not a colour.
+  float triMac = texture2D( map, triOctUv * uTriMacro + vec2( 0.63, 0.29 ) ).g;
+  diffuseColor.rgb *= 1.0 + ( triMac - 0.5 ) * uTriMacroAmt;
 `;
 
 // ── Roughness ──────────────────────────────────────────────────────────────────

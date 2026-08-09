@@ -85,3 +85,82 @@ describe('ImpactFX pooling', () => {
     f.dispose();
   });
 });
+
+describe('ImpactFX ambient ash', () => {
+  it('emits at a RATE, so the air looks the same at 30fps and at 144', () => {
+    const slow = fx();
+    for (let i = 0; i < 30; i++) { slow.ambient(1 / 30, [0, 1.6, 0]); slow.update(1 / 30); }
+    const a = slow.particleCount;
+    slow.dispose();
+
+    const fast = fx();
+    for (let i = 0; i < 144; i++) { fast.ambient(1 / 144, [0, 1.6, 0]); fast.update(1 / 144); }
+    const b = fast.particleCount;
+    fast.dispose();
+
+    // One second of ash either way. A per-frame count would have made these differ
+    // by nearly 5x.
+    expect(a).toBeGreaterThan(0);
+    expect(Math.abs(a - b)).toBeLessThanOrEqual(2);
+  });
+
+  it('a frame shorter than one mote still accumulates instead of emitting nothing', () => {
+    const f = fx();
+    // At 16/s a 60Hz frame is owed 0.27 of a mote — flooring per frame without
+    // carrying the remainder would emit forever and never produce one.
+    for (let i = 0; i < 20; i++) { f.ambient(1 / 60, [0, 1.6, 0]); f.update(1 / 60); }
+    expect(f.particleCount).toBeGreaterThan(0);
+    f.dispose();
+  });
+
+  it('holds its own pool, so a firefight cannot delete the atmosphere', () => {
+    const f = fx();
+    for (let i = 0; i < 60; i++) { f.ambient(1 / 60, [0, 1.6, 0]); f.update(1 / 60); }
+    const ash = f.particleCount;
+    // Empty several magazines into a wall right next to it.
+    for (let i = 0; i < 200; i++) f.burst([0, 1, 0], UP, 'concrete');
+    f.update(1 / 60);
+    // Every impact particle is short-lived; the motes live for seconds. Run past
+    // the impacts and the ash must still be there.
+    for (let i = 0; i < 240; i++) f.update(1 / 60);
+    expect(f.particleCount).toBeGreaterThanOrEqual(ash - 4);
+    f.dispose();
+  });
+
+  it('the lean tier thins the ash out', () => {
+    const full = fx();
+    for (let i = 0; i < 60; i++) { full.ambient(1 / 60, [0, 1.6, 0]); full.update(1 / 60); }
+    const a = full.particleCount;
+    full.dispose();
+
+    const lean = fx('lean');
+    for (let i = 0; i < 60; i++) { lean.ambient(1 / 60, [0, 1.6, 0]); lean.update(1 / 60); }
+    const b = lean.particleCount;
+    lean.dispose();
+
+    expect(b).toBeLessThan(a);
+  });
+});
+
+describe('ImpactFX blood', () => {
+  it('a body going down throws a last spatter', () => {
+    const f = fx();
+    f.pool([2, 0, -3]);
+    expect(f.particleCount).toBeGreaterThan(0);
+    f.dispose();
+  });
+
+  it('a flesh hit throws more liquid than a wall hit throws chips', () => {
+    const body = fx();
+    body.burst([0, 1.2, 0], UP, 'flesh');
+    const wet = body.particleCount;
+    body.dispose();
+
+    const wall = fx();
+    wall.burst([0, 1.2, 0], UP, 'wood');
+    const dry = wall.particleCount;
+    wall.dispose();
+
+    expect(wet).toBeGreaterThan(dry);
+  });
+});
