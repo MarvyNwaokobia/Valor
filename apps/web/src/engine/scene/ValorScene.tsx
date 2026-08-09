@@ -223,9 +223,13 @@ function touchBtn(color: string, size: number, strong = false): React.CSSPropert
   return {
     position: 'absolute', width: size, height: size, borderRadius: '50%',
     border: `1.5px solid ${color}${strong ? 'cc' : '55'}`,
-    background: `radial-gradient(circle at 50% 34%, ${color}${strong ? '40' : '22'}, ${color}0f 66%, rgba(6,10,16,.42))`,
+    // Base alpha raised .42 → .74 because this used to sit on a blur(7px) backdrop
+    // that supplied most of the separation from the scene. The blur is gone (see
+    // `frost` — these buttons are touch-only, and nine live backdrop-filters over a
+    // per-frame canvas was the mobile HUD's largest fixed cost), so the fill has to
+    // carry the contrast on its own.
+    background: `radial-gradient(circle at 50% 34%, ${color}${strong ? '40' : '22'}, ${color}0f 66%, rgba(6,10,16,.74))`,
     boxShadow: `inset 0 1px 0 rgba(255,255,255,.22), inset 0 -8px 16px ${color}14, 0 6px 16px rgba(0,0,0,.5)`,
-    backdropFilter: 'blur(7px)', WebkitBackdropFilter: 'blur(7px)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     color, fontWeight: 700, letterSpacing: 1, touchAction: 'none', userSelect: 'none', WebkitTapHighlightColor: 'transparent',
     transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s', willChange: 'transform',
@@ -269,6 +273,37 @@ function detectTouchDevice(): boolean {
   // and trackpad laptops that merely happen to have a touchscreen.
   if (navigator.maxTouchPoints > 0 && window.matchMedia?.('(pointer: coarse)')?.matches) return true;
   return false;
+}
+
+/** Cached: the answer cannot change for the life of the page, and `frost` asks per chip. */
+let touchCache: boolean | null = null;
+function isTouchDevice(): boolean {
+  if (touchCache === null) touchCache = detectTouchDevice();
+  return touchCache;
+}
+
+/**
+ * Frosted backing for a HUD chip on desktop; a flat opaque one on touch.
+ *
+ * `backdrop-filter` is the most expensive CSS property you can lay over a live
+ * WebGL canvas. The compositor cannot cache the blurred result: it has to re-read
+ * the pixels behind the element and re-blur them every time the canvas presents,
+ * which during a fight is every single frame. The touch HUD carried NINE of these
+ * at once (the control buttons, the top bar, the weapon chips, the re-arm bar) on
+ * exactly the hardware least able to absorb it — mobile GPUs are tile-based and
+ * fill-rate bound, and each blurred region is an extra full composite pass.
+ *
+ * Desktop keeps the glass: the look is worth it there and the compositor has the
+ * budget. Touch gets a solid `opaque` colour instead, which over a dark scene
+ * reads almost identically and costs nothing per frame.
+ *
+ * Spread this AFTER `background` in a style object so the touch branch wins:
+ *   style={{ ...base, background: 'rgba(6,10,16,.55)', ...frost(6, 'rgba(6,10,16,.88)') }}
+ */
+function frost(px: number, opaque: string): React.CSSProperties {
+  return isTouchDevice()
+    ? { background: opaque }
+    : { backdropFilter: `blur(${px}px)`, WebkitBackdropFilter: `blur(${px}px)` };
 }
 
 /** Shared outlined-button style for the pause menu (C4). */
@@ -3142,7 +3177,9 @@ function SurvivalRearmControls({ walletAddress }: { walletAddress: string }) {
     <button onClick={() => doRearm(action)} disabled={busy || pending} style={{
       pointerEvents: 'auto', cursor: busy ? 'wait' : 'pointer', background: 'rgba(10,14,20,.72)',
       border: `1px solid ${color}`, color, fontFamily: 'inherit', fontSize: 12, letterSpacing: 2,
-      padding: '9px 14px', borderRadius: 6, backdropFilter: 'blur(6px)', opacity: busy || pending ? 0.55 : 1,
+      padding: '9px 14px', borderRadius: 6, opacity: busy || pending ? 0.55 : 1,
+      // Live on screen for the whole survival run, so it takes the frost rule.
+      ...frost(6, 'rgba(10,14,20,.92)'),
     }}>{label}</button>
   );
 
@@ -3226,7 +3263,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   if (status === 'locked') {
     return (
       <div style={{ position: 'absolute', left: 0, right: 0, top: 70, zIndex: 45, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-        <div style={{ background: 'rgba(20,16,4,.82)', border: '1px solid #e0b73766', color: '#e6c766', fontSize: 11, letterSpacing: 1, padding: '7px 12px', borderRadius: 6, backdropFilter: 'blur(6px)' }}>
+        <div style={{ background: 'rgba(20,16,4,.82)', border: '1px solid #e0b73766', color: '#e6c766', fontSize: 11, letterSpacing: 1, padding: '7px 12px', borderRadius: 6, ...frost(6, 'rgba(20,16,4,.94)') }}>
           not ranked — finish the campaign to unlock the Gauntlet
         </div>
       </div>
@@ -3242,7 +3279,7 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
     const mine = walletAddress ? seasonRows.find((e) => e.wallet_address.toLowerCase() === walletAddress.toLowerCase()) : undefined;
     return (
       <div style={{ position: 'absolute', left: 0, right: 0, top: 46, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-        <div style={{ pointerEvents: 'auto', width: 312, maxWidth: '88vw', background: 'rgba(14,12,4,.92)', border: '1px solid #e0b73755', borderRadius: 10, padding: '14px 16px', color: '#e9edf2', fontFamily: UI_FONT, backdropFilter: 'blur(8px)' }}>
+        <div style={{ pointerEvents: 'auto', width: 312, maxWidth: '88vw', background: 'rgba(14,12,4,.92)', border: '1px solid #e0b73755', borderRadius: 10, padding: '14px 16px', color: '#e9edf2', fontFamily: UI_FONT, ...frost(8, 'rgba(14,12,4,.97)') }}>
           <div style={{ fontSize: 11, letterSpacing: 5, color: '#e0b737' }}>GAUNTLET · RANKED</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '6px 0 10px' }}>
             <span style={{ fontSize: 34, fontWeight: 800, color: '#e6c766' }}>{result.waves}</span>
@@ -3596,10 +3633,30 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
   const sceneMountedAt = useRef(0);
   useEffect(() => { sceneMountedAt.current = performance.now(); }, [missionIndex, mode, runNonce]);
 
-  // minimal = the aggressive tier (dpr 1, no shadows, no set-dressing). Desktop/laptop
-  // only — mobile keeps its current look untouched. lightFx = drop heavy postprocessing.
+  // minimal = the aggressive tier (dpr 1, no shadows, no set-dressing, lean impacts).
+  // lightFx = drop the heavy postprocessing passes.
+  //
+  // This USED to read `!isTouch && autoMinimal`, i.e. phones could never reach the
+  // minimal tier at all: the shadow pass, the set dressing and the ambient impact
+  // particles stayed on no matter how badly the device was drowning, and the only
+  // thing touch got was `lightFx`, which it already had unconditionally. Two things
+  // followed from that, both bad:
+  //
+  //   1. a struggling Android phone had NO escape hatch — AdaptiveDpr trimming the
+  //      resolution was the entire adaptive budget, and it can't touch the shadow
+  //      map or the draw calls, which is where the cost actually is;
+  //   2. the GRAPHICS → LOW button in the pause menu was a NO-OP on touch. It flips
+  //      `autoMinimal`, which was ANDed away here, so a player who felt the lag,
+  //      found the setting and chose LOW got exactly nothing and reasonably
+  //      concluded the game was broken.
+  //
+  // Every consumer of `minimal` is a pure performance lever (see the shadow, set
+  // dressing, ImpactFX and dpr sites) — none of it changes what you can see, hit or
+  // stand on — so there is nothing device-specific to protect here. Mobile gets the
+  // same tier, and the auto-degrade path that already ran on phones now does
+  // something when it fires.
   const autoMinimal = quality === 'low' || (quality === 'auto' && degraded);
-  const minimal = !isTouch && autoMinimal;
+  const minimal = autoMinimal;
   const lightFx = isTouch || autoMinimal;
 
   // Lock the PAGE to the game while the scene is mounted (restored on unmount so
@@ -3838,12 +3895,16 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         shadows
         gl={{ antialias: false, powerPreference: 'high-performance' }}
         // C3: cap the render resolution. A retina phone is DPR 3 (9× the pixels of
-        // DPR 1) — the single biggest mobile cost. Phones cap at 1.5, desktop at 2;
-        // AdaptiveDpr drops toward the low end when PerformanceMonitor sees fps sag.
-        // Retina desktops render at DPR 2 (4x the pixels of DPR 1) — the single
-        // biggest desktop cost. `minimal` locks a struggling machine to DPR 1; mobile
-        // keeps 1.5; capable desktops keep 2 (AdaptiveDpr still trims within bounds).
-        dpr={isTouch ? [1, 1.5] : (minimal ? [1, 1] : [1, 2])}
+        // DPR 1) — the single biggest mobile cost. Retina desktops render at DPR 2
+        // (4× DPR 1) — the single biggest desktop cost. AdaptiveDpr trims toward the
+        // low end of whatever range it is given when PerformanceMonitor sees fps sag.
+        //
+        // `minimal` now locks DPR 1 on EVERY device, not just desktop. A phone on the
+        // minimal tier is by definition one that could not hold framerate at 1.5 with
+        // AdaptiveDpr already trimming, so leaving it capped at 1.5 was leaving the
+        // largest single lever untouched on exactly the devices that needed it.
+        // Healthy phones keep 1.5 and capable desktops keep 2, unchanged.
+        dpr={minimal ? [1, 1] : (isTouch ? [1, 1.5] : [1, 2])}
         camera={{ position: [mission.start[0], 1.6, mission.start[1]], fov: 55, near: 0.01, far: 320 }}
       >
         {/* Auto-degrade: after a warmup, sustained declines (or the flipflop fallback)
@@ -4161,7 +4222,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           {/* C4 pause button — top-centre, ABOVE the aim strip (top:104) so it never
               eats an aim touch. Safe to mis-tap: pause just freezes + offers RESUME. */}
           <div onTouchStart={(e) => { e.stopPropagation(); openPause(); }} onClick={openPause}
-            style={{ position: 'absolute', left: '50%', top: 8, transform: 'translateX(-50%)', zIndex: 20, width: 40, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(255,255,255,.18)', color: '#cfe0ea', backdropFilter: 'blur(6px)', pointerEvents: 'auto' }}>
+            style={{ position: 'absolute', left: '50%', top: 8, transform: 'translateX(-50%)', zIndex: 20, width: 40, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'rgba(6,10,16,.88)', border: '1px solid rgba(255,255,255,.18)', color: '#cfe0ea', pointerEvents: 'auto' }}>
             <Icon name="pause" size={18} />
           </div>
 
@@ -4171,7 +4232,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
               buttons, so it isn't mis-tapped mid-fight. */}
           {onExit && (
             <div onTouchStart={(e) => { e.stopPropagation(); onExit(); }} onClick={onExit}
-              style={{ position: 'absolute', left: 10, top: 8, zIndex: 20, height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, backdropFilter: 'blur(6px)', pointerEvents: 'auto' }}>
+              style={{ position: 'absolute', left: 10, top: 8, zIndex: 20, height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.88)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, pointerEvents: 'auto' }}>
               <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
             </div>
           )}
@@ -4242,7 +4303,11 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
                 onPointerUp={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
                 onPointerLeave={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
                 onPointerCancel={(e) => pressFx(e.currentTarget as HTMLElement, false, c.color)}
-                style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a)`, boxShadow: `inset 0 1px 0 ${c.color}33`, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent', transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s, background .12s, border-color .12s' }}>{c.label}</div>
+                // The tint gradient is nearly transparent — the blur used to supply the
+                // chip's body. With it gone (touch-only row; see `frost`), the gradient
+                // is composited over a dark solid so the label stays readable against a
+                // bright muzzle flash instead of dissolving into the scene.
+                style={{ width: 46, height: 30, borderRadius: 8, border: `1px solid ${c.color}77`, background: `linear-gradient(180deg, ${c.color}1f, ${c.color}0a), rgba(6,10,16,.82)`, boxShadow: `inset 0 1px 0 ${c.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, letterSpacing: 1, fontWeight: 700, color: c.color, touchAction: 'none', WebkitTapHighlightColor: 'transparent', transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s, background .12s, border-color .12s' }}>{c.label}</div>
             ))}
           </div>
         </>
