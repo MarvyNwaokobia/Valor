@@ -8,6 +8,7 @@ import { BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import { makeTriplanarMaterial } from './triplanar';
+import { buildViewmodelHands, VIEWMODEL_HIP, VIEWMODEL_ADS, WEAPON_VIEW } from './viewmodelHands';
 import { ImpactFX, type ImpactSurface } from '../vfx/ImpactFX';
 import { useImpactTextures } from '../vfx/useImpactTextures';
 import { DroppedWeapon } from '../vfx/DroppedWeapon';
@@ -22,7 +23,7 @@ import { STARTER_GUN_ID, type GunId } from '../combat/GunStats';
 import type { AmmoId, AttachmentId, AttachmentSlot } from '../combat/Loadout';
 import { FpsAudio } from '../audio';
 import { computeEdgeArrow } from '../verb/threatArrow';
-import { useGunPrototypes, ALL_GUN_IDS } from './gunModels';
+import { useGunPrototypes, ALL_GUN_IDS, GUN_LENGTH } from './gunModels';
 import { OperatorRig, type OperatorApi } from './OperatorRig';
 import { CAMPAIGN, CAMPAIGN_KEY, PROGRESS_KEY, ZONE_THEMES, themeForMission, SURVIVAL_MISSION, GAUNTLET_MISSION, ENDLESS_MISSION, SEASONAL_MISSION, survivalWaveCount, survivalWaveHp, gauntletWaveCount, gauntletWaveHp, type Mission } from '../fps/campaign';
 import {
@@ -90,14 +91,8 @@ const PITCH_LIMIT = 1.45;       // ~83°
 const RECOIL_RECOVER = 12;     // per second
 const BOB = 0.014;
 
-const HIP_POS = new THREE.Vector3(0.2, -0.2, -0.5);
-// ADS is a gentle RAISE of the hip pose, not a shove into the camera. The rifle is
-// ~0.88m long and centred on its origin (rear ~0.44m back), so pulling it to z=-0.32
-// AND centring it (x=0) put the chunky receiver end-on ~1cm from the eye = a giant
-// black blob. Instead keep it at hip depth (-0.5, whole gun in front), only slightly
-// toward centre (x 0.2->0.1 so you still see its side, not its rear), and lift it
-// (y -0.2->-0.1). The aim "zoom" comes from the FOV narrowing, not the gun position.
-const ADS_POS = new THREE.Vector3(0.1, -0.1, -0.5);
+// The two viewmodel framings moved to scene/viewmodelHands as VIEWMODEL_HIP /
+// VIEWMODEL_ADS, so the grip bench can frame a weapon identically to the game.
 
 // The tactical UI face (loaded in the route via next/font), mono for raw numbers.
 const UI_FONT = 'var(--font-tactical), ui-monospace, monospace';
@@ -291,22 +286,6 @@ const ATTACH_CHIPS: { id: Attachment; label: string; key: string; color: string 
   { id: 'optic', label: 'OPTIC', key: 'O', color: '#8fb8d0' },
 ];
 
-// Each model is now normalised to its own real length (see gunModels.ts), so
-// `scale` is a small fudge for hand-fit, not a size proxy; z/y slide the weapon
-// in the hands (a long DMR sits pushed out, a pistol held in close).
-const WEAPON_VIEW: Record<GunId, { scale: number; z: number; y: number }> = {
-  sidearm: { scale: 1.0, z: 0.12, y: -0.02 }, // a compact pistol, held in close
-  smg: { scale: 1.0, z: 0.05, y: -0.01 },     // stubby, snappy
-  assault_rifle: { scale: 1.0, z: 0, y: 0 },  // the baseline
-  marksman: { scale: 1.0, z: -0.05, y: 0.01 },// long — pushed out front
-  legendary: { scale: 1.0, z: 0, y: 0 },      // the Valor Prototype
-  // Seasonal weapons: longer bodies are pushed further out so the muzzle clears frame.
-  ashfall_carbine: { scale: 1.0, z: 0.04, y: -0.005 },
-  warden_repeater: { scale: 1.0, z: -0.06, y: 0.01 },
-  rift_lance:      { scale: 1.0, z: -0.07, y: 0.012 },
-  seraph_lmg:      { scale: 1.0, z: -0.03, y: 0.005 },
-  ember_halo:      { scale: 1.0, z: -0.02, y: 0.008 },
-};
 
 // Where a dropped weapon comes to rest. Not 0: the models are centred on the body
 // of the gun, so a receiver lying on the deck sits a few centimetres up.
@@ -956,6 +935,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // its own -Z. The barrel is +Z, so unturned it fires into your face.
       g.rotateY(Math.PI);
       g.scale.setScalar(WEAPON_VIEW[id].scale);
+      // Hands go on the GUN, not on the viewmodel group. Everything the weapon does
+      // — sights, recoil kick, the swap dip, the pullback against a wall — is applied
+      // to the viewmodel or to this mesh, and a hand parented here inherits all of it
+      // and can never drift off the grip. On the viewmodel group it would have to
+      // re-implement each of those, and would break the next time ADS was retuned.
+      //
+      // Built BEFORE it is attached, and deliberately on its own line: the grips are
+      // measured off the weapon's own geometry, so hands already in the hierarchy
+      // would be measured as part of the weapon.
+      const hands = buildViewmodelHands(id, g, GUN_LENGTH[id]);
+      g.add(hands);
       out[id] = g;
     }
     return out;
@@ -1514,12 +1504,26 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // weapon here would throw sixty times a second.
     const activeMesh = gunMeshes[activeId] ?? gunMeshes.assault_rifle;
     muzzleRef.current = activeMesh.getObjectByName('muzzle') ?? activeMesh;
+    /**
+     * Hands are for the HIP pose only.
+     *
+     * The ADS framing (see VIEWMODEL_ADS) keeps the weapon at hip depth and only
+     * lifts it toward centre, so the grip — and therefore the firing hand — ends up
+     * in the middle of the sight picture. Compared against the same frame with hands
+     * off, the hand was covering the thing you are aiming at. The alternative is to
+     * retune the ADS pose to make room, and that pose is a deliberate feel decision
+     * with its own reasoning; quietly rewriting it to suit a new prop would be the
+     * wrong trade. So the hands tuck away as the weapon comes up, which is both what
+     * the sights need and roughly what actually happens to your view of them.
+     */
+    const handsGroup = activeMesh.getObjectByName('hands');
+    if (handsGroup) handsGroup.visible = adsCur.current < 0.45;
     swapRaise.current = Math.max(0, swapRaise.current - dt * 2.4);
     const vm = vmRef.current;
     // While the weapon is on the deck it must not also be in your hands.
     if (vm) vm.visible = !dropPhysics.current.active;
     if (vm) {
-      const local = tmp.copy(HIP_POS).lerp(ADS_POS, adsCur.current);
+      const local = tmp.copy(VIEWMODEL_HIP).lerp(VIEWMODEL_ADS, adsCur.current);
       local.z += view.z; local.y += view.y;                 // where this weapon sits
       // bob: a gentle walk figure-8 on the viewmodel when moving
       local.x += Math.sin(bobPhase.current) * BOB * (moving ? 1 : 0);
@@ -2800,11 +2804,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         {ALL_GUN_IDS.map((id) => (
           <primitive key={id} object={gunMeshes[id]} />
         ))}
-        {/* simple graybox hands so the first person reads */}
-        <mesh position={[0.02, -0.03, -0.02]}>
-          <boxGeometry args={[0.06, 0.06, 0.14]} />
-          <meshStandardMaterial color="#6b5b4d" roughness={0.8} />
-        </mesh>
+        {/* The hands are children of each GUN (see gunMeshes), not of this group,
+            so they ride the weapon through ADS, recoil and the wall pullback. What
+            used to be here was a single 6cm cube of brown that the framing never
+            actually put on screen. */}
       </group>
 
       {/* the weapon after you go down: in the world, not in your hands */}

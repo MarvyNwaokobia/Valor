@@ -121,6 +121,20 @@ export const GUN_IDS = Object.keys(GUN_MODEL_URL) as Exclude<GunId, ProceduralGu
  */
 export const ALL_GUN_IDS: GunId[] = [...GUN_IDS, ...PROCEDURAL_IDS];
 
+/**
+ * The real-world length every prototype is normalised to, for both families at once.
+ *
+ * Exported because a prototype's frame is only meaningful WITH its length: the model
+ * is centred on the origin, so "how far along the weapon" is a fraction of this and
+ * nothing else. The viewmodel hands measure their grips that way.
+ */
+export const GUN_LENGTH: Record<GunId, number> = {
+  ...(Object.fromEntries(
+    (Object.keys(GUN_LEN) as Exclude<GunId, ProceduralGunId>[]).map((id) => [id, Number(GUN_LEN[id])]),
+  ) as Record<Exclude<GunId, ProceduralGunId>, number>),
+  ...PROCEDURAL_LEN,
+};
+
 /** Load + normalise every gun model. Returns one prototype per tier; clone before
  *  mutating. Suspends while the GLBs load, so mount under a <Suspense>. */
 export function useGunPrototypes(): Record<GunId, THREE.Group> {
