@@ -81,7 +81,34 @@ export const OperatorRig = forwardRef<OperatorApi, { modelPath: string }>(functi
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh || STRIP.test(mesh.name)) return;
       mesh.castShadow = true;
-      mesh.frustumCulled = false; // skinned bounds lie when animating
+
+      // Frustum culling STAYS ON, with padded bounds.
+      //
+      // This used to be `frustumCulled = false`, on the reasoning that a skinned
+      // mesh's bounds come from the bind pose and understate an animating body. That
+      // is true, but switching culling off is the wrong remedy: it means every rig in
+      // the mission is submitted every frame even when it is behind the player, and
+      // each operator is 46,301 triangles across two primitives. Measured on the
+      // touch/minimal tier, nine rigs accounted for 417k of the frame's 440k triangles
+      // — 95% of all geometry, on the quality tier that is supposed to be the escape
+      // hatch for a struggling phone. No quality setting touched it, which is exactly
+      // why LOW felt like it did nothing.
+      //
+      // The correct remedy for lying bind-pose bounds is to PAD them. The bind sphere
+      // already encloses the whole body; 2.5x gives a wide margin for any pose the rig
+      // reaches (arms out, ragdoll fall) while still rejecting anyone off-screen, so
+      // nothing you could actually see can pop.
+      //
+      // Guarded by a flag because SkeletonUtils.clone SHARES geometry between clones:
+      // without it, 36 endless rigs would each inflate the same sphere and the radius
+      // would compound into infinity, culling nothing.
+      mesh.frustumCulled = true;
+      const geo = mesh.geometry as THREE.BufferGeometry;
+      if (!geo.userData.__valorCullPadded) {
+        if (!geo.boundingSphere) geo.computeBoundingSphere();
+        if (geo.boundingSphere) geo.boundingSphere.radius *= 2.5;
+        geo.userData.__valorCullPadded = true;
+      }
       const src = mesh.material as THREE.Material | THREE.Material[];
       const cloneMat = (m: THREE.Material) => {
         const c = m.clone() as THREE.MeshStandardMaterial;
@@ -96,7 +123,8 @@ export const OperatorRig = forwardRef<OperatorApi, { modelPath: string }>(functi
     });
 
     // Do NOT measure a skinned mesh with Box3: its bounds come from the bind pose
-    // and lie badly (that's why frustumCulled is off). Scale from the HEAD BONE,
+    // and lie badly (which is why the cull sphere above is padded rather than
+    // trusted as-is). Scale from the HEAD BONE,
     // which also lands the model's head exactly on the sim's head hitbox.
     clone.updateMatrixWorld(true);
     let head: THREE.Object3D | null = null;

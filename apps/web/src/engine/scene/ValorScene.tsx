@@ -366,6 +366,26 @@ const ENDLESS_CULL_ACTIVE = 60;
  *  almost always sealed behind a wall. Rooms are 14-18m deep, so this shows the one
  *  you are in and drops the rest — where nearly all the saving is. */
 const ENDLESS_CULL_DORMANT = 20;
+/** The same rule for an AUTHORED op, held further out.
+ *
+ *  This cull used to be endless-only, which left the campaign drawing every enemy in
+ *  the mission on every frame. That is not a small oversight: an operator rig is
+ *  46,301 triangles, and a measured op-1 frame on the minimal touch tier spent 417k of
+ *  its 440k triangles on nine of them. Frustum culling alone cannot fix it, because an
+ *  op is a corridor of rooms and the enemies are all AHEAD of you, inside the view
+ *  cone, merely hidden behind walls — and three.js does no occlusion culling.
+ *
+ *  Set against the real geometry rather than guessed. Ops start the player at z=16
+ *  (A_START) and op 1's rooms sit at z 2.5..5 and z -7..-2.5, i.e. dz 11-13.5 for the
+ *  front room and 18.5-23 for the back one. 18m therefore keeps every body in the room
+ *  you are walking into and drops the room behind its unbreached wall — which is the
+ *  whole saving, since that far room is where most of an op's defenders wait.
+ *
+ *  It cannot pop anything you could see: a dormant enemy is by definition sealed in a
+ *  room you have not opened, and by the time you reach the breach you are far inside
+ *  18m, so it is already drawn. Breaching calls setRoomActive, which flips it to the
+ *  ACTIVE distance and pins it visible for the rest of the fight. */
+const CAMPAIGN_CULL_DORMANT = 18;
 /** Depth of the travelling floor plane. Chosen so the ground texture's 20 repeats
  *  divide it into whole 3m tiles (see ENDLESS_RIG_STEP). */
 const ENDLESS_FLOOR_D = 60;
@@ -1827,7 +1847,14 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // ahead are dormant by definition.
       const shown = e.alive || e.deadAt >= 0;
       const dz = Math.abs(e.z - pos.current.z);
-      g.visible = shown && (!endless || dz < (e.active ? ENDLESS_CULL_ACTIVE : ENDLESS_CULL_DORMANT));
+      // The distance cull now applies to AUTHORED ops as well, not just endless. A
+      // dormant enemy is one whose room you have not breached, so it is behind a wall
+      // in either mode and the reasoning carries over unchanged; campaign just holds
+      // the line further out (see CAMPAIGN_CULL_DORMANT).
+      const cullAt = e.active
+        ? ENDLESS_CULL_ACTIVE
+        : (endless ? ENDLESS_CULL_DORMANT : CAMPAIGN_CULL_DORMANT);
+      g.visible = shown && dz < cullAt;
       // Boots lifting the ash. Measured by DISTANCE COVERED rather than on a timer,
       // so a puff means a step was actually taken: a man holding still never smokes,
       // and one sprinting past leaves a trail at the right spacing. Only for the
