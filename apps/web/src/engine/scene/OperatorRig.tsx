@@ -102,12 +102,33 @@ export const OperatorRig = forwardRef<OperatorApi, { modelPath: string }>(functi
       // Guarded by a flag because SkeletonUtils.clone SHARES geometry between clones:
       // without it, 36 endless rigs would each inflate the same sphere and the radius
       // would compound into infinity, culling nothing.
+      // The sphere MUST be set on the mesh, not the geometry. three.js r184's
+      // Frustum.intersectsObject takes the object's own bounding sphere whenever the
+      // property exists, and SkinnedMesh declares one (initialised null):
+      //
+      //   if ( object.boundingSphere !== undefined ) {
+      //     if ( object.boundingSphere === null ) object.computeBoundingSphere();
+      //
+      // so padding geometry.boundingSphere is simply never read for a skinned mesh.
+      // Leaving it null instead makes three call SkinnedMesh.computeBoundingSphere(),
+      // which walks EVERY vertex through applyBoneTransform — 31,687 of them per rig —
+      // and then caches the result, so the sphere is also a one-shot snapshot of
+      // whatever pose the rig happened to be in. That is the original "skinned bounds
+      // lie" complaint, just relocated: a later pose can reach outside it and the body
+      // vanishes at the screen edge.
+      //
+      // Setting it explicitly fixes all three: no per-vertex walk, no pose snapshot,
+      // and the padding actually applies. Radius comes from the geometry's bind-pose
+      // sphere (cheap, no skinning) with generous headroom for any reachable pose.
       mesh.frustumCulled = true;
-      const geo = mesh.geometry as THREE.BufferGeometry;
-      if (!geo.userData.__valorCullPadded) {
+      const skinned = mesh as unknown as THREE.SkinnedMesh;
+      if (skinned.isSkinnedMesh) {
+        const geo = mesh.geometry as THREE.BufferGeometry;
         if (!geo.boundingSphere) geo.computeBoundingSphere();
-        if (geo.boundingSphere) geo.boundingSphere.radius *= 2.5;
-        geo.userData.__valorCullPadded = true;
+        if (geo.boundingSphere) {
+          skinned.boundingSphere = geo.boundingSphere.clone();
+          skinned.boundingSphere.radius *= 2.5;
+        }
       }
       const src = mesh.material as THREE.Material | THREE.Material[];
       const cloneMat = (m: THREE.Material) => {

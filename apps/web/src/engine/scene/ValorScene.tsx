@@ -775,19 +775,37 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    * consistent now. One material each, shared by every mesh of that surface, which
    * also retires the per-wall <meshStandardMaterial> the JSX used to allocate.
    */
+  // `minimal` compiles the two extra octaves OUT of the shell shaders.
+  //
+  // Every wall, pillar and the floor is triplanar, and the detail + macro octaves are
+  // one texture fetch each on top of the base map, roughness and normal — so ~5 fetches
+  // per fragment across the surfaces that cover most of the screen. They exist to stop
+  // large flat faces reading as tiled, which is a fair trade on a machine that can
+  // afford it and a bad one on a phone that cannot hold framerate at all. Passing 0
+  // does not merely zero their weight: `detail > 0` / `macro > 0` gate the shader
+  // defines, so the sampling code is never emitted and the fetches genuinely disappear
+  // rather than being multiplied by zero.
+  // Memoised on `minimal` alone: a fresh object literal here would change identity on
+  // every render, busting the shellMaterials memo below and rebuilding five triplanar
+  // materials (and recompiling their shaders) continuously — far worse than the
+  // octaves it is trying to save.
+  const octaves = useMemo(
+    () => (minimal ? { detail: 0, detailAmount: 0, macro: 0, macroAmount: 0 } : null),
+    [minimal],
+  );
   const shellMaterials = useMemo(() => ({
-    floor: makeTriplanarMaterial(floorMaps, { color: theme.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9, detail: 9.7, detailAmount: 0.6, macro: 0.11, macroAmount: 0.4 }),
-    brick: makeTriplanarMaterial(brickMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7, detail: 9.3, detailAmount: 0.62, macro: 0.13, macroAmount: 0.3 }),
-    plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8, detail: 8.7, detailAmount: 0.68, macro: 0.13, macroAmount: 0.32 }),
+    floor: makeTriplanarMaterial(floorMaps, { color: theme.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9, detail: 9.7, detailAmount: 0.6, macro: 0.11, macroAmount: 0.4, ...octaves }),
+    brick: makeTriplanarMaterial(brickMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7, detail: 9.3, detailAmount: 0.62, macro: 0.13, macroAmount: 0.3, ...octaves }),
+    plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8, detail: 8.7, detailAmount: 0.68, macro: 0.13, macroAmount: 0.32, ...octaves }),
     // Cover boxes are the surface you are most often pressed right up against —
     // the compound's pillars are these — so the detail octave bites hardest here
     // and the base tile is smaller, which puts the planks at a believable board
     // width instead of one 1.2m plank per pillar face.
-    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.95, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26 }),
+    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.95, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26, ...octaves }),
     // The cap on top of a wall. Was a flat grey box, which read as the graybox it
     // was; concrete at a coarse tile makes it a poured coping instead.
-    coping: makeTriplanarMaterial(plasterMaps, { color: '#59565e', roughness: 0.9, metalness: 0 }, { metresPerTile: 1.3, detail: 9.1, detailAmount: 0.5 }),
-  }), [floorMaps, brickMaps, plasterMaps, plankMaps, theme.floorTint, theme.wallTint]);
+    coping: makeTriplanarMaterial(plasterMaps, { color: '#59565e', roughness: 0.9, metalness: 0 }, { metresPerTile: 1.3, detail: 9.1, detailAmount: 0.5, ...octaves }),
+  }), [floorMaps, brickMaps, plasterMaps, plankMaps, theme.floorTint, theme.wallTint, octaves]);
 
   /**
    * Set-dressing surfaces.
@@ -2760,13 +2778,27 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           so in endless both the light and this target ride along with the player. */}
       <object3D ref={sunTargetRef} />
       <directionalLight position={[-10, 7, -12]} intensity={theme.fill.intensity} color={theme.fill.color} />
-      <ambientLight intensity={theme.ambient} />
+      {/* `minimal` lifts ambient to pay back some of the light the practicals below
+          are no longer providing, so the compound reads as dim rather than black. */}
+      <ambientLight intensity={minimal ? theme.ambient * 1.9 : theme.ambient} />
       {/* practicals are ACCENTS, not floodlights: they shape darkness, not expose it.
           They are placed for the authored compound and sit near the origin with a 9-10m
           falloff, so in endless the player leaves them behind in the first room and they
           become four lights lighting nothing — while still costing every lit material a
-          slot in its shader's light loop. Endless runs daylight and drops them. */}
-      {!endless && <>
+          slot in its shader's light loop. Endless runs daylight and drops them.
+
+          `minimal` drops them too, and this is the tier's biggest remaining lever.
+          Cost here is PER PIXEL, not per object: three.js compiles NUM_POINT_LIGHTS
+          from how many point lights are in the scene, so every lit fragment in the
+          frame walks the whole list — and it does so whatever their intensity, which
+          is why the two flash lights further down count even while dark. Six point
+          lights plus two directionals plus a hemisphere is a heavy shader to run over
+          every pixel of a compound, and NO quality tier was touching it: it is
+          invisible to draw calls and triangle counts, which is exactly why the
+          geometry work did not fix a phone that was fill-bound rather than
+          vertex-bound. Dropping these four leaves the two flash lights, which have to
+          stay — they are the "someone fired" read. */}
+      {!endless && !minimal && <>
         <pointLight position={[0, 2.6, 12]} intensity={theme.practicalIntensity * 0.9} distance={9} decay={2} color={theme.practical} />
         <pointLight position={[0, 2.6, 4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
         <pointLight position={[0, 2.6, -4]} intensity={theme.practicalIntensity} distance={10} decay={2} color={theme.practical} />
@@ -2930,7 +2962,14 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           second full render of the scene every frame — affordable on an authored op,
           not on top of a streamed four-room compound and a pool of skinned characters.
           It also buys least exactly here, on flat generated boxes. */}
-      {(lightFx || endless) ? (
+      {/* `minimal` runs NO composer at all. Even the two-effect light stack is not
+          cheap the way an effect count suggests: mounting a composer redirects the
+          whole scene into an offscreen render target and then blits it back through
+          each pass, so the frame pays several extra FULL-SCREEN reads and writes on
+          top of the one it needed. That is pure fill cost, and fill is precisely what
+          a struggling phone has least of. The chromatic edge and vignette are lens
+          flavour; a playable frame rate is not. */}
+      {minimal ? null : (lightFx || endless) ? (
         <EffectComposer multisampling={0}>
           <ChromaticAberration offset={caOffset} radialModulation modulationOffset={0.35} blendFunction={BlendFunction.NORMAL} />
           <Vignette darkness={0.5} offset={0.3} blendFunction={BlendFunction.NORMAL} />
