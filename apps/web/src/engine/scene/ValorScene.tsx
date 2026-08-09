@@ -433,6 +433,7 @@ interface Hud {
   perf: HTMLDivElement | null;
   lockReticle: HTMLDivElement | null; // bracket drawn over the locked-on enemy
   adsBtn: HTMLDivElement | null;      // mobile ADS toggle, lit while aiming
+  crouchBtn: HTMLDivElement | null;   // mobile crouch toggle, lit while crouched
   attachChips: Record<string, HTMLDivElement | null>; // mobile kit chips, lit while active
   rankText: HTMLDivElement | null;
   xpBar: HTMLDivElement | null;
@@ -464,6 +465,10 @@ interface Controls {
   lookSens: number;
   fire: boolean;
   ads: boolean;
+  /** Touch crouch, held as a TOGGLE rather than a press. The stick and the fire pad
+   *  already own both thumbs, so a hold-to-crouch button is a button you cannot use
+   *  while playing. Desktop keeps hold-to-crouch on C, where a spare finger exists. */
+  crouch: boolean;
   reload: boolean;
   fireMode: boolean;
   swap: boolean;
@@ -1252,7 +1257,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
     // ── Stances FIRST (look sensitivity is reduced while aiming down sights) ──
     const adsWant = held('ShiftLeft') || held('ShiftRight') || mouseBtn.current.has(2) || ct.ads ? 1 : 0;
-    const crouchWant = held('KeyC') ? 1 : 0;
+    const crouchWant = held('KeyC') || ct.crouch ? 1 : 0;
     const leanWant = (held('KeyE') ? 1 : 0) - (held('KeyQ') ? 1 : 0);
     adsCur.current += (adsWant - adsCur.current) * Math.min(1, dt * 12);
     crouchCur.current += (crouchWant - crouchCur.current) * Math.min(1, dt * 10);
@@ -3336,6 +3341,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     objText: null, survEnd: null, survEndText: null, waveHud: null, waveLabel: null, waveRooms: null, waveDone: null, waveDoneText: null, waveDoneSub: null, objArrow: null, briefing: null, complete: null, perf: null,
     lockReticle: null,
     adsBtn: null,
+    crouchBtn: null,
     attachChips: {},
     rankText: null, xpBar: null, xpPops: [], rankUp: null, rankUpRank: null, rankUpG: null,
     subWrap: null, subName: null, subText: null,
@@ -3344,7 +3350,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
 
   // Mobile is a first-class target (Marvy's note): a left move-stick, a right
   // look-pad, and fire/ADS/reload buttons write into this, read by FpsWorld.
-  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, lookSens: loadLookSens(), fire: false, ads: false, reload: false, fireMode: false, swap: false, toggle: null, lockCycle: false, tapAimX: null, tapAimY: null });
+  const controls = useRef<Controls>({ moveX: 0, moveY: 0, lookX: 0, lookY: 0, lookSens: loadLookSens(), fire: false, ads: false, crouch: false, reload: false, fireMode: false, swap: false, toggle: null, lockCycle: false, tapAimX: null, tapAimY: null });
   const audio = useMemo(() => new FpsAudio(), []);
   useEffect(() => () => audio.dispose(), [audio]);
 
@@ -3802,6 +3808,24 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     paintAdsBtn(on);
   };
 
+  /** Same lit/unlit treatment as ADS — both are STATES you hold, and a toggle you
+   *  can't see the state of is a toggle you lose track of mid-firefight. */
+  const paintCrouchBtn = (on: boolean) => {
+    const el = hud.current.crouchBtn;
+    if (!el) return;
+    el.style.background = on
+      ? 'radial-gradient(circle at 50% 40%, rgba(143,184,208,.42), rgba(90,130,160,.24))'
+      : '';
+    el.style.borderColor = on ? 'rgba(143,184,208,.95)' : '';
+    el.style.color = on ? '#04141a' : '';
+    el.style.fontWeight = on ? '800' : '';
+  };
+  const toggleCrouch = () => {
+    const on = !controls.current.crouch;
+    controls.current.crouch = on;
+    paintCrouchBtn(on);
+  };
+
   const tick = 'position:absolute;left:50%;top:50%;background:#e9edf2;box-shadow:0 0 2px #000;';
   return (
     <div ref={(r) => { hud.current.root = r; }} style={{ position: 'fixed', inset: 0, background: '#000', cursor: 'none', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}>
@@ -4186,6 +4210,19 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
             onPointerLeave={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); paintAdsBtn(controls.current.ads); }}
             onPointerCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#cfe0ea'); paintAdsBtn(controls.current.ads); }}
             style={{ ...touchBtn('#cfe0ea', 52), right: 108, bottom: 30, fontSize: 11 }}>ADS</div>
+          {/* CROUCH — the one control touch never had. It sits beside ADS rather than
+              in the secondary column because it is a combat control, not a housekeeping
+              one: it drops your eye line below cover, which is now how you break contact
+              and make a room lose you. A toggle, not a hold — both thumbs are already
+              committed to the stick and the fire pad. Label is 9px with the letter
+              spacing dialled out: "CROUCH" is twice the label "ADS" is, and at the
+              shared 11px/1px it ran to both edges of the circle. */}
+          <div ref={(r) => { hud.current.crouchBtn = r; paintCrouchBtn(controls.current.crouch); }}
+            onPointerDown={(e) => { e.preventDefault(); pressFx(e.currentTarget as HTMLElement, true, '#8fb8d0'); toggleCrouch(); }}
+            onPointerUp={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#8fb8d0'); paintCrouchBtn(controls.current.crouch); }}
+            onPointerLeave={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#8fb8d0'); paintCrouchBtn(controls.current.crouch); }}
+            onPointerCancel={(e) => { pressFx(e.currentTarget as HTMLElement, false, '#8fb8d0'); paintCrouchBtn(controls.current.crouch); }}
+            style={{ ...touchBtn('#8fb8d0', 52), right: 170, bottom: 30, fontSize: 9, letterSpacing: 0 }}>CROUCH</div>
           {/* secondary actions — a slim column hugging the right edge, up off the gun */}
           <div {...tap('#ffb454', () => { controls.current.reload = true; })}
             style={{ ...touchBtn('#ffb454', 44), right: 22, bottom: 116 }}><Icon name="refresh" size={19} /></div>

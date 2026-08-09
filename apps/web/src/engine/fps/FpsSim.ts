@@ -53,6 +53,14 @@ export interface FpsEnemy {
   nextGoalAt: number;
   room: number;      // mission room (slice 4)
   active: boolean;   // AI only runs when the room has been entered
+  // ── Contact (what this enemy BELIEVES, which is not always the truth) ──
+  /** Where it last had eyes on the player. Everything it does without line of
+   *  sight is aimed here, which is what makes cover worth anything. */
+  seenX: number;
+  seenZ: number;
+  /** Sim-time of that sighting; 0 = it has never had contact at all. Age decides
+   *  whether it is still hunting or has given up and gone back to its post. */
+  seenAt: number;
   boss: boolean;
   phase: number;     // 0 for a mook; 1..3 for a boss, rising as its health falls
   // ── Incendiary DoT (B) ──
@@ -231,6 +239,15 @@ export const FPS_TUNING = {
     // re-derives both bounds from the mission data, so authoring a layout this cannot
     // separate fails there rather than in someone's op.
     ROOM_ENTRY_REACH: 5.5,
+    // ── Breaking contact ──
+    // How long an enemy keeps hunting the last place it saw you before it gives up
+    // and goes back to holding its post. Long enough that ducking behind a crate
+    // mid-firefight does not just switch them off — they come and look, and looking
+    // is what pushes you to keep moving instead of sitting in one hole.
+    SEARCH_SECS: 6,
+    // Scatter around that last-known point while searching, so a squad that lost you
+    // fans out over the spot rather than stacking on one coordinate.
+    SEARCH_SPREAD: 2.6,
     BASE_ACC: 0.45,       // point-blank hit chance
     NEAR: 6, FAR: 26,     // accuracy falls off linearly across this range
     DMG: 10,              // damage per hit
@@ -343,6 +360,10 @@ export class FpsSim {
   private playerEyeY = 1.6;
   playerAlive = true;
   private mercyUntil = 0;
+  /** Where the player actually is, refreshed every step. Only the sim's own
+   *  bookkeeping may read this — an ENEMY must go through its own `seen` position,
+   *  or it is omniscient again. */
+  private playerPos: Vec3 = [0, 1.6, 0];
 
   /** Rounds in the ACTIVE weapon's magazine (transparently the current slot). */
   get ammo(): number { return this.ammoBySlot[this.activeSlot]; }
@@ -417,6 +438,9 @@ export class FpsSim {
       nextGoalAt: 0,
       room: spec.room ?? 0,
       active: true,
+      seenX: sx,
+      seenZ: sz,
+      seenAt: 0,   // no contact yet: it holds its post and watches its arc
       boss: spec.boss ?? false,
       phase: spec.boss ? 1 : 0,
       burnUntil: 0,
@@ -458,9 +482,28 @@ export class FpsSim {
   setRoomActive(room: number, active: boolean): void {
     for (const e of this.enemies) {
       if (e.room !== room) continue;
-      if (active && !e.active) e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.WAKE_STAGGER;
+      if (active && !e.active) {
+        e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.WAKE_STAGGER;
+        this.markContact(e);
+      }
       e.active = active;
     }
+  }
+
+  /**
+   * Hand an enemy the player's CURRENT position as its last-known contact.
+   *
+   * Used when a room wakes or a defender is reinforced in, because something just
+   * told them you are here — a door going in, a body hitting the floor, the noise of
+   * the room next door. Without it they would come online with no idea where you are
+   * and stand at their posts while you shot them, which is the same statue problem
+   * from the other direction. Note this is a SNAPSHOT: move after it and they are
+   * hunting a stale position, which is exactly the point.
+   */
+  private markContact(e: FpsEnemy): void {
+    e.seenX = this.playerPos[0];
+    e.seenZ = this.playerPos[2];
+    e.seenAt = this.time;
   }
   setAllActive(active: boolean): void {
     for (const e of this.enemies) e.active = active;
@@ -660,6 +703,9 @@ export class FpsSim {
     }
 
     this.playerEyeY = input.crouched ? 1.02 : 1.6;
+    this.playerPos[0] = input.origin[0];
+    this.playerPos[1] = input.origin[1];
+    this.playerPos[2] = input.origin[2];
 
     // Firing — fire mode decides what a held trigger means.
     const rising = input.firing && !this.prevFiring;            // this frame's trigger PULL
@@ -820,7 +866,10 @@ export class FpsSim {
     let tokens = 0;
     for (const e of this.enemies) if (e.alive && e.token && !e.boss) tokens++;
 
-    for (const e of this.enemies) {
+    // Indexed, because an enemy that has given up falls back to its POST, and the
+    // post lives in the index-aligned `spawns` array.
+    for (let ei = 0; ei < this.enemies.length; ei++) {
+      const e = this.enemies[ei];
       if (!e.alive) { e.token = false; continue; }
       if (!e.active) { // dormant until the player breaches this room
         e.ducking += (1 - e.ducking) * Math.min(1, dt * 6);
@@ -828,6 +877,13 @@ export class FpsSim {
         e.token = false;
         continue;
       }
+      // First live frame for an enemy that has never had contact: it knows where you
+      // are. Every wake path funnels through here — `setRoomActive`, reinforcements,
+      // survival waves spawned already-active, `setAllActive(true)` — so none of them
+      // can come online believing you are nowhere. Without it, `hunting` would be
+      // false from birth and a whole survival wave would spawn, decide it had lost
+      // you, and walk back to its own spawn points.
+      if (e.seenAt === 0) this.markContact(e);
 
       // A boss escalates as it bleeds — announce each new phase once.
       if (e.boss) {
@@ -840,9 +896,20 @@ export class FpsSim {
       }
       const ph = e.boss ? e.phase - 1 : 0; // phase index into the BOSS tables
 
-      e.facing = Math.atan2(px - e.x, pz - e.z);
-      const dist = Math.hypot(px - e.x, pz - e.z);
       const los = this.playerAlive && this.hasLOS(e, input.origin);
+      if (los) { e.seenX = px; e.seenZ = pz; e.seenAt = this.time; }
+
+      // What this enemy BELIEVES. With eyes on you that is the truth; without, it is
+      // the last place it saw you, and it goes stale. Everything below reads these
+      // and not px/pz — an enemy that reads the real position while it cannot see
+      // you is an enemy you cannot hide from, which is what this used to be: it
+      // faced you through walls and walked straight to you with its eyes shut.
+      const hunting = e.seenAt > 0 && this.time - e.seenAt < E.SEARCH_SECS;
+
+      // Watch where you believe he is. Having given up, that means watching the last
+      // place you saw him from your post, which reads as a guard back on his arc.
+      e.facing = Math.atan2(e.seenX - e.x, e.seenZ - e.z);
+      const dist = Math.hypot(px - e.x, pz - e.z);
 
       // stand to shoot, duck otherwise
       const duckTarget = e.ai === 'aim' || e.ai === 'fire' ? 0 : 1;
@@ -863,20 +930,43 @@ export class FpsSim {
         continue;
       }
 
-      // No token: MANEUVER. Pick a spot at a preferred combat distance from the
-      // player (with a strafe offset) and walk to it — so enemies close in and
-      // flank instead of standing still and bobbing.
+      // No token: MANEUVER. Three different jobs depending on what it knows.
       if (this.time >= e.nextGoalAt) {
         // Resample until the goal is somewhere a body can actually stand.
-        const preferred = e.boss ? B.PREFERRED_DIST[ph] : E.PREFERRED_DIST;
-        for (let tries = 0; tries < 6; tries++) {
-          const bearing = Math.atan2(e.x - px, e.z - pz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
-          const d = preferred + (this.rng() - 0.5) * 5;
-          e.goalX = px + Math.sin(bearing) * d;
-          e.goalZ = pz + Math.cos(bearing) * d;
-          if (!this.inCover(e.goalX, e.goalZ)) break;
+        if (los) {
+          // EYES ON — the fight. Hold a preferred combat distance with a strafe
+          // offset, so they close in and flank instead of standing still and bobbing.
+          const preferred = e.boss ? B.PREFERRED_DIST[ph] : E.PREFERRED_DIST;
+          for (let tries = 0; tries < 6; tries++) {
+            const bearing = Math.atan2(e.x - px, e.z - pz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
+            const d = preferred + (this.rng() - 0.5) * 5;
+            e.goalX = px + Math.sin(bearing) * d;
+            e.goalZ = pz + Math.cos(bearing) * d;
+            if (!this.inCover(e.goalX, e.goalZ)) break;
+          }
+          e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
+        } else if (hunting) {
+          // LOST HIM — go and look. Straight at the last known position rather than
+          // holding off at combat range: standing back from a spot you cannot see
+          // into is not searching it. The scatter keeps a squad from stacking on one
+          // coordinate, and re-picking often makes them sweep rather than park.
+          for (let tries = 0; tries < 6; tries++) {
+            const a = this.rng() * Math.PI * 2;
+            const r = this.rng() * E.SEARCH_SPREAD;
+            e.goalX = e.seenX + Math.sin(a) * r;
+            e.goalZ = e.seenZ + Math.cos(a) * r;
+            if (!this.inCover(e.goalX, e.goalZ)) break;
+          }
+          e.nextGoalAt = this.time + 0.8 + this.rng() * 1.2;
+        } else {
+          // GAVE UP — back to the post, and stay there. Without this they would
+          // simply stop wherever the search ran out, and a room you disengaged from
+          // would slowly turn into a loose crowd standing in the open.
+          const post = this.spawns[ei];
+          e.goalX = post[0];
+          e.goalZ = post[1];
+          e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
         }
-        e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
       }
       if (Math.hypot(e.goalX - e.x, e.goalZ - e.z) > 0.6) {
         this.moveToward(e, e.goalX, e.goalZ, dt, e.boss ? B.MOVE_MULT[ph] : 1);
@@ -1239,6 +1329,10 @@ export class FpsSim {
       enemies: this.enemies.map((e) => ({
         id: e.id, x: e.x, z: e.z, alive: e.alive, hp: e.hp, maxHp: e.maxHp, deadAt: e.deadAt,
         ai: e.ai, ducking: e.ducking, facing: e.facing, token: e.token, room: e.room, active: e.active, boss: e.boss, phase: e.phase,
+        // What it believes, alongside what it is. Exposed for the same reason `ai`
+        // and `token` are: this is the state you need to see to tell a bug from a
+        // design choice when an enemy walks the wrong way.
+        seenX: e.seenX, seenZ: e.seenZ, seenAt: e.seenAt,
       })),
       aliveCount: this.aliveCount(),
       hostage: this.hostage ? { x: this.hostage.x, z: this.hostage.z, rescued: this.hostage.rescued } : null,
