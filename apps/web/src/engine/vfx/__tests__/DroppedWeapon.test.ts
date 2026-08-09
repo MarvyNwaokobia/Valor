@@ -44,6 +44,15 @@ describe('DroppedWeapon', () => {
     expect(w.position.y).toBeGreaterThan(0.5);
   });
 
+  it('is still in the air a full second after it leaves your hands', () => {
+    // A death now HOLDS on the respawn/exit choice instead of restarting itself
+    // after a couple of seconds, so the fall is the only thing moving on screen and
+    // it gets the whole beat. One second in it must still be falling.
+    const w = drop();
+    run(w, 1);
+    expect(w.landed).toBe(false);
+  });
+
   it('falls, lands on the deck and comes to a complete stop', () => {
     const w = drop();
     run(w, 4);

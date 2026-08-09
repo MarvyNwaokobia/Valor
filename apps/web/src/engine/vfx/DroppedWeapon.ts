@@ -20,10 +20,12 @@ export interface DroppedWeaponOptions {
   /** Where it comes to rest. Not 0: the models are centred on the gun's body, so a
    *  receiver lying on the deck sits a few centimetres up. */
   restY?: number;
-  /** Downward acceleration. Under real gravity on purpose: the drop is a beat you
-   *  are meant to WATCH — the weapon leaving your hands is how the death reads —
+  /** Downward acceleration. Well under real gravity on purpose: the drop is a beat
+   *  you are meant to WATCH — the weapon leaving your hands is how the death reads —
    *  and at true 9.8 (let alone the 15 this used to run) it is on the deck before
-   *  the camera has finished falling with you. */
+   *  the camera has finished falling with you. Now that a death HOLDS, waiting on
+   *  the player to choose, the fall has the whole beat to itself and is slower
+   *  again: roughly a second and a half in the air, tumbling the whole way. */
   gravity?: number;
   rng?: () => number;
 }
@@ -51,7 +53,7 @@ export class DroppedWeapon {
 
   constructor(opts: DroppedWeaponOptions = {}) {
     this.restY = opts.restY ?? 0.07;
-    this.gravity = opts.gravity ?? 6.5;
+    this.gravity = opts.gravity ?? 3.4;
     this.rng = opts.rng ?? Math.random;
   }
 
@@ -65,18 +67,24 @@ export class DroppedWeapon {
     this.landed = false;
     this.settle = 0;
     // Starts where the weapon actually was: out in front of the eye, a little low.
-    this.position.copy(eye).addScaledVector(forward, 0.45).addScaledVector(UP, -0.22);
+    // Slightly further out than the hands hold it, and thrown on at walking pace: the
+    // camera is sinking to the deck at the same time, and a weapon that merely dropped
+    // would spend the whole fall filling the lens instead of landing in view.
+    this.position.copy(eye).addScaledVector(forward, 0.55).addScaledVector(UP, -0.22);
     this.quaternion.copy(orientation);
-    const drift = (this.rng() - 0.5) * 1.2;
+    const drift = (this.rng() - 0.5) * 1.0;
     this.vel.set(
-      forward.x * 1.5 + this.right.x * drift,
-      0.9,
-      forward.z * 1.5 + this.right.z * drift,
+      forward.x * 1.6 + this.right.x * drift,
+      0.85,
+      forward.z * 1.6 + this.right.z * drift,
     );
+    // Spin is scaled DOWN with the gravity. Slowing the fall while leaving the
+    // tumble alone would spin the same rifle through half again as many turns on
+    // the way to the deck, which reads as a thrown prop rather than a dropped one.
     this.spin.set(
-      (this.rng() - 0.5) * 9,
-      (this.rng() - 0.5) * 7,
-      (this.rng() - 0.5) * 11,
+      (this.rng() - 0.5) * 5.6,
+      (this.rng() - 0.5) * 4.4,
+      (this.rng() - 0.5) * 6.8,
     );
   }
 
