@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
 import { Copy, Check, LogOut, ArrowUpRight, ArrowLeft } from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
+import AgentChat from '@/components/agent/AgentChat'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useSignOut } from '@/hooks/useSignOut'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -92,6 +94,9 @@ export default function BankPage() {
   const playerSynced = usePlayerStore((s) => s.playerSynced)
 
   const [copied, setCopied] = useState(false)
+  // The Bank is where 'my money is wrong' gets asked. The helper reads the ledger and
+  // the live payout brakes, which is the only way to answer that without guessing.
+  const [askOpen, setAskOpen] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [destination, setDestination] = useState('')
   const [amount, setAmount] = useState('')
@@ -217,6 +222,16 @@ export default function BankPage() {
         <StatTile label="Transferred Out" value={`${formatGDollarNumber(ledger?.transferred_out ?? 0)} G$`} />
       </div>
 
+      {/* Sits directly under the numbers, because that is where a player decides
+          something is wrong. The helper can read this ledger and the live earning
+          brakes; the alternative is a player concluding on their own that we took it. */}
+      <button
+        onClick={() => setAskOpen(true)}
+        className="self-start text-xs underline underline-offset-4 transition-colors text-slate-500 hover:text-slate-300"
+      >
+        Something here look wrong?
+      </button>
+
       {/* Daily claim + rank pool */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <DailyClaimButton walletAddress={address as `0x${string}`} />
@@ -313,6 +328,22 @@ export default function BankPage() {
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {askOpen && (
+          <AgentChat
+            walletAddress={address}
+            context="bank"
+            onClose={() => setAskOpen(false)}
+            greeting="I can read your ledger and check what rewards are actually paying right now. What looks wrong?"
+            suggestions={[
+              'Why did I earn less than expected?',
+              'Where is my pending payout?',
+              'How do I send my G$ out?',
+            ]}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

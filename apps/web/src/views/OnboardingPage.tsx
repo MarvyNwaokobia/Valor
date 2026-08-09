@@ -18,6 +18,16 @@ import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { ConnectButton } from '@/components/ui/ConnectButton'
+import AgentChat from '@/components/agent/AgentChat'
+
+/**
+ * Failed attempts at the final step before the helper offers itself.
+ *
+ * One rejection is usually a taken username and the player just tries another. Two means
+ * they are guessing, and this is the last screen before the game — a player who gives up
+ * here has done every other step for nothing.
+ */
+const CONFIRM_FAILURES_BEFORE_HELP = 2
 
 type Step = 'verify' | 'covenant' | 'telegram' | 'select' | 'confirm' | 'tutorial'
 
@@ -44,6 +54,10 @@ export default function OnboardingPage() {
   const [username,      setUsername]      = useState('')
   const [pending,       setPending]       = useState(false)
   const [error,         setError]         = useState<string | null>(null)
+  // Counts rejections at the confirm step so the helper appears only for someone who is
+  // actually stuck, not for the ordinary "that username is taken, try another".
+  const [confirmFails,  setConfirmFails]  = useState(0)
+  const [helperOpen,    setHelperOpen]    = useState(false)
   // Referral attribution. Layers 1-3 (URL, server cookie, localStorage) run in
   // getReferrer(); this field is layer 4 — the one that recovers a click on a
   // phone followed by a signup on a laptop, which no storage can bridge.
@@ -211,8 +225,8 @@ export default function OnboardingPage() {
             character_confirmed: true,
           }),
         })
-        if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
-        if (!res.ok) { setError('Could not save. Please try again.'); setPending(false); return }
+        if (res.status === 409) { setError('That username is already taken.'); setConfirmFails(n => n + 1); setPending(false); return }
+        if (!res.ok) { setError('Could not save. Please try again.'); setConfirmFails(n => n + 1); setPending(false); return }
         setPlayer(await res.json())
         router.replace('/')          // returning user → straight to their dashboard
         return
@@ -256,9 +270,9 @@ export default function OnboardingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPlayer),
       })
-      if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
+      if (res.status === 409) { setError('That username is already taken.'); setConfirmFails(n => n + 1); setPending(false); return }
       if (!res.ok) {
-        setError('Failed to create player. Please try again.'); setPending(false); return
+        setError('Failed to create player. Please try again.'); setConfirmFails(n => n + 1); setPending(false); return
       }
       // Attribution is spent — a second character on this device must not credit
       // the same referrer again.
@@ -434,6 +448,19 @@ export default function OnboardingPage() {
             <p className="text-red-400 text-xs text-center">{error}</p>
           )}
 
+          {/* Offered only after repeated rejections. The helper can check a specific
+              username's availability and read the referral code, which is more use here
+              than the generic error text can be. */}
+          {confirmFails >= CONFIRM_FAILURES_BEFORE_HELP && !helperOpen && (
+            <button
+              onClick={() => setHelperOpen(true)}
+              className="text-xs underline underline-offset-4 text-center transition-colors"
+              style={{ color: '#93c5fd' }}
+            >
+              Stuck on this? Let me help
+            </button>
+          )}
+
           {/* CTA */}
           <motion.button
             onClick={handleCreate}
@@ -463,6 +490,20 @@ export default function OnboardingPage() {
               : (confirming ? 'Confirm Character' : 'Forge Your Legacy')}
           </motion.button>
         </div>
+
+        {helperOpen && (
+          <AgentChat
+            walletAddress={address}
+            context="onboarding:confirm"
+            onClose={() => setHelperOpen(false)}
+            greeting="Something here isn't going through. Tell me what it says and I'll work out which field it is."
+            suggestions={[
+              'My username keeps getting rejected',
+              'The invite code is not working',
+              'It just says it failed',
+            ]}
+          />
+        )}
       </div>
     )
   }
@@ -473,6 +514,7 @@ export default function OnboardingPage() {
       <TutorialArena
         player={createdPlayer}
         onComplete={() => router.replace('/')}
+        walletAddress={address}
       />
     )
   }
