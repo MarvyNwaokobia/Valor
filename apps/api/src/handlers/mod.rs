@@ -1,5 +1,6 @@
 use actix_web::{web, HttpResponse};
 
+pub mod agent;
 pub mod players;
 pub mod identity;
 pub mod battles;
@@ -178,5 +179,13 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/seasons")
                 .route("/current", web::get().to(seasons::current)),
+        )
+        // Support agent. Unauthenticated like the rest of the player routes, and it can
+        // only READ what those routes already expose plus write an escalation, so it
+        // widens no surface. Rate-limited per wallet inside the handler because the cost
+        // here is model spend rather than database load.
+        .service(
+            web::scope("/agent")
+                .route("/chat", web::post().to(agent::chat)),
         );
 }
