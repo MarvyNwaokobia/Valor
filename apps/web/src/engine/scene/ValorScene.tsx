@@ -1016,7 +1016,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // Pointer lock is OPTIONAL — only for players who want mouse-look. It is
     // requested on a deliberate click (a trusted gesture), never on keydown, so
     // keyboard-only play (arrow keys aim) never triggers a lock error.
+    //
+    // It is also requested ONLY for a click AT THE FIGHT. This matters more than it
+    // sounds: the moment the canvas takes the pointer, the browser routes every
+    // further mouse event to it, so a click that grabbed the lock on its way DOWN
+    // never delivers its `click` to the button underneath. That is exactly what
+    // happened to EXIT — pressing it captured the mouse and started mouse-look
+    // instead of leaving, and the harder you clicked the more locked in you were.
+    // So: no lock while any overlay is up, and no lock from a click on UI chrome.
+    // The buttons that put you BACK in the fight ask for it explicitly instead
+    // (`grabMouse` in the scene).
     const wantLock = () => {
+      if (pausedRef.current || gateRef.current || awaitingChoice.current) return;
       if (locked.current || document.pointerLockElement === canvas) return;
       try {
         const p: unknown = canvas.requestPointerLock?.();
@@ -1057,7 +1068,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       wantLock();
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
-    const mdown = (e: MouseEvent) => { mouseBtn.current.add(e.button); audio.unlock(); wantLock(); };
+    /** Did this click land on something the player is OPERATING rather than on the
+     *  fight? Buttons, and anything a HUD marks `data-ui`. Checked on the target
+     *  itself rather than left to `stopPropagation` in each overlay: this listener is
+     *  on `window`, above every React root, and one overlay that forgets to stop the
+     *  event is a button that cannot be pressed. */
+    const onChrome = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('button, a, input, [data-ui]');
+    const mdown = (e: MouseEvent) => {
+      mouseBtn.current.add(e.button);
+      audio.unlock();
+      if (!onChrome(e.target)) wantLock();
+    };
     const mup = (e: MouseEvent) => mouseBtn.current.delete(e.button);
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement === canvas) {
@@ -3524,6 +3545,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setSelect(false);
     setMissionIndex(i);
     setRunNonce((n) => n + 1); // force a fresh mount even if it's the same op
+    grabMouse();
   };
   const pickSurvival = () => {
     setMode('survival');
@@ -3531,6 +3553,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setDebrief(null);
     setSelect(false);
     setRunNonce((n) => n + 1);
+    grabMouse();
   };
   const pickGauntlet = () => {
     if (!gauntletUnlocked) return; // prestige tier — locked until the campaign is done
@@ -3539,6 +3562,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setDebrief(null);
     setSelect(false);
     setRunNonce((n) => n + 1);
+    grabMouse();
   };
 
   // ── Between-mission debrief: clear an op → story of the next → deploy/retry/exit ──
@@ -3549,7 +3573,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');
     menuOpenRef.current = true;                 // freeze the scene behind the debrief
-    try { document.exitPointerLock?.(); } catch { /* ignore */ }
+    releaseMouse();
     // Record the op with the server (kills/headshots feed the capped skill bonus) and
     // surface the REAL reward on the debrief. Clear any prior reward first so a stale
     // one never flashes while this one is recording.
@@ -3570,14 +3594,15 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
   // clicked (the fight holds the pointer lock) and put the card up. The sim keeps
   // running behind it on purpose: the weapon is still falling.
   const handleDown = (state: { refills: number; wave: number | null; kills: number }) => {
-    try { document.exitPointerLock?.(); } catch { /* ignore */ }
+    releaseMouse();
     setDownCard(state);
   };
-  const respawnFromCard = () => { setDownCard(null); respawnRef.current?.(); };
+  const respawnFromCard = () => { setDownCard(null); respawnRef.current?.(); grabMouse(); };
   /** EXIT from the down card: out of the fight entirely if the app gave us somewhere
    *  to go, otherwise back to the Operations board. */
   const exitFromCard = () => {
     setDownCard(null);
+    releaseMouse();
     if (onExit) onExit();
     else setSelect(true);
   };
@@ -3586,10 +3611,12 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     try { window.localStorage.setItem(CAMPAIGN_KEY, String(next)); } catch { /* ignore */ }
     clearComplete(); setDebrief(null); menuOpenRef.current = false;
     setMissionIndex(next); setRunNonce((n) => n + 1);
+    grabMouse();
   };
   const retryMission = () => {
     clearComplete(); setDebrief(null); menuOpenRef.current = false;
     setRunNonce((n) => n + 1); // remount the same op fresh
+    grabMouse();
   };
   const exitHome = () => {
     clearComplete(); setCampaignDone(false); setDebrief(null);
@@ -3749,11 +3776,33 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
   // Single source of truth for the pause flag: any full-screen overlay freezes play.
   useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null || paused; }, [portrait, selectOpen, debrief, paused]);
 
+  /**
+   * Put the mouse back in the fight, deliberately.
+   *
+   * Clicking a button no longer captures the pointer as a side effect (see the note
+   * on `wantLock`): a click that grabbed the mouse on its way down never delivered
+   * its `click` to the button, which is how EXIT came to start mouse-look instead of
+   * leaving. So the handful of actions that DO return you to the fight ask for the
+   * pointer here, from inside their own click — the gesture the browser requires.
+   * Every other button leaves the mouse alone, and one click at the fight brings it
+   * back the usual way.
+   */
+  const grabMouse = () => {
+    if (isTouch) return;
+    try {
+      const c = document.querySelector('canvas');
+      const p: unknown = c?.requestPointerLock?.();
+      if (p && typeof (p as { catch?: unknown }).catch === 'function') (p as Promise<void>).catch(() => {});
+    } catch { /* pointer lock unavailable (blocked / headless) — arrow keys still aim */ }
+  };
+  /** Leaving the fight: hand the mouse back to the page, whatever happens next. */
+  const releaseMouse = () => { try { document.exitPointerLock?.(); } catch { /* ignore */ } };
+
   // C4 · deliberate pause menu. Non-destructive: opening it just freezes the game,
   // so an accidental open is a one-tap RESUME away (unlike the old exit-to-OPS button).
-  const openPause = () => { setPaused(true); try { document.exitPointerLock?.(); } catch { /* ignore */ } };
-  const resume = () => setPaused(false);
-  const restartFromPause = () => { setPaused(false); setDebrief(null); setRunNonce((n) => n + 1); };
+  const openPause = () => { setPaused(true); releaseMouse(); };
+  const resume = () => { setPaused(false); grabMouse(); };
+  const restartFromPause = () => { setPaused(false); setDebrief(null); setRunNonce((n) => n + 1); grabMouse(); };
   const exitToOps = () => { setPaused(false); setSelect(true); };
 
   const JOY_R = 46;
@@ -4102,7 +4151,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 4, margin: '8px 0', color: '#ff5a47' }}>OVERRUN</div>
           <div ref={(r) => { hud.current.survEndText = r; }} style={{ fontSize: 14, color: '#e6c2bc', letterSpacing: 1 }}>you held 0 waves</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
-            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('refresh', 'AGAIN', 14)}</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); grabMouse(); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('refresh', 'AGAIN', 14)}</button>
             <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('menu', 'OPERATIONS', 14)}</button>
           </div>
         </div>
@@ -4166,7 +4215,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
               <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
               <button onClick={exitToOps} style={btnC4('#6f7d8c')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
               {onExit && (
-                <button onClick={onExit} style={{ ...btnC4('#e0796f'), background: 'rgba(224,121,111,.10)' }}>
+                <button onClick={() => { releaseMouse(); onExit(); }} style={{ ...btnC4('#e0796f'), background: 'rgba(224,121,111,.10)' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
                   </span>
@@ -4223,7 +4272,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         )}
 
         {selectOpen && (
-          <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => setSelect(false)} onExit={onExit} />
+          <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => { setSelect(false); grabMouse(); }} onExit={onExit ? () => { releaseMouse(); onExit(); } : undefined} />
         )}
 
         {/* zone / op label (operations are chosen outside the game now). On touch it
@@ -4264,7 +4313,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           {onExit && (
             <button
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={onExit}
+              onClick={() => { releaseMouse(); onExit(); }}
               title="Leave the fight"
               style={{ height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, backdropFilter: 'blur(6px)', cursor: 'pointer' }}
             >
