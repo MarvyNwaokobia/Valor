@@ -222,6 +222,15 @@ export const FPS_TUNING = {
     // purpose: a room should come alive over a beat or two as defenders react at
     // their own pace, not answer the door as one synchronised volley.
     WAKE_STAGGER: 1.8,
+    // Get this close to a defender's post and its whole room turns to face you (see
+    // wakeEnteredRoom). The authored campaign leaves a narrow window: it has to be at
+    // least 4.3 to cover the middle of the most spread-out room, and under 7.0 or
+    // standing in the front room of ash-1 reaches through the divider into the
+    // objective room. 5.5 sits in the middle of that with about a metre either side.
+    // The campaign-wide sweep in roomWake.test.ts is what holds this honest — it
+    // re-derives both bounds from the mission data, so authoring a layout this cannot
+    // separate fails there rather than in someone's op.
+    ROOM_ENTRY_REACH: 5.5,
     BASE_ACC: 0.45,       // point-blank hit chance
     NEAR: 6, FAR: 26,     // accuracy falls off linearly across this range
     DMG: 10,              // damage per hit
@@ -455,6 +464,61 @@ export class FpsSim {
   }
   setAllActive(active: boolean): void {
     for (const e of this.enemies) e.active = active;
+  }
+
+  /**
+   * Wake whichever room the player is standing in.
+   *
+   * Dormancy is paced by the OBJECTIVE flow — breach wakes room 1, pushing to the
+   * objective wakes room 2 — and that flow is a cursor that only advances when the
+   * objective before it completes. So the wake for room 2 sat behind "clear room 1",
+   * and you could walk past a live front room into the middle of five defenders who
+   * would all keep facing the wall until you had killed everyone behind you. That is
+   * not pacing, it is a room full of statues. Entering wakes a room now, whatever the
+   * objective cursor thinks.
+   *
+   * "Inside a room" is derived from where its defenders were POSTED: get within
+   * ROOM_ENTRY_REACH of any one post and that whole room turns to face you. Nothing
+   * in the mission data describes room bounds, and inferring them from the walls
+   * would mean guessing which of a dozen boxes is the divider — but a room IS its
+   * defenders, and their posts trace its shape for free.
+   *
+   * A union of small discs, not one big circle around the room's centre. Several
+   * authored rooms are long and thin (a hall, a cell row), and a circle wide enough
+   * to cover one of those from its centroid also swallows the room next door — three
+   * ops broke exactly that way. Hugging each post separately follows the shape
+   * instead of bounding it.
+   *
+   * Read off `spawns`, not live positions, for a subtler reason: an awake room
+   * maneuvers toward the player, so its enemies would drag their trigger discs along
+   * behind you into the next room, and that room would never register as the one you
+   * had walked into.
+   *
+   * Every room in reach wakes, not just the nearest: standing in a doorway is
+   * standing in both, and the room you are stepping into is the one that most needs
+   * to have noticed.
+   *
+   * This can only ever wake a room EARLIER than the objective flow would have, and
+   * nothing here puts a room back to sleep — so pushing on through leaves the fight
+   * behind you switched on, which is the point.
+   */
+  private wakeEnteredRoom(input: FpsInput): void {
+    if (!this.playerAlive) return;
+    // Most of a mission is spent with everything already awake. Bail before the scan
+    // rather than testing every post every frame for nothing.
+    let dormant = false;
+    for (const e of this.enemies) if (e.alive && !e.active) { dormant = true; break; }
+    if (!dormant) return;
+
+    const px = input.origin[0], pz = input.origin[2];
+    const reach2 = FPS_TUNING.ENEMY.ROOM_ENTRY_REACH ** 2;
+
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      if (!e.alive || e.active) continue;
+      const dx = px - this.spawns[i][0], dz = pz - this.spawns[i][1];
+      if (dx * dx + dz * dz <= reach2) this.setRoomActive(e.room, true);
+    }
   }
   /** The attack breaks: the living attackers from a room fall back and clear off the
    *  field. Used when a defend hold is survived so the extract is a walk-out, not a
@@ -748,6 +812,9 @@ export class FpsSim {
     const E = FPS_TUNING.ENEMY;
     const B = FPS_TUNING.BOSS;
     const px = input.origin[0], pz = input.origin[2];
+
+    // Before anyone thinks: is the player standing in a room that hasn't noticed?
+    this.wakeEnteredRoom(input);
 
     // Bosses fight outside the fairness budget, so only mooks spend tokens.
     let tokens = 0;

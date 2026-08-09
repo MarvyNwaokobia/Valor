@@ -114,17 +114,26 @@ describe('ImpactFX ambient ash', () => {
   });
 
   it('holds its own pool, so a firefight cannot delete the atmosphere', () => {
-    const f = fx();
-    for (let i = 0; i < 60; i++) { f.ambient(1 / 60, [0, 1.6, 0]); f.update(1 / 60); }
-    const ash = f.particleCount;
-    // Empty several magazines into a wall right next to it.
-    for (let i = 0; i < 200; i++) f.burst([0, 1, 0], UP, 'concrete');
-    f.update(1 / 60);
-    // Every impact particle is short-lived; the motes live for seconds. Run past
-    // the impacts and the ash must still be there.
-    for (let i = 0; i < 240; i++) f.update(1 / 60);
-    expect(f.particleCount).toBeGreaterThanOrEqual(ash - 4);
-    f.dispose();
+    // Six seconds of ash, with and without a firefight in the middle of it. Every
+    // impact particle is dead inside 3.2s, so by the end both runs are motes only —
+    // and if bursts were evicting motes (which sharing the dust pool would do), the
+    // run that got shot at would come out visibly thinner.
+    const run = (shoot: boolean) => {
+      const f = fx();
+      for (let i = 0; i < 360; i++) {
+        f.ambient(1 / 60, [0, 1.6, 0]);
+        if (shoot && i >= 150 && i < 180) f.burst([0, 1, 0], UP, 'concrete');
+        f.update(1 / 60);
+      }
+      const n = f.particleCount;
+      f.dispose();
+      return n;
+    };
+
+    const quiet = run(false);
+    const fought = run(true);
+    expect(quiet).toBeGreaterThan(20);              // there is ash to lose
+    expect(fought).toBeGreaterThan(quiet * 0.75);   // and the gunfight did not take it
   });
 
   it('the lean tier thins the ash out', () => {
