@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Crosshair, Coins, Gem, ChevronDown } from 'lucide-react'
+import { Crosshair, Coins, Layers, ChevronDown } from 'lucide-react'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
 import SignInModal from '@/components/ui/SignInModal'
 
@@ -33,16 +33,25 @@ function useEmbers(n = 18) {
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
+// Descriptions here are load-bearing: they are the only promise a player has read
+// before they sign in. Two rules, learned the hard way from the copy this replaced
+// (see docs/LANDING_REWRITE.md §B):
+//   1. Never describe a mechanic the engine doesn't run. The old "Fight" line sold
+//      dodge timing from the deleted stat-duel, and the FPS has no such thing.
+//   2. Never state a G$ FIGURE here, and never imply payment for something that
+//      isn't paid. Rewards are first-clear + rank-up bounties, not per-victory, and
+//      the rate has changed more than once. State the mechanism; let the app show
+//      the amount.
 const FEATURES = [
-  { Icon: Crosshair, label: 'Fight',  color: '#ef4444', desc: 'Real-time gun duels — your weapon and dodge timing decide who walks away.' },
-  { Icon: Coins,  label: 'Earn G$', color: '#eab308', desc: 'Every victory pays out GoodDollar tokens — real money that goes directly into your account.' },
-  { Icon: Gem,    label: 'Own',    color: '#8b5cf6', desc: 'Weapons and gear are yours permanently. Buy, sell, and equip in the Armoury.' },
+  { Icon: Crosshair, label: 'Breach', color: '#ef4444', desc: 'Fifteen operations across three theatres, cleared room by room in first person. A room wakes the moment you step into it, so a bad breach is a bad fight.' },
+  { Icon: Coins,  label: 'Earn',   color: '#eab308', desc: 'Clear an operation for the first time and it pays G$ on Celo. Rank up and it pays again. Withdraw to your own wallet whenever you want.' },
+  { Icon: Layers, label: 'Arm',    color: '#8b5cf6', desc: 'Ten weapon tiers, every one of them on-chain. Ashfall Carbine, Warden\'s Repeater, Rift Lance, Seraph, Ember Halo.' },
 ] as const
 
 const HOW_IT_WORKS = [
-  { num: '01', color: '#ef4444', title: 'Prove You\'re Human', desc: 'Connect via GoodDollar — the universal basic income protocol. One fighter per verified player. No bots.' },
-  { num: '02', color: '#3b82f6', title: 'Choose Your Class',  desc: 'Berserker, Sentinel, or Phantom. Your class is permanent — it defines your identity in the arena.' },
-  { num: '03', color: '#8b5cf6', title: 'Battle & Earn',      desc: 'Climb the ranks. Every win pays out G$ tokens on Celo. Every loss teaches you something.' },
+  { num: '01', color: '#ef4444', title: 'Prove You\'re Human',     desc: 'Connect via GoodDollar — the universal basic income protocol. One account per verified human. No bots.' },
+  { num: '02', color: '#3b82f6', title: 'Take the First Compound', desc: 'Ashfall is five operations. Breach, clear, extract. Your rifle is issued; better ones you earn or buy.' },
+  { num: '03', color: '#8b5cf6', title: 'Climb Iron to Diamond',   desc: 'Seven ranks, then prestige. First clears and rank-ups pay G$ on Celo. Go quiet for three days and the ladder takes it back.' },
 ] as const
 
 const CLASS_IMGS: Record<string, string> = {
@@ -237,7 +246,7 @@ export default function LandingPage() {
 
             <p className="font-display font-bold uppercase"
               style={{ fontSize:'clamp(8px,1.5vw,10px)', letterSpacing:'0.35em', color:'rgba(100,116,139,0.72)' }}>
-              One verified human · One fighter · Forever
+              One verified human · One account
             </p>
 
             <div className="flex items-center gap-2">
@@ -286,8 +295,8 @@ export default function LandingPage() {
 
           <SectionHead
             eyebrow="What is Valor"
-            title="Fight. Earn. Own."
-            sub="The first web3 fighting game built exclusively for verified humans. No bots. No fake accounts. No empty rewards."
+            title="Breach. Earn. Arm."
+            sub="A first-person tactical shooter built exclusively for verified humans. No bots. No fake accounts. No empty rewards."
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -327,7 +336,7 @@ export default function LandingPage() {
           <SectionHead
             eyebrow="Three Classes. One Covenant."
             title="Choose Your Fighter"
-            sub="One class. Permanent. This is your identity in the arena — not a loadout, not a character slot."
+            sub="Your class decides your duels. Attack and defence feed every PvP damage roll, and each one breaks a fight open a different way. In the campaign, your weapon does the talking."
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -337,7 +346,7 @@ export default function LandingPage() {
               return (
                 <motion.div key={cls}
                   className="relative overflow-hidden rounded-2xl flex flex-col"
-                  style={{ background:'#060510', border:`1px solid ${def.accentColor}22`, minHeight:420 }}
+                  style={{ background:'#060510', border:`1px solid ${def.accentColor}22`, minHeight:430 }}
                   initial={{ opacity:0, y:32 }}
                   whileInView={{ opacity:1, y:0 }}
                   viewport={{ once:true, amount:0.2 }}
@@ -377,12 +386,21 @@ export default function LandingPage() {
                       </p>
                     </div>
 
-                    {/* Stat bars */}
+                    {/* ATK/DEF only, and no SPD bar.
+                        These two are REAL, but only in DUELS, not the campaign. The FPS
+                        reads combat/GunStats.ts and never touches a class stat, so this
+                        block is scoped by the section's sub-copy above. What backs it is
+                        apps/api/src/services/battle.rs: calc_damage_v2(attack, defense, …)
+                        takes both on every PvP damage roll, and boosters add stat_boost to
+                        them (handlers/battles.rs).
+                        SPD is deliberately absent: `speed_stat` is written to the DB at
+                        onboarding and then never read for any mechanic anywhere in the API
+                        or the client. It was the one bar of the three that measured
+                        nothing, so it is the one bar that did not come back. */}
                     <div className="flex flex-col gap-1.5">
                       {[
                         { l:'ATK', v:def.stats.attack,  c:'#ef4444' },
                         { l:'DEF', v:def.stats.defense, c:'#3b82f6' },
-                        { l:'SPD', v:def.stats.speed,   c:'#22c55e' },
                       ].map(({ l, v, c }) => (
                         <div key={l} className="flex items-center gap-2">
                           <span className="font-display font-black w-6 shrink-0"
@@ -402,15 +420,17 @@ export default function LandingPage() {
                       ))}
                     </div>
 
-                    {/* Weapon + Special */}
-                    <div className="flex gap-2 mt-auto pt-1">
-                      <div className="flex-1 rounded-xl px-2.5 py-2" style={{ background:def.accentColorDim, border:`1px solid ${def.accentColor}22` }}>
-                        <p style={{ fontSize:7, letterSpacing:'0.2em', color:'rgba(255,255,255,0.25)' }} className="uppercase font-bold mb-0.5">Weapon</p>
-                        <p className="font-display font-black text-white" style={{ fontSize:10 }}>{def.weapon}</p>
-                      </div>
-                      <div className="flex-1 rounded-xl px-2.5 py-2" style={{ background:def.accentColorDim, border:`1px solid ${def.accentColor}22` }}>
-                        <p style={{ fontSize:7, letterSpacing:'0.2em', color:'rgba(255,255,255,0.25)' }} className="uppercase font-bold mb-0.5">Special</p>
-                        <p className="font-display font-black" style={{ fontSize:10, color:def.accentColor }}>{def.special}</p>
+                    {/* Special, full width now that the Weapon panel is gone. The panel
+                        used to sit beside this one showing def.weapon — "Dual Battle Axes",
+                        "Sword & Tower Shield" — melee gear that exists in no mode of the
+                        shipped game and pulled the whole section back toward the fantasy
+                        arena. The special is the honest differentiator: every one of these
+                        is implemented per class in move_effect() in battle.rs. */}
+                    <div className="mt-auto pt-1">
+                      <div className="rounded-xl px-3 py-2.5" style={{ background:def.accentColorDim, border:`1px solid ${def.accentColor}22` }}>
+                        <p style={{ fontSize:7, letterSpacing:'0.2em', color:'rgba(255,255,255,0.25)' }} className="uppercase font-bold mb-1">Special</p>
+                        <p className="font-display font-black mb-0.5" style={{ fontSize:11, color:def.accentColor }}>{def.special}</p>
+                        <p className="text-slate-400 leading-snug" style={{ fontSize:10.5 }}>{def.specialDesc}</p>
                       </div>
                     </div>
                   </div>
@@ -499,16 +519,16 @@ export default function LandingPage() {
 
           <p className="font-display font-bold uppercase"
             style={{ fontSize:10, letterSpacing:'0.48em', color:'rgba(234,179,8,0.55)' }}>
-            One human. One fighter.
+            Earn Your Honor
           </p>
 
           <h2 className="font-display font-black text-white leading-tight"
             style={{ fontSize:'clamp(2rem,7vw,3.4rem)', letterSpacing:'0.04em' }}>
-            Your Fighter<br />Awaits
+            Ashfall Is<br />Still Burning
           </h2>
 
           <p className="text-slate-500 leading-relaxed" style={{ fontSize:13, maxWidth:340 }}>
-            One human. One fighter. Every victory earns real G$ on Celo. No bots. No alts. Only you.
+            Fifteen operations between you and the man on the radio. One verified human, one account, no bots.
           </p>
 
           <div className="w-full flex flex-col items-center gap-3 mt-2">
