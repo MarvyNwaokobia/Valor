@@ -23,10 +23,12 @@ import bpy
 import math
 import os
 import sys
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 argv = sys.argv[sys.argv.index('--') + 1:]
 glb_dir, out_dir = argv[0], argv[1]
+# Optional third arg: the rifle to put in their hands.
+rifle_path = argv[2] if len(argv) > 2 else None
 os.makedirs(out_dir, exist_ok=True)
 
 # Accent colours are the linear-space equivalents of accentColor in classes.ts:
@@ -74,6 +76,99 @@ def pose_idle(frame=30):
         bpy.context.scene.frame_set(int(min(max(frame, lo), hi)))
         return True
     return False
+
+
+def find_bone(armature, suffix):
+    """Mixamo bone by name suffix. Matches 'mixamorig:RightHand' and the sanitised
+    'mixamorig_RightHand' the glTF round-trip can produce, and never
+    RightHandIndex1 - hence anchoring to the END of the name."""
+    low = suffix.lower()
+    for pb in armature.pose.bones:
+        if pb.name.lower().endswith(low):
+            return pb
+    return None
+
+
+def attach_rifle(rifle_path, char_height):
+    """Put a rifle in the operator's hands.
+
+    The idle clip is a RIFLE idle, so without this the hands close around nothing
+    and the portrait reads as a character holding an invisible object - which is
+    worse than a neutral pose, because the viewer can see the grip.
+
+    Orientation comes from the HANDS, not from the hand bone's own axes. Bone roll
+    is a Mixamo authoring detail that differs between rigs, whereas 'the barrel
+    runs from the trigger hand towards the support hand' is true of every rifle
+    grip. So: forward = right hand -> left hand, up = world up orthogonalised
+    against it. The model itself is authored barrel-along-+X, up-along-+Z (5.17 x
+    0.35 x 1.79 units), and is scaled from those 5.17 units down to roughly half
+    the character's height, a rifle being about 0.9m against a 1.75m operator.
+    """
+    arm = next((o for o in bpy.context.scene.objects if o.type == 'ARMATURE'), None)
+    if not arm:
+        return 'no armature'
+    rhand, lhand = find_bone(arm, 'righthand'), find_bone(arm, 'lefthand')
+    if not rhand or not lhand:
+        return 'hand bones not found'
+
+    before = set(bpy.context.scene.objects)
+    bpy.ops.import_scene.gltf(filepath=rifle_path)
+    new = [o for o in bpy.context.scene.objects if o not in before]
+    roots = [o for o in new if o.parent not in new]
+    if not roots:
+        return 'rifle imported nothing'
+
+    r_world = arm.matrix_world @ rhand.head
+    l_world = arm.matrix_world @ lhand.head
+
+    forward = (l_world - r_world)
+    if forward.length < 1e-5:
+        return 'hands coincident'
+    forward.normalize()
+
+    up = Vector((0, 0, 1))
+    up = (up - forward * up.dot(forward))
+    if up.length < 1e-5:                      # barrel pointing straight up/down
+        up = Vector((0, 1, 0))
+    up.normalize()
+    side = forward.cross(up)
+
+    basis = Matrix.Identity(3)
+    basis.col[0] = forward     # model +X is the barrel
+    basis.col[1] = side
+    basis.col[2] = up          # model +Z is the top of the receiver
+    scale = (char_height * 0.5) / 5.169
+
+    xform = (
+        Matrix.Translation(r_world)
+        @ basis.to_4x4()
+        @ Matrix.Diagonal((scale, scale, scale, 1.0))
+    )
+
+    # PRE-MULTIPLY, never assign. The glTF importer parents the mesh under a root
+    # empty and puts the Y-up -> Z-up correction on that root, so the mesh's world
+    # orientation is root @ child, not root. Assigning root.matrix_world threw the
+    # child's own rotation away and left the rifle rolled about its barrel - grip
+    # pointing sideways instead of down.
+    #
+    # As imported, the rifle already sits at the world origin with barrel along +X
+    # and grip down -Z (verified by rendering it alone), so its original world
+    # basis is the identity and pre-multiplying by `xform` lands it exactly where
+    # `xform` describes.
+    for root in roots:
+        root.matrix_world = xform @ root.matrix_world
+
+    # NOTE: the rifle renders in a flat mid-grey, because rifle.glb carries no
+    # textures. Overriding its material here did NOT work - assigning a dark
+    # Principled BSDF to obj.data.materials, forcing every slot's link to 'DATA',
+    # and sweeping metalness/roughness from 0.9/0.35 to 0.0/0.9 all left the render
+    # pixel-identical, so something in this import path is not taking the override.
+    # Left alone rather than left as dead code.
+    #
+    # It is tolerable: at card size a lighter weapon actually reads more clearly as
+    # a weapon, and on the near-black Sentinel it is the only thing separating the
+    # silhouette. Worth revisiting if the guns ever get real textures.
+    return f'ok (scale {scale:.3f})'
 
 
 def mesh_bounds():
@@ -128,6 +223,12 @@ for name, accent in CLASSES.items():
 
     centre = (lo + hi) * 0.5
     height = max(hi.z - lo.z, 0.001)
+
+    # Deliberately after mesh_bounds(): the framing is measured on the OPERATOR, and
+    # a rifle held out front would drag the bounding box forward and push the camera
+    # back on whichever class happens to hold it furthest from the body.
+    if rifle_path and os.path.exists(rifle_path):
+        print(f'    rifle: {attach_rifle(rifle_path, height)}')
     # Frame the upper body: cards crop tight, and boots are not the selling point.
     focus = Vector((centre.x, centre.y, lo.z + height * 0.68))
 
