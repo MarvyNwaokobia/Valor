@@ -142,7 +142,12 @@ function BakeInner() {
         {/* HDRI reflections make the metal read as metal — the single biggest
             "real, not toy" lever. background stays off for the transparent bake. */}
         <Suspense fallback={null}>
-          <Environment files="/hdri/venice_sunset_1k.hdr" background={false} environmentIntensity={0.7} />
+          {/* Was /hdri/venice_sunset_1k.hdr. That file shipped 1.4MB to every player
+              to serve one dev page and the (now deleted) RealisticArena; the game
+              itself generates its lighting per zone in engine/scene/zoneEnvironment.ts.
+              A drei preset keeps this baker working without shipping the asset —
+              same approach as /dev/bake-gun. */}
+          <Environment preset="warehouse" background={false} environmentIntensity={0.7} />
         </Suspense>
         {/* Cinematic 3-point: a hard warm key top-right for the hero highlight, a
             hard cool rim from behind-left to carve the silhouette out of the dark
