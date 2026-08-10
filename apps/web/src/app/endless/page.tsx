@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -86,10 +86,16 @@ export default function EndlessPage() {
   const onWaveCleared = useCallback(() => { void progress.clearWave(); }, [progress]);
   const onDeath = useCallback((wave: number) => { void progress.reportDeath(wave); }, [progress]);
 
-  if (!player) {
-    router.replace('/');
-    return null;
-  }
+  // Redirect in an effect, never during render. `router.replace` reaches for
+  // `location`, which does not exist on the server, so calling it in the render
+  // body threw `ReferenceError: location is not defined` out of an uncaught
+  // exception handler and took the whole Next process down on any server-rendered
+  // hit to /endless without a player. Same pattern HomePage already uses.
+  useEffect(() => {
+    if (!player) router.replace('/');
+  }, [player, router]);
+
+  if (!player) return null;
 
   const cleared = player.pve_level ?? 0;
   const locked = cleared < UNLOCK_LEVEL;
