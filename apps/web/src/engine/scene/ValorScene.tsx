@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { usePbr } from './usePbr';
 import { makeTriplanarMaterial } from './triplanar';
 import { buildViewmodelHands, VIEWMODEL_HIP, VIEWMODEL_ADS, WEAPON_VIEW } from './viewmodelHands';
+import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment';
 import { ImpactFX, type ImpactSurface } from '../vfx/ImpactFX';
 import { useImpactTextures } from '../vfx/useImpactTextures';
 import { DroppedWeapon } from '../vfx/DroppedWeapon';
@@ -839,6 +840,43 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   useEffect(() => () => {
     for (const m of Object.values(propMaterials)) m.dispose();
   }, [propMaterials]);
+
+  // ── Image-based lighting ──
+  //
+  // Generated from this zone's own sky rather than loaded (see zoneEnvironment.ts
+  // for why an HDRI is the wrong answer here). Without this, every `envMapIntensity`
+  // in gunModels/GunMesh and ItemMesh multiplies a black environment and the
+  // viewmodel — the thing on screen 100% of the time — reads as grey plastic
+  // instead of steel.
+  //
+  // Kept on at every quality tier, `minimal` included: an environment map is a
+  // texture lookup already in the standard material shader, so unlike the point
+  // lights it costs nothing per pixel and cannot push a struggling phone further
+  // down the degrade path.
+  //
+  // Keyed on the theme's PRIMITIVE fields, never the theme object. `themeForMission`
+  // builds a fresh object (and a fresh `hemi` array) on every call for any op that
+  // isn't the first of its zone, so a dep on `theme` would rebuild and re-prefilter
+  // a cubemap every render. Same reason the triplanar memos above key on
+  // `theme.floorTint` / `theme.wallTint`.
+  const envParams = useMemo(() => ({
+    skyTop: theme.sky.top,
+    skyBottom: theme.sky.bottom,
+    sunColor: theme.sun.color,
+    sunIntensity: theme.sun.intensity,
+    groundColor: theme.hemi[1],
+    floorTint: theme.floorTint,
+  }), [theme.sky.top, theme.sky.bottom, theme.sun.color, theme.sun.intensity, theme.hemi[1], theme.floorTint]);
+
+  useEffect(() => {
+    const target = buildZoneEnvironment(gl, envParams);
+    scene.environment = target.texture;
+    scene.environmentIntensity = ENV_INTENSITY;
+    return () => {
+      scene.environment = null;
+      target.dispose();
+    };
+  }, [gl, scene, envParams]);
 
   // ── Impact VFX: sparks, dust, debris and the holes they leave behind ──
   const impactMaps = useImpactTextures();

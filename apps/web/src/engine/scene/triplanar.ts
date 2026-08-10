@@ -100,7 +100,20 @@ export function makeTriplanarMaterial(
   const macro = opts.macro ?? 0;
   const detailFade = opts.detailFade ?? [7, 16];
 
-  const mat = new THREE.MeshStandardMaterial({ ...maps, ...params });
+  // Damped image-based lighting on every world surface.
+  //
+  // `scene.environment` (zoneEnvironment.ts) runs at full strength so the weapon —
+  // authored at envMapIntensity 1.8 and the reason IBL exists here at all — reads
+  // as steel. But these are the compound: walls, floor, cover, clutter, at
+  // roughness 1 / metalness 0, where an environment map contributes almost pure
+  // diffuse irradiance. At full strength that is a second ambient light over every
+  // surface in the level, which lifts the blacks and flattens the hand-tuned zone
+  // lighting the whole scene is built around.
+  //
+  // Damping here rather than globally is what lets metal and matte respond
+  // differently to the same sky, which is the entire point of the environment map.
+  // Overridable per material: it is only a default in the spread.
+  const mat = new THREE.MeshStandardMaterial({ envMapIntensity: 0.25, ...maps, ...params });
 
   // Texture coords are computed in the shader, so a shared texture's `repeat` is
   // dead state — clear it so nobody later "fixes" the tiling by setting it and
