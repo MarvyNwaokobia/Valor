@@ -14,31 +14,42 @@ import sys
 # Explicit mapping of actual Mixamo download filenames to our animation names.
 # character: the FBX with mesh + skeleton ("With Skin" download from Mixamo)
 # animations: {our_animation_name: actual_filename}
+# The three player classes now share one animation set, and it is a RIFLE set:
+# rifle idle, gunplay shooting, hit reaction, forward death. They used to carry
+# melee clips (barbarian idle, sword attacks) from the pre-TTK arena game, which
+# would have left the new tactical bodies punching each other in duels.
+#
+# Filenames are normalised by the staging step rather than using the raw Mixamo
+# download names, which are whatever was typed into the search box and routinely
+# describe the wrong character. What each source actually was:
+#   berserker <- Mixamo "Soldier"      (helmet, plate carrier, holstered sidearm)
+#   sentinel  <- Mixamo "Ch35"         (gas mask, heavy riot vest) - the tank read
+#   phantom   <- Mixamo "SpacePirate"  (lean, sleek) - the fast flanker read
 CLASS_FILES = {
     'berserker': {
-        'character': 'T-Pose with skin male.fbx',
+        'character': 'character.fbx',
         'animations': {
-            'idle':   'Barbarian.fbx',         # contains embedded animation (character default)
-            'attack': 'male attack.fbx',
-            'hit':    'male hit.fbx',
-            'death':  'Male death.fbx',
+            'idle':   'idle.fbx',
+            'attack': 'attack.fbx',
+            'hit':    'hit.fbx',
+            'death':  'death.fbx',
         },
     },
     'sentinel': {
-        'character': 'T-Pose male.fbx',
+        'character': 'character.fbx',
         'animations': {
-            'idle':   'Idle male.fbx',
-            'attack': 'attack male.fbx',
-            'hit':    'Hit Reaction male.fbx',
-            'death':  'death male.fbx',
+            'idle':   'idle.fbx',
+            'attack': 'attack.fbx',
+            'hit':    'hit.fbx',
+            'death':  'death.fbx',
         },
     },
     'phantom': {
-        'character': 'T-Pose.fbx',
+        'character': 'character.fbx',
         'animations': {
-            'idle':   'Idle.fbx',
+            'idle':   'idle.fbx',
             'attack': 'attack.fbx',
-            'hit':    'Hit To Body.fbx',
+            'hit':    'hit.fbx',
             'death':  'death.fbx',
         },
     },

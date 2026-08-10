@@ -15,10 +15,13 @@ import { xpForNextRank, nextRankReward } from '@/lib/constants'
 import { rankLabel } from '@/lib/ranks'
 import { formatGDollarNumber } from '@/utils/format'
 
+// Rendered from the shipped GLBs (scripts/bake_class_portraits.py). Was fantasy
+// key art - a Viking with axes for a player whose class never even appears in the
+// FPS campaign.
 const CLASS_SOLO: Record<string, string> = {
-  Berserker: '/characters/Berserkers.webp',
-  Sentinel:  '/characters/Sentinel.webp',
-  Phantom:   '/characters/Phanthom.webp',
+  Berserker: '/characters/classes/berserker.webp',
+  Sentinel:  '/characters/classes/sentinel.webp',
+  Phantom:   '/characters/classes/phantom.webp',
 }
 
 const ACTIONS: { to: string; Icon: LucideIcon; label: string; desc: string; color: string }[] = [

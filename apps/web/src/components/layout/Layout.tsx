@@ -6,11 +6,13 @@ import Navbar from './Navbar'
 import MobileNav from './MobileNav'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
-// Ghost character art that bleeds into background of every page
+// Ghost character art that bleeds into the background of every page. Easy one to
+// miss: it is faint, so the old fantasy art sat behind every signed-in screen
+// unnoticed. Same renders as the class cards (scripts/bake_class_portraits.py).
 const CLASS_BG: Record<string, { img: string; accent: string; glow: string }> = {
-  Berserker: { img: '/characters/Berserkers.webp',  accent: '#ef4444', glow: 'rgba(239,68,68,0.12)' },
-  Sentinel:  { img: '/characters/Sentinel.webp',    accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)' },
-  Phantom:   { img: '/characters/Phanthom.webp',    accent: '#8b5cf6', glow: 'rgba(139,92,246,0.12)' },
+  Berserker: { img: '/characters/classes/berserker.webp', accent: '#ef4444', glow: 'rgba(239,68,68,0.12)' },
+  Sentinel:  { img: '/characters/classes/sentinel.webp',  accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)' },
+  Phantom:   { img: '/characters/classes/phantom.webp',   accent: '#8b5cf6', glow: 'rgba(139,92,246,0.12)' },
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
