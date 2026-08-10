@@ -800,9 +800,26 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     plaster: makeTriplanarMaterial(plasterMaps, { color: theme.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.8, detail: 8.7, detailAmount: 0.68, macro: 0.13, macroAmount: 0.32, ...octaves }),
     // Cover boxes are the surface you are most often pressed right up against —
     // the compound's pillars are these — so the detail octave bites hardest here
-    // and the base tile is smaller, which puts the planks at a believable board
-    // width instead of one 1.2m plank per pillar face.
-    plank: makeTriplanarMaterial(plankMaps, { color: '#6b6055', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.95, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26, ...octaves }),
+    // and the base tile is small, which puts the boards at a believable width
+    // instead of one 1.2m board per pillar face.
+    //
+    // NOT the plank maps, despite "scorched planking" being the right idea.
+    // `black_painted_planks_diff` averages 27/255 (0.106 sRGB, ~0.8% LINEAR
+    // reflectance once decoded). The brick walls that read correctly sit at 10%.
+    // `color` MULTIPLIES the map, so a mid-brown tint took cover to roughly 2%,
+    // darker than coal — which is why every cover box rendered as a flat black
+    // slab in the middle of frame. Tinting cannot rescue it either: matching the
+    // walls needs a gain around 12x, which clips the pale grout lines to white
+    // streaks. A near-black albedo is simply the wrong base for a surface that
+    // has to read.
+    //
+    // Plaster instead (133/255, the brightest set we have) tinted to weathered
+    // timber-brown, at a third of the wall's tile size. Reads as the mud-plastered
+    // board barricade a burned village would actually throw up, and the tile scale
+    // plus tint keep it distinct from the plaster DIVIDERS at 1.8 — which matters
+    // for gameplay, not just looks: cover you can hide behind must never read as
+    // wall you cannot.
+    plank: makeTriplanarMaterial(plasterMaps, { color: '#8a6f4e', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.6, blend: true, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26, ...octaves }),
     // The cap on top of a wall. Was a flat grey box, which read as the graybox it
     // was; concrete at a coarse tile makes it a poured coping instead.
     coping: makeTriplanarMaterial(plasterMaps, { color: '#59565e', roughness: 0.9, metalness: 0 }, { metresPerTile: 1.3, detail: 9.1, detailAmount: 0.5, ...octaves }),
@@ -829,7 +846,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // tint on top of that.
     barrelA: makeTriplanarMaterial(plankMaps, { color: '#6d5a46', roughness: 0.5, metalness: 0.45 }, { metresPerTile: 0.7, blend: true, detail: 7.7, detailAmount: 0.7 }),
     barrelB: makeTriplanarMaterial(plankMaps, { color: '#54604c', roughness: 0.55, metalness: 0.4 }, { metresPerTile: 0.7, blend: true, detail: 7.7, detailAmount: 0.7 }),
-    crate: makeTriplanarMaterial(plankMaps, { color: '#9c7a4c', roughness: 0.9, metalness: 0.02 }, { metresPerTile: 0.5, blend: true, detail: 7.3, detailAmount: 0.75 }),
+    // Off the plank maps for the same reason the cover boxes are (see shellMaterials
+    // above): a 0.8%-reflectance albedo made these read as black cubes rather than
+    // the timber crates the tint is asking for. The drums above keep the plank maps —
+    // they are metal at metalness 0.45, so the environment map carries them on
+    // specular and a dark albedo is correct for an oil drum.
+    crate: makeTriplanarMaterial(plasterMaps, { color: '#9c7a4c', roughness: 0.9, metalness: 0.02 }, { metresPerTile: 0.5, blend: true, detail: 7.3, detailAmount: 0.75 }),
     sandbag: makeTriplanarMaterial(plasterMaps, { color: '#a2946c', roughness: 1, metalness: 0 }, { metresPerTile: 0.4, blend: true, detail: 7.1, detailAmount: 0.8 }),
     rubble: makeTriplanarMaterial(brickMaps, { color: '#7c7880', roughness: 0.95, metalness: 0.03 }, { metresPerTile: 0.45, blend: true, detail: 7.7, detailAmount: 0.7 }),
   }), [plankMaps, plasterMaps, brickMaps]);
