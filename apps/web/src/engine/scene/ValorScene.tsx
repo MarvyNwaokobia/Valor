@@ -330,9 +330,10 @@ const DROP_REST_Y = 0.07;
 /** Metres between footfalls — one puff of dust per stride walked. */
 const STRIDE = 0.95;
 
-/** Sim-seconds on the deck before a second wind puts you back up. Long enough to
- *  register that you went down, short enough that it never feels like a load. */
-const REVIVE_DELAY = 1.5;
+/** Where the eye settles once you are on the deck. Going down drops the camera to
+ *  roughly a head lying on the floor, so the down card is read from where you fell
+ *  rather than from a corpse still standing at eye height. */
+const EYE_DOWN = 0.42;
 
 // The mission compound is data now (engine/fps/campaign.ts). The scene runs ONE
 // Mission at a time, loaded from CAMPAIGN[missionIndex]; completing it advances.
@@ -537,15 +538,22 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, endlessOpts }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, onDown, respawnRef, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, endlessOpts }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
   // desktop/laptop: also kills shadows + set-dressing (mobile never sets this).
   audio: FpsAudio; lowSpec: boolean; lightFx: boolean; minimal: boolean; mission: Mission; onComplete: (stats: { kills: number; headshots: number }) => void;
-  // Fires once per death, just before the op auto-restarts. The scene records the loss
-  // (campaign only). Omitted where losses aren't recorded (/dev/verb).
+  // Fires the moment you go down — EVERY death, including one you then spend a
+  // second wind on. The scene records the loss (campaign only). Omitted where losses
+  // aren't recorded (/dev/verb).
   onDeath?: (stats: { kills: number; headshots: number }) => void;
+  // The run has HALTED on a death and is waiting for the player to choose. The scene
+  // answers with the down card (RESPAWN / EXIT); nothing moves it along on its own.
+  onDown?: (state: { refills: number; wave: number | null; kills: number }) => void;
+  // Filled in by this component with "put me back in" — what the down card's RESPAWN
+  // button calls. Null whenever there is no death to come back from.
+  respawnRef?: React.MutableRefObject<(() => void) | null>;
   pausedRef: React.MutableRefObject<boolean>;
   // While the server-readiness gate is up (connecting / retry), freeze the sim so the
   // briefing + countdown don't run out behind the overlay and drop you into a live fight.
@@ -638,8 +646,6 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   const endlessTicks = useRef(0);
   /** Wall-clock deadline for the wave-cleared banner, 0 when it isn't showing. */
   const waveDoneUntil = useRef(0);
-  /** Wall-clock moment a dead endless player is put back at the start of their wave. */
-  const respawnAt = useRef(0);
 
   /**
    * Rebuild the chain at the first room of `wave` and drop the player in there.
@@ -651,7 +657,6 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // Both second winds come back with the wave — they are per attempt at it, not
     // per run, or a long run would spend them in wave 1 and never see them again.
     refills.current = REFILLS;
-    reviveAt.current = 0;
     paintRefills();
     const seed = endlessOpts?.seed ?? 1;
     const first = firstRoomOfWave(wave);
@@ -911,7 +916,6 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   useEffect(() => () => impactFx.dispose(), [impactFx]);
   const caOffset = useMemo(() => new THREE.Vector2(lowSpec ? 0.0003 : 0.0007, lowSpec ? 0.0004 : 0.0009), [lowSpec]);
   const heartbeatAt = useRef(0);
-  const downAt = useRef(-99);
   /**
    * Second wind. Going down doesn't end the attempt while you have one of these:
    * you get back up where you fell, at full health, with a moment of grace.
@@ -923,15 +927,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    * NONE in survival / the Gauntlet: that mode already sells a revive for G$, and
    * handing out free ones would undercut one of the few real sinks in the economy.
    *
-   * A refilled death is NOT reported to `onDeath`. In campaign that call is what
-   * writes the loss on-chain, and in endless it is what tells the page the run has
-   * ENDED (Seasonal submits the score on it) — neither is true of a death you got
-   * back up from. Only the final one counts.
+   * These are no longer spent FOR you. A death holds on the down card, and a second
+   * wind is what the RESPAWN button buys with it — you stand up where you fell
+   * instead of starting the op (or the wave) over. Either way the death has already
+   * been recorded: going down is a death whether or not you had one of these left.
    */
   const REFILLS = survival ? 0 : endless ? 2 : 1;
   const refills = useRef(REFILLS);
-  /** Sim-time at which a downed player stands back up; 0 = no revive pending. */
-  const reviveAt = useRef(0);
+  /** The run is stopped on a death, waiting for RESPAWN or EXIT. Nothing — no timer,
+   *  no free revive — moves it along; only the player does. */
+  const awaitingChoice = useRef(false);
+  /** 0 upright → 1 face-down on the deck. Eases the camera to the floor on a death. */
+  const deathSink = useRef(0);
   const refillsShown = useRef(-1);   // last count painted to the HUD
   const vignetteHit = useRef(0); // decaying red damage-flash intensity
   const bossFlash = useRef(0);   // decaying pulse when a boss crosses a phase threshold
@@ -1142,7 +1149,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // Pointer lock is OPTIONAL — only for players who want mouse-look. It is
     // requested on a deliberate click (a trusted gesture), never on keydown, so
     // keyboard-only play (arrow keys aim) never triggers a lock error.
+    //
+    // It is also requested ONLY for a click AT THE FIGHT. This matters more than it
+    // sounds: the moment the canvas takes the pointer, the browser routes every
+    // further mouse event to it, so a click that grabbed the lock on its way DOWN
+    // never delivers its `click` to the button underneath. That is exactly what
+    // happened to EXIT — pressing it captured the mouse and started mouse-look
+    // instead of leaving, and the harder you clicked the more locked in you were.
+    // So: no lock while any overlay is up, and no lock from a click on UI chrome.
+    // The buttons that put you BACK in the fight ask for it explicitly instead
+    // (`grabMouse` in the scene).
     const wantLock = () => {
+      if (pausedRef.current || gateRef.current || awaitingChoice.current) return;
       if (locked.current || document.pointerLockElement === canvas) return;
       try {
         const p: unknown = canvas.requestPointerLock?.();
@@ -1183,7 +1201,17 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       wantLock();
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
-    const mdown = (e: MouseEvent) => { mouseBtn.current.add(e.button); audio.unlock(); wantLock(); };
+    /** Did this click land on something the player is OPERATING rather than on the
+     *  fight? Buttons, and anything a HUD marks `data-ui`. Checked on the target
+     *  itself rather than left to `stopPropagation` in each overlay: this listener is
+     *  on `window`, above every React root, and one overlay that forgets to stop the
+     *  event is a button that cannot be pressed. */
+    const onChrome = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('button, a, input, [data-ui]');
+    const mdown = (e: MouseEvent) => {
+      mouseBtn.current.add(e.button);
+      audio.unlock();
+      if (!onChrome(e.target)) wantLock();
+    };
     const mup = (e: MouseEvent) => mouseBtn.current.delete(e.button);
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement === canvas) {
@@ -1251,7 +1279,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // `alive` / `refills` / `reviving` make the second wind observable: a mission
     // RESTART and a second wind both put health back to full, so the health bar
     // alone cannot tell you which one happened.
-    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills, simTime: sim.time, alive: sim.snapshot().playerAlive, hp: sim.snapshot().playerHp, refills: refills.current, reviving: reviveAt.current > 0, weaponDown: dropPhysics.current.active, weaponLanded: dropPhysics.current.landed });
+    w.__valorMission = () => ({ objective: objective.current, total: OBJECTIVES.length, complete: completeAt.current > 0, briefing: sim.time < briefingUntil.current, survival, gauntlet: !!mission.gauntlet, wave: survWave.current, waveState: survState.current, survOver: survOver.current, kills: sim.snapshot().stats.kills, simTime: sim.time, alive: sim.snapshot().playerAlive, hp: sim.snapshot().playerHp, refills: refills.current, awaitingRespawn: awaitingChoice.current, weaponDown: dropPhysics.current.active, weaponLanded: dropPhysics.current.landed });
     // Endless chain state, for headless verification of the streamed room chain:
     // which room the player is in, how many are live, and whether the room is clear.
     w.__valorEndless = () => {
@@ -1550,8 +1578,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     pitch.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch.current));
 
     // ── Movement (camera-relative on the ground plane; keyboard + touch stick) ──
-    const mf = Math.max(-1, Math.min(1, (held('KeyW') ? 1 : 0) - (held('KeyS') ? 1 : 0) + ct.moveY));
-    const ms = Math.max(-1, Math.min(1, (held('KeyD') ? 1 : 0) - (held('KeyA') ? 1 : 0) + ct.moveX));
+    // A body on the deck doesn't walk. The stick and WASD are dead until you are back
+    // on your feet — the down card used to clear itself in a couple of seconds, but it
+    // now waits indefinitely, and a corpse strolling around under it would be absurd.
+    const isDown = !sim.playerAlive;
+    const mf = isDown ? 0 : Math.max(-1, Math.min(1, (held('KeyW') ? 1 : 0) - (held('KeyS') ? 1 : 0) + ct.moveY));
+    const ms = isDown ? 0 : Math.max(-1, Math.min(1, (held('KeyD') ? 1 : 0) - (held('KeyA') ? 1 : 0) + ct.moveX));
     const moving = Math.abs(mf) > 0.02 || Math.abs(ms) > 0.02;
     let speed = WALK * (1 - 0.45 * adsCur.current) * (1 - (1 - CROUCH_MOVE) * crouchCur.current);
     if (adsCur.current > 0.5) speed = Math.min(speed, WALK * ADS_MOVE);
@@ -1579,8 +1611,16 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const swayYaw = Math.sin(swayT.current * 0.63) * 0.0038 * swayAmt;
     const swayRoll = Math.sin(swayT.current * 0.51) * 0.0075 * swayAmt;
 
-    const eyeY = THREE.MathUtils.lerp(EYE_STAND, EYE_CROUCH, crouchCur.current)
-      + Math.sin(swayT.current * 2.1) * 0.011 * swayAmt;
+    // Going down takes the camera down with you: the eye sinks to the deck over about
+    // a second and the view rolls onto its side, so the drop of the weapon is watched
+    // from where you fell. Standing back up snaps it home faster than it fell.
+    deathSink.current += ((isDown ? 1 : 0) - deathSink.current) * Math.min(1, dt * (isDown ? 2.4 : 9));
+    const eyeY = THREE.MathUtils.lerp(
+      THREE.MathUtils.lerp(EYE_STAND, EYE_CROUCH, crouchCur.current)
+        + Math.sin(swayT.current * 2.1) * 0.011 * swayAmt,
+      EYE_DOWN,
+      deathSink.current,
+    );
     const lean = leanCur.current;
     const cam = camera as THREE.PerspectiveCamera;
     // Lateral lean offset. Peeking must never push the camera into geometry —
@@ -1600,7 +1640,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     cam.rotation.set(
       pitch.current + recoilP.current + swayPitch + staggerP.current + (Math.random() - 0.5) * sh * 0.5,
       yaw.current + recoilY.current + swayYaw + staggerY.current + (Math.random() - 0.5) * sh * 0.5,
-      -lean * 0.14 + swayRoll + (Math.random() - 0.5) * sh,
+      -lean * 0.14 + swayRoll + (Math.random() - 0.5) * sh + deathSink.current * 0.42,
       'YXZ',
     );
     const adsFov = THREE.MathUtils.lerp(55, 42, adsCur.current);
@@ -1816,22 +1856,23 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         vignetteHit.current = 1;
         showHitDir(ev.fromDir);
       } else if (ev.kind === 'playerDown') {
-        downAt.current = now;
         dropWeapon(cam);            // your hands let go of it
-        if (refills.current > 0) {
-          // Second wind: this attempt is not over. The endless and campaign
-          // death paths below both stand down while a revive is pending.
-          refills.current--;
-          reviveAt.current = now + REVIVE_DELAY;
-          showDown(refills.current > 0 ? `SECOND WIND · ${refills.current} LEFT` : 'SECOND WIND · LAST', '#ffb454');
-          paintRefills();
-        } else {
-          reviveAt.current = 0;
+        // NOTHING brings you back on its own. The run stops here and waits on the
+        // player: RESPAWN (spending a second wind if they have one) or EXIT. It used
+        // to spend a second wind for you after a beat, or restart the op after two
+        // seconds, which meant a death you never agreed to and never had to read.
+        //
+        // The death is recorded either way, the moment you go down. Going down IS a
+        // death — the choice that follows is only about what happens next.
+        if (survival) {
+          // Survival keeps its own run-over screen (and its own paid revive), so it
+          // gets the plain card and none of this.
           showDown('DOWN', '#ff5a47');
-          // Record the death — only a FINAL one. In campaign this writes the loss;
-          // firing it on a death you got back up from would log a loss for an op
-          // you may still go on to clear.
-          onDeath?.(sim.snapshot().stats);
+        } else {
+          awaitingChoice.current = true;
+          const st = sim.snapshot().stats;
+          if (!endless) onDeath?.(st);   // campaign: writes the loss. Endless reports its own, with the wave.
+          onDown?.({ refills: refills.current, wave: endless ? chain.current.wave : null, kills: st.kills });
         }
       } else if (ev.kind === 'bossPhase') {
         // The boss just escalated: pulse it, jolt the view, and let Valor mark it.
@@ -1877,17 +1918,6 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     impactFx.update(dt);
     stepDroppedWeapon(dt);
 
-    // Second wind: stand back up where you fell. Runs before either death path
-    // below, both of which are gated on there being no revive pending.
-    if (reviveAt.current > 0 && now >= reviveAt.current) {
-      reviveAt.current = 0;
-      sim.secondWind();
-      holsterWeapon();                   // the rifle is back in your hands
-      if (hud.current.down) hud.current.down.style.opacity = '0';
-      vignetteHit.current = 0;
-      staggerP.current = 0; staggerY.current = 0; shake.current = 0;
-      shoveX.current = 0; shoveZ.current = 0;
-    }
     for (let i = 0; i < EFLASH; i++) {
       const m = eFlashRefs.current[i];
       if (m && m.visible && now > eFlashUntil.current[i]) m.visible = false;
@@ -2180,29 +2210,22 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         }
       }
 
-      // Death ends the run outright — no auto-restart. The page decides what happens
-      // next (Seasonal submits the score; Campaign Endless saves the checkpoint).
-      // DEATH: you drop back to the START of the wave you were on, never to wave 1 and
-      // never further. You lose the rooms you had cleared inside this wave and nothing
-      // else, so a death costs real ground without undoing a session's work. The run
-      // itself continues — there is no run-over screen out here.
-      // A pending second wind holds the wave restart off entirely — you are getting
-      // back up, so the run has not ended and endlessOpts.onDeath (which is what
-      // banks the checkpoint / submits a Seasonal score) must not fire.
-      if (!snap.playerAlive && !c.dying && reviveAt.current === 0) {
+      // DEATH: the run stops on the down card and waits (see the `playerDown` event).
+      // Choosing RESPAWN puts you back at the START of the wave you were on, never
+      // wave 1 and never further — you lose the rooms you had cleared inside this
+      // wave and nothing else, so a death costs real ground without undoing a
+      // session's work. Choosing EXIT leaves the run where it stands.
+      //
+      // The report fires here rather than in the event handler because it is the only
+      // place that knows the wave. It fires on EVERY death, second wind or not: a
+      // death is a death, and the page (which banks the checkpoint / submits a
+      // Seasonal score) is entitled to know about all of them.
+      if (!snap.playerAlive && !c.dying) {
         c.dying = true;
         waveDoneUntil.current = 0;
         if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
         const st = sim.snapshot().stats;
         endlessOpts?.onDeath?.(c.wave, { kills: st.kills, headshots: st.headshots });
-        respawnAt.current = performance.now() + 2400;
-        if (hud.current.down) hud.current.down.style.opacity = '1';
-      }
-      if (c.dying && performance.now() >= respawnAt.current) {
-        c.dying = false;
-        respawnAt.current = 0;
-        if (hud.current.down) hud.current.down.style.opacity = '0';
-        restartWave(c.wave);
       }
 
       // Waypoint: point at the doorway once the room is clear, so "push forward" is
@@ -2318,8 +2341,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         hostageRef.current.visible = false;
       }
     }
-    // DOWN or COMPLETE → restart the operation after a beat
-    if (!snap.playerAlive && reviveAt.current === 0 && now - downAt.current > 2.2) restartMission();
+    // A DOWN no longer restarts anything on a timer — it holds on the down card until
+    // the player picks RESPAWN or EXIT (see `respawnFromDown`).
     // MISSION COMPLETE holds for a beat, then hands off to the debrief interstitial.
     if (completeAt.current > 0 && performance.now() - completeWallAt.current > 2200 && !advanced.current) {
       advanced.current = true;
@@ -2602,7 +2625,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         el.style.color = active ? '#fff' : c.color;
       }
     }
-    if (h.lock) h.lock.style.opacity = locked.current ? '0' : '1';
+    // The mouse-capture hint. Also hidden while you are down: the down card RELEASES
+    // the pointer so its buttons can be clicked, and without this the hint reads as
+    // "move the mouse to aim" across the face of a death screen.
+    if (h.lock) h.lock.style.opacity = locked.current || awaitingChoice.current ? '0' : '1';
     // crosshair gap grows with spread + recoil
     const spread = sim.spreadFor(adsCur.current, false, crouchCur.current > 0.5);
     const gap = 5 + spread * 620 + Math.abs(recoilP.current) * 340;
@@ -2768,11 +2794,48 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     }
   }
 
+  /**
+   * The down card's RESPAWN. The ONLY way back into a fight you were killed in.
+   *
+   * What it gives you depends on what you have left. A second wind puts you back on
+   * your feet exactly where you fell, with the room still as you left it — that is
+   * the good outcome, and it is why the pips beside the health bar matter. Out of
+   * second winds, coming back costs ground: the op restarts from the breach, or (in
+   * endless) the wave you died on restarts from its first room.
+   */
+  function respawnFromDown() {
+    if (!awaitingChoice.current) return;
+    awaitingChoice.current = false;
+    if (hud.current.down) hud.current.down.style.opacity = '0';
+    vignetteHit.current = 0;
+    staggerP.current = 0; staggerY.current = 0; shake.current = 0;
+    shoveX.current = 0; shoveZ.current = 0;
+    if (refills.current > 0) {
+      refills.current--;
+      paintRefills();
+      sim.secondWind();
+      holsterWeapon();             // the rifle is back in your hands
+      chain.current.dying = false; // endless: you are up, the wave stands
+    } else if (endless) {
+      chain.current.dying = false;
+      restartWave(chain.current.wave);
+    } else {
+      restartMission();
+    }
+  }
+  // Handed to the scene so the down card's button can reach in here. Re-bound every
+  // render (the closure above captures this frame's refs) and cleared on unmount, so
+  // a card left over from a torn-down run can never respawn into a dead sim.
+  useEffect(() => {
+    if (!respawnRef) return;
+    respawnRef.current = respawnFromDown;
+    return () => { respawnRef.current = null; };
+  });
+
   function restartMission() {
     holsterWeapon();               // pick the rifle back up
     // A fresh attempt gets a fresh second wind.
     refills.current = REFILLS;
-    reviveAt.current = 0;
     paintRefills();
     storyFired.current.clear();
     voQueue.current.length = 0;
@@ -3052,9 +3115,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
  * furthest-unlocked is replayable; the rest are locked. Grouped by zone so the
  * three theatres of the campaign read at a glance.
  */
-function MissionSelect({ current, progress, onPick, onSurvival, onGauntlet, gauntletUnlocked, onClose }: {
+function MissionSelect({ current, progress, onPick, onSurvival, onGauntlet, gauntletUnlocked, onClose, onExit }: {
   current: number; progress: number; onPick: (i: number) => void; onSurvival: () => void;
   onGauntlet: () => void; gauntletUnlocked: boolean; onClose: () => void;
+  /** Leave the game entirely (back to the app). Absent in the standalone sandbox,
+   *  where there is nowhere to go and RESUME is the only way off this board. */
+  onExit?: () => void;
 }) {
   const zones = CAMPAIGN.reduce<Record<string, { m: Mission; i: number }[]>>((acc, m, i) => {
     (acc[m.zone] ??= []).push({ m, i });
@@ -3073,12 +3139,28 @@ function MissionSelect({ current, progress, onPick, onSurvival, onGauntlet, gaun
             <div style={{ fontSize: 12, letterSpacing: 8, color: '#37d0e0' }}>Valor · CAMPAIGN</div>
             <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 4 }}>OPERATIONS</div>
           </div>
-          <button
-            onClick={onClose}
-            style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #37d0e0', color: '#37d0e0', fontFamily: 'inherit', fontSize: 13, letterSpacing: 2, padding: '8px 14px', borderRadius: 5 }}
-          >
-            {iconRow('chevron', 'RESUME', 14)}
-          </button>
+          {/* RESUME goes back to the fight; EXIT leaves the game. This board is where
+              players land after a death or a debrief, so leaving must be reachable
+              from it — before this, the only way out was to resume into a fight you
+              had already decided to leave and quit from there. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onExit && (
+              <button
+                onClick={onExit}
+                style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'rgba(224,121,111,.10)', border: '1px solid rgba(224,121,111,.55)', color: '#e6a29b', fontFamily: 'inherit', fontSize: 13, letterSpacing: 2, padding: '8px 14px', borderRadius: 5 }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+                </span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #37d0e0', color: '#37d0e0', fontFamily: 'inherit', fontSize: 13, letterSpacing: 2, padding: '8px 14px', borderRadius: 5 }}
+            >
+              {iconRow('chevron', 'RESUME', 14)}
+            </button>
+          </div>
         </div>
 
         {zoneOrder.map((zone) => {
@@ -3548,6 +3630,11 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     if (v) { try { document.exitPointerLock?.(); } catch { /* ignore */ } }
   };
   const [mode, setMode] = useState<'campaign' | 'survival' | 'gauntlet' | 'endless'>(endless ? 'endless' : 'campaign');
+  /** Set while the player is on the deck and the run is waiting on them. Nothing
+   *  clears it but a button: RESPAWN or EXIT. */
+  const [downCard, setDownCard] = useState<{ refills: number; wave: number | null; kills: number } | null>(null);
+  /** FpsWorld fills this in with "put me back in" — see `respawnFromDown` there. */
+  const respawnRef = useRef<(() => void) | null>(null);
   const [debrief, setDebrief] = useState<null | 'next' | 'finale'>(null);
   const [lastReward, setLastReward] = useState<OpReward | null>(null); // real server reward for the debrief
   const missionStartWall = useRef(performance.now()); // for the op's clear time
@@ -3621,6 +3708,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setSelect(false);
     setMissionIndex(i);
     setRunNonce((n) => n + 1); // force a fresh mount even if it's the same op
+    grabMouse();
   };
   const pickSurvival = () => {
     setMode('survival');
@@ -3628,6 +3716,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setDebrief(null);
     setSelect(false);
     setRunNonce((n) => n + 1);
+    grabMouse();
   };
   const pickGauntlet = () => {
     if (!gauntletUnlocked) return; // prestige tier — locked until the campaign is done
@@ -3636,6 +3725,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     setDebrief(null);
     setSelect(false);
     setRunNonce((n) => n + 1);
+    grabMouse();
   };
 
   // ── Between-mission debrief: clear an op → story of the next → deploy/retry/exit ──
@@ -3646,7 +3736,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     if (last) setCampaignDone(true);
     setDebrief(last ? 'finale' : 'next');
     menuOpenRef.current = true;                 // freeze the scene behind the debrief
-    try { document.exitPointerLock?.(); } catch { /* ignore */ }
+    releaseMouse();
     // Record the op with the server (kills/headshots feed the capped skill bonus) and
     // surface the REAL reward on the debrief. Clear any prior reward first so a stale
     // one never flashes while this one is recording.
@@ -3663,20 +3753,41 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
     if (mode !== 'campaign') return;
     onOpFailed?.(stats);
   };
+  // The run has stopped on a death. Free the mouse so the card's buttons can be
+  // clicked (the fight holds the pointer lock) and put the card up. The sim keeps
+  // running behind it on purpose: the weapon is still falling.
+  const handleDown = (state: { refills: number; wave: number | null; kills: number }) => {
+    releaseMouse();
+    setDownCard(state);
+  };
+  const respawnFromCard = () => { setDownCard(null); respawnRef.current?.(); grabMouse(); };
+  /** EXIT from the down card: out of the fight entirely if the app gave us somewhere
+   *  to go, otherwise back to the Operations board. */
+  const exitFromCard = () => {
+    setDownCard(null);
+    releaseMouse();
+    if (onExit) onExit();
+    else setSelect(true);
+  };
   const deployNext = () => {
     const next = Math.min(CAMPAIGN.length - 1, missionIndex + 1);
     try { window.localStorage.setItem(CAMPAIGN_KEY, String(next)); } catch { /* ignore */ }
     clearComplete(); setDebrief(null); menuOpenRef.current = false;
     setMissionIndex(next); setRunNonce((n) => n + 1);
+    grabMouse();
   };
   const retryMission = () => {
     clearComplete(); setDebrief(null); menuOpenRef.current = false;
     setRunNonce((n) => n + 1); // remount the same op fresh
+    grabMouse();
   };
   const exitHome = () => {
     clearComplete(); setCampaignDone(false); setDebrief(null);
     setSelect(true); // straight to the Operations board (stays paused)
   };
+  // A remount (new op, retry, mode change) is a fresh run: any down card left over
+  // from the last one belongs to a world that no longer exists.
+  useEffect(() => { setDownCard(null); }, [runNonce, missionIndex, mode]);
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__valorCampaign = () => ({ index: missionIndex, total: CAMPAIGN.length, name: mission.name, zone: mission.zone, done: campaignDone, progress, selectOpen });
@@ -3848,11 +3959,33 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
   // Single source of truth for the pause flag: any full-screen overlay freezes play.
   useEffect(() => { menuOpenRef.current = portrait || selectOpen || debrief !== null || paused; }, [portrait, selectOpen, debrief, paused]);
 
+  /**
+   * Put the mouse back in the fight, deliberately.
+   *
+   * Clicking a button no longer captures the pointer as a side effect (see the note
+   * on `wantLock`): a click that grabbed the mouse on its way down never delivered
+   * its `click` to the button, which is how EXIT came to start mouse-look instead of
+   * leaving. So the handful of actions that DO return you to the fight ask for the
+   * pointer here, from inside their own click — the gesture the browser requires.
+   * Every other button leaves the mouse alone, and one click at the fight brings it
+   * back the usual way.
+   */
+  const grabMouse = () => {
+    if (isTouch) return;
+    try {
+      const c = document.querySelector('canvas');
+      const p: unknown = c?.requestPointerLock?.();
+      if (p && typeof (p as { catch?: unknown }).catch === 'function') (p as Promise<void>).catch(() => {});
+    } catch { /* pointer lock unavailable (blocked / headless) — arrow keys still aim */ }
+  };
+  /** Leaving the fight: hand the mouse back to the page, whatever happens next. */
+  const releaseMouse = () => { try { document.exitPointerLock?.(); } catch { /* ignore */ } };
+
   // C4 · deliberate pause menu. Non-destructive: opening it just freezes the game,
   // so an accidental open is a one-tap RESUME away (unlike the old exit-to-OPS button).
-  const openPause = () => { setPaused(true); try { document.exitPointerLock?.(); } catch { /* ignore */ } };
-  const resume = () => setPaused(false);
-  const restartFromPause = () => { setPaused(false); setDebrief(null); setRunNonce((n) => n + 1); };
+  const openPause = () => { setPaused(true); releaseMouse(); };
+  const resume = () => { setPaused(false); grabMouse(); };
+  const restartFromPause = () => { setPaused(false); setDebrief(null); setRunNonce((n) => n + 1); grabMouse(); };
   const exitToOps = () => { setPaused(false); setSelect(true); };
 
   const JOY_R = 46;
@@ -4048,7 +4181,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} endlessOpts={mode === 'endless' ? endless : undefined} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} onDown={handleDown} respawnRef={respawnRef} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} endlessOpts={mode === 'endless' ? endless : undefined} />
         </Suspense>
       </Canvas>
 
@@ -4205,10 +4338,53 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 4, margin: '8px 0', color: '#ff5a47' }}>OVERRUN</div>
           <div ref={(r) => { hud.current.survEndText = r; }} style={{ fontSize: 14, color: '#e6c2bc', letterSpacing: 1 }}>you held 0 waves</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
-            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('refresh', 'AGAIN', 14)}</button>
+            <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setRunNonce((n) => n + 1); grabMouse(); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #ff8a7a', color: '#ff8a7a', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('refresh', 'AGAIN', 14)}</button>
             <button onClick={() => { if (hud.current.survEnd) { hud.current.survEnd.style.opacity = '0'; hud.current.survEnd.style.pointerEvents = 'none'; } setSelect(true); }} style={{ pointerEvents: 'auto', cursor: 'pointer', background: 'transparent', border: '1px solid #9fb4c8', color: '#9fb4c8', fontFamily: 'inherit', fontSize: 13, letterSpacing: 3, padding: '10px 20px', borderRadius: 5 }}>{iconRow('menu', 'OPERATIONS', 14)}</button>
           </div>
         </div>
+        {/* The down card. A death HOLDS here: it is recorded the moment you go down,
+            and nothing puts you back in the fight until you say so. RESPAWN spends a
+            second wind if you have one (up where you fell) and otherwise starts the op
+            — or the endless wave — over; EXIT leaves.
+
+            Deliberately translucent and slow to fade in: the weapon is still tumbling
+            out of your hands behind it, and that fall is the death read. */}
+        {/* The board / pause menu / debrief take precedence while they are up — the
+            card is not dismissed by them, it waits underneath and comes back with the
+            fight (the death is still pending until RESPAWN or EXIT answers it). */}
+        {downCard && !selectOpen && !paused && !debrief && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(20,2,2,.72)', color: '#ff8a7a', textAlign: 'center', fontFamily: UI_FONT, pointerEvents: 'auto', cursor: 'auto', animation: 'valorDownIn 1.1s ease-out both' }}>
+            <div style={{ fontSize: 12, letterSpacing: 8, color: '#c98' }}>
+              {mode === 'endless' ? `${seasonal ? 'SEASONAL' : 'ENDLESS'} · WAVE ${downCard.wave ?? 1}` : `${mission.zone} · ${mission.name}`}
+            </div>
+            <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: 6, margin: '10px 0 4px', color: '#ff5a47' }}>DOWN</div>
+            <div style={{ fontSize: 13, color: '#e6c2bc', letterSpacing: 1 }}>
+              {downCard.kills} confirmed · this one goes on your record
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 28, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={respawnFromCard}
+                style={{ ...btnC4(downCard.refills > 0 ? '#5fe0a8' : '#ff8a7a'), background: downCard.refills > 0 ? 'rgba(95,224,168,.12)' : 'rgba(255,138,122,.10)', fontWeight: 700 }}
+              >
+                {iconRow('refresh', 'RESPAWN', 14)}
+              </button>
+              <button onMouseDown={(e) => e.stopPropagation()} onClick={exitFromCard} style={{ ...btnC4('#9fb4c8'), background: 'rgba(159,180,200,.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
+                </span>
+              </button>
+            </div>
+            {/* What RESPAWN actually costs, said plainly — it is the whole decision. */}
+            <div style={{ fontSize: 11, color: '#9fb4c8', letterSpacing: 1, marginTop: 18, maxWidth: 380, lineHeight: 1.7 }}>
+              {downCard.refills > 0
+                ? `second wind · ${downCard.refills} left — back on your feet where you fell, the fight as you left it`
+                : mode === 'endless'
+                  ? `no second winds left — wave ${downCard.wave ?? 1} restarts from its first room`
+                  : 'no second winds left — the operation restarts from the breach'}
+            </div>
+          </div>
+        )}
         {/* Survival re-arm G$ sink (B1) — only with a wallet; sandbox stays local */}
         {walletAddress && <SurvivalRearmControls walletAddress={walletAddress} />}
         {/* Prestige Gauntlet run token + ranked result (B2) */}
@@ -4226,7 +4402,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
               <button onClick={restartFromPause} style={btnC4('#9fb4c8')}>{iconRow('refresh', 'RESTART', 14)}</button>
               <button onClick={exitToOps} style={btnC4('#6f7d8c')}>{iconRow('menu', 'OPERATIONS', 14)}</button>
               {onExit && (
-                <button onClick={onExit} style={{ ...btnC4('#e0796f'), background: 'rgba(224,121,111,.10)' }}>
+                <button onClick={() => { releaseMouse(); onExit(); }} style={{ ...btnC4('#e0796f'), background: 'rgba(224,121,111,.10)' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}><Icon name="chevron" size={14} /></span>EXIT
                   </span>
@@ -4283,7 +4459,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         )}
 
         {selectOpen && (
-          <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => setSelect(false)} />
+          <MissionSelect current={mode === 'campaign' ? missionIndex : -1} progress={progress} onPick={pickMission} onSurvival={pickSurvival} onGauntlet={pickGauntlet} gauntletUnlocked={gauntletUnlocked} onClose={() => { setSelect(false); grabMouse(); }} onExit={onExit ? () => { releaseMouse(); onExit(); } : undefined} />
         )}
 
         {/* zone / op label (operations are chosen outside the game now). On touch it
@@ -4319,12 +4495,12 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
           onMouseDown stops propagation because the window-level `mdown` handler
           re-requests pointer lock on ANY click — without this, clicking PAUSE would
           grab the mouse again on the way in. */}
-      {!isTouch && !selectOpen && !portrait && !paused && !debrief && (
+      {!isTouch && !selectOpen && !portrait && !paused && !debrief && !downCard && (
         <div style={{ position: 'absolute', left: 26, top: 16, zIndex: 20, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto' }}>
           {onExit && (
             <button
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={onExit}
+              onClick={() => { releaseMouse(); onExit(); }}
               title="Leave the fight"
               style={{ height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 11px 0 8px', borderRadius: 8, background: 'rgba(6,10,16,.55)', border: '1px solid rgba(224,121,111,.4)', color: '#e6a29b', fontFamily: UI_FONT, fontSize: 11, letterSpacing: 2, backdropFilter: 'blur(6px)', cursor: 'pointer' }}
             >
@@ -4343,7 +4519,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
       )}
 
       {/* ── Mobile touch controls — glassy, tucked to the corners ── */}
-      {isTouch && !selectOpen && !portrait && !paused && (
+      {isTouch && !selectOpen && !portrait && !paused && !downCard && (
         <>
           {/* C4 pause button — top-centre, ABOVE the aim strip (top:104) so it never
               eats an aim touch. Safe to mis-tap: pause just freezes + offers RESUME. */}

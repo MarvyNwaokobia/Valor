@@ -327,6 +327,71 @@ pub async fn status_for(db: &PgPool, wallet: &str) -> serde_json::Value {
     })
 }
 
+/// Everything that decides what a reward ACTUALLY pays right now, in one read.
+///
+/// WHY THIS EXISTS. The face value of a reward is a constant in `battles.rs`, but what
+/// lands in a wallet is that constant after three independent modifiers: the earning
+/// pause, this wallet's weekly allowance, and the taper on whichever pool is paying.
+/// Any one of them can turn a documented "10 G$ per op clear" into 0 or 2 without a
+/// single line of code being wrong, so anyone answering "why did I get less than the
+/// help page says" needs all four numbers together or they will confidently give a
+/// wrong answer.
+///
+/// Built for the support agent (`handlers::agent`), whose hard rule is that it may not
+/// state a G$ figure it did not retrieve. This is the retrieval. It is deliberately
+/// descriptive rather than predictive — it reports the state of each brake instead of
+/// simulating a payout, because a simulated figure would itself become a promise.
+pub async fn payout_context(state: &crate::AppState, wallet: &str) -> serde_json::Value {
+    let paused = earning_paused();
+    let cap = weekly_cap_g();
+    let earned = earned_this_week(&state.db, wallet).await;
+    let floor = pool_floor_g();
+
+    // Read both pools, not just the one behind whichever surface the player asked
+    // about: "I earned nothing" rarely arrives labelled with its reward source, and an
+    // agent that checked only Main would repeat the exact bug this pair replaced.
+    let mut pools = serde_json::Map::new();
+    if let Some(chain) = state.chain.as_ref() {
+        for (label, source) in [("main", RewardSource::Main), ("endless", RewardSource::Endless)] {
+            let balance = pool_balance_g(chain, source).await;
+            pools.insert(label.to_string(), serde_json::json!({
+                "balance_g": balance,
+                // None means the balance read failed, which callers treat as "do not
+                // taper". Reported as null rather than false so a support answer can
+                // say "could not read" instead of asserting a healthy pool.
+                "tapering": balance.map(|b| floor > 0 && b < floor),
+            }));
+        }
+    }
+
+    serde_json::json!({
+        // Whole-game switch. When true, ops and Endless waves pay 0 and no payout row
+        // is written — the clear is forfeited, not deferred, so this is the difference
+        // between "your money is coming" and "that one is gone".
+        "earning_paused": paused,
+        "paused_surfaces": if paused { vec!["campaign_op_clears", "endless_waves"] } else { vec![] },
+        "always_paying": ["rank_up_bonus", "referrals", "season_prizes", "duel_payouts"],
+        "weekly_cap": {
+            "cap_g": cap,
+            "earned_this_week_g": earned,
+            "remaining_g": cap.saturating_sub(earned),
+            "over_cap": cap > 0 && earned >= cap,
+            "rate_past_cap": over_cap_rate(),
+            "resets_at": (week_start() + chrono::Duration::days(7)).to_rfc3339(),
+        },
+        "pool_floor": {
+            "floor_g": floor,
+            "rate_while_under_floor": pool_floor_rate(),
+            "pools": pools,
+        },
+        // Stated explicitly because it is the single most common wrong answer: the two
+        // brakes take the harsher of the two, they do not multiply.
+        "note": "The weekly cap and the pool taper are each measured against the full \
+                 reward and the harsher one wins. They do not compound. A reward can \
+                 still be 0 if earning is paused, which is separate from both.",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

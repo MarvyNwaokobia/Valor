@@ -144,6 +144,15 @@ body {
   100% { transform: scale(1)   rotate(0deg);   opacity: 1; }
 }
 
+/* The down card fading up over a body that is still falling. Slow on purpose: the
+   weapon leaving your hands is the death read, and the card must not cut across it. */
+@keyframes valorDownIn {
+  0%   { opacity: 0; pointer-events: none; }
+  45%  { opacity: 0; pointer-events: none; }
+  46%  { pointer-events: auto; }
+  100% { opacity: 1; }
+}
+
 @keyframes impact-flash {
   0%   { opacity: 0; }
   12%  { opacity: 0.7; }

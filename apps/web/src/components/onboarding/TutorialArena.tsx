@@ -11,6 +11,7 @@ import { useCombatFeel } from '@/hooks/useCombatFeel'
 import { useAudio } from '@/hooks/useAudio'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import ImpactBurst from '@/components/battle/ImpactBurst'
+import AgentChat from '@/components/agent/AgentChat'
 
 const BOT_CLASS: CharacterClass = 'Berserker'
 
@@ -20,12 +21,22 @@ const MOVES: { id: BattleMove; label: string; Icon: typeof Sword; color: string 
   { id: 'special', label: 'Special', Icon: Zap,    color: '#8b5cf6' },
 ]
 
+/**
+ * How long the player can sit on the tutorial without picking a move before the helper
+ * offers itself. Long enough to read the screen and think; short enough to catch someone
+ * whose controls simply are not responding, which is the failure this is for.
+ */
+const TUTORIAL_IDLE_MS = 35_000
+
 interface Props {
   player: Player
   onComplete: () => void
+  /** Passed through so the helper can look this player up. Optional: the tutorial runs
+   *  immediately after account creation, so it is always present in practice. */
+  walletAddress?: string
 }
 
-export default function TutorialArena({ player, onComplete }: Props) {
+export default function TutorialArena({ player, onComplete, walletAddress }: Props) {
   const def    = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
   const botDef = CLASS_DEFINITIONS[BOT_CLASS]
 
@@ -39,6 +50,18 @@ export default function TutorialArena({ player, onComplete }: Props) {
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const hint = TUTORIAL_HINTS.find(h => h.round === battle.round)
+
+  // Idle watchdog. A player who has not taken a turn in half a minute is not thinking
+  // hard about attack-versus-defend, they are looking at a screen that is not responding
+  // to them — most often touch controls. Keyed on the round so any move resets it.
+  const [helperOffered, setHelperOffered] = useState(false)
+  const [helperOpen, setHelperOpen] = useState(false)
+  useEffect(() => {
+    // `result` is set once the tutorial resolves; a finished player is not stuck.
+    if (helperOffered || battle.result) return
+    const timer = setTimeout(() => setHelperOffered(true), TUTORIAL_IDLE_MS)
+    return () => clearTimeout(timer)
+  }, [battle.round, battle.result, helperOffered])
 
   // Drive combat animations from log
   const prevLogLen = useRef(0)
@@ -341,6 +364,36 @@ export default function TutorialArena({ player, onComplete }: Props) {
           )
         })}
       </div>
+
+      {/* Idle nudge. Deliberately a small line rather than a modal: if the player is
+          simply reading, an interruption here is the last thing they need. */}
+      {helperOffered && !helperOpen && (
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          onClick={() => setHelperOpen(true)}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs underline underline-offset-4 z-30"
+          style={{ color: '#93c5fd' }}
+        >
+          Controls not working?
+        </motion.button>
+      )}
+
+      <AnimatePresence>
+        {helperOpen && (
+          <AgentChat
+            walletAddress={walletAddress}
+            context="onboarding:tutorial"
+            onClose={() => setHelperOpen(false)}
+            greeting="Looks like this one is not moving for you. What happens when you tap one of the three buttons at the bottom?"
+            suggestions={[
+              'Nothing happens when I tap',
+              'I cannot see the buttons',
+              'How do I play this?',
+            ]}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, ChevronDown, HelpCircle, Send, BookOpen } from 'lucide-react'
+import { Search, ChevronDown, HelpCircle, Send, BookOpen, MessageCircle } from 'lucide-react'
 
 import { TELEGRAM_URL as TELEGRAM } from '@/lib/constants'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import AgentChat from '@/components/agent/AgentChat'
 
 interface QA { q: string; a: string }
 interface Category { title: string; items: QA[] }
@@ -113,6 +115,8 @@ function Accordion({ q, a }: QA) {
 export default function HelpCenter() {
   const [query, setQuery] = useState('')
   const [showWalkthrough, setShowWalkthrough] = useState(false)
+  const [askOpen, setAskOpen] = useState(false)
+  const { address } = useResolvedAuth()
 
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
@@ -150,6 +154,28 @@ export default function HelpCenter() {
         />
       </div>
 
+      {/* The FAQ below answers how the game works in general. This answers questions
+          about THIS account — whether you're verified, where a specific payout went —
+          which is the class of question a static page structurally cannot handle. */}
+      <button
+        onClick={() => setAskOpen(true)}
+        className="flex items-center gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors hover:border-amber-500/40"
+        style={{ background: 'rgba(8,8,14,0.6)', borderColor: 'rgba(42,42,58,0.8)' }}
+      >
+        <div
+          className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}
+        >
+          <MessageCircle size={17} className="text-blue-400" strokeWidth={1.8} />
+        </div>
+        <div className="min-w-0">
+          <p className="font-bold text-white text-sm">Ask about your account</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Checks your verification, rank and payouts directly
+          </p>
+        </div>
+      </button>
+
       {/* FAQ */}
       {!noResults && filtered.map(cat => (
         <section key={cat.title} className="flex flex-col gap-2.5">
@@ -162,10 +188,19 @@ export default function HelpCenter() {
         <div className="rounded-2xl border p-6 text-center flex flex-col items-center gap-3"
           style={{ background: 'rgba(8,8,14,0.6)', borderColor: 'rgba(42,42,58,0.8)' }}>
           <p className="text-slate-400 text-sm">No answer found for “{query}”.</p>
+          {/* The helper comes first now: a search that missed is exactly the case where
+              a canned page has nothing and a lookup against the player's own account
+              might. Telegram stays as the human fallback rather than the first resort. */}
+          <button
+            onClick={() => setAskOpen(true)}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-sm text-white"
+            style={{ background: '#3b82f6' }}
+          >
+            <MessageCircle size={15} /> Ask the helper
+          </button>
           <a href={TELEGRAM} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-sm text-black"
-            style={{ background: '#eab308' }}>
-            <Send size={15} /> Ask on Telegram
+            className="inline-flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            <Send size={13} /> Or ask the team on Telegram
           </a>
         </div>
       )}
@@ -221,6 +256,22 @@ export default function HelpCenter() {
           <Send size={15} /> Join us on Telegram
         </a>
       </div>
+
+      <AnimatePresence>
+        {askOpen && (
+          <AgentChat
+            walletAddress={address}
+            context="help"
+            onClose={() => setAskOpen(false)}
+            greeting="Ask me anything about Valor. I can look up your own account too, so if something about your rank, verification or a payout looks wrong, say what you're seeing."
+            suggestions={[
+              'Am I verified?',
+              'Where did my G$ go?',
+              'Why did I earn less than expected?',
+            ]}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

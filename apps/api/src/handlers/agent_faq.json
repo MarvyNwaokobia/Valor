@@ -1,0 +1,117 @@
+[
+  {
+    "topic": "what is valor",
+    "q": "What is Valor?",
+    "a": "A first-person tactical shooter where the fighting actually pays. Breach compounds, clear rooms, extract. Every kill earns XP, every rank earns G$, and that G$ is real money in your wallet you can spend or send anywhere."
+  },
+  {
+    "topic": "sign in login",
+    "q": "How do I sign in?",
+    "a": "Tap ENTER VALOR. Three ways in: Continue with Google (easiest, one tap and we make the wallet for you), Continue with Email (we send a code), or Connect a wallet. Not sure? Use Google. On mobile Safari, Google sign-in sometimes fails with a PKCE error; the email code always works, so use that instead."
+  },
+  {
+    "topic": "crypto knowledge needed",
+    "q": "Do I need to know crypto?",
+    "a": "No. Sign in with Google and never think about it. A wallet is created for you behind the scenes. Crypto only comes up if you choose to send your G$ out to another wallet."
+  },
+  {
+    "topic": "what is g$ gooddollar money",
+    "q": "What is G$?",
+    "a": "G$ (GoodDollar) is real money on the Celo network. You earn it by playing, claim it free every day, spend it in the Armoury, or send it out to any wallet."
+  },
+  {
+    "topic": "why verify verification required identity",
+    "q": "Why do I have to verify?",
+    "a": "Valor pays real money, so every player has to be a real, unique person, otherwise bots and farmed accounts would drain the rewards meant for real players. One human, one warrior."
+  },
+  {
+    "topic": "what is verification face check",
+    "q": "What is the verification?",
+    "a": "A quick GoodDollar identity check. Under 60 seconds, free. Your data stays with GoodDollar, not with us. Verifying also unlocks your daily free G$ claim."
+  },
+  {
+    "topic": "verification stuck login information missing face verification failed",
+    "q": "The verification page says 'Login information is missing'.",
+    "a": "That page is run by GoodDollar, not Valor, and it shows that message when the secure link it was opened with was not carried through, which can happen if the page was reloaded, opened from history, or restored by the browser. Go back to Valor and start verification again from the button so a fresh link is generated. Do not reuse an old tab. If a fresh link gives the same message, this needs a human: the wallet address should be escalated."
+  },
+  {
+    "topic": "already verified but asked again re-verify",
+    "q": "I already verified, but the app still says verify.",
+    "a": "Verification is run by GoodDollar, not Valor, and we only ever show what GoodDollar reports for your wallet. GoodDollar sometimes removes wallets from its verified list, which is out of our control. Check the live status first before telling the player anything; if GoodDollar says not verified, the honest answer is that it is on their side and we can escalate the specific wallet."
+  },
+  {
+    "topic": "daily g$ ubi free claim",
+    "q": "What is the daily G$?",
+    "a": "GoodDollar UBI: free G$ you can claim every day, just for being verified. It is separate from what you earn playing. Claim it at Profile then Bank then Daily G$. Once per day; the Bank shows the next claim time and that time comes from GoodDollar, we do not guess it."
+  },
+  {
+    "topic": "how to earn playing rewards",
+    "q": "How do I earn G$ by playing?",
+    "a": "Clearing a campaign operation for the first time pays a bounty, clearing waves in Endless pays per wave, and every rank-up pays a bonus. Daily UBI is on top of all that. Never quote the amounts from memory: the live figures depend on the earning pause, the weekly cap and the pool taper, so always retrieve them first."
+  },
+  {
+    "topic": "ranks ladder progression xp",
+    "q": "How do ranks work?",
+    "a": "The ladder is Iron, Bronze, Silver, Gold, Platinum, Emerald, Diamond, and each rank-up pays a bonus. Later ranks take more XP than earlier ones, so the climb gets longer. Past Diamond you prestige (Diamond II, III, and up). Your XP never stops counting."
+  },
+  {
+    "topic": "replay op paid nothing again",
+    "q": "Why did replaying an operation pay no G$?",
+    "a": "The first-clear bounty pays once per operation, the first time you clear it. Replays still give XP, but not the bounty again. To earn more op bounties, clear the next operation."
+  },
+  {
+    "topic": "earned less than expected smaller payout short",
+    "q": "Why did I get paid less than expected?",
+    "a": "Three things can reduce a payout independently: the earning pause (which makes op clears and Endless waves pay zero), your weekly earning allowance, and a taper that kicks in when the reward pool is low. The weekly cap and the pool taper do not multiply, the harsher one applies. Retrieve the live payout context before answering, and never estimate the number."
+  },
+  {
+    "topic": "armoury marketplace shop buy items",
+    "q": "What can I buy?",
+    "a": "Guns, ammo, attachments, field kit, shields and boosters, all with your G$. Every item is on-chain, so you genuinely own it. Scroll past the shop to Player Listings to buy from other players or list your own gear. Gear matters: you pick your loadout before you deploy."
+  },
+  {
+    "topic": "bank balance money where is my g$",
+    "q": "Where is my money?",
+    "a": "Profile then Bank. Your G$ balance, a full ledger (earned from UBI, earned from gameplay, spent in the market, sent out), the daily claim, and Transfer G$ Out. Money that has been earned but not yet settled on-chain shows as pending and settles on its own."
+  },
+  {
+    "topic": "withdraw transfer out send g$ cash out",
+    "q": "How do I send my G$ out?",
+    "a": "Bank then Transfer G$ Out. Your G$ is real crypto on Celo, so it travels between wallet addresses (a long string starting with 0x). Copy and paste the destination address, never type it by hand, and send a small amount the first time. If you send to a wrong address it is gone and nobody can reverse it. A withdrawal fee applies."
+  },
+  {
+    "topic": "exchange binance bybit listing sell",
+    "q": "Can I send G$ straight to an exchange?",
+    "a": "No. G$ is not listed on Bybit, Binance or other major exchanges, and sending it to an exchange deposit address will lose it. To reach an exchange you must first send G$ to your own wallet on the Celo network, swap it there, then send that."
+  },
+  {
+    "topic": "balance looks wrong ledger mismatch",
+    "q": "My balance looks off.",
+    "a": "The Bank ledger tracks what happened inside Valor. Your on-chain wallet balance reflects everything, including G$ you received or claimed outside the app, so the two can differ without anything being lost. Check the player's ledger and pending payouts before saying more."
+  },
+  {
+    "topic": "stuck frozen not loading broken",
+    "q": "The game or a claim is stuck.",
+    "a": "Reload the page first. If a payout is on the way, the Bank shows it as pending and it settles on its own. If something still looks wrong after a reload, escalate with the wallet address."
+  },
+  {
+    "topic": "character class berserker sentinel phantom which to pick",
+    "q": "Which class should I pick?",
+    "a": "Berserker is raw power, Sentinel is defense and counters, Phantom is speed and strikes first. None of them lock you out of content and none of them changes what you can earn, so pick the play style you want rather than optimising. You choose your loadout separately before each operation, and that matters more."
+  },
+  {
+    "topic": "username taken name invalid",
+    "q": "My username is not accepted.",
+    "a": "Usernames are unique across all players, so a name someone already took will be rejected. Your warrior name and your @username are different things: the name is display text, the username is the unique handle. Check availability for the specific username the player wants and suggest a close variant."
+  },
+  {
+    "topic": "referral invite code friend",
+    "q": "How do referrals work?",
+    "a": "You enter an inviter's code or username when you create your warrior, and referrals pay a bonus to the referrer. The code must match an existing player. Referrals keep paying even when other earning is paused, because recruiting is a growth lever rather than a grind."
+  },
+  {
+    "topic": "mobile controls touch how to move shoot",
+    "q": "How do I move and shoot on a phone?",
+    "a": "Drag on the left side of the screen to move, and use the right side to look and fire. Touch controls are actively being reworked, so if a player is stuck in the tutorial and cannot move, that is worth escalating with the device they are on."
+  }
+]

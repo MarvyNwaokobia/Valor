@@ -5,6 +5,18 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useSignOut } from '@/hooks/useSignOut'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import AgentChat from '@/components/agent/AgentChat'
+
+/**
+ * How long a player sits at "not verified" before the helper offers itself.
+ *
+ * This screen is where players actually leave: GoodDollar's own page can fail in ways we
+ * cannot see (an expired link renders as "Login information is missing"), and a player
+ * who bounces off that does not open a help panel and type a question — they close the
+ * tab. So the helper has to speak first. Long enough that someone mid-verification is not
+ * interrupted, short enough to catch them before they give up.
+ */
+const HELPER_PROMPT_MS = 12_000
 
 interface Props {
   walletAddress: `0x${string}`
@@ -20,6 +32,11 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
   // "Verification Required" button for a frame first.
   const [signing, setSigning] = useState(true)
   const autoChecked = useRef(false)
+
+  // Proactive helper. `offered` latches so that once the player has been shown the
+  // prompt we never nag again in this session, whatever the status does afterwards.
+  const [helperOpen, setHelperOpen] = useState(false)
+  const [helperOffered, setHelperOffered] = useState(false)
 
   // Detection only: read-only whitelist check keyed to the wallet address.
   // Needs no Magic wallet / signature, so it works on every device and lets
@@ -108,6 +125,16 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       console.log('[IdentityVerification] handleRecheckAfterFV finished')
     }
   }
+
+  // Offer the helper once the player has been sitting at "not whitelisted" for a while.
+  // Gated on `not_whitelisted` specifically rather than on any error: a failed lookup
+  // resolves itself on retry, but this state means GoodDollar has actually answered and
+  // said no, which is the case a human explanation is worth something for.
+  useEffect(() => {
+    if (status !== 'not_whitelisted' || signing || helperOffered) return
+    const timer = setTimeout(() => setHelperOffered(true), HELPER_PROMPT_MS)
+    return () => clearTimeout(timer)
+  }, [status, signing, helperOffered])
 
   const isChecking = signing || status === 'checking'
 
@@ -245,6 +272,21 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
             >
               Already verified — continue
             </button>
+
+            {/* Appears only after the player has been stuck here a while. Worded as an
+                offer rather than a support link, because "contact support" reads as
+                effort and gets ignored by exactly the people who most need it. */}
+            {helperOffered && !helperOpen && (
+              <motion.button
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => setHelperOpen(true)}
+                className="text-sm underline underline-offset-4 transition-colors"
+                style={{ color: '#93c5fd' }}
+              >
+                Not working? Let me take a look
+              </motion.button>
+            )}
           </motion.div>
         )}
 
@@ -285,6 +327,25 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
           </motion.div>
         )}
 
+      </AnimatePresence>
+
+      {/* Opens with the agent already talking and with the two things people actually
+          ask here as one-tap starters. The wallet is passed so it can check this
+          player's live GoodDollar status rather than describe the process in general. */}
+      <AnimatePresence>
+        {helperOpen && (
+          <AgentChat
+            walletAddress={walletAddress}
+            context="onboarding:verify"
+            onClose={() => setHelperOpen(false)}
+            greeting="Verification is run by GoodDollar rather than by us, and it does fail sometimes. Tell me what you're seeing and I'll check your wallet against their records."
+            suggestions={[
+              'It says login information is missing',
+              'I already verified before',
+              'Nothing happens when I tap verify',
+            ]}
+          />
+        )}
       </AnimatePresence>
     </div>
   )
