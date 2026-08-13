@@ -348,6 +348,10 @@ pub struct CreateSeasonRequest {
     /// The G$ prize pool. Can also be set later with /admin/seasons/:id/fund.
     #[serde(default)]
     pub prize_pool_g: Option<i64>,
+    /// Per-season prize split in basis points by rank. Omit to fall back to the
+    /// default top-heavy table (`seasons::PAYOUT_BPS`).
+    #[serde(default)]
+    pub payout_bps: Option<Vec<i32>>,
 }
 
 pub async fn create_season(
@@ -380,8 +384,8 @@ pub async fn create_season(
     let seed = body.seed.unwrap_or_else(|| (Uuid::new_v4().as_u128() as i64).abs());
 
     let row = sqlx::query_as::<_, SeasonRow>(
-        "INSERT INTO seasons (name, starts_at, ends_at, seed, prize_pool_g)
-         VALUES ($1, COALESCE($2, now()), $3, $4, COALESCE($5, 0))
+        "INSERT INTO seasons (name, starts_at, ends_at, seed, prize_pool_g, payout_bps)
+         VALUES ($1, COALESCE($2, now()), $3, $4, COALESCE($5, 0), $6)
          RETURNING id, name, starts_at, ends_at",
     )
     .bind(body.name.trim())
@@ -389,6 +393,7 @@ pub async fn create_season(
     .bind(body.ends_at)
     .bind(seed)
     .bind(body.prize_pool_g)
+    .bind(body.payout_bps.as_deref())
     .fetch_one(&state.db)
     .await;
 
