@@ -34,6 +34,14 @@ interface AdminStats {
   total_g_transferred_out: number
 }
 
+/** What POST /admin/grants returns per wallet. */
+interface GrantResult {
+  wallet_address: string
+  status: 'paid' | 'already_paid' | 'not_a_player' | 'invalid_address' | 'failed'
+  tx_hash: string | null
+  error: string | null
+}
+
 interface OnchainRow {
   kind: string
   wallet: string
@@ -81,6 +89,7 @@ const KIND_LABEL: Record<string, string> = {
   survival_rearm:       'Re-arm',
   duel_stake:           'Duel stake',
   duel_payout:          'Duel payout',
+  challenge_reward:     'Challenge prize',
 }
 
 // ── CSV export ───────────────────────────────────────────────────────────────
@@ -169,6 +178,13 @@ export default function AdminPage() {
   const [showScheduler, setShowScheduler] = useState(false)
   const [preview, setPreview] = useState<PayoutPreview | null>(null)
   const [paying, setPaying] = useState(false)
+
+  const [showGrants, setShowGrants] = useState(false)
+  const [grantWallets, setGrantWallets] = useState('')
+  const [grantAmount, setGrantAmount] = useState(10000)
+  const [grantReason, setGrantReason] = useState('')
+  const [granting, setGranting] = useState(false)
+  const [grantResults, setGrantResults] = useState<GrantResult[] | null>(null)
 
   useEffect(() => { setSession(loadSession()) }, [])
 
@@ -384,6 +400,34 @@ export default function AdminPage() {
       if (res.ok) await refreshSeasons()
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleGrantRewards() {
+    const wallets = grantWallets.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean)
+    if (wallets.length === 0 || grantAmount <= 0 || !grantReason.trim()) return
+    const summary =
+      `Pay ${wallets.length} wallet${wallets.length === 1 ? '' : 's'} ${grantAmount.toLocaleString()} G$ each ` +
+      `(${(wallets.length * grantAmount).toLocaleString()} G$ total)?\n\nReason: ${grantReason.trim()}\n\n` +
+      `Only wallets already registered as Valor players will be paid — others are skipped and reported.`
+    if (!window.confirm(summary)) return
+
+    setGranting(true)
+    setGrantResults(null)
+    try {
+      const res = await authedFetch('/admin/grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallets, amount_g: grantAmount, reason: grantReason.trim() }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setGrantResults(data.results as GrantResult[])
+      } else {
+        window.alert(`Could not run the grant: ${await res.text()}`)
+      }
+    } finally {
+      setGranting(false)
     }
   }
 
@@ -690,6 +734,70 @@ export default function AdminPage() {
           </div>
           </>)}
         </div>
+      </div>
+
+      {/* One-off grants — bounties, external challenge prizes */}
+      <div className="flex flex-col gap-3 rounded-xl border p-4" style={{ borderColor: 'rgba(42,42,58,0.8)', background: 'rgba(10,10,18,0.4)' }}>
+        <button
+          onClick={() => setShowGrants((v) => !v)}
+          className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 hover:text-slate-300 text-left"
+        >
+          {showGrants ? '▾ One-off grants (bounties, challenge prizes)' : '▸ One-off grants (bounties, challenge prizes)'}
+        </button>
+        {showGrants && (<>
+          <textarea
+            value={grantWallets}
+            onChange={(e) => setGrantWallets(e.target.value)}
+            placeholder="Wallet addresses — one per line, or comma/space separated"
+            rows={4}
+            className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none font-mono"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+              <input type="number" min={1} step={100} value={grantAmount}
+                onChange={(e) => setGrantAmount(Math.max(0, Number(e.target.value) || 0))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Reason</span>
+              <input type="text" value={grantReason} onChange={(e) => setGrantReason(e.target.value)}
+                placeholder="e.g. valor-challenge-aug-2026"
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none" />
+            </label>
+          </div>
+          <p className="text-xs text-slate-500">
+            Only wallets already registered as Valor players get paid. Re-running the same wallet + reason
+            never pays twice. Each pair is capped at 10,000 G$ per call (on-chain limit).
+          </p>
+          <button
+            onClick={handleGrantRewards}
+            disabled={granting || !grantWallets.trim() || !grantReason.trim() || grantAmount <= 0}
+            className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50 self-start"
+            style={{ background: '#eab308' }}
+          >
+            {granting ? 'Paying…' : 'Pay wallets'}
+          </button>
+          {grantResults && (
+            <div className="flex flex-col gap-1 pt-2 border-t text-xs" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
+              {grantResults.map((r) => (
+                <div key={r.wallet_address} className="flex items-center justify-between gap-2 font-mono">
+                  <span className="text-slate-400 truncate">{r.wallet_address}</span>
+                  <span className={
+                    r.status === 'paid' || r.status === 'already_paid' ? 'text-emerald-400'
+                    : r.status === 'not_a_player' || r.status === 'invalid_address' ? 'text-amber-400'
+                    : 'text-red-400'
+                  }>
+                    {r.status === 'paid' ? 'paid' : r.status === 'already_paid' ? 'already paid'
+                      : r.status === 'not_a_player' ? 'not a player — skipped'
+                      : r.status === 'invalid_address' ? 'bad address — skipped'
+                      : `failed${r.error ? `: ${r.error}` : ''}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>)}
       </div>
 
       {/* Stats */}

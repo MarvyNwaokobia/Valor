@@ -406,6 +406,118 @@ pub async fn create_season(
     }
 }
 
+// ── POST /admin/grants ──────────────────────────────────────────────────────────
+// Admin, MONEY-TOUCHING. One-off G$ payouts to specific players — bounties, external
+// challenge prizes — outside any of the game's normal earn paths. Every wallet must
+// already be a registered player (never pays an address nobody signed up with), and
+// each (wallet, reason) pair can only ever be paid once: re-submitting the same
+// request reconciles to the existing outcome instead of paying twice.
+#[derive(Deserialize)]
+pub struct GrantRequest {
+    pub wallets: Vec<String>,
+    pub amount_g: i64,
+    pub reason: String,
+}
+
+#[derive(Serialize)]
+pub struct GrantResult {
+    pub wallet_address: String,
+    // "paid" | "already_paid" | "not_a_player" | "invalid_address" | "failed"
+    pub status: String,
+    pub tx_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+pub async fn grant_rewards(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<GrantRequest>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) {
+        return resp;
+    }
+    if body.amount_g <= 0 {
+        return HttpResponse::BadRequest().json(json!({"error": "amount_g must be positive"}));
+    }
+    let reason = body.reason.trim();
+    if reason.is_empty() {
+        return HttpResponse::BadRequest().json(json!({"error": "reason is required"}));
+    }
+    let Some(chain) = state.chain.as_ref().cloned() else {
+        return HttpResponse::ServiceUnavailable().json(json!({"error": "Chain relay not available"}));
+    };
+
+    let mut results: Vec<GrantResult> = Vec::with_capacity(body.wallets.len());
+    for raw in &body.wallets {
+        let wallet = normalize_wallet(raw);
+        if !is_valid_wallet(&wallet) {
+            results.push(GrantResult { wallet_address: raw.clone(), status: "invalid_address".into(), tx_hash: None, error: None });
+            continue;
+        }
+
+        // Hard requirement: never pay an address that isn't one of our players.
+        let is_player: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM players WHERE wallet_address = $1)")
+            .bind(&wallet).fetch_one(&state.db).await.unwrap_or(false);
+        if !is_player {
+            results.push(GrantResult { wallet_address: wallet, status: "not_a_player".into(), tx_hash: None, error: None });
+            continue;
+        }
+        let Ok(addr) = wallet.parse::<Address>() else {
+            results.push(GrantResult { wallet_address: wallet, status: "invalid_address".into(), tx_hash: None, error: None });
+            continue;
+        };
+
+        // Reserve the (wallet, reason) row before paying, so a second submission of
+        // the same request hits the existing row and reconciles instead of re-paying.
+        let _ = sqlx::query(
+            "INSERT INTO admin_grants (wallet_address, reason, amount_g) VALUES ($1, $2, $3)
+             ON CONFLICT (wallet_address, reason) DO NOTHING",
+        ).bind(&wallet).bind(reason).bind(body.amount_g).execute(&state.db).await;
+
+        let existing_status: Option<String> = sqlx::query_scalar(
+            "SELECT status FROM admin_grants WHERE wallet_address = $1 AND reason = $2",
+        ).bind(&wallet).bind(reason).fetch_optional(&state.db).await.unwrap_or(None);
+        if existing_status.as_deref() == Some("paid") {
+            results.push(GrantResult { wallet_address: wallet, status: "already_paid".into(), tx_hash: None, error: None });
+            continue;
+        }
+
+        let reference = ethers::utils::keccak256(format!("admin_grant:{}:{}", wallet, reason).as_bytes());
+        if chain.reward_ref_used(reference).await.unwrap_or(false) {
+            let _ = sqlx::query("UPDATE admin_grants SET status = 'paid' WHERE wallet_address = $1 AND reason = $2")
+                .bind(&wallet).bind(reason).execute(&state.db).await;
+            results.push(GrantResult { wallet_address: wallet, status: "already_paid".into(), tx_hash: None, error: None });
+            continue;
+        }
+
+        match chain.distribute_reward(addr, body.amount_g as u64, reference).await {
+            Ok(Some(tx)) => {
+                let _ = sqlx::query("UPDATE admin_grants SET status = 'paid', tx_hash = $1 WHERE wallet_address = $2 AND reason = $3")
+                    .bind(&tx).bind(&wallet).bind(reason).execute(&state.db).await;
+                crate::handlers::ledger::insert_ledger_entry(
+                    &state.db, &wallet, "challenge_reward", rust_decimal::Decimal::from(body.amount_g), Some(&tx), None,
+                    crate::services::chain_id::ChainId::Celo,
+                ).await;
+                tracing::info!("admin grant paid: {} +{} G$ ({}) tx={}", wallet, body.amount_g, reason, tx);
+                results.push(GrantResult { wallet_address: wallet, status: "paid".into(), tx_hash: Some(tx), error: None });
+            }
+            Ok(None) => {
+                let _ = sqlx::query("UPDATE admin_grants SET status = 'failed' WHERE wallet_address = $1 AND reason = $2")
+                    .bind(&wallet).bind(reason).execute(&state.db).await;
+                results.push(GrantResult { wallet_address: wallet, status: "failed".into(), tx_hash: None, error: Some("reward pool not configured".into()) });
+            }
+            Err(e) => {
+                let _ = sqlx::query("UPDATE admin_grants SET status = 'failed' WHERE wallet_address = $1 AND reason = $2")
+                    .bind(&wallet).bind(reason).execute(&state.db).await;
+                tracing::error!("admin grant failed: {} ({}): {}", wallet, reason, e);
+                results.push(GrantResult { wallet_address: wallet, status: "failed".into(), tx_hash: None, error: Some(e) });
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(json!({ "results": results }))
+}
+
 pub async fn end_season(
     req: HttpRequest,
     state: web::Data<AppState>,

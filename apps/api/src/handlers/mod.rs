@@ -166,6 +166,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/onchain", web::get().to(admin::list_onchain))
                 .route("/seasons", web::get().to(admin::list_seasons))
                 .route("/seasons", web::post().to(admin::create_season))
+                .route("/grants", web::post().to(admin::grant_rewards))
                 .route("/seasons/{id}/end", web::post().to(admin::end_season))
                 .route("/seasons/{id}", web::delete().to(admin::delete_season))
                 .route("/seasons/{id}", web::patch().to(admin::update_season))

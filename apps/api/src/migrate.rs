@@ -34,6 +34,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // (hand-applied, never captured). add_survival_runs.sql reads `endless_scores` and
     // fix_xp_cap.sql reads `players.pve_level`, so this has to precede both.
     ("add_missing_baseline_objects.sql", include_str!("../migrations/add_missing_baseline_objects.sql")),
+    ("add_admin_grants.sql",      include_str!("../migrations/add_admin_grants.sql")),
     ("add_battle_mode.sql",       include_str!("../migrations/add_battle_mode.sql")),
     ("add_chain_tx_columns.sql",  include_str!("../migrations/add_chain_tx_columns.sql")),
     ("add_character_confirmed.sql", include_str!("../migrations/add_character_confirmed.sql")),
