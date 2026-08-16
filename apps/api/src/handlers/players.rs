@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::handlers::identity::check_gooddollar_whitelisted;
 use crate::handlers::ledger::{record_ubi_claim, DailyClaimLedgerBody};
 use crate::utils::{is_valid_wallet, normalize_wallet};
 use crate::AppState;
@@ -38,10 +39,17 @@ pub struct UpdatePlayerRequest {
 }
 
 pub async fn update_player(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<UpdatePlayerRequest>,
 ) -> HttpResponse {
+    let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+    if !state.battle_limiter.check(&format!("update_player:{}", ip)) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many requests. Slow down."}));
+    }
+
     let wallet = normalize_wallet(&path.into_inner());
 
     // Validate username uniqueness if provided
@@ -360,6 +368,22 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
         return;
     }
 
+    // Ground-truth GoodDollar check, not the `edition` column. `wallet_earns`
+    // below only proves the row claims to be `web` edition — that flag is
+    // client-asserted at signup and `POST /players` has no auth, so a script
+    // can create as many "web" rows as it wants with no identity ever proven.
+    // Exploited 2026-08-16: 13k+ bot-created wallets with `referred_by` set to
+    // 3 attacker wallets drained 93.5k G$ in referral_reward before this
+    // landed. The whole point of paying a referral is buying a verified
+    // human, so check that directly instead of trusting a self-reported flag.
+    if !check_gooddollar_whitelisted(referred).await.unwrap_or(false) {
+        tracing::warn!(
+            "referral skipped: {} is not GoodDollar-whitelisted (referrer {})",
+            referred, referrer,
+        );
+        return;
+    }
+
     // Neither side may be a non-earning edition.
     //
     // The REFERRED player is the identity argument above: no gate passed, nothing
@@ -478,9 +502,19 @@ pub async fn settle_referral(
 }
 
 pub async fn create_player(
+    req: HttpRequest,
     state: web::Data<AppState>,
     body: web::Json<CreatePlayerRequest>,
 ) -> HttpResponse {
+    // Blunt volume control, not an identity check — see check_gooddollar_whitelisted
+    // in credit_referral for the real gate. This just stops one IP from scripting
+    // unlimited account creation (exploited 2026-08-16, see credit_referral).
+    let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+    if !state.battle_limiter.check(&format!("create_player:{}", ip)) {
+        return HttpResponse::TooManyRequests()
+            .json(json!({"error": "Too many signups from this address. Slow down."}));
+    }
+
     let wallet = normalize_wallet(&body.wallet_address);
     let customization = body.character_customization.clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));

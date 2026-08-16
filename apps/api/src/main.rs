@@ -16,7 +16,7 @@ pub struct AppState {
     pub db:                sqlx::PgPool,
     pub rewards:           Option<services::rewards::RewardService>,
     pub chain:             Option<services::chain::ChainWriter>,
-    pub battle_limiter:    services::rate_limiter::RateLimiter,
+    pub battle_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
@@ -64,9 +64,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Event listener disabled (MARKETPLACE_CONTRACT not set)");
     }
 
-    // Rate limiter — shared across all workers via AppState (DashMap is Send + Sync)
+    // Rate limiter — shared across all workers via AppState (DashMap is Send + Sync).
+    // Must be built ONCE here and cloned (Arc) into the closure below, not
+    // reconstructed inside it — HttpServer::new's closure runs once per worker
+    // thread, so a fresh RateLimiter::new() there gives every worker its own
+    // independent bucket, silently multiplying the real limit by worker count.
     // battle_limiter: 10 requests / 60s per IP
-    let battle_limiter = services::rate_limiter::RateLimiter::new(10, 60);
+    let battle_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
     // In-progress bot fights — keyed by session id, shared across all workers
@@ -97,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
 
     HttpServer::new(move || {
         let origins = allowed_origins.clone();
+        let battle_limiter = battle_limiter.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let s = origin.to_str().unwrap_or("");
@@ -113,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
                 db:             db.clone(),
                 rewards:        rewards.clone(),
                 chain:          chain.clone(),
-                battle_limiter: services::rate_limiter::RateLimiter::new(10, 60),
+                battle_limiter: battle_limiter.clone(),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
                 live_fight_sessions: live_fight_sessions.clone(),
