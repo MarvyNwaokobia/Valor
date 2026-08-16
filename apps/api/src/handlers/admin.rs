@@ -141,6 +141,11 @@ pub struct AdminStats {
     pub starts_at: DateTime<Utc>,
     pub ends_at: Option<DateTime<Utc>>,
     pub new_players: i64,
+    /// Distinct wallets with at least one recorded game — a `battles` row in
+    /// ANY mode (campaign/bot/pvp/endless) or a `survival_runs` row (Season/
+    /// Gauntlet) — within the window. Unlike `active_players`, this does NOT
+    /// count a bare `g_ledger` touch (e.g. a UBI claim) as having played.
+    pub played_players: i64,
     pub active_players: i64,
     pub total_battles: i64,
     #[serde(with = "rust_decimal::serde::float")]
@@ -188,11 +193,31 @@ pub async fn get_stats(
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((0,));
 
+    // Played = actually played a game (Operations/campaign/bot/pvp/endless via
+    // `battles`, in ANY mode, or a Season/Gauntlet run via `survival_runs`).
+    // Deliberately excludes `g_ledger` — claiming UBI or receiving a payout
+    // isn't gameplay.
+    let played_players: (i64,) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT wallet) FROM (
+            SELECT challenger_wallet AS wallet FROM battles WHERE created_at >= $1 AND created_at < $2
+            UNION
+            SELECT opponent_wallet AS wallet FROM battles WHERE created_at >= $1 AND created_at < $2
+            UNION
+            SELECT wallet_address AS wallet FROM survival_runs WHERE created_at >= $1 AND created_at < $2
+        ) t",
+    )
+    .bind(starts_at).bind(window_end)
+    .fetch_one(&state.db).await.unwrap_or((0,));
+
+    // Active = played (above) OR touched G$ in any way (UBI claim, reward,
+    // marketplace spend, withdrawal) within the window. Broader than "played".
     let active_players: (i64,) = sqlx::query_as(
         "SELECT COUNT(DISTINCT wallet) FROM (
             SELECT challenger_wallet AS wallet FROM battles WHERE created_at >= $1 AND created_at < $2
             UNION
             SELECT opponent_wallet AS wallet FROM battles WHERE created_at >= $1 AND created_at < $2
+            UNION
+            SELECT wallet_address AS wallet FROM survival_runs WHERE created_at >= $1 AND created_at < $2
             UNION
             SELECT wallet_address AS wallet FROM g_ledger WHERE created_at >= $1 AND created_at < $2
         ) t",
@@ -239,6 +264,7 @@ pub async fn get_stats(
         starts_at,
         ends_at,
         new_players: new_players.0,
+        played_players: played_players.0,
         active_players: active_players.0,
         total_battles: total_battles.0,
         total_g_awarded: total_g_awarded.0,

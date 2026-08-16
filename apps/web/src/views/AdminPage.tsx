@@ -27,6 +27,7 @@ interface AdminStats {
   starts_at: string
   ends_at: string | null
   new_players: number
+  played_players: number
   active_players: number
   total_battles: number
   total_g_awarded: number
@@ -440,6 +441,7 @@ export default function AdminPage() {
       ['window_start', stats.starts_at],
       ['window_end', stats.ends_at ?? 'now'],
       ['new_players', stats.new_players],
+      ['played_players', stats.played_players],
       ['active_players', stats.active_players],
       ['total_battles', stats.total_battles],
       ['g_awarded', stats.total_g_awarded],
@@ -811,6 +813,7 @@ export default function AdminPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <StatTile label="New Players" value={stats.new_players.toLocaleString()} />
+            <StatTile label="Played Players" value={stats.played_players.toLocaleString()} />
             <StatTile label="Active Players" value={stats.active_players.toLocaleString()} />
             <StatTile label="Total Battles" value={stats.total_battles.toLocaleString()} />
             <StatTile label="G$ Awarded" value={`${formatGDollarNumber(stats.total_g_awarded)} G$`} />

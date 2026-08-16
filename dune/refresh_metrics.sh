@@ -1,13 +1,34 @@
 #!/usr/bin/env bash
-# Regenerate dune/valor_metrics.csv from the LIVE prod DB, then re-upload it to Dune.
+# SUPERSEDED (2026-08-16): the public dashboard's query 8112548 no longer reads
+# this CSV — it reads on-chain events directly (see its own header comment for
+# why: this file's numbers sat ~35% below reality between manual uploads, and
+# "active_users" here has no time window). Uploading a fresh CSV to Dune will
+# NOT change anything the dashboard shows. Keeping this script correct anyway
+# as a Postgres-side sanity check / fallback, not because anything reads it.
 #
 # Usage:  ./dune/refresh_metrics.sh
-# Then:   Dune -> Library -> Data uploads -> replace the "valor_metrics" dataset
-#         with the new file. Same dataset name = every counter on the dashboard
-#         updates automatically (no query changes needed).
 #
-# The dashboard reads these via query 8112548 (dune.marvyy.dataset_valor_metrics):
-#   Registered / Onboarded / Active Users counters in the Users section.
+# played_users  = distinct wallets with at least one recorded game: a `battles`
+#                 row in ANY mode (campaign/bot/pvp/endless) or a `survival_runs`
+#                 row (Season/Gauntlet). Excludes bare g_ledger touches (e.g. a
+#                 UBI claim isn't gameplay).
+# active_users  = played_users OR touched G$ in any way (g_ledger row of any
+#                 category). Broader than played_users. Mirrors
+#                 apps/api/src/handlers/admin.rs's active_players query, incl.
+#                 both battles.challenger_wallet AND battles.opponent_wallet
+#                 (a wallet that only ever appears as opponent in a real PvP
+#                 duel was previously missed here).
+#
+# played_users  = distinct wallets with at least one recorded game: a `battles`
+#                 row in ANY mode (campaign/bot/pvp/endless) or a `survival_runs`
+#                 row (Season/Gauntlet). Excludes bare g_ledger touches (e.g. a
+#                 UBI claim isn't gameplay).
+# active_users  = played_users OR touched G$ in any way (g_ledger row of any
+#                 category). Broader than played_users. Mirrors
+#                 apps/api/src/handlers/admin.rs's active_players query, incl.
+#                 both battles.challenger_wallet AND battles.opponent_wallet
+#                 (a wallet that only ever appears as opponent in a real PvP
+#                 duel was previously missed here).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,6 +41,12 @@ select
   (select count(*) from players where character_confirmed = true)   as onboarded_users,
   (select count(distinct wallet) from (
       select challenger_wallet as wallet from battles
+      union select opponent_wallet as wallet from battles
+      union select wallet_address from survival_runs) t)            as played_users,
+  (select count(distinct wallet) from (
+      select challenger_wallet as wallet from battles
+      union select opponent_wallet as wallet from battles
+      union select wallet_address from survival_runs
       union select wallet_address from g_ledger) t)                 as active_users,
   (select count(*) from battles)                                    as total_battles,
   (select coalesce(sum(amount),0) from g_ledger
