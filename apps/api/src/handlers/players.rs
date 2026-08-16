@@ -516,6 +516,41 @@ pub async fn create_player(
     }
 
     let wallet = normalize_wallet(&body.wallet_address);
+
+    // Real identity gate, server-side. The frontend already runs this exact
+    // check before it ever calls this endpoint (OnboardingPage.tsx's `verify`
+    // step), so a legitimate signup always passes it here too — this closes
+    // the gap for callers that skip the browser and hit the API directly.
+    // Exploited 2026-08-16 for referral farming (see credit_referral); the
+    // same unauthenticated path also let a bot mint 14k+ confirmed accounts
+    // and burn real relay gas on ~1,000 on-chain claim txs, neither of which
+    // required a referral.
+    //
+    // Scoped to brand-new WEB-edition wallets only:
+    //   - MiniPay has no identity gate by design (services::edition) — nothing
+    //     it does pays real money, so there is nothing to protect here.
+    //   - An existing wallet re-running onboarding (the "confirm your class"
+    //     flow for reconstructed players) already passed this the first time
+    //     its row was created; re-checking would strand real players if
+    //     GoodDollar's API has a transient blip during a routine re-confirm.
+    let edition = crate::services::edition::Edition::parse(body.edition.as_deref().unwrap_or("web"));
+    if edition == crate::services::edition::Edition::Web {
+        let already_exists: Option<(String,)> =
+            sqlx::query_as("SELECT wallet_address FROM players WHERE wallet_address = $1")
+                .bind(&wallet)
+                .fetch_optional(&state.db)
+                .await
+                .unwrap_or(None);
+
+        if already_exists.is_none()
+            && !check_gooddollar_whitelisted(&wallet).await.unwrap_or(false)
+        {
+            return HttpResponse::Forbidden().json(json!({
+                "error": "Wallet is not GoodDollar-verified. Complete identity verification first."
+            }));
+        }
+    }
+
     let customization = body.character_customization.clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
