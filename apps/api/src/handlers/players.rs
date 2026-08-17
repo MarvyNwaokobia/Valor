@@ -363,6 +363,13 @@ const REFERRAL_REWARD_G: u64 = 100;
 /// Every guard is here rather than on the client: the client supplies the
 /// referrer and cannot be trusted with who gets paid.
 async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
+    // Hard stop, checked before anything else is written. While paused, a referred
+    // signup earns no referral at all — no `referrals` row, nothing queued as
+    // `pending` to settle later. Turning REFERRALS_PAUSED back off does not retroactively
+    // pay referrals from the pause window; whoever wants back-pay is a manual look.
+    if REFERRALS_PAUSED {
+        return;
+    }
     let referrer = normalize_wallet(referrer_raw);
     if !is_valid_wallet(&referrer) || referrer == referred {
         return;
