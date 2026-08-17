@@ -1309,6 +1309,18 @@ async fn settle_rank_up_reward(
 ///
 /// Auth: shares the decay cron's `x-cron-secret` (DECAY_CRON_SECRET) so it needs no
 /// new secret. Processes a bounded batch per run to cap gas/latency on the free tier.
+/// Guards `run_reconcile_sweep` against overlap: the GitHub Actions cron fires every
+/// 15 minutes regardless of whether the previous run finished, and every settle_*
+/// call funnels through `ChainWriter`'s single `tx_lock` for nonce ordering — so one
+/// slow tick means every tick after it queues up behind that same lock, compounding.
+/// 2026-08-17: exactly this happened, and the endpoint went from healthy to a dead
+/// 90s timeout on every single invocation for 13+ hours straight.
+///
+/// Two layers: this flag stops a NEW sweep from starting while one is still in
+/// flight (returns immediately instead of queueing), and `run_reconcile_sweep` is
+/// itself wrapped in a hard time budget so a sweep that would have hung forever
+/// still releases the flag and lets the next tick try again, rather than wedging
+/// the flag `true` permanently after the first bad run.
 pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
     let expected = std::env::var("DECAY_CRON_SECRET").unwrap_or_default();
     let provided = req
@@ -1320,10 +1332,37 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         return HttpResponse::Unauthorized().finish();
     }
 
+    if state
+        .reconcile_running
+        .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+        .is_err()
+    {
+        tracing::warn!("reconcile sweep skipped: a previous run is still in flight");
+        return HttpResponse::Ok().json(json!({"skipped": "previous reconcile still running"}));
+    }
+    struct ClearOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _guard = ClearOnDrop(state.reconcile_running.clone());
+
+    const SWEEP_BUDGET_SECS: u64 = 75;
+    match tokio::time::timeout(std::time::Duration::from_secs(SWEEP_BUDGET_SECS), run_reconcile_sweep(state)).await {
+        Ok(body) => HttpResponse::Ok().json(body),
+        Err(_) => {
+            tracing::error!("reconcile sweep exceeded {}s — aborted, will retry next tick", SWEEP_BUDGET_SECS);
+            HttpResponse::Ok().json(json!({"error": format!("reconcile exceeded {}s budget, aborted", SWEEP_BUDGET_SECS)}))
+        }
+    }
+}
+
+async fn run_reconcile_sweep(state: web::Data<AppState>) -> serde_json::Value {
     let Some(chain) = state.chain.as_ref().cloned() else {
-        return HttpResponse::Ok().json(json!({
+        return json!({
             "reconciled": 0, "still_failed": 0, "skipped": "chain not configured",
-        }));
+        });
     };
 
     // Oldest-first, capped so a backlog can't make one sweep run unbounded.
@@ -1438,7 +1477,7 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         reconciled, attempted, rank_reconciled, rank_attempted, play_reconciled, play_attempted,
         endless_reconciled, endless_attempted, referral_reconciled, referral_attempted
     );
-    HttpResponse::Ok().json(json!({
+    json!({
         "attempted":         attempted,
         "reconciled":        reconciled,
         "still_failed":      attempted as u32 - reconciled,
@@ -1452,7 +1491,7 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         "referral_attempted":  referral_attempted,
         "referral_reconciled": referral_reconciled,
         "ran_at":            Utc::now().to_rfc3339(),
-    }))
+    })
 }
 
 #[derive(Deserialize)]

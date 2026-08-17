@@ -21,6 +21,7 @@ pub struct AppState {
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
     pub endless_sessions: std::sync::Arc<DashMap<Uuid, services::battle::EndlessSession>>,
+    pub reconcile_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[tokio::main]
@@ -73,6 +74,18 @@ async fn main() -> anyhow::Result<()> {
     let battle_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
+    // Guards /battles/bounties/reconcile against pile-up: the GitHub Actions cron
+    // fires it every 15 minutes regardless of whether the previous run finished, and
+    // every settle_* call funnels through chain::ChainWriter's single `tx_lock` for
+    // nonce ordering. One slow tick (a big backlog, an RPC hiccup) means every tick
+    // after it queues up behind that same lock, compounding — which is exactly what
+    // happened 2026-08-17: the reconcile endpoint went from healthy to a dead 90s
+    // timeout on every single invocation for 13+ hours straight, with no way to tell
+    // whether it had permanently wedged or would eventually drain the queue. Same
+    // per-worker-instance trap as the rate limiter bug: this MUST be built once here
+    // and cloned in, not constructed inside the HttpServer::new closure.
+    let reconcile_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // In-progress bot fights — keyed by session id, shared across all workers
     // (an Arc, not a per-worker instance, so /round requests reach the
     // session created by /start regardless of which worker handles them).
@@ -102,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
     HttpServer::new(move || {
         let origins = allowed_origins.clone();
         let battle_limiter = battle_limiter.clone();
+        let reconcile_running = reconcile_running.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let s = origin.to_str().unwrap_or("");
@@ -123,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
                 bot_fight_sessions: bot_fight_sessions.clone(),
                 live_fight_sessions: live_fight_sessions.clone(),
                 endless_sessions: endless_sessions.clone(),
+                reconcile_running: reconcile_running.clone(),
             }))
             .wrap(Logger::default())
             .wrap(cors)
