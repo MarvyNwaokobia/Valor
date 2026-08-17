@@ -346,6 +346,12 @@ pub struct CreatePlayerRequest {
 /// rather than a grind, and the amount already reflects that.
 const REFERRAL_REWARD_G: u64 = 100;
 
+/// Max referrals one wallet may be credited in a rolling 24h window — see
+/// credit_referral for why this exists alongside the identity gate. 20
+/// comfortably covers an enthusiastic streamer bringing in real fans in a day;
+/// a bot farm does not look like that.
+const REFERRAL_DAILY_CAP: i64 = 20;
+
 /// Credit a referrer, once, for bringing in a newly created player.
 ///
 /// Called AFTER the player row exists. In the WEB edition that is the point at which
@@ -421,6 +427,28 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
             .await
             .unwrap_or(None);
     if exists.is_none() {
+        return;
+    }
+
+    // Independent of the identity gate above: no wallet gets credited more than
+    // REFERRAL_DAILY_CAP referrals in a rolling 24h window, however it got past
+    // GoodDollar. Defense in depth for the 08-16 shape — a bot doing 1,200+ referrals
+    // in a day cannot repeat that even if GoodDollar's own face-dedup has a timing gap
+    // (it is not instant — see project_gooddollar_whitelist_drop) or a different
+    // verification hole turns up later. Checked against `referrals`, not `g_ledger`,
+    // because the abuse is claiming referred-wallet slots, not just getting paid.
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM referrals WHERE referrer_wallet = $1 AND created_at > now() - interval '24 hours'",
+    )
+    .bind(&referrer)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    if recent >= REFERRAL_DAILY_CAP {
+        tracing::warn!(
+            "referral capped: {} already credited {} referrals in the last 24h (cap {}), skipping {}",
+            referrer, recent, REFERRAL_DAILY_CAP, referred,
+        );
         return;
     }
 
