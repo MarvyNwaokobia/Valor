@@ -457,6 +457,25 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
 /// Safe to call repeatedly on the same referral: the on-chain reference is derived from
 /// the referred wallet, so `reward_ref_used` catches a payout that already landed and
 /// marks the row paid rather than sending twice. Returns the status it settled on.
+///
+/// 2026-08-17: the identity-check fix for the referral-farming bot (2026-08-16) only
+/// guarded the CREDIT path (a new referral being recorded). It never touched this
+/// settle path, which both the live credit AND the reconcile cron call — so the
+/// reconcile sweep spent the following 13 hours quietly paying out the 12,663-row
+/// backlog of already-fraudulent rows the bot had left in `pending`/`failed`, 25 at a
+/// time every 15 minutes, with zero fraud check. `REFERRALS_PAUSED` is the emergency
+/// stop for that: flip back to `false` once the backlog is cleared out of the table
+/// and this function (or the reconcile query) has its own fraud check.
+const REFERRALS_PAUSED: bool = true;
+
+/// Wallets confirmed running the 2026-08-16 referral-farming bot. Blocked permanently
+/// here regardless of `REFERRALS_PAUSED` — not a hold, these never get paid again.
+const REFERRAL_FRAUD_BLOCKLIST: &[&str] = &[
+    "0x03fa336e3772c80a90238edee4f34502e9efaadf",
+    "0x4fe207375e0c7bff67d94322e65cfac251366d61",
+    "0x8a408c186a29abade67cbedc14e67c5ddac6c380",
+];
+
 pub async fn settle_referral(
     db: &sqlx::PgPool,
     chain: &crate::services::chain::ChainWriter,
@@ -464,6 +483,17 @@ pub async fn settle_referral(
     referred: &str,
     amount_g: u64,
 ) -> &'static str {
+    if REFERRAL_FRAUD_BLOCKLIST.contains(&referrer) {
+        tracing::warn!("referral BLOCKED (confirmed fraud wallet): {} owed {} G$, permanently refusing", referrer, amount_g);
+        let _ = sqlx::query("UPDATE referrals SET status = 'fraud_blocked' WHERE referrer_wallet = $1 AND referred_wallet = $2")
+            .bind(referrer).bind(referred).execute(db).await;
+        return "fraud_blocked";
+    }
+    if REFERRALS_PAUSED {
+        tracing::warn!("referral payout paused: {} owed {} G$ to {}, not paying", referrer, amount_g, referred);
+        return "paused";
+    }
+
     let Ok(addr) = referrer.parse::<Address>() else {
         tracing::error!("referral settle: {} is not a valid address", referrer);
         return "failed";
@@ -1025,6 +1055,19 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
             tx_hash: None,
             error: None,
         };
+        if REFERRAL_FRAUD_BLOCKLIST.contains(&referrer.as_str()) {
+            let _ = sqlx::query("UPDATE referrals SET status = 'fraud_blocked' WHERE referrer_wallet = $1 AND referred_wallet = $2")
+                .bind(&referrer).bind(&referred).execute(&state.db).await;
+            row.status = "fraud_blocked".into();
+            results.push(row);
+            continue;
+        }
+        if REFERRALS_PAUSED {
+            row.status = "paused".into();
+            results.push(row);
+            continue;
+        }
+
         let Ok(addr) = referrer.parse::<Address>() else {
             row.error = Some("unparseable referrer address".into());
             results.push(row);
