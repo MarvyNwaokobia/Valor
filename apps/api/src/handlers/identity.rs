@@ -1,5 +1,11 @@
 use actix_web::{web, HttpResponse};
-use serde::{Deserialize, Serialize};
+use ethers::{
+    contract::abigen,
+    providers::{Http, Middleware, Provider},
+    types::Address,
+};
+use serde::Serialize;
+use std::sync::Arc;
 
 use crate::AppState;
 
@@ -12,49 +18,55 @@ pub struct VerifyResponse {
     error: Option<String>,
 }
 
-// GoodDollar identity API response shapes
-#[derive(Deserialize)]
-struct GdWhitelistResponse {
-    whitelisted: Option<bool>,
-    // identity API v2 uses "isWhitelisted"
-    #[serde(rename = "isWhitelisted")]
-    is_whitelisted: Option<bool>,
-}
+abigen!(
+    GoodDollarIdentity,
+    r#"[
+        function getWhitelistedRoot(address account) external view returns (address)
+    ]"#
+);
 
-/// Calls GoodDollar's own whitelist API directly — no DB shortcut. Unlike
-/// `verify_identity` below (which trusts "a players row exists" as a fast
-/// path), this is the ground truth check other server-side code should gate
-/// real-money payouts on: whether GoodDollar itself has ever verified this
-/// wallet is a unique human. A `players` row proves nothing on its own — it
-/// can be created by anyone hitting `POST /players` directly with a random
-/// address, no identity check involved.
+// GoodDollar's IdentityV2 contract on Celo mainnet. Same address the frontend's
+// citizen-sdk resolves for `env: 'production'` (apps/web/src/lib/gooddollar.ts,
+// via @goodsdks/citizen-sdk's chainConfigs[CELO].contracts.production.identityContract).
+const CELO_IDENTITY_CONTRACT: &str = "0xC361A6E67822a0EDc17D899227dd9FC50BD62F42";
+
+/// Ground truth for "has GoodDollar ever verified this wallet is a unique
+/// human" — read directly from their IdentityV2 contract on Celo, exactly the
+/// way the frontend's own pre-check does it (checkWhitelistStatusReadOnly in
+/// apps/web/src/lib/gooddollar.ts, via citizen-sdk's getWhitelistedRoot). A
+/// non-zero returned "root" address means whitelisted; zero means not.
+///
+/// This used to call a REST endpoint (`GOOD_DOLLAR_API_URL`, defaulting to
+/// `https://gooddollar-api.gooddollar.org`) that does not resolve in DNS at
+/// all — every call failed, so this always returned `None`, and every caller
+/// below treats `None` as "not verified" (`.unwrap_or(false)`, fail-closed by
+/// design so an API outage can't be used to bypass verification). The result
+/// was that POST /players rejected every brand-new signup, legitimate or not,
+/// from the moment the check went live (2026-08-16) — confirmed by zero new
+/// `players` rows in the 48+ hours since. Reading on-chain instead removes
+/// the dependency on that dead host entirely and matches the one check that
+/// was actually working (the frontend's).
 pub async fn check_gooddollar_whitelisted(wallet: &str) -> Option<bool> {
-    let wallet = wallet.to_lowercase();
-    let api_base = std::env::var("GOOD_DOLLAR_API_URL")
-        .unwrap_or_else(|_| "https://gooddollar-api.gooddollar.org".into());
+    let account: Address = wallet.parse().ok()?;
 
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .unwrap_or_default();
+    let rpc_url = std::env::var("CELO_RPC_URL").unwrap_or_else(|_| "https://forno.celo.org".into());
+    let provider = Provider::<Http>::try_from(rpc_url.as_str())
+        .map_err(|e| tracing::warn!("GoodDollar identity check: bad RPC URL {}: {}", rpc_url, e))
+        .ok()?;
 
-    // Try v2 API first, fall back to v1
-    let url_v2 = format!("{}/api/v2/verify/whitelisted/{}", api_base, wallet);
-    let url_v1 = format!("{}/api/v1/verify/{}", api_base, wallet);
+    let contract_addr: Address = std::env::var("GOODDOLLAR_IDENTITY_CONTRACT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| CELO_IDENTITY_CONTRACT.parse().expect("valid const address"));
 
-    for url in [&url_v2, &url_v1] {
-        if let Ok(res) = http.get(url).send().await {
-            if res.status().is_success() {
-                if let Ok(body) = res.json::<GdWhitelistResponse>().await {
-                    let result = body.is_whitelisted.or(body.whitelisted);
-                    if result.is_some() {
-                        return result;
-                    }
-                }
-            }
+    let contract = GoodDollarIdentity::new(contract_addr, Arc::new(provider));
+    match contract.get_whitelisted_root(account).call().await {
+        Ok(root) => Some(root != Address::zero()),
+        Err(e) => {
+            tracing::warn!("GoodDollar on-chain whitelist check failed for {}: {}", wallet, e);
+            None
         }
     }
-    None
 }
 
 pub async fn verify_identity(
@@ -80,9 +92,6 @@ pub async fn verify_identity(
         });
     }
 
-    // Check GoodDollar whitelist via API
-    // The GoodDollar backend exposes a simple REST endpoint for whitelist checks.
-    // citizen-sdk hits the same underlying identity contract — this is the backend equivalent.
     let whitelisted = check_gooddollar_whitelisted(&wallet).await;
 
     match whitelisted {
