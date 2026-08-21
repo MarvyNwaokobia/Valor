@@ -311,39 +311,37 @@ export default function FriendsPage() {
                     </div>
                   </>
                 ) : (
-                  <>
-                    <div className="min-w-0">
-                      <p className="text-white font-bold text-base truncate">{who(f)}</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-sm truncate">{who(f)}</p>
                       <p className="text-slate-500 text-[11px] uppercase tracking-wider mt-0.5">{f.rank}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => router.push(`/friends/chat/${f.wallet}?name=${encodeURIComponent(who(f))}`)}
-                        className="relative shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-300 hover:text-white hover:border-valor-gold/50 transition-colors flex items-center justify-center"
-                        aria-label={`Message ${who(f)}`}
-                      >
-                        <MessageCircle size={16} />
-                        {!!unreadByWallet[f.wallet] && (
-                          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-valor-gold text-black text-[10px] font-black flex items-center justify-center">
-                            {unreadByWallet[f.wallet]}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
-                        className="flex-1 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center justify-center gap-1.5"
-                      >
-                        <Swords size={14} /> Challenge
-                      </button>
-                      <button
-                        onClick={() => setConfirmRemove(f.wallet)}
-                        className="shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors flex items-center justify-center"
-                        aria-label={`Remove ${who(f)}`}
-                      >
-                        <UserMinus size={16} />
-                      </button>
-                    </div>
-                  </>
+                    <button
+                      onClick={() => router.push(`/friends/chat/${f.wallet}?name=${encodeURIComponent(who(f))}`)}
+                      className="relative shrink-0 px-3 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center gap-1.5"
+                    >
+                      <MessageCircle size={14} /> Chat
+                      {!!unreadByWallet[f.wallet] && (
+                        <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center">
+                          {unreadByWallet[f.wallet]}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
+                      className="shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-300 hover:text-white hover:border-valor-gold/50 transition-colors flex items-center justify-center"
+                      aria-label={`Challenge ${who(f)}`}
+                    >
+                      <Swords size={16} />
+                    </button>
+                    <button
+                      onClick={() => setConfirmRemove(f.wallet)}
+                      className="shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors flex items-center justify-center"
+                      aria-label={`Remove ${who(f)}`}
+                    >
+                      <UserMinus size={16} />
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
