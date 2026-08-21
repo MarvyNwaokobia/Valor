@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Swords, Coins, Loader2, X, AlertTriangle } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -61,14 +61,20 @@ function Row({ label, value, gold, strong }: {
 export default function DuelsPage() {
   const { status, address } = useResolvedAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const player = usePlayerStore((s) => s.player)
   const inventory = usePlayerStore((s) => s.inventory)
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
 
+  // Arrived here via "Challenge" on a friend's row in /friends — reserves the
+  // duel for that one wallet instead of opening it to anyone.
+  const challengeWallet = searchParams.get('challenge')
+  const challengeName = searchParams.get('name')
+
   const [stake, setStake] = useState(1000)
   // The pending stake awaiting explicit confirmation. Nothing is charged until
   // the player acts on this.
-  const [confirm, setConfirm] = useState<{ mode: 'create' | 'accept'; stake: number; id?: string } | null>(null)
+  const [confirm, setConfirm] = useState<{ mode: 'create' | 'accept'; stake: number; id?: string; invitedWallet?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [run, setRun] = useState<DuelRun | null>(null)
   const [pickingLoadout, setPickingLoadout] = useState(false)
@@ -89,9 +95,9 @@ export default function DuelsPage() {
     setRun(r); setWaves(0); setResult(null); setPickingLoadout(true)
   }, [])
 
-  const onCreate = useCallback(async (amount: number) => {
+  const onCreate = useCallback(async (amount: number, invitedWallet?: string) => {
     setError(null)
-    try { beginRun(await createDuel(amount)) }
+    try { beginRun(await createDuel(amount, invitedWallet)) }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not open the duel') }
   }, [createDuel, beginRun])
 
@@ -268,9 +274,18 @@ export default function DuelsPage() {
         {/* ── Open a duel ──────────────────────────────────────────────────── */}
         {!myOpen && !result && !confirm && (
           <div className="rounded-xl border border-valor-border bg-valor-surface p-5 flex flex-col gap-3">
-            <p className="font-display font-black text-white text-sm uppercase tracking-wider">Open a duel</p>
+            <div className="flex items-center justify-between">
+              <p className="font-display font-black text-white text-sm uppercase tracking-wider">
+                {challengeWallet ? `Challenge ${challengeName || 'friend'}` : 'Open a duel'}
+              </p>
+              {challengeWallet && (
+                <button onClick={() => router.push('/duels')} className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors">
+                  Open to anyone instead
+                </button>
+              )}
+            </div>
             <p className="text-[11px] uppercase tracking-widest text-slate-400 font-bold">
-              Choose your stake
+              {challengeWallet ? 'Only they can accept this stake' : 'Choose your stake'}
             </p>
             {/* Fixed amounts rather than a free number field: both players stake the
                 SAME figure, so it has to come from one agreed ladder both sides see.
@@ -292,7 +307,7 @@ export default function DuelsPage() {
               ))}
             </div>
             <button
-              onClick={() => setConfirm({ mode: 'create', stake: activeStake })}
+              onClick={() => setConfirm({ mode: 'create', stake: activeStake, invitedWallet: challengeWallet ?? undefined })}
               disabled={pending || !signerReady}
               className="w-full min-h-12 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
             >
@@ -339,7 +354,7 @@ export default function DuelsPage() {
                 onClick={() => {
                   const c = confirm
                   setConfirm(null)
-                  if (c.mode === 'create') void onCreate(c.stake)
+                  if (c.mode === 'create') void onCreate(c.stake, c.invitedWallet)
                   else void onAccept(c.id!, c.stake)
                 }}
                 disabled={pending}
@@ -370,6 +385,30 @@ export default function DuelsPage() {
             >
               {pending ? 'Closing…' : 'Close duel & refund my stake'}
             </button>
+          </div>
+        )}
+
+        {/* ── Challenges from friends ──────────────────────────────────────── */}
+        {(duels?.invited.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="font-display font-black text-white text-sm uppercase tracking-wider">Challenges for you</p>
+            {duels?.invited.map((d) => (
+              <div key={d.id} className="rounded-xl border border-valor-gold/40 bg-valor-gold/[0.06] px-4 py-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-bold text-sm truncate">{who(d.challenger_name, d.challenger)}</p>
+                  <p className="text-slate-500 text-[11px]">
+                    {d.stake_g.toLocaleString()} {currency} · winner takes {d.winner_takes_g.toLocaleString()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setConfirm({ mode: 'accept', stake: d.stake_g, id: d.id })}
+                  disabled={pending || !signerReady}
+                  className="shrink-0 px-4 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors disabled:opacity-40"
+                >
+                  Accept
+                </button>
+              </div>
+            ))}
           </div>
         )}
 

@@ -21,7 +21,8 @@ import { xpForNextRank, TELEGRAM_URL } from '@/lib/constants'
 import type { Item } from '@/types'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import Link from 'next/link'
-import { Wallet, HelpCircle } from 'lucide-react'
+import { Wallet, HelpCircle, Users } from 'lucide-react'
+import { useFriends } from '@/hooks/useFriends'
 
 export default function ProfilePage() {
   const { status, address } = useResolvedAuth()
@@ -29,6 +30,7 @@ export default function ProfilePage() {
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const inventory    = usePlayerStore(s => s.inventory)
+  const { incoming: incomingFriendRequests } = useFriends(address)
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
@@ -213,6 +215,26 @@ export default function ProfilePage() {
             <span className="font-bold text-white text-sm">Go to Bank</span>
           </div>
           <span className="text-[9px] uppercase tracking-widest text-amber-500/70 font-bold">G$ · Claim · Transfer</span>
+        </Link>
+
+        {/* Friends — add fighters, then challenge them straight to a duel */}
+        <Link
+          href="/friends"
+          className="flex items-center justify-between px-4 py-3 rounded-xl border transition-colors hover:border-purple-500/50"
+          style={{ background: 'rgba(168,85,247,0.07)', borderColor: 'rgba(168,85,247,0.3)' }}
+        >
+          <div className="flex items-center gap-2">
+            <Users size={16} className="text-purple-400" />
+            <span className="font-bold text-white text-sm">Friends</span>
+            {incomingFriendRequests.length > 0 && (
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-purple-500 text-white text-[10px] font-black flex items-center justify-center">
+                {incomingFriendRequests.length}
+              </span>
+            )}
+          </div>
+          <span className="text-[9px] uppercase tracking-widest font-bold" style={{ color: 'rgba(168,85,247,0.75)' }}>
+            Add · Requests · Challenge
+          </span>
         </Link>
 
         {/* Telegram — same ask as onboarding, kept reachable afterwards. A player

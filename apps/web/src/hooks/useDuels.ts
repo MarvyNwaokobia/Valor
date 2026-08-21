@@ -49,6 +49,9 @@ export interface MyDuel {
 
 export interface DuelsList {
   open: OpenDuel[]
+  /** Duels a friend opened reserved specifically for this wallet — never shown
+   *  in `open`, since a targeted challenge isn't meant to be public. */
+  invited: OpenDuel[]
   mine: MyDuel[]
   /** The agreed stake ladder. Both sides can only pick from this, and the server
    *  enforces it — the UI renders whatever the server says rather than its own copy,
@@ -242,13 +245,17 @@ export function useDuels(walletAddress: string | undefined) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress, walletClient, relayAddress, config, source])
 
-  const createDuel = useCallback(async (stakeG: number): Promise<DuelRun> => {
+  /** `invitedWallet` reserves the duel for one specific friend instead of
+   *  opening it to anyone — see the `invited_wallet` column on the API side. */
+  const createDuel = useCallback(async (stakeG: number, invitedWallet?: string): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
       const permit = await signStake(stakeG)
       const run = await post<DuelRun>('/duels', {
-        wallet: walletAddress, stake_g: stakeG, ...permit,
+        wallet: walletAddress, stake_g: stakeG,
+        ...(invitedWallet ? { invited_wallet: invitedWallet } : {}),
+        ...permit,
       })
       refresh()
       return run

@@ -111,6 +111,7 @@ struct DuelRow {
     opponent_score: Option<i32>,
     status: String,
     winner_wallet: Option<String>,
+    invited_wallet: Option<String>,
 }
 
 /// Signed authorisation for one stake. A duel stake is a deliberate, one-off,
@@ -246,6 +247,10 @@ async fn settle_cancel(state: &AppState, duel_id: Uuid, challenger: &str, stake:
 pub struct CreateRequest {
     pub wallet: String,
     pub stake_g: i64,
+    /// Set to challenge one specific friend instead of opening the stake to
+    /// anyone. When present, only this wallet can accept — see accept_duel.
+    #[serde(default)]
+    pub invited_wallet: Option<String>,
     #[serde(flatten)]
     pub permit: StakePermit,
 }
@@ -276,6 +281,19 @@ pub async fn create_duel(
     }
     let wallet = normalize_wallet(&body.wallet);
 
+    let invited_wallet = match &body.invited_wallet {
+        Some(w) if !is_valid_wallet(w) =>
+            return HttpResponse::BadRequest().json(json!({"error": "Invalid invited wallet address"})),
+        Some(w) => {
+            let normalized = normalize_wallet(w);
+            if normalized == wallet {
+                return HttpResponse::BadRequest().json(json!({"error": "You can't challenge yourself"}));
+            }
+            Some(normalized)
+        }
+        None => None,
+    };
+
     // Reject a second open duel BEFORE escrowing, so a duplicate request can never
     // charge a stake it then has nowhere to put (the unique index would reject the
     // insert and the money would already be gone).
@@ -304,11 +322,11 @@ pub async fn create_duel(
     let inserted = sqlx::query(
         "INSERT INTO duels (id, challenger_wallet, stake_g, seed,
                             challenger_run_token, challenger_started_at, status,
-                            challenger_stake_tx)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)",
+                            challenger_stake_tx, invited_wallet)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)",
     )
     .bind(id).bind(&wallet).bind(body.stake_g).bind(seed)
-    .bind(&token).bind(now).bind(&stake_tx)
+    .bind(&token).bind(now).bind(&stake_tx).bind(&invited_wallet)
     .execute(&state.db).await;
 
     if let Err(e) = inserted {
@@ -360,6 +378,14 @@ pub async fn accept_duel(
     }
     if duel.challenger_wallet == wallet {
         return HttpResponse::BadRequest().json(json!({"error": "You can't accept your own duel"}));
+    }
+    if let Some(ref invited) = duel.invited_wallet {
+        if invited != &wallet {
+            // Same response as "not found" rather than "forbidden" — a targeted
+            // challenge shouldn't confirm its own existence to a wallet it wasn't
+            // sent to.
+            return HttpResponse::NotFound().json(json!({"error": "Duel not found"}));
+        }
     }
 
     let stake_tx = match escrow_stake(&state, &wallet, duel.stake_g, &body.permit).await {
@@ -598,13 +624,18 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     // an address tells you nothing about who you are about to stake against.
     // COALESCE order matches how players are named elsewhere: username first,
     // character name as the fallback.
+    //
+    // Invited (friend-targeted) duels are excluded from this public list — they
+    // are reserved for one wallet and surface separately below as `invited`, or
+    // this would show a "private" challenge to everyone and let them discover it
+    // even though accepting it would still be rejected.
     let open: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
         "SELECT d.id, d.challenger_wallet,
                 COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
                 d.stake_g, d.created_at
          FROM duels d
          LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
-         WHERE d.status = 'open'
+         WHERE d.status = 'open' AND d.invited_wallet IS NULL
          ORDER BY d.created_at DESC LIMIT 50",
     )
     .fetch_all(&state.db).await.unwrap_or_default();
@@ -613,6 +644,27 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
         "id": id, "challenger": w, "challenger_name": name, "stake_g": stake,
         "winner_takes_g": winner_payout(stake), "created_at": at,
     })).collect();
+
+    let invited_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
+        Some(w) => {
+            let wallet = normalize_wallet(w);
+            let rows: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
+                "SELECT d.id, d.challenger_wallet,
+                        COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
+                        d.stake_g, d.created_at
+                 FROM duels d
+                 LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
+                 WHERE d.status = 'open' AND d.invited_wallet = $1
+                 ORDER BY d.created_at DESC LIMIT 25",
+            )
+            .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
+            rows.into_iter().map(|(id, w, name, stake, at)| json!({
+                "id": id, "challenger": w, "challenger_name": name, "stake_g": stake,
+                "winner_takes_g": winner_payout(stake), "created_at": at,
+            })).collect()
+        }
+        None => vec![],
+    };
 
     let mine_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
         Some(w) => {
@@ -647,6 +699,7 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     let tiers = stake_tiers();
     HttpResponse::Ok().json(json!({
         "open": open_json,
+        "invited": invited_json,
         "mine": mine_json,
         "stake_tiers": tiers,
         "min_stake_g": tiers.first().copied().unwrap_or(MIN_STAKE_G),

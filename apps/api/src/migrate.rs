@@ -81,6 +81,11 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("fix_ledger_categories.sql", include_str!("../migrations/fix_ledger_categories.sql")),
     ("fix_xp_cap.sql",            include_str!("../migrations/fix_xp_cap.sql")),
     ("add_push_subscriptions.sql", include_str!("../migrations/add_push_subscriptions.sql")),
+    ("add_friendships.sql",       include_str!("../migrations/add_friendships.sql")),
+    // Depends on the `duels` table from add_duels.sql, which is already long
+    // applied by the time this runs — tacked on at the end rather than sorted
+    // in alphabetically, matching add_push_subscriptions.sql above.
+    ("add_duel_invites.sql",      include_str!("../migrations/add_duel_invites.sql")),
 ];
 
 /// Apply every migration not yet recorded, in order, each in its own transaction. Called

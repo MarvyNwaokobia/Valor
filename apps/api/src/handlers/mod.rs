@@ -7,6 +7,7 @@ pub mod missions;
 pub mod items;
 pub mod decay;
 pub mod duels;
+pub mod friends;
 pub mod rewards;
 pub mod ws;
 pub mod endless;
@@ -102,7 +103,12 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/settle-debt", web::post().to(debts::settle_debt))
                 .route("/{wallet}/gas-topup", web::post().to(gas::gas_topup))
                 .route("/{wallet}/push-subscription", web::post().to(push::subscribe))
-                .route("/{wallet}/push-subscription", web::delete().to(push::unsubscribe)),
+                .route("/{wallet}/push-subscription", web::delete().to(push::unsubscribe))
+                .route("/{wallet}/friends", web::get().to(friends::list_friends))
+                .route("/{wallet}/friends/requests", web::get().to(friends::list_requests))
+                .route("/{wallet}/friends/request", web::post().to(friends::send_request))
+                .route("/{wallet}/friends/{other}/accept", web::post().to(friends::accept_request))
+                .route("/{wallet}/friends/{other}", web::delete().to(friends::remove_friend)),
         )
         .service(
             web::scope("/battles")
