@@ -1,18 +1,35 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, UserPlus, UserMinus, Swords, MessageCircle, Check, X, Loader2 } from 'lucide-react'
+import { Users, UserPlus, UserMinus, Swords, MessageCircle, Search, Check, X, Loader2 } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useFriends, type FriendEntry, type FriendRequestEntry } from '@/hooks/useFriends'
 import { useUnreadCounts } from '@/hooks/useChat'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+
 const who = (f: { username: string | null; character_name: string }) => f.username || f.character_name
 
 type Tab = 'friends' | 'requests'
+
+interface Suggestion {
+  wallet_address: string
+  username:       string | null
+  character_name: string
+  rank:           string
+}
+
+/** Minimum length before a suggestion lookup fires — one or two characters
+ *  would match half the roster and just be noise. */
+const MIN_SUGGEST_LEN = 2
+const SUGGEST_DEBOUNCE_MS = 300
+// Below this, the list fits on screen without scrolling — a search box would
+// just be one more thing to look at for nothing it actually filters.
+const FILTER_THRESHOLD = 5
 
 /**
  * FRIENDS — opt-in social graph, kept separate from referrals.
@@ -41,13 +58,45 @@ export default function FriendsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [formNotice, setFormNotice] = useState<string | null>(null)
 
+  // ── Add-a-friend typeahead ──────────────────────────────────────────────────
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  const [highlight, setHighlight] = useState(-1)
+  const latestQuery = useRef('')
+
+  // ── Search-within-list ───────────────────────────────────────────────────────
+  const [listFilter, setListFilter] = useState('')
+
+  useEffect(() => {
+    // Wallet addresses aren't matched by the search endpoint (it's a LIKE
+    // over character_name/username), so there's nothing useful to suggest.
+    if (!address || addBy === 'wallet') { setSuggestions([]); return }
+    const q = identifier.trim()
+    latestQuery.current = q
+    if (q.length < MIN_SUGGEST_LEN) { setSuggestions([]); return }
+
+    const handle = setTimeout(() => {
+      fetch(`${API}/players/search?q=${encodeURIComponent(q)}&exclude=${address}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((rows: Suggestion[]) => {
+          // A slower earlier request could otherwise land after a faster
+          // later one and clobber it with stale results.
+          if (latestQuery.current === q) { setSuggestions(rows); setHighlight(-1) }
+        })
+        .catch(() => {})
+    }, SUGGEST_DEBOUNCE_MS)
+
+    return () => clearTimeout(handle)
+  }, [identifier, addBy, address])
+
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   if (!player) { router.replace('/'); return null }
 
-  const onAdd = async () => {
-    const value = identifier.trim()
+  const onAdd = async (explicitIdentifier?: string) => {
+    const value = (explicitIdentifier ?? identifier).trim()
     if (!value) return
+    setSuggestions([])
     setFormError(null)
     setFormNotice(null)
     setSending(true)
@@ -69,6 +118,11 @@ export default function FriendsPage() {
     catch (e) { setFormError(e instanceof Error ? e.message : 'Something went wrong') }
     finally { setBusyWallet(null) }
   }
+
+  const filterQ = listFilter.trim().toLowerCase()
+  const filteredFriends  = filterQ ? friends.filter((f) => who(f).toLowerCase().includes(filterQ))  : friends
+  const filteredIncoming = filterQ ? incoming.filter((f) => who(f).toLowerCase().includes(filterQ)) : incoming
+  const filteredOutgoing = filterQ ? outgoing.filter((f) => who(f).toLowerCase().includes(filterQ)) : outgoing
 
   return (
     <div
@@ -121,11 +175,20 @@ export default function FriendsPage() {
             ))}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 relative">
             <input
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void onAdd() }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setSuggestOpen(false)}
+              onKeyDown={(e) => {
+                const showing = suggestOpen && addBy !== 'wallet' && suggestions.length > 0
+                if (showing && e.key === 'ArrowDown') { e.preventDefault(); setHighlight((i) => Math.min(i + 1, suggestions.length - 1)); return }
+                if (showing && e.key === 'ArrowUp')   { e.preventDefault(); setHighlight((i) => Math.max(i - 1, 0)); return }
+                if (showing && e.key === 'Escape')    { setSuggestions([]); return }
+                if (showing && e.key === 'Enter' && highlight >= 0) { e.preventDefault(); void onAdd(suggestions[highlight].wallet_address); return }
+                if (e.key === 'Enter') void onAdd()
+              }}
               placeholder={addBy === 'username' ? 'Username' : addBy === 'character' ? 'Character name' : '0x…'}
               className="flex-1 min-h-11 rounded-lg border border-valor-border bg-valor-surface-2 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/50"
             />
@@ -137,6 +200,30 @@ export default function FriendsPage() {
               {sending ? <Loader2 className="animate-spin" size={14} /> : <UserPlus size={14} />}
               Add
             </button>
+
+            {/* Typeahead — wallet mode has nothing to suggest (the search
+                endpoint matches names, not addresses). onMouseDown (not
+                onClick) fires before the input's onBlur, so a tap here
+                selects instead of just closing the dropdown. */}
+            {suggestOpen && addBy !== 'wallet' && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-16 mt-1 rounded-lg border border-valor-border bg-valor-surface-2 shadow-lg overflow-hidden z-10">
+                {suggestions.map((s, i) => (
+                  <button
+                    key={s.wallet_address}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); void onAdd(s.wallet_address) }}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors ${
+                      i === highlight ? 'bg-valor-gold/15' : 'hover:bg-valor-gold/[0.07]'
+                    }`}
+                  >
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-white font-bold text-sm truncate">{who(s)}</span>
+                    </span>
+                    <span className="shrink-0 text-slate-500 text-[10px] uppercase tracking-wider">{s.rank}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {formNotice && <p className="text-green-400 text-xs font-medium">{formNotice}</p>}
@@ -157,7 +244,7 @@ export default function FriendsPage() {
           ]).map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { setTab(t.id); setListFilter('') }}
               className={`px-3 pb-2.5 text-xs font-black uppercase tracking-wider transition-colors relative ${
                 tab === t.id ? 'text-white' : 'text-slate-500 hover:text-slate-300'
               }`}
@@ -172,13 +259,30 @@ export default function FriendsPage() {
 
         {loading && <p className="text-slate-500 text-sm">Loading…</p>}
 
+        {/* Search-within-list — only worth showing once there's enough to scroll past. */}
+        {!loading && ((tab === 'friends' && friends.length > FILTER_THRESHOLD) ||
+          (tab === 'requests' && incoming.length + outgoing.length > FILTER_THRESHOLD)) && (
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            <input
+              value={listFilter}
+              onChange={(e) => setListFilter(e.target.value)}
+              placeholder={tab === 'friends' ? 'Search your friends…' : 'Search requests…'}
+              className="w-full min-h-10 rounded-lg border border-valor-border bg-valor-surface-2/50 pl-9 pr-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/50"
+            />
+          </div>
+        )}
+
         {/* ── Friends list ──────────────────────────────────────────────────── */}
         {tab === 'friends' && !loading && (
           <div className="flex flex-col gap-2">
             {friends.length === 0 && (
               <p className="text-slate-500 text-sm">No friends yet — add one above.</p>
             )}
-            {friends.map((f: FriendEntry) => (
+            {friends.length > 0 && filteredFriends.length === 0 && (
+              <p className="text-slate-500 text-sm">No friends match &ldquo;{listFilter}&rdquo;.</p>
+            )}
+            {filteredFriends.map((f: FriendEntry) => (
               <div key={f.wallet} className={`rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors ${
                 confirmRemove === f.wallet ? 'border-red-500/50 bg-red-500/[0.06]' : 'border-valor-border bg-valor-surface-2/50'
               }`}>
@@ -247,7 +351,10 @@ export default function FriendsPage() {
             <div className="flex flex-col gap-2">
               <p className="font-display font-black text-white text-sm uppercase tracking-wider">Incoming</p>
               {incoming.length === 0 && <p className="text-slate-500 text-sm">No pending requests.</p>}
-              {incoming.map((f: FriendRequestEntry) => (
+              {incoming.length > 0 && filteredIncoming.length === 0 && (
+                <p className="text-slate-500 text-sm">No matches.</p>
+              )}
+              {filteredIncoming.map((f: FriendRequestEntry) => (
                 <div key={f.wallet} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-bold text-sm truncate">{who(f)}</p>
@@ -276,7 +383,10 @@ export default function FriendsPage() {
             <div className="flex flex-col gap-2">
               <p className="font-display font-black text-white text-sm uppercase tracking-wider">Sent</p>
               {outgoing.length === 0 && <p className="text-slate-500 text-sm">No outgoing requests.</p>}
-              {outgoing.map((f: FriendRequestEntry) => (
+              {outgoing.length > 0 && filteredOutgoing.length === 0 && (
+                <p className="text-slate-500 text-sm">No matches.</p>
+              )}
+              {filteredOutgoing.map((f: FriendRequestEntry) => (
                 <div key={f.wallet} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-bold text-sm truncate">{who(f)}</p>
