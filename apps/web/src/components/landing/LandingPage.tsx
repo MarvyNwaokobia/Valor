@@ -185,7 +185,9 @@ export default function LandingPage() {
 
         {/* Weather */}
         <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage:'repeating-linear-gradient(168deg, transparent 0px, transparent 5px, rgba(160,200,255,0.04) 5px, rgba(160,200,255,0.04) 6px)', backgroundSize:'6px 80px', animation:'rain-fall 0.5s linear infinite' }} />
-        <div className="absolute inset-0 pointer-events-none" style={{ background:'radial-gradient(ellipse 45% 75% at 50% 28%, rgba(70,120,255,0.09), transparent 60%)', animation:'lightning-flash 8s ease-in-out infinite', animationDelay:'3.2s' }} />
+        {/* Lightning-flash overlay removed: the new hero photo has its own bright sunburst
+            at roughly this same screen position, so the periodic flash stacked on top of it
+            and read as a rendering glitch rather than weather. */}
 
         {/* Embers */}
         {embers.map(e => (
