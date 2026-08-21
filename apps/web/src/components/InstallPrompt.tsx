@@ -3,63 +3,32 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { edition } from '@/editions'
+import {
+  detectBrowserCtx,
+  INSTALL_COPY,
+  isStandalone,
+  resolveInstallMode,
+  type BeforeInstallPromptEvent,
+  type BrowserCtx,
+} from '@/lib/pwaInstall'
+import { usePwaStore } from '@/stores/usePwaStore'
 
 /**
  * "Install Valor" affordance — and, crucially, guidance so users don't create a
- * BROKEN install.
- *
- * The iPhone trap: on iOS, only **Safari** turns "Add to Home Screen" into a real
- * full-screen app. If the user opens the link in an in-app browser (Instagram,
- * WhatsApp, Telegram, X, Facebook…) or in Chrome/Firefox for iOS, "Add to Home
- * Screen" just saves a browser bookmark that opens WITH the browser bar. So when
- * we detect a non-Safari context we tell them to open in Safari first.
- *
- * Platforms:
- *  - Android/desktop Chrome/Edge fire `beforeinstallprompt` → we show an Install button.
- *  - iOS Safari → manual "Share → Add to Home Screen" hint.
- *  - iOS in-app / Chrome-iOS → "Open in Safari to install".
- *  - Android in-app browser → "Open in Chrome to install".
+ * BROKEN install. See apps/web/src/lib/pwaInstall.ts for the per-browser detection
+ * this is built on (shared with the Profile notification toggle).
  *
  * Never shows when already installed (standalone), and a dismissal is remembered.
  */
 
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
-}
-
 const DISMISS_KEY = 'valor:install-dismissed'
-
-// Major in-app browsers (their WebViews can't make a standalone iOS PWA, and don't
-// fire beforeinstallprompt on Android). `; wv)` is the generic Android WebView tell.
-const IN_APP_RE =
-  /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|WhatsApp|Telegram|TikTok|musical_ly|Snapchat|LinkedInApp|Pinterest|GSA\/|Twitter|; ?wv\)/i
-// Non-Safari browsers on iOS (Chrome, Firefox, Edge, Opera) — also can't make a PWA.
-const IOS_OTHER_BROWSER_RE = /CriOS|FxiOS|EdgiOS|OPiOS|Opera Touch/i
-
-function isStandalone(): boolean {
-  if (typeof window === 'undefined') return false
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true
-  )
-}
-
-function isIOS(): boolean {
-  if (typeof navigator === 'undefined') return false
-  return (
-    /iphone|ipad|ipod/i.test(navigator.userAgent) ||
-    // iPadOS 13+ masquerades as Mac; detect a touch screen to catch it
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  )
-}
-
-type Ctx = { ios: boolean; android: boolean; inApp: boolean; iosOther: boolean }
 
 export function InstallPrompt() {
   const pathname = usePathname()
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
-  const [ctx, setCtx] = useState<Ctx | null>(null)
+  const setDeferred = usePwaStore((s) => s.setDeferred)
+  const setStandalone = usePwaStore((s) => s.setStandalone)
+  const deferred = usePwaStore((s) => s.deferred)
+  const [ctx, setCtx] = useState<BrowserCtx | null>(null)
   // Start hidden until the client effect decides — avoids an SSR flash.
   const [hidden, setHidden] = useState(true)
   // Android Chrome fires `beforeinstallprompt` on its own schedule (engagement
@@ -68,6 +37,7 @@ export function InstallPrompt() {
   const [late, setLate] = useState(false)
 
   useEffect(() => {
+    setStandalone(isStandalone())
     if (isStandalone()) return
     // Inside a wallet's Mini App there is nothing to install. MiniPay runs the
     // page in its own WebView with its own chrome — no Share icon, no "Add to
@@ -76,8 +46,8 @@ export function InstallPrompt() {
     //
     // Detected from the edition rather than the user-agent because MiniPay's
     // WebView is not reliably identifiable from the UA string on iOS, whereas
-    // its injected provider always announces itself. IN_APP_RE still covers the
-    // UA-identifiable in-app browsers (Instagram, WhatsApp, Telegram, …).
+    // its injected provider always announces itself. The in-app-browser regex
+    // in pwaInstall.ts still covers the UA-identifiable ones (Instagram, WhatsApp, Telegram, …).
     if (edition().id === 'minipay') return
     try {
       if (localStorage.getItem(DISMISS_KEY)) return
@@ -85,20 +55,16 @@ export function InstallPrompt() {
       /* private mode — just proceed */
     }
     setHidden(false)
-
-    const ua = navigator.userAgent
-    setCtx({
-      ios: isIOS(),
-      android: /Android/i.test(ua),
-      inApp: IN_APP_RE.test(ua),
-      iosOther: IOS_OTHER_BROWSER_RE.test(ua),
-    })
+    setCtx(detectBrowserCtx())
 
     const onBeforeInstall = (e: Event) => {
       e.preventDefault() // stop Chrome's mini-infobar; we drive it ourselves
       setDeferred(e as BeforeInstallPromptEvent)
     }
-    const onInstalled = () => dismiss()
+    const onInstalled = () => {
+      setStandalone(true)
+      dismiss()
+    }
 
     window.addEventListener('beforeinstallprompt', onBeforeInstall)
     window.addEventListener('appinstalled', onInstalled)
@@ -115,7 +81,6 @@ export function InstallPrompt() {
 
   const dismiss = () => {
     setHidden(true)
-    setDeferred(null)
     try {
       localStorage.setItem(DISMISS_KEY, '1')
     } catch {
@@ -127,6 +92,7 @@ export function InstallPrompt() {
     if (!deferred) return
     await deferred.prompt()
     await deferred.userChoice
+    setDeferred(null)
     dismiss()
   }
 
@@ -134,52 +100,10 @@ export function InstallPrompt() {
   if (pathname !== '/') return null
   if (hidden || !ctx) return null
 
-  // Decide what to show. `native` = a real install prompt is available.
-  const mode:
-    | 'native'
-    | 'ios-safari'
-    | 'ios-open-in-safari'
-    | 'android-open-in-chrome'
-    | 'android-manual'
-    | null = deferred
-    ? 'native'
-    : ctx.ios && (ctx.inApp || ctx.iosOther)
-      ? 'ios-open-in-safari'
-      : ctx.ios
-        ? 'ios-safari'
-        : ctx.android && ctx.inApp
-          ? 'android-open-in-chrome'
-          : // Android Chrome that never fired the auto-prompt → manual hint (after a beat)
-            ctx.android && late
-            ? 'android-manual'
-            : null
-
+  const mode = resolveInstallMode(ctx, !!deferred, late)
   if (!mode) return null
 
-  const copy: Record<Exclude<typeof mode, null>, { title: string; body: string }> = {
-    native: {
-      title: 'Install Valor',
-      body: 'Add it to your home screen for a full-screen app.',
-    },
-    'ios-safari': {
-      title: 'Install Valor',
-      body: 'Tap the Share icon, then “Add to Home Screen”.',
-    },
-    'ios-open-in-safari': {
-      title: 'Open in Safari to install',
-      body: 'You’re in an in-app browser. Tap ••• (or the share icon) → “Open in Safari”, then Share → Add to Home Screen.',
-    },
-    'android-open-in-chrome': {
-      title: 'Open in Chrome to install',
-      body: 'You’re in an in-app browser. Tap ⋮ → “Open in Chrome” to install Valor.',
-    },
-    'android-manual': {
-      title: 'Install Valor',
-      body: 'Tap ⋮ (top-right), then “Install app” or “Add to home screen”.',
-    },
-  }
-
-  const { title: cardTitle, body } = copy[mode]
+  const { title: cardTitle, body } = INSTALL_COPY[mode]
 
   return (
     <div style={wrap}>
