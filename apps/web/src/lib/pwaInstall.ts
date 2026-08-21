@@ -3,14 +3,15 @@
 // instructions" logic exists in exactly one place — a second copy would drift out of
 // sync with the first the next time a browser quirk is added.
 //
-// The iPhone trap this all exists for: on iOS, only **Safari** turns "Add to Home
-// Screen" into a real full-screen app (and only a home-screen install can ever use
-// Web Push there) — Apple requires every other iOS browser to run on WebKit and
-// blocks them from installing PWAs at all. Both an in-app WebView (Instagram,
-// WhatsApp, Telegram, X, Facebook…) and a real third-party browser (Chrome, Firefox,
-// Edge for iOS) hit that wall, but for different reasons, so they get distinct copy:
-// the WebView case tells the user they're trapped inside another app, the browser
-// case tells them Safari is the only iOS browser allowed to install at all.
+// The iPhone trap this all exists for: on iOS there's no `beforeinstallprompt`, so
+// installing means the user taps the native Share icon and picks "Add to Home
+// Screen" — and that's a system-level share action, available from **any** iOS
+// browser that exposes the real Share icon (Safari, Chrome, Firefox, Edge all do),
+// not just Safari. Only a genuine in-app WebView (Instagram, WhatsApp, Telegram, X,
+// Facebook…) is actually stuck, because its in-app "share" button opens that app's
+// own share sheet instead of iOS's — those get told to open the page in a real
+// browser first. A real third-party iOS browser needs the exact same instructions
+// as Safari, not a redirect to Safari.
 
 export type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -21,8 +22,6 @@ export type BeforeInstallPromptEvent = Event & {
 // fire beforeinstallprompt on Android). `; wv)` is the generic Android WebView tell.
 const IN_APP_RE =
   /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|WhatsApp|Telegram|TikTok|musical_ly|Snapchat|LinkedInApp|Pinterest|GSA\/|Twitter|; ?wv\)/i
-// Non-Safari browsers on iOS (Chrome, Firefox, Edge, Opera) — also can't make a PWA.
-const IOS_OTHER_BROWSER_RE = /CriOS|FxiOS|EdgiOS|OPiOS|Opera Touch/i
 
 export function isStandalone(): boolean {
   if (typeof window === 'undefined') return false
@@ -41,7 +40,7 @@ export function isIOS(): boolean {
   )
 }
 
-export type BrowserCtx = { ios: boolean; android: boolean; inApp: boolean; iosOther: boolean }
+export type BrowserCtx = { ios: boolean; android: boolean; inApp: boolean }
 
 export function detectBrowserCtx(): BrowserCtx {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
@@ -49,7 +48,6 @@ export function detectBrowserCtx(): BrowserCtx {
     ios: isIOS(),
     android: /Android/i.test(ua),
     inApp: IN_APP_RE.test(ua),
-    iosOther: IOS_OTHER_BROWSER_RE.test(ua),
   }
 }
 
@@ -57,7 +55,6 @@ export type InstallMode =
   | 'native'
   | 'ios-safari'
   | 'ios-in-app-open-in-safari'
-  | 'ios-browser-open-in-safari'
   | 'android-open-in-chrome'
   | 'android-manual'
 
@@ -68,7 +65,8 @@ export type InstallMode =
 export function resolveInstallMode(ctx: BrowserCtx, hasNativePrompt: boolean, late: boolean): InstallMode | null {
   if (hasNativePrompt) return 'native'
   if (ctx.ios && ctx.inApp) return 'ios-in-app-open-in-safari'
-  if (ctx.ios && ctx.iosOther) return 'ios-browser-open-in-safari'
+  // A real third-party iOS browser (Chrome/Firefox/Edge) gets Safari's own
+  // instructions — its Share icon → Add to Home Screen works identically.
   if (ctx.ios) return 'ios-safari'
   if (ctx.android && ctx.inApp) return 'android-open-in-chrome'
   if (ctx.android && late) return 'android-manual'
@@ -87,10 +85,6 @@ export const INSTALL_COPY: Record<InstallMode, { title: string; body: string }> 
   'ios-in-app-open-in-safari': {
     title: 'Open in Safari to install',
     body: 'You’re in an in-app browser. Tap ••• (or the share icon) → “Open in Safari”, then Share → Add to Home Screen.',
-  },
-  'ios-browser-open-in-safari': {
-    title: 'Open in Safari to install',
-    body: 'Only Safari can install apps on iOS. Tap ••• → “Open in Safari”, then Share → Add to Home Screen.',
   },
   'android-open-in-chrome': {
     title: 'Open in Chrome to install',
