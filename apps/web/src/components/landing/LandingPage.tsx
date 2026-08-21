@@ -8,34 +8,21 @@ import SignInModal from '@/components/ui/SignInModal'
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
-// TEMPORARY, and deliberately a step backwards. This is the pre-pivot fantasy art:
-// a Viking with axes, an armoured knight, a hooded rogue. It sells a game we no
-// longer make.
+// Generated shooter key art, which is what 17bd2ab was waiting for. That commit
+// deliberately restored the pre-pivot fantasy art - a Viking, a knight, a rogue -
+// because the honest alternative at the time (portraits baked from the shipped
+// GLBs) had every operator holding a flat mid-grey untextured rifle, which reads
+// at card size and falls apart blown up to hero height.
 //
-// It is here because the honest alternative currently looks worse. The GLB renders
-// that replaced it (scripts/bake_class_portraits.py -> /characters/classes/*.webp)
-// are correct in the sense that they show the models a player actually gets, but
-// every operator holds a flat mid-grey untextured rifle, because rifle.glb carries
-// no textures. That reads acceptably at 220px card size and falls apart blown up to
-// hero height, which is exactly where the hero uses it.
-//
-// So: fantasy art buys presentable until real shooter key art exists. The renders
-// are still on disk, unchanged, one path swap away.
-//
-// TO GO BACK, when new art lands:
-//   berserker    -> /characters/classes/berserker.webp
-//   sentinelHero -> /characters/classes/sentinel.webp
-//   sentinelCard -> /characters/classes/sentinel.webp
-//   phantom      -> /characters/classes/phantom.webp
-// and fix rifle.glb's textures, or bake the portraits without the weapon.
-//
-// Paths are URL-encoded because these filenames carry spaces. Restored from
-// ee224d3^ after 8f9e981 dropped them from the bundle.
+// `hero` is a single frame of three operators breaching at golden hour. The class
+// images are per-class operator art, matched to the models players actually get in
+// duels and onboarding, and are the same files Layout/HomePage/onboarding already
+// point at - so those surfaces picked up the new art without a code change.
 const IMG = {
-  berserker:      '/characters/Valor%20Characters/Characters/berserkers%20male-nobackground.png',
-  sentinelHero:   '/characters/Valor%20Characters/Sentinel-withoutback.jpg',
-  sentinelCard:   '/characters/Valor%20Characters/Characters/sentinel%20male%20-%20no%20background.jpg',
-  phantom:        '/characters/Valor%20Characters/Characters/Phanthom%20male-no%20background.png',
+  hero:      '/art/hero-breach.webp',
+  berserker: '/characters/classes/berserker.webp',
+  sentinel:  '/characters/classes/sentinel.webp',
+  phantom:   '/characters/classes/phantom.webp',
 }
 
 // ── Embers ────────────────────────────────────────────────────────────────────
@@ -79,7 +66,7 @@ const HOW_IT_WORKS = [
 
 const CLASS_IMGS: Record<string, string> = {
   Berserker: IMG.berserker,
-  Sentinel:  IMG.sentinelCard,
+  Sentinel:  IMG.sentinel,
   Phantom:   IMG.phantom,
 }
 
@@ -173,50 +160,21 @@ export default function LandingPage() {
           <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse 55% 70% at 92% 90%, rgba(90,12,190,0.48) 0%, transparent 65%)' }} />
         </div>
 
-        {/* Mobile: Sentinel full bg.
-            mixBlendMode screen is REQUIRED, not decoration: this asset is a JPG, so it
-            has no alpha and its "removed" background is actually solid black. Screen
-            against the near-black page drops those pixels out. Drop it and you get a
-            black rectangle. The brightness/contrast lift compensates for what screen
-            blending costs. */}
-        <motion.img src={IMG.sentinelHero} alt="" aria-hidden
-          className="md:hidden absolute inset-0 w-full h-full object-cover object-top"
-          style={{ mixBlendMode:'screen', filter:'brightness(1.4) contrast(1.08) saturate(1.1)' }}
-          initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:1, delay:0.3 }}
-        />
+        {/* One full-bleed key art, identical on mobile and desktop.
+            It replaces four separate character cut-outs - Berserker left, Sentinel
+            centre, Phantom right, plus a mobile-only variant - that were composited
+            to fake a squad. All the tricks they needed are gone with them: no
+            mixBlendMode:'screen' to knock a black JPG background out, no brightness
+            lift to pay for that blend, no per-figure edge masks. This asset is
+            opaque and carries its own lighting, so object-cover just crops to the
+            centre, which is where the squad is at any aspect ratio.
 
-        {/* Desktop: Berserker left */}
-        <motion.img src={IMG.berserker} alt="" aria-hidden
-          className="hidden md:block absolute bottom-0 left-0 h-[88%] w-auto object-contain object-bottom"
-          style={{
-            filter:'drop-shadow(0 0 40px rgba(239,68,68,0.55)) brightness(1.15)',
-            WebkitMaskImage:'linear-gradient(to right, black 0%, black 65%, transparent 100%), linear-gradient(to top, black 0%, black 78%, transparent 100%)',
-            maskImage:'linear-gradient(to right, black 0%, black 65%, transparent 100%), linear-gradient(to top, black 0%, black 78%, transparent 100%)',
-            WebkitMaskComposite:'source-in', maskComposite:'intersect',
-          }}
-          initial={{ opacity:0, x:-40 }} animate={{ opacity:1, x:0 }}
-          transition={{ duration:0.9, delay:0.4, ease:[0.16,1,0.3,1] }}
-        />
-
-        {/* Desktop: Sentinel center */}
-        <motion.img src={IMG.sentinelHero} alt="" aria-hidden
-          className="hidden md:block absolute bottom-0 left-1/2 -translate-x-1/2 h-[92%] w-auto object-contain object-bottom"
-          style={{ mixBlendMode:'screen', filter:'brightness(1.35) contrast(1.1) drop-shadow(0 0 50px rgba(59,130,246,0.6))' }}
-          initial={{ opacity:0, y:30 }} animate={{ opacity:1, y:0 }}
-          transition={{ duration:1, delay:0.25, ease:[0.16,1,0.3,1] }}
-        />
-
-        {/* Desktop: Phantom right */}
-        <motion.img src={IMG.phantom} alt="" aria-hidden
-          className="hidden md:block absolute bottom-0 right-0 h-[88%] w-auto object-contain object-bottom"
-          style={{
-            filter:'drop-shadow(0 0 40px rgba(139,92,246,0.6)) brightness(1.1)',
-            WebkitMaskImage:'linear-gradient(to left, black 0%, black 65%, transparent 100%), linear-gradient(to top, black 0%, black 78%, transparent 100%)',
-            maskImage:'linear-gradient(to left, black 0%, black 65%, transparent 100%), linear-gradient(to top, black 0%, black 78%, transparent 100%)',
-            WebkitMaskComposite:'source-in', maskComposite:'intersect',
-          }}
-          initial={{ opacity:0, x:40 }} animate={{ opacity:1, x:0 }}
-          transition={{ duration:0.9, delay:0.4, ease:[0.16,1,0.3,1] }}
+            The slow scale-down is the only motion: the frame settles rather than
+            slides, so the VALOR logotype animating over it stays the main event. */}
+        <motion.img src={IMG.hero} alt="" aria-hidden
+          className="absolute inset-0 w-full h-full object-cover object-center"
+          initial={{ opacity:0, scale:1.06 }} animate={{ opacity:1, scale:1 }}
+          transition={{ duration:1.6, ease:[0.16,1,0.3,1] }}
         />
 
         {/* Gradient overlays */}
@@ -372,7 +330,6 @@ export default function LandingPage() {
               const def = CLASS_DEFINITIONS[cls]
               // Sentinel's card art is a JPG with a black background rather than alpha,
               // so it needs screen blending to drop out. The other two are real PNGs.
-              const isSentinel = cls === 'Sentinel'
               return (
                 <motion.div key={cls}
                   className="relative overflow-hidden rounded-2xl flex flex-col"
@@ -389,10 +346,7 @@ export default function LandingPage() {
                       src={CLASS_IMGS[cls]}
                       alt={cls}
                       className="absolute inset-0 w-full h-full object-cover object-top"
-                      style={{
-                        filter:`drop-shadow(0 0 24px ${def.accentColor}44) brightness(1.05)`,
-                        mixBlendMode: isSentinel ? 'screen' : undefined,
-                      }}
+                      style={{ filter:`drop-shadow(0 0 24px ${def.accentColor}44)` }}
                     />
                     <div style={{ position:'absolute', bottom:0, left:0, right:0, height:'55%', background:'linear-gradient(0deg, #060510 0%, transparent 100%)' }} />
 
