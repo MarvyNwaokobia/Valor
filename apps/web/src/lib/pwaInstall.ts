@@ -5,10 +5,12 @@
 //
 // The iPhone trap this all exists for: on iOS, only **Safari** turns "Add to Home
 // Screen" into a real full-screen app (and only a home-screen install can ever use
-// Web Push there). Opening the link in an in-app browser (Instagram, WhatsApp,
-// Telegram, X, Facebook…) or in Chrome/Firefox for iOS makes "Add to Home Screen"
-// save a plain bookmark instead — so those contexts get told to open Safari first,
-// while everyone else gets instructions that never mention it.
+// Web Push there) — Apple requires every other iOS browser to run on WebKit and
+// blocks them from installing PWAs at all. Both an in-app WebView (Instagram,
+// WhatsApp, Telegram, X, Facebook…) and a real third-party browser (Chrome, Firefox,
+// Edge for iOS) hit that wall, but for different reasons, so they get distinct copy:
+// the WebView case tells the user they're trapped inside another app, the browser
+// case tells them Safari is the only iOS browser allowed to install at all.
 
 export type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -54,7 +56,8 @@ export function detectBrowserCtx(): BrowserCtx {
 export type InstallMode =
   | 'native'
   | 'ios-safari'
-  | 'ios-open-in-safari'
+  | 'ios-in-app-open-in-safari'
+  | 'ios-browser-open-in-safari'
   | 'android-open-in-chrome'
   | 'android-manual'
 
@@ -64,7 +67,8 @@ export type InstallMode =
  * to a manual hint rather than showing nothing at all. */
 export function resolveInstallMode(ctx: BrowserCtx, hasNativePrompt: boolean, late: boolean): InstallMode | null {
   if (hasNativePrompt) return 'native'
-  if (ctx.ios && (ctx.inApp || ctx.iosOther)) return 'ios-open-in-safari'
+  if (ctx.ios && ctx.inApp) return 'ios-in-app-open-in-safari'
+  if (ctx.ios && ctx.iosOther) return 'ios-browser-open-in-safari'
   if (ctx.ios) return 'ios-safari'
   if (ctx.android && ctx.inApp) return 'android-open-in-chrome'
   if (ctx.android && late) return 'android-manual'
@@ -80,9 +84,13 @@ export const INSTALL_COPY: Record<InstallMode, { title: string; body: string }> 
     title: 'Install Valor',
     body: 'Tap the Share icon, then “Add to Home Screen”.',
   },
-  'ios-open-in-safari': {
+  'ios-in-app-open-in-safari': {
     title: 'Open in Safari to install',
     body: 'You’re in an in-app browser. Tap ••• (or the share icon) → “Open in Safari”, then Share → Add to Home Screen.',
+  },
+  'ios-browser-open-in-safari': {
+    title: 'Open in Safari to install',
+    body: 'Only Safari can install apps on iOS. Tap ••• → “Open in Safari”, then Share → Add to Home Screen.',
   },
   'android-open-in-chrome': {
     title: 'Open in Chrome to install',
