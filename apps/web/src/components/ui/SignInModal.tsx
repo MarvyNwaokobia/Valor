@@ -220,8 +220,8 @@ export default function SignInModal({ onClose }: Props) {
                 type="button"
                 onClick={() => { setCredential(id); setError(null) }}
                 disabled={!!pending}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 ${
-                  credential === id ? 'bg-valor-gold/15 text-valor-gold' : 'text-slate-500 hover:text-slate-300'
+                className={`px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40 ${
+                  credential === id ? 'bg-valor-gold/15 text-valor-gold' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 {label}

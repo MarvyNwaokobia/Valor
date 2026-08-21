@@ -108,6 +108,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/gas-topup", web::post().to(gas::gas_topup))
                 .route("/{wallet}/push-subscription", web::post().to(push::subscribe))
                 .route("/{wallet}/push-subscription", web::delete().to(push::unsubscribe))
+                .route("/{wallet}/contact-email", web::get().to(players::get_contact_email_status))
+                .route("/{wallet}/contact-email", web::post().to(players::set_contact_email))
                 .route("/{wallet}/friends", web::get().to(friends::list_friends))
                 .route("/{wallet}/friends/requests", web::get().to(friends::list_requests))
                 .route("/{wallet}/friends/request", web::post().to(friends::send_request))

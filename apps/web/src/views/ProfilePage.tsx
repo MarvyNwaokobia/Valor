@@ -10,6 +10,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
 import DecayPanel from '@/components/player-card/DecayPanel'
 import NotificationToggle from '@/components/profile/NotificationToggle'
+import ContactEmailCard from '@/components/profile/ContactEmailCard'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
 import UsernameSetup from '@/components/profile/UsernameSetup'
@@ -25,7 +26,7 @@ import { Wallet, HelpCircle, Users } from 'lucide-react'
 import { useFriends } from '@/hooks/useFriends'
 
 export default function ProfilePage() {
-  const { status, address } = useResolvedAuth()
+  const { status, address, source } = useResolvedAuth()
   const router      = useRouter()
   const player       = usePlayerStore(s => s.player)
   const playerSynced = usePlayerStore(s => s.playerSynced)
@@ -278,6 +279,10 @@ export default function ProfilePage() {
 
         {/* Daily reminder push notifications */}
         <NotificationToggle walletAddress={address} />
+
+        {/* Only a wallet-only account needs this — a Magic-sourced session
+            already has a working magic_email captured automatically. */}
+        {source === 'wallet' && <ContactEmailCard walletAddress={address} />}
       </motion.div>
 
       {/* ── RIGHT — Panels ──────────────────────────────────────────── */}

@@ -87,6 +87,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // in alphabetically, matching add_push_subscriptions.sql above.
     ("add_duel_invites.sql",      include_str!("../migrations/add_duel_invites.sql")),
     ("add_chat_messages.sql",     include_str!("../migrations/add_chat_messages.sql")),
+    ("add_contact_email.sql",     include_str!("../migrations/add_contact_email.sql")),
 ];
 
 /// Apply every migration not yet recorded, in order, each in its own transaction. Called

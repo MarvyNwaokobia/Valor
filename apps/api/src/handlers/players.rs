@@ -298,6 +298,65 @@ pub async fn set_magic_identity(
     HttpResponse::Ok().json(json!({"ok": true}))
 }
 
+// ── GET /players/:wallet/contact-email ─────────────────────────────────────────
+/// A wallet-only account (signed up by connecting an external wallet, never
+/// Magic) has no `magic_email` — that column means "a real Magic OTP login
+/// exists for this wallet", which can never be true for one that isn't
+/// Magic-minted (see resolve_login_email). `contact_email` is a deliberately
+/// separate, support/lookup-only field for exactly those accounts.
+///
+/// Returns only whether one is on file, never the address itself — this
+/// endpoint is unauthenticated like the rest of `/players/*`, so there is no
+/// reason for it to leak an email by wallet alone.
+pub async fn get_contact_email_status(
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    let has: Option<(bool,)> = sqlx::query_as(
+        "SELECT (contact_email IS NOT NULL) FROM players WHERE wallet_address = $1",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    HttpResponse::Ok().json(json!({"has_contact_email": has.map(|(b,)| b).unwrap_or(false)}))
+}
+
+// ── POST /players/:wallet/contact-email ────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct ContactEmailBody {
+    pub email: String,
+}
+
+pub async fn set_contact_email(
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+    body:  web::Json<ContactEmailBody>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    let email = body.email.trim();
+    if email.is_empty() || email.len() > 254 || !email.contains('@') {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid email address"}));
+    }
+
+    let updated = sqlx::query("UPDATE players SET contact_email = $1 WHERE wallet_address = $2")
+        .bind(email)
+        .bind(&wallet)
+        .execute(&state.db)
+        .await;
+
+    match updated {
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(json!({"ok": true})),
+        Ok(_) => HttpResponse::NotFound().json(json!({"error": "Player not found"})),
+        Err(e) => {
+            tracing::error!("set contact email failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
 // ── POST /players ─────────────────────────────────────────────────────────────
 #[derive(Deserialize)]
 pub struct CreatePlayerRequest {
