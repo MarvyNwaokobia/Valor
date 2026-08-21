@@ -26,6 +26,7 @@ export default function ChatThreadPage() {
   const params = useParams<{ wallet: string }>()
   const searchParams = useSearchParams()
   const player = usePlayerStore((s) => s.player)
+  const playerSynced = usePlayerStore((s) => s.playerSynced)
   const otherWallet = params.wallet
   const displayName = searchParams.get('name') || shortWallet(otherWallet)
 
@@ -48,6 +49,7 @@ export default function ChatThreadPage() {
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
+  if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
   const onSend = async () => {

@@ -42,6 +42,7 @@ export default function FriendsPage() {
   const { status, address } = useResolvedAuth()
   const router = useRouter()
   const player = usePlayerStore((s) => s.player)
+  const playerSynced = usePlayerStore((s) => s.playerSynced)
   const { friends, incoming, outgoing, loading, error, sendRequest, acceptRequest, removeFriend } =
     useFriends(address)
   const { byWallet: unreadByWallet } = useUnreadCounts(address)
@@ -91,6 +92,7 @@ export default function FriendsPage() {
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
+  if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
   const onAdd = async (explicitIdentifier?: string) => {

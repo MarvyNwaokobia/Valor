@@ -63,6 +63,7 @@ export default function DuelsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const player = usePlayerStore((s) => s.player)
+  const playerSynced = usePlayerStore((s) => s.playerSynced)
   const inventory = usePlayerStore((s) => s.inventory)
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
 
@@ -123,6 +124,7 @@ export default function DuelsPage() {
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
+  if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
   // ── The run itself ─────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight, Swords } from 'lucide-react'
@@ -23,9 +22,15 @@ export default function BattlePage() {
   const challengeTarget = searchParams.get('challenge') ?? undefined
   const duelsAvailable = useDuelsAvailable()
 
-  const [view, setView] = useState<'menu' | 'operations' | 'pvp' | 'challenge'>(
-    challengeTarget ? 'challenge' : 'menu'
-  )
+  // The sub-view lives in the URL (not local state) so the browser Back button
+  // steps back out of Operations/PvP/Challenge to the menu instead of skipping
+  // the whole page — see FriendsPage/DuelsPage/ChatThreadPage for the sibling
+  // fix to the reload/back-button bug this page shared.
+  const viewParam = searchParams.get('view')
+  const view: 'menu' | 'operations' | 'pvp' | 'challenge' =
+    viewParam === 'operations' || viewParam === 'pvp' || viewParam === 'challenge'
+      ? viewParam
+      : challengeTarget ? 'challenge' : 'menu'
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
@@ -35,11 +40,11 @@ export default function BattlePage() {
   const def = CLASS_DEFINITIONS[player.character_class as CharacterClass] ?? CLASS_DEFINITIONS.Berserker
 
   if (view === 'operations') {
-    return <OperationsSelect player={player} onBack={() => setView('menu')} />
+    return <OperationsSelect player={player} onBack={() => router.push('/battle')} />
   }
 
   if (view === 'pvp') {
-    return <BattlePvP player={player} walletAddress={address} onBack={() => setView('menu')} />
+    return <BattlePvP player={player} walletAddress={address} onBack={() => router.push('/battle')} />
   }
 
   if (view === 'challenge') {
@@ -47,7 +52,7 @@ export default function BattlePage() {
       <div className="max-w-2xl mx-auto">
         <ChallengeBattle
           walletAddress={address}
-          onBack={() => setView('menu')}
+          onBack={() => router.push('/battle')}
           prefillOpponent={challengeTarget}
         />
       </div>
@@ -69,7 +74,7 @@ export default function BattlePage() {
 
       {/* Campaign → the first-person Operations list */}
       <motion.button
-        onClick={() => setView('operations')}
+        onClick={() => router.push('/battle?view=operations')}
         className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
         style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
         whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -96,7 +101,7 @@ export default function BattlePage() {
 
       {/* Challenge a Player */}
       <motion.button
-        onClick={() => setView('challenge')}
+        onClick={() => router.push('/battle?view=challenge')}
         className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
         style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(42,42,58,0.8)' }}
         whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
