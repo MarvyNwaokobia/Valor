@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, UserPlus, Swords, Check, X, Loader2 } from 'lucide-react'
+import { Users, UserPlus, UserMinus, Swords, Check, X, Loader2 } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useFriends, type FriendEntry, type FriendRequestEntry } from '@/hooks/useFriends'
@@ -32,6 +32,10 @@ export default function FriendsPage() {
   const [identifier, setIdentifier] = useState('')
   const [sending, setSending] = useState(false)
   const [busyWallet, setBusyWallet] = useState<string | null>(null)
+  // Wallet awaiting an explicit "yes, remove them" — unfriending is a one-way
+  // action (they'd have to re-request), so a stray tap on the button that
+  // starts it must not be enough to finish it.
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [formNotice, setFormNotice] = useState<string | null>(null)
 
@@ -173,25 +177,51 @@ export default function FriendsPage() {
               <p className="text-slate-500 text-sm">No friends yet — add one above.</p>
             )}
             {friends.map((f: FriendEntry) => (
-              <div key={f.wallet} className="rounded-xl border border-valor-border bg-valor-surface-2/50 px-4 py-3 flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm truncate">{who(f)}</p>
-                  <p className="text-slate-500 text-[11px] uppercase tracking-wider">{f.rank}</p>
-                </div>
-                <button
-                  onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
-                  className="shrink-0 px-3 min-h-9 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center gap-1.5"
-                >
-                  <Swords size={13} /> Challenge
-                </button>
-                <button
-                  onClick={() => void withBusy(f.wallet, () => removeFriend(f.wallet))}
-                  disabled={busyWallet === f.wallet}
-                  className="shrink-0 w-9 h-9 rounded-lg border border-valor-border text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors disabled:opacity-40 flex items-center justify-center"
-                  aria-label={`Remove ${who(f)}`}
-                >
-                  <X size={14} />
-                </button>
+              <div key={f.wallet} className={`rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors ${
+                confirmRemove === f.wallet ? 'border-red-500/50 bg-red-500/[0.06]' : 'border-valor-border bg-valor-surface-2/50'
+              }`}>
+                {confirmRemove === f.wallet ? (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-sm truncate">Remove {who(f)}?</p>
+                      <p className="text-slate-500 text-[11px]">They&apos;ll need to send a new request to be friends again.</p>
+                    </div>
+                    <button
+                      onClick={() => setConfirmRemove(null)}
+                      disabled={busyWallet === f.wallet}
+                      className="shrink-0 px-3 min-h-9 rounded-lg border border-valor-border bg-valor-surface-2 text-slate-300 font-bold text-xs hover:text-white transition-colors disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => void withBusy(f.wallet, () => removeFriend(f.wallet)).then(() => setConfirmRemove(null))}
+                      disabled={busyWallet === f.wallet}
+                      className="shrink-0 px-3 min-h-9 rounded-lg bg-red-500/90 text-white font-bold text-xs hover:bg-red-500 transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                    >
+                      {busyWallet === f.wallet ? <Loader2 className="animate-spin" size={13} /> : <UserMinus size={13} />}
+                      Remove
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-sm truncate">{who(f)}</p>
+                      <p className="text-slate-500 text-[11px] uppercase tracking-wider">{f.rank}</p>
+                    </div>
+                    <button
+                      onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
+                      className="shrink-0 px-3 min-h-9 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center gap-1.5"
+                    >
+                      <Swords size={13} /> Challenge
+                    </button>
+                    <button
+                      onClick={() => setConfirmRemove(f.wallet)}
+                      className="shrink-0 px-3 min-h-9 rounded-lg border border-valor-border text-slate-400 font-bold text-xs hover:text-red-300 hover:border-red-500/50 transition-colors flex items-center gap-1.5"
+                    >
+                      <UserMinus size={13} /> Remove friend
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
