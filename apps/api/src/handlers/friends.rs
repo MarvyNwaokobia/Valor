@@ -28,32 +28,64 @@ struct PersonRow {
     rank:           String,
 }
 
-/// Resolve "who is this" from either a wallet address or a username — the caller
-/// chooses which one they're typing, but this is where that choice actually gets
-/// looked up. A wallet-shaped string is matched as a wallet; anything else is
-/// matched as a username. Never both, so a username that happened to look like a
-/// wallet (impossible today — usernames aren't hex — but not worth relying on)
-/// can't be ambiguous.
-async fn resolve_person(state: &AppState, identifier: &str) -> Option<PersonRow> {
+enum Resolved {
+    Found(PersonRow),
+    /// More than one player shares that character name — see resolve_person.
+    Ambiguous,
+}
+
+/// Resolve "who is this" from a wallet address, a username, or a character
+/// name — the caller can type any of the three. Tried in order of how
+/// uniquely each one identifies a player:
+///   1. wallet-shaped input is matched as a wallet, always unambiguous.
+///   2. otherwise tried as a username, which IS enforced unique (see
+///      check_username in handlers/players.rs).
+///   3. otherwise tried as a character name — the name chosen at
+///      onboarding, which is NOT required to be unique. If more than one
+///      player has it, that's reported as Ambiguous rather than silently
+///      picking one, so a friend request can't land on a stranger who
+///      happens to share a name.
+async fn resolve_person(state: &AppState, identifier: &str) -> Option<Resolved> {
     if is_valid_wallet(identifier) {
         let wallet = normalize_wallet(identifier);
-        sqlx::query_as::<_, PersonRow>(
+        let found: Option<PersonRow> = sqlx::query_as(
             "SELECT wallet_address AS wallet, username, character_name, rank
              FROM players WHERE wallet_address = $1",
         )
         .bind(&wallet)
         .fetch_optional(&state.db)
         .await
-        .unwrap_or(None)
-    } else {
-        sqlx::query_as::<_, PersonRow>(
-            "SELECT wallet_address AS wallet, username, character_name, rank
-             FROM players WHERE LOWER(username) = LOWER($1) LIMIT 1",
-        )
-        .bind(identifier)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None)
+        .unwrap_or(None);
+        return found.map(Resolved::Found);
+    }
+
+    let by_username: Option<PersonRow> = sqlx::query_as(
+        "SELECT wallet_address AS wallet, username, character_name, rank
+         FROM players WHERE LOWER(username) = LOWER($1) LIMIT 1",
+    )
+    .bind(identifier)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+    if let Some(p) = by_username {
+        return Some(Resolved::Found(p));
+    }
+
+    // LIMIT 2 rather than counting: all that matters is "exactly one" vs
+    // "more than one", and this answers that in one row-count check either way.
+    let mut by_character: Vec<PersonRow> = sqlx::query_as(
+        "SELECT wallet_address AS wallet, username, character_name, rank
+         FROM players WHERE LOWER(character_name) = LOWER($1) LIMIT 2",
+    )
+    .bind(identifier)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    match by_character.len() {
+        0 => None,
+        1 => Some(Resolved::Found(by_character.remove(0))),
+        _ => Some(Resolved::Ambiguous),
     }
 }
 
@@ -96,7 +128,10 @@ pub async fn send_request(
     let wallet = normalize_wallet(&raw_wallet);
 
     let target = match resolve_person(&state, body.identifier.trim()).await {
-        Some(p) => p,
+        Some(Resolved::Found(p)) => p,
+        Some(Resolved::Ambiguous) => return HttpResponse::Conflict().json(json!({
+            "error": "Multiple players share that character name — try their username or wallet instead",
+        })),
         None => return HttpResponse::NotFound().json(json!({"error": "No such player"})),
     };
     if target.wallet == wallet {

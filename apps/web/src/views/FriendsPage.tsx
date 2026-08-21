@@ -28,7 +28,7 @@ export default function FriendsPage() {
     useFriends(address)
 
   const [tab, setTab] = useState<Tab>('friends')
-  const [addBy, setAddBy] = useState<'username' | 'wallet'>('username')
+  const [addBy, setAddBy] = useState<'username' | 'character' | 'wallet'>('username')
   const [identifier, setIdentifier] = useState('')
   const [sending, setSending] = useState(false)
   const [busyWallet, setBusyWallet] = useState<string | null>(null)
@@ -91,21 +91,26 @@ export default function FriendsPage() {
         <div className="rounded-xl border border-valor-border bg-valor-surface p-5 flex flex-col gap-3">
           <p className="font-display font-black text-white text-sm uppercase tracking-wider">Add a friend</p>
 
-          {/* The player picks which they're typing — the server matches either,
-              but the input's placeholder/validation should match what they chose. */}
-          <div className="grid grid-cols-2 gap-2">
-            {(['username', 'wallet'] as const).map((mode) => (
+          {/* The player picks which they're typing — the server tries all three
+              regardless (wallet, then username, then character name), so this
+              toggle only steers the placeholder/label toward what they chose. */}
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { id: 'username' as const, label: 'Username' },
+              { id: 'character' as const, label: 'Char. name' },
+              { id: 'wallet' as const, label: 'Wallet' },
+            ]).map(({ id, label }) => (
               <button
-                key={mode}
-                onClick={() => setAddBy(mode)}
-                aria-pressed={addBy === mode}
+                key={id}
+                onClick={() => setAddBy(id)}
+                aria-pressed={addBy === id}
                 className={`min-h-10 rounded-lg border font-bold text-xs uppercase tracking-wider transition-colors ${
-                  addBy === mode
+                  addBy === id
                     ? 'border-valor-gold bg-valor-gold/15 text-valor-gold'
                     : 'border-valor-border bg-valor-surface-2 text-slate-300 hover:border-valor-gold/50'
                 }`}
               >
-                By {mode}
+                {label}
               </button>
             ))}
           </div>
@@ -115,7 +120,7 @@ export default function FriendsPage() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onAdd() }}
-              placeholder={addBy === 'username' ? 'Username' : '0x…'}
+              placeholder={addBy === 'username' ? 'Username' : addBy === 'character' ? 'Character name' : '0x…'}
               className="flex-1 min-h-11 rounded-lg border border-valor-border bg-valor-surface-2 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/50"
             />
             <button
