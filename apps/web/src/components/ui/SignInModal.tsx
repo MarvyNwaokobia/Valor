@@ -14,6 +14,7 @@ interface Props {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 const CONNECTOR_LABELS: Record<string, string> = {
   injected: 'Browser Wallet',
@@ -62,8 +63,10 @@ export default function SignInModal({ onClose }: Props) {
     // MiniPay.
     return mini.length ? mini : connectors.filter((c) => c.id === 'injected')
   })()
+  const [credential, setCredential] = useState<'email' | 'username'>('email')
   const [email, setEmail] = useState('')
-  const [pending, setPending] = useState<'email' | 'google' | string | null>(null)
+  const [username, setUsername] = useState('')
+  const [pending, setPending] = useState<'email' | 'username' | 'google' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function handleWeb3AuthWallet() {
@@ -104,6 +107,41 @@ export default function SignInModal({ onClose }: Props) {
       // Magic shows its own OTP-entry modal on top of this one and resolves
       // once the user enters the code — nothing else to build here.
       await loginWithEmailOTP(email)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign-in failed — try again.')
+    } finally {
+      setPending(null)
+    }
+  }
+
+  /**
+   * "Forgot which email" path: resolve the typed username to the email
+   * already on file, then run the exact same OTP flow as handleEmail. The
+   * one extra step is verifying the login actually landed on the wallet this
+   * username belongs to — Magic can mint a different wallet for the same
+   * email under a different login method (see MagicAuthProvider's note on
+   * loginWithEmailOTP), so a mismatch here means "wrong login method", not
+   * "wrong code".
+   */
+  async function handleUsername() {
+    const name = username.trim()
+    if (name.length < 3 || pending) return
+    setPending('username')
+    setError(null)
+    try {
+      const res = await fetch(`${API}/players/by-username/${encodeURIComponent(name)}/login-email`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error((json as { error?: string }).error ?? 'Could not find that account')
+      }
+      const { email: resolvedEmail, wallet } = json as { email: string; wallet: string }
+
+      const identity = await loginWithEmailOTP(resolvedEmail)
+      if (!identity.address || identity.address.toLowerCase() !== wallet.toLowerCase()) {
+        setError("That login didn't match this account — try Google or connect your wallet instead.")
+        return
+      }
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed — try again.')
@@ -170,22 +208,66 @@ export default function SignInModal({ onClose }: Props) {
         </div>
 
         <div className="flex flex-col gap-2">
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value.trim())}
-            placeholder="you@example.com"
-            className="w-full px-3.5 py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-medium text-sm placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
-            onKeyDown={e => { if (e.key === 'Enter') handleEmail() }}
-            disabled={!!pending}
-          />
-          <button
-            onClick={handleEmail}
-            disabled={!EMAIL_RE.test(email) || !!pending}
-            className="w-full py-3 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40"
-          >
-            {pending === 'email' ? 'Sending code…' : 'Continue with Email'}
-          </button>
+          {/* Forgot which email you signed up with — resolve by username
+              instead and run the exact same OTP flow. */}
+          <div className="flex gap-1.5 self-start">
+            {([
+              { id: 'email' as const, label: 'Email' },
+              { id: 'username' as const, label: 'Username' },
+            ]).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => { setCredential(id); setError(null) }}
+                disabled={!!pending}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 ${
+                  credential === id ? 'bg-valor-gold/15 text-valor-gold' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {credential === 'email' ? (
+            <>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value.trim())}
+                placeholder="you@example.com"
+                className="w-full px-3.5 py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-medium text-sm placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
+                onKeyDown={e => { if (e.key === 'Enter') handleEmail() }}
+                disabled={!!pending}
+              />
+              <button
+                onClick={handleEmail}
+                disabled={!EMAIL_RE.test(email) || !!pending}
+                className="w-full py-3 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40"
+              >
+                {pending === 'email' ? 'Sending code…' : 'Continue with Email'}
+              </button>
+            </>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value.trim())}
+                placeholder="yourusername"
+                className="w-full px-3.5 py-3 rounded-xl bg-valor-surface-2 border border-valor-border text-white font-medium text-sm placeholder:text-slate-600 focus:outline-none focus:border-valor-gold/60 transition-colors"
+                onKeyDown={e => { if (e.key === 'Enter') handleUsername() }}
+                disabled={!!pending}
+              />
+              <button
+                onClick={handleUsername}
+                disabled={username.trim().length < 3 || !!pending}
+                className="w-full py-3 rounded-xl bg-valor-gold text-black font-bold text-sm hover:bg-valor-gold-light transition-colors disabled:opacity-40"
+              >
+                {pending === 'username' ? 'Sending code…' : 'Continue with Username'}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Bring-your-own-wallet. Ordered by how likely each is to just work:

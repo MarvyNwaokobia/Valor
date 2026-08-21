@@ -19,10 +19,14 @@ interface MagicAuthState {
 }
 
 interface MagicAuthContextValue extends MagicAuthState {
-  loginWithEmailOTP: (email: string) => Promise<void>
+  // Both resolve with the identity `refresh()` just landed on — callers that need
+  // to act on the address right away (e.g. verifying a username-recovered login
+  // actually reached the expected wallet) can't rely on `address` from this same
+  // render's closure, since that value is captured before the login happened.
+  loginWithEmailOTP: (email: string) => Promise<ResolvedIdentity>
   loginWithGoogle: () => Promise<void>
   logout: () => Promise<void>
-  refresh: () => Promise<void>
+  refresh: () => Promise<ResolvedIdentity>
 }
 
 const MagicAuthContext = createContext<MagicAuthContextValue | null>(null)
@@ -119,7 +123,7 @@ async function resolveIdentity(): Promise<ResolvedIdentity> {
 export function MagicAuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<MagicAuthState>({ status: 'loading', address: undefined, email: undefined, issuer: undefined })
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<ResolvedIdentity> => {
     try {
       const { address, email, issuer } = await resolveIdentity()
       // Publish to the bridge only now that Magic has actually resolved an
@@ -142,9 +146,11 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ email, issuer }),
         }).catch(() => {})
       }
+      return { address, email, issuer }
     } catch {
       clearBridgedProvider('magic')
       setState({ status: 'unauthenticated', address: undefined, email: undefined, issuer: undefined })
+      return { address: undefined, email: undefined, issuer: undefined }
     }
   }, [])
 
@@ -152,11 +158,11 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
     refresh()
   }, [refresh])
 
-  const loginWithEmailOTP = useCallback(async (email: string) => {
+  const loginWithEmailOTP = useCallback(async (email: string): Promise<ResolvedIdentity> => {
     const magic = getMagic()
-    if (!magic) return
+    if (!magic) return { address: undefined, email: undefined, issuer: undefined }
     await magic.auth.loginWithEmailOTP({ email, showUI: true })
-    await refresh()
+    return refresh()
   }, [refresh])
 
   const loginWithGoogle = useCallback(async () => {

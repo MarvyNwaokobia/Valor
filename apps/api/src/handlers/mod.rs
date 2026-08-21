@@ -84,6 +84,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("", web::post().to(players::create_player))
                 .route("/search", web::get().to(players::search_players))
                 .route("/by-username/{username}", web::get().to(players::get_player_by_username))
+                .route("/by-username/{username}/login-email", web::get().to(players::resolve_login_email))
                 .route("/{wallet}", web::get().to(players::get_player))
                 .route("/{wallet}/daily-claim", web::post().to(players::daily_claim))
                 .route("/{wallet}/daily-claim-status", web::get().to(players::daily_claim_status))

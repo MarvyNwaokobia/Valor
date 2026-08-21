@@ -1009,6 +1009,61 @@ pub async fn get_player_by_username(
     }
 }
 
+// ── GET /players/by-username/:username/login-email ────────────────────────────
+/// Sign-in recovery: a player who forgot which email they signed up with can
+/// type their username instead. This resolves it to the `magic_email` already
+/// on file so the CLIENT can drive the exact same `loginWithEmailOTP` flow it
+/// already has — no password, no new session model, just a lookup.
+///
+/// `wallet` is returned alongside the email so the caller can verify, after
+/// the OTP login completes, that it actually landed on the wallet this
+/// username belongs to — Magic can mint a different wallet for the same
+/// email under a different login method (see MagicAuthProvider's own comment
+/// on this), so that check is what stops a stale/cross-method email from
+/// silently dropping the player into an unfamiliar account.
+#[derive(sqlx::FromRow)]
+struct LoginEmailRow {
+    wallet_address: String,
+    magic_email:    Option<String>,
+}
+
+pub async fn resolve_login_email(
+    req:   HttpRequest,
+    state: web::Data<AppState>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+    if !state.battle_limiter.check(&format!("login_email_lookup:{}", ip)) {
+        return HttpResponse::TooManyRequests().json(json!({"error": "Too many requests. Slow down."}));
+    }
+
+    let username = path.into_inner();
+    if username.len() < 3 || username.len() > 20 {
+        return HttpResponse::NotFound().json(json!({"error": "No such player"}));
+    }
+
+    let result: Result<Option<LoginEmailRow>, _> = sqlx::query_as(
+        "SELECT wallet_address, magic_email FROM players WHERE LOWER(username) = LOWER($1) LIMIT 1",
+    )
+    .bind(&username)
+    .fetch_optional(&state.db)
+    .await;
+
+    match result {
+        Ok(Some(row)) => match row.magic_email {
+            Some(email) => HttpResponse::Ok().json(json!({"email": email, "wallet": row.wallet_address})),
+            None => HttpResponse::Conflict().json(json!({
+                "error": "This account doesn't have an email login — connect your wallet instead",
+            })),
+        },
+        Ok(None) => HttpResponse::NotFound().json(json!({"error": "No such player"})),
+        Err(e) => {
+            tracing::error!("login email lookup failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}
+
 pub async fn search_players(
     state: web::Data<AppState>,
     query: web::Query<SearchQuery>,
