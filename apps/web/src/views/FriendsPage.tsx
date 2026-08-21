@@ -283,61 +283,66 @@ export default function FriendsPage() {
               <p className="text-slate-500 text-sm">No friends match &ldquo;{listFilter}&rdquo;.</p>
             )}
             {filteredFriends.map((f: FriendEntry) => (
-              <div key={f.wallet} className={`rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors ${
+              <div key={f.wallet} className={`rounded-xl border px-4 py-3 flex flex-col gap-2.5 transition-colors ${
                 confirmRemove === f.wallet ? 'border-red-500/50 bg-red-500/[0.06]' : 'border-valor-border bg-valor-surface-2/50'
               }`}>
                 {confirmRemove === f.wallet ? (
                   <>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-bold text-sm truncate">Remove {who(f)}?</p>
-                      <p className="text-slate-500 text-[11px]">They&apos;ll need to send a new request to be friends again.</p>
+                    <div className="min-w-0">
+                      <p className="text-white font-bold text-sm">Remove {who(f)}?</p>
+                      <p className="text-slate-500 text-[11px] mt-0.5">They&apos;ll need to send a new request to be friends again.</p>
                     </div>
-                    <button
-                      onClick={() => setConfirmRemove(null)}
-                      disabled={busyWallet === f.wallet}
-                      className="shrink-0 px-3 min-h-9 rounded-lg border border-valor-border bg-valor-surface-2 text-slate-300 font-bold text-xs hover:text-white transition-colors disabled:opacity-40"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => void withBusy(f.wallet, () => removeFriend(f.wallet)).then(() => setConfirmRemove(null))}
-                      disabled={busyWallet === f.wallet}
-                      className="shrink-0 px-3 min-h-9 rounded-lg bg-red-500/90 text-white font-bold text-xs hover:bg-red-500 transition-colors disabled:opacity-40 flex items-center gap-1.5"
-                    >
-                      {busyWallet === f.wallet ? <Loader2 className="animate-spin" size={13} /> : <UserMinus size={13} />}
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setConfirmRemove(null)}
+                        disabled={busyWallet === f.wallet}
+                        className="flex-1 min-h-10 rounded-lg border border-valor-border bg-valor-surface-2 text-slate-300 font-bold text-xs hover:text-white transition-colors disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => void withBusy(f.wallet, () => removeFriend(f.wallet)).then(() => setConfirmRemove(null))}
+                        disabled={busyWallet === f.wallet}
+                        className="flex-1 min-h-10 rounded-lg bg-red-500/90 text-white font-bold text-xs hover:bg-red-500 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+                      >
+                        {busyWallet === f.wallet ? <Loader2 className="animate-spin" size={13} /> : <UserMinus size={13} />}
+                        Remove
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-bold text-sm truncate">{who(f)}</p>
-                      <p className="text-slate-500 text-[11px] uppercase tracking-wider">{f.rank}</p>
+                    <div className="min-w-0">
+                      <p className="text-white font-bold text-base truncate">{who(f)}</p>
+                      <p className="text-slate-500 text-[11px] uppercase tracking-wider mt-0.5">{f.rank}</p>
                     </div>
-                    <button
-                      onClick={() => router.push(`/friends/chat/${f.wallet}?name=${encodeURIComponent(who(f))}`)}
-                      className="relative shrink-0 w-9 h-9 rounded-lg border border-valor-border text-slate-300 hover:text-white hover:border-valor-gold/50 transition-colors flex items-center justify-center"
-                      aria-label={`Message ${who(f)}`}
-                    >
-                      <MessageCircle size={15} />
-                      {!!unreadByWallet[f.wallet] && (
-                        <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-valor-gold text-black text-[10px] font-black flex items-center justify-center">
-                          {unreadByWallet[f.wallet]}
-                        </span>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
-                      className="shrink-0 px-3 min-h-9 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center gap-1.5"
-                    >
-                      <Swords size={13} /> Challenge
-                    </button>
-                    <button
-                      onClick={() => setConfirmRemove(f.wallet)}
-                      className="shrink-0 px-3 min-h-9 rounded-lg border border-valor-border text-slate-400 font-bold text-xs hover:text-red-300 hover:border-red-500/50 transition-colors flex items-center gap-1.5"
-                    >
-                      <UserMinus size={13} /> Remove friend
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => router.push(`/friends/chat/${f.wallet}?name=${encodeURIComponent(who(f))}`)}
+                        className="relative shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-300 hover:text-white hover:border-valor-gold/50 transition-colors flex items-center justify-center"
+                        aria-label={`Message ${who(f)}`}
+                      >
+                        <MessageCircle size={16} />
+                        {!!unreadByWallet[f.wallet] && (
+                          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-valor-gold text-black text-[10px] font-black flex items-center justify-center">
+                            {unreadByWallet[f.wallet]}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
+                        className="flex-1 min-h-10 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <Swords size={14} /> Challenge
+                      </button>
+                      <button
+                        onClick={() => setConfirmRemove(f.wallet)}
+                        className="shrink-0 w-10 h-10 rounded-lg border border-valor-border text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors flex items-center justify-center"
+                        aria-label={`Remove ${who(f)}`}
+                      >
+                        <UserMinus size={16} />
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
