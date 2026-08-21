@@ -9,3 +9,16 @@ pub fn is_valid_wallet(addr: &str) -> bool {
 pub fn normalize_wallet(addr: &str) -> String {
     addr.to_lowercase()
 }
+
+/// The name to show for a wallet in a notification — username first, character
+/// name as the fallback, same COALESCE order used everywhere else a player is
+/// named (duel lobbies, achievements). None if the wallet has no player row.
+pub async fn display_name(db: &sqlx::PgPool, wallet: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(NULLIF(username, ''), character_name) FROM players WHERE wallet_address = $1",
+    )
+    .bind(wallet)
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None)
+}

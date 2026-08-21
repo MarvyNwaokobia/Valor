@@ -16,7 +16,8 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::utils::{is_valid_wallet, normalize_wallet};
+use crate::services::push::notify;
+use crate::utils::{display_name, is_valid_wallet, normalize_wallet};
 use crate::AppState;
 
 #[derive(sqlx::FromRow)]
@@ -101,6 +102,7 @@ pub async fn send_request(
     if target.wallet == wallet {
         return HttpResponse::BadRequest().json(json!({"error": "You can't friend yourself"}));
     }
+    let requester_name = display_name(&state.db, &wallet).await.unwrap_or_else(|| "A player".into());
 
     if let Some(existing) = find_between(&state, &wallet, &target.wallet).await {
         if existing.status == "accepted" {
@@ -120,7 +122,12 @@ pub async fn send_request(
         .execute(&state.db)
         .await;
         return match accepted {
-            Ok(_) => HttpResponse::Ok().json(json!({"status": "accepted", "auto_accepted": true})),
+            Ok(_) => {
+                // `target` was the original requester — they're the one who should
+                // hear that their pending request just got a yes.
+                notify(&state, target.wallet.clone(), format!("{requester_name} accepted your friend request"), "/friends");
+                HttpResponse::Ok().json(json!({"status": "accepted", "auto_accepted": true}))
+            }
             Err(e) => {
                 tracing::error!("friend auto-accept failed: {}", e);
                 HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
@@ -140,7 +147,10 @@ pub async fn send_request(
     .await;
 
     match inserted {
-        Ok(_) => HttpResponse::Ok().json(json!({"status": "pending", "to": target.wallet})),
+        Ok(_) => {
+            notify(&state, target.wallet.clone(), format!("{requester_name} sent you a friend request"), "/friends");
+            HttpResponse::Ok().json(json!({"status": "pending", "to": target.wallet}))
+        }
         Err(e) => {
             tracing::error!("friend request insert failed: {}", e);
             HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
@@ -173,7 +183,11 @@ pub async fn accept_request(
     .await;
 
     match updated {
-        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(json!({"status": "accepted"})),
+        Ok(r) if r.rows_affected() > 0 => {
+            let accepter_name = display_name(&state.db, &wallet).await.unwrap_or_else(|| "A player".into());
+            notify(&state, other.clone(), format!("{accepter_name} accepted your friend request"), "/friends");
+            HttpResponse::Ok().json(json!({"status": "accepted"}))
+        }
         Ok(_) => HttpResponse::NotFound().json(json!({"error": "No pending request from that player"})),
         Err(e) => {
             tracing::error!("friend accept failed: {}", e);

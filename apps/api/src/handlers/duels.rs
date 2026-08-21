@@ -22,7 +22,8 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::utils::{is_valid_wallet, normalize_wallet};
+use crate::utils::{display_name, is_valid_wallet, normalize_wallet};
+use crate::services::push::notify;
 use crate::AppState;
 
 /// House cut in BASIS POINTS (1 bp = 0.01%), taken out of the pot and left in the
@@ -339,6 +340,15 @@ pub async fn create_duel(
         }));
     }
 
+    if let Some(ref invited) = invited_wallet {
+        let challenger_name = display_name(&state.db, &wallet).await.unwrap_or_else(|| "A friend".into());
+        notify(
+            &state, invited.clone(),
+            format!("{challenger_name} challenged you to a duel — {} G$", body.stake_g),
+            "/duels",
+        );
+    }
+
     let takes = winner_payout(body.stake_g);
     tracing::info!("duel {} opened by {} for {} G$", id, wallet, body.stake_g);
     HttpResponse::Ok().json(json!({
@@ -416,6 +426,13 @@ pub async fn accept_duel(
             "refund_tx": refunded,
         }));
     }
+
+    let accepter_name = display_name(&state.db, &wallet).await.unwrap_or_else(|| "A player".into());
+    notify(
+        &state, duel.challenger_wallet.clone(),
+        format!("{accepter_name} accepted your duel challenge — {} G$", duel.stake_g),
+        "/duels",
+    );
 
     let takes = winner_payout(duel.stake_g);
     tracing::info!("duel {} accepted by {}", id, wallet);
