@@ -139,7 +139,10 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       {status !== 'whitelisted' && (
         <button
           onClick={() => signOut()}
-          className="absolute top-5 right-5 z-20 text-xs text-slate-600 hover:text-slate-300 transition-colors font-medium tracking-wide"
+          className="absolute right-5 z-20 text-xs text-slate-600 hover:text-slate-300 transition-colors font-medium tracking-wide"
+          // top-5 alone sits behind the iOS status bar in standalone PWA mode
+          // (viewport-fit=cover draws content under it) — offset past the inset too.
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}
         >
           Sign out
         </button>
