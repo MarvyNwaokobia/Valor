@@ -16,6 +16,7 @@ pub struct AppState {
     pub db:                sqlx::PgPool,
     pub rewards:           Option<services::rewards::RewardService>,
     pub chain:             Option<services::chain::ChainWriter>,
+    pub push:              Option<services::push::PushService>,
     pub battle_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
@@ -57,6 +58,10 @@ async fn main() -> anyhow::Result<()> {
     if chain.is_none() {
         tracing::info!("ChainWriter disabled (GAME_RECORD_CONTRACT not set)");
     }
+
+    let push = services::push::PushService::from_env()
+        .map_err(|e| tracing::info!("Push notifications disabled: {}", e))
+        .ok();
 
     // Start event listener as a background task
     if let Some(listener) = services::event_listener::EventListener::from_env(db.clone()) {
@@ -132,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
                 db:             db.clone(),
                 rewards:        rewards.clone(),
                 chain:          chain.clone(),
+                push:           push.clone(),
                 battle_limiter: battle_limiter.clone(),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),

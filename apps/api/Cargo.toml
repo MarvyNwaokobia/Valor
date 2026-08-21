@@ -26,6 +26,8 @@ jsonwebtoken = "9"
 dashmap = "6"
 actix-ws = "0.3"
 futures-util = "0.3"
+web-push = "0.11"
+base64 = "0.22"
 
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }

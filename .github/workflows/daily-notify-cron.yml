@@ -1,0 +1,36 @@
+name: daily-notify-cron
+
+# Fires the daily "come back and play" push sweep (POST /notifications/daily-run,
+# apps/api/src/handlers/push.rs). One run a day is the point — the endpoint itself
+# gates re-sends per subscription (RENOTIFY_AFTER_HOURS), so an extra manual run
+# is a harmless no-op, not a double-send.
+#
+# 18:00 UTC ≈ evening in the Americas/Europe, the highest-traffic replay window for
+# a "your rank is waiting" nudge. Revisit if the player base shifts timezone.
+#
+# Reuses the same two secrets as decay-cron.yml (Settings → Secrets and variables →
+# Actions):
+#   API_URL            the live API, e.g. https://valor-production.up.railway.app
+#   DECAY_CRON_SECRET  same value as the API's DECAY_CRON_SECRET env var
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  daily-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily reminder sweep
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          DECAY_CRON_SECRET: ${{ secrets.DECAY_CRON_SECRET }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$DECAY_CRON_SECRET" ]; then
+            echo "API_URL or DECAY_CRON_SECRET secret not set — skipping."; exit 0
+          fi
+          code=$(curl -sS -X POST "$API_URL/notifications/daily-run" \
+            -H "x-cron-secret: $DECAY_CRON_SECRET" \
+            -o /tmp/out.txt -w "%{http_code}" --max-time 90 || echo "000")
+          echo "HTTP $code"; cat /tmp/out.txt || true
+          case "$code" in 2*) exit 0;; *) echo "daily notify sweep did not return 2xx"; exit 1;; esac

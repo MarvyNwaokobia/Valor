@@ -19,6 +19,7 @@ pub mod gas;
 pub mod admin;
 pub mod consistency;
 pub mod client_errors;
+pub mod push;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -62,6 +63,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/health/ready", web::get().to(ready))
         // Read-only self-audit; the cron fails its job when this reports trouble.
         .route("/health/consistency", web::post().to(consistency::run_consistency_check))
+        .route("/push/vapid-public-key", web::get().to(push::vapid_public_key))
+        .route("/notifications/daily-run", web::post().to(push::run_daily_sweep))
         .route("/relay-address", web::get().to(ledger::get_relay_address))
         .route("/withdraw-fee", web::get().to(ledger::get_withdraw_fee))
         // Which reward pools this server actually loaded — see get_pools.
@@ -97,7 +100,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/transfer", web::post().to(ledger::transfer_out))
                 .route("/{wallet}/debt", web::get().to(debts::get_debt))
                 .route("/{wallet}/settle-debt", web::post().to(debts::settle_debt))
-                .route("/{wallet}/gas-topup", web::post().to(gas::gas_topup)),
+                .route("/{wallet}/gas-topup", web::post().to(gas::gas_topup))
+                .route("/{wallet}/push-subscription", web::post().to(push::subscribe))
+                .route("/{wallet}/push-subscription", web::delete().to(push::unsubscribe)),
         )
         .service(
             web::scope("/battles")

@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import InventoryPanel from '@/components/player-card/InventoryPanel'
 import DecayPanel from '@/components/player-card/DecayPanel'
+import NotificationToggle from '@/components/profile/NotificationToggle'
 import IdlePanel from '@/components/idle/IdlePanel'
 import BattleHistory from '@/components/profile/BattleHistory'
 import UsernameSetup from '@/components/profile/UsernameSetup'
@@ -252,6 +253,9 @@ export default function ProfilePage() {
 
         {/* Decay panel */}
         <DecayPanel walletAddress={address} />
+
+        {/* Daily reminder push notifications */}
+        <NotificationToggle walletAddress={address} />
       </motion.div>
 
       {/* ── RIGHT — Panels ──────────────────────────────────────────── */}
