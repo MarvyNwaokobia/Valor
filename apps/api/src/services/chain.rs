@@ -312,6 +312,10 @@ impl ChainWriter {
     /// Distributes a rank-up G$ reward from the ValorRewardPool to the player's wallet.
     /// Returns Ok(true) on success, Ok(false) if pool not configured, Err on failure.
     pub async fn distribute_rank_up_reward(&self, player: Address, rank: String) -> Result<bool, String> {
+        if crate::services::fraud_blocklist::is_blocked(player) {
+            tracing::warn!("distributeRankUpReward BLOCKED (fraud wallet): {}", player);
+            return Ok(false);
+        }
         let pool = match &self.reward_pool {
             Some(p) => p,
             None => return Ok(false),
@@ -338,6 +342,10 @@ impl ChainWriter {
     /// same bounty can never pay twice on-chain (a duplicate call reverts).
     /// Returns Ok(Some(tx_hash)) on success, Ok(None) if the pool isn't configured.
     pub async fn distribute_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<Option<String>, String> {
+        if crate::services::fraud_blocklist::is_blocked(player) {
+            tracing::warn!("distributeReward BLOCKED (fraud wallet): {} owed {} G$", player, amount_g);
+            return Ok(None);
+        }
         let pool = match &self.reward_pool {
             Some(p) => p,
             None => return Ok(None),
@@ -373,6 +381,10 @@ impl ChainWriter {
     /// separate pool means a survival grinder drains its own budget, not the rank-up /
     /// bounty budget.
     pub async fn distribute_endless_reward(&self, player: Address, amount_g: u64, reference: [u8; 32]) -> Result<Option<String>, String> {
+        if crate::services::fraud_blocklist::is_blocked(player) {
+            tracing::warn!("distributeEndlessReward BLOCKED (fraud wallet): {} owed {} G$", player, amount_g);
+            return Ok(None);
+        }
         let pool = match self.endless_or_main() {
             Some(p) => p.clone(),
             None => return Ok(None),
@@ -441,6 +453,10 @@ impl ChainWriter {
     /// Distributes the daily claim G$ reward from the ValorRewardPool to the player's wallet.
     /// Returns Ok(true) on success, Ok(false) if pool not configured, Err on failure.
     pub async fn distribute_daily_claim(&self, player: Address) -> Result<bool, String> {
+        if crate::services::fraud_blocklist::is_blocked(player) {
+            tracing::warn!("distributeDailyClaim BLOCKED (fraud wallet): {}", player);
+            return Ok(false);
+        }
         let pool = match &self.reward_pool {
             Some(p) => p,
             None => return Ok(false),

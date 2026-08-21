@@ -195,7 +195,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/seasons/{id}/fund", web::post().to(seasons::fund))
                 .route("/seasons/{id}/payout-preview", web::get().to(seasons::payout_preview))
                 .route("/seasons/{id}/payout", web::post().to(seasons::payout))
-                .route("/referrals/retry", web::post().to(players::retry_referrals)),
+                .route("/referrals/retry", web::post().to(players::retry_referrals))
+                .route("/character-claims/retry", web::post().to(players::retry_character_claims)),
         )
         .service(
             web::scope("/seasons")

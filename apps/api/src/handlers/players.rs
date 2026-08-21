@@ -562,14 +562,6 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
 /// and this function (or the reconcile query) has its own fraud check.
 const REFERRALS_PAUSED: bool = true;
 
-/// Wallets confirmed running the 2026-08-16 referral-farming bot. Blocked permanently
-/// here regardless of `REFERRALS_PAUSED` — not a hold, these never get paid again.
-const REFERRAL_FRAUD_BLOCKLIST: &[&str] = &[
-    "0x03fa336e3772c80a90238edee4f34502e9efaadf",
-    "0x4fe207375e0c7bff67d94322e65cfac251366d61",
-    "0x8a408c186a29abade67cbedc14e67c5ddac6c380",
-];
-
 pub async fn settle_referral(
     db: &sqlx::PgPool,
     chain: &crate::services::chain::ChainWriter,
@@ -577,7 +569,11 @@ pub async fn settle_referral(
     referred: &str,
     amount_g: u64,
 ) -> &'static str {
-    if REFERRAL_FRAUD_BLOCKLIST.contains(&referrer) {
+    // Same list services::chain checks before any distribute_* call, so this wallet
+    // is blocked from every reward type, not just referrals. Checked here too (rather
+    // than relying solely on the chain-level block) so the row gets the specific
+    // 'fraud_blocked' status instead of sitting as a generically-retried 'failed'.
+    if crate::services::fraud_blocklist::is_blocked_str(referrer) {
         tracing::warn!("referral BLOCKED (confirmed fraud wallet): {} owed {} G$, permanently refusing", referrer, amount_g);
         let _ = sqlx::query("UPDATE referrals SET status = 'fraud_blocked' WHERE referrer_wallet = $1 AND referred_wallet = $2")
             .bind(referrer).bind(referred).execute(db).await;
@@ -739,7 +735,13 @@ pub async fn create_player(
                 }
             }
 
-            // Background chain write — only for brand-new players (no existing claim tx)
+            // Background chain write — only for brand-new players (no existing claim tx).
+            // Retries a few times with backoff: the dominant failure mode observed in
+            // production is the relay running dry of CELO gas, which a submit-time retry
+            // a few seconds later doesn't fix if the tank is still empty. That longer
+            // outage is handled by the admin `/players/character-claims/retry` endpoint
+            // instead — this loop only smooths over transient RPC/nonce blips so most
+            // claims don't need that manual step at all.
             if player.character_claim_tx.is_none() {
                 if let Some(chain) = state.chain.as_ref().cloned() {
                     let addr_str = wallet.clone();
@@ -747,18 +749,28 @@ pub async fn create_player(
                     let name = player.character_name.clone();
                     let db = state.db.clone();
                     tokio::spawn(async move {
-                        if let Ok(addr) = addr_str.parse::<Address>() {
-                            if let Some(hash) = chain.claim_character(addr, class, name).await {
+                        let Ok(addr) = addr_str.parse::<Address>() else { return };
+                        const DELAYS_SECS: [u64; 3] = [2, 8, 20];
+                        for (attempt, delay) in DELAYS_SECS.iter().enumerate() {
+                            if attempt > 0 {
+                                tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+                            }
+                            if let Some(hash) = chain.claim_character(addr, class.clone(), name.clone()).await {
                                 let hash_str = format!("{:?}", hash);
                                 let _ = sqlx::query(
                                     "UPDATE players SET character_claim_tx = $1 WHERE wallet_address = $2",
                                 )
                                 .bind(hash_str)
-                                .bind(addr_str)
+                                .bind(&addr_str)
                                 .execute(&db)
                                 .await;
+                                return;
                             }
                         }
+                        tracing::error!(
+                            "claimCharacter gave up after {} attempts for {} — needs /players/character-claims/retry",
+                            DELAYS_SECS.len(), addr_str
+                        );
                     });
                 }
             }
@@ -1204,7 +1216,7 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
             tx_hash: None,
             error: None,
         };
-        if REFERRAL_FRAUD_BLOCKLIST.contains(&referrer.as_str()) {
+        if crate::services::fraud_blocklist::is_blocked_str(&referrer) {
             let _ = sqlx::query("UPDATE referrals SET status = 'fraud_blocked' WHERE referrer_wallet = $1 AND referred_wallet = $2")
                 .bind(&referrer).bind(&referred).execute(&state.db).await;
             row.status = "fraud_blocked".into();
@@ -1270,6 +1282,78 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
         "attempted": results.len(),
         "paid":      paid_count,
         "paid_g":    paid_g,
+        "results":   results,
+    }))
+}
+
+#[derive(Serialize)]
+struct RetriedClaim {
+    wallet: String,
+    status: String,
+    tx_hash: Option<String>,
+    error: Option<String>,
+}
+
+/// Reconciles players whose on-chain `claimCharacter` never landed a tx hash — the
+/// background write in `create_or_update_player` retries transient failures on its
+/// own, but a sustained relay-gas outage needs this manual sweep once the relay is
+/// funded again. Safe to re-run: only targets rows still missing `character_claim_tx`,
+/// and a claim that already succeeded on-chain for that wallet is a cheap no-op revert
+/// on the contract side rather than a double-spend, since claiming is idempotent per
+/// wallet there.
+pub async fn retry_character_claims(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    if let Err(resp) = crate::handlers::admin::verify_admin_token(&req) {
+        return resp;
+    }
+    let Some(chain) = state.chain.as_ref() else {
+        return HttpResponse::ServiceUnavailable().json(json!({"error": "Chain relay not available"}));
+    };
+
+    let stuck: Vec<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT wallet_address, character_class, character_name FROM players
+         WHERE character_confirmed = true AND character_claim_tx IS NULL
+         ORDER BY created_at ASC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut results: Vec<RetriedClaim> = Vec::with_capacity(stuck.len());
+    let mut claimed_count = 0i64;
+
+    for (wallet, class, name) in stuck {
+        let mut row = RetriedClaim { wallet: wallet.clone(), status: "failed".into(), tx_hash: None, error: None };
+
+        let Ok(addr) = wallet.parse::<Address>() else {
+            row.error = Some("unparseable wallet address".into());
+            results.push(row);
+            continue;
+        };
+
+        match chain.claim_character(addr, class.unwrap_or_default(), name).await {
+            Some(hash) => {
+                let hash_str = format!("{:?}", hash);
+                let _ = sqlx::query("UPDATE players SET character_claim_tx = $1 WHERE wallet_address = $2")
+                    .bind(&hash_str)
+                    .bind(&wallet)
+                    .execute(&state.db)
+                    .await;
+                tracing::info!("claimCharacter retry SUBMITTED for {} tx={}", wallet, hash_str);
+                claimed_count += 1;
+                row.status = "submitted".into();
+                row.tx_hash = Some(hash_str);
+            }
+            None => {
+                tracing::error!("claimCharacter retry FAILED for {}", wallet);
+                row.error = Some("chain write failed — see logs".into());
+            }
+        }
+        results.push(row);
+    }
+
+    HttpResponse::Ok().json(json!({
+        "attempted": results.len(),
+        "submitted": claimed_count,
         "results":   results,
     }))
 }

@@ -1,6 +1,7 @@
 pub mod battle;
 pub mod earn_cap;
 pub mod edition;
+pub mod fraud_blocklist;
 pub mod rewards;
 pub mod chain;
 pub mod chain_id;
