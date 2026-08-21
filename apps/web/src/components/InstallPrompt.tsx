@@ -184,7 +184,10 @@ export function InstallPrompt() {
   return (
     <div style={wrap}>
       <div style={card}>
-        <img src="/valor-icon-192.png" alt="" width={40} height={40} style={icon} />
+        {/* Transparent variant, not the PWA manifest icon: that one is deliberately opaque
+            (OS home-screen icons expect a filled background), but embedded inline here on
+            the card's own dark background an opaque square read as a stray black box. */}
+        <img src="/valor-icon-transparent.png" alt="" width={40} height={40} style={icon} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={title}>{cardTitle}</div>
           <div style={subtitle}>{body}</div>
