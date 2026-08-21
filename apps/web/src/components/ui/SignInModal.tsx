@@ -210,7 +210,7 @@ export default function SignInModal({ onClose }: Props) {
         <div className="flex flex-col gap-2">
           {/* Forgot which email you signed up with — resolve by username
               instead and run the exact same OTP flow. */}
-          <div className="flex gap-1.5 self-start">
+          <div className="grid grid-cols-2 gap-2">
             {([
               { id: 'email' as const, label: 'Email' },
               { id: 'username' as const, label: 'Username' },
@@ -219,9 +219,12 @@ export default function SignInModal({ onClose }: Props) {
                 key={id}
                 type="button"
                 onClick={() => { setCredential(id); setError(null) }}
+                aria-pressed={credential === id}
                 disabled={!!pending}
-                className={`px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40 ${
-                  credential === id ? 'bg-valor-gold/15 text-valor-gold' : 'text-slate-400 hover:text-slate-200'
+                className={`min-h-10 rounded-lg border font-black text-xs uppercase tracking-wider transition-colors disabled:opacity-40 ${
+                  credential === id
+                    ? 'border-valor-gold bg-valor-gold/15 text-valor-gold'
+                    : 'border-valor-border bg-valor-surface-2 text-slate-400 hover:border-valor-gold/50 hover:text-slate-200'
                 }`}
               >
                 {label}
