@@ -19,10 +19,11 @@ import SignInModal from '@/components/ui/SignInModal'
 // duels and onboarding, and are the same files Layout/HomePage/onboarding already
 // point at - so those surfaces picked up the new art without a code change.
 const IMG = {
-  hero:      '/art/hero-breach.webp',
-  berserker: '/characters/classes/berserker.webp',
-  sentinel:  '/characters/classes/sentinel.webp',
-  phantom:   '/characters/classes/phantom.webp',
+  hero:       '/art/hero-breach.webp',
+  heroMobile: '/art/hero-breach-mobile.webp',
+  berserker:  '/characters/classes/berserker.webp',
+  sentinel:   '/characters/classes/sentinel.webp',
+  phantom:    '/characters/classes/phantom.webp',
 }
 
 // ── Embers ────────────────────────────────────────────────────────────────────
@@ -160,19 +161,30 @@ export default function LandingPage() {
           <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse 55% 70% at 92% 90%, rgba(90,12,190,0.48) 0%, transparent 65%)' }} />
         </div>
 
-        {/* One full-bleed key art, identical on mobile and desktop.
-            It replaces four separate character cut-outs - Berserker left, Sentinel
-            centre, Phantom right, plus a mobile-only variant - that were composited
-            to fake a squad. All the tricks they needed are gone with them: no
+        {/* One full-bleed key art, replacing four separate character cut-outs - Berserker
+            left, Sentinel centre, Phantom right, plus a mobile-only variant - that were
+            composited to fake a squad. All the tricks they needed are gone: no
             mixBlendMode:'screen' to knock a black JPG background out, no brightness
-            lift to pay for that blend, no per-figure edge masks. This asset is
-            opaque and carries its own lighting, so object-cover just crops to the
-            centre, which is where the squad is at any aspect ratio.
+            lift to pay for that blend, no per-figure edge masks. This asset is opaque and
+            carries its own lighting, so object-cover just crops to the centre.
+
+            Desktop and mobile use DIFFERENT crops of the same photo, not the same crop at
+            two sizes. The source is a wide 3-operator frame; on a phone's narrow, tall
+            viewport object-cover has to crop so much off the sides that it either leaves a
+            half-cropped sliver of a flanking operator at the edge, or - depending on the
+            exact viewport width - cuts them cleanly but centres oddly. `heroMobile` is a
+            dedicated tight portrait crop of just the lead operator, composed on its own
+            terms rather than being whatever a wide frame happens to leave after cropping.
 
             The slow scale-down is the only motion: the frame settles rather than
             slides, so the VALOR logotype animating over it stays the main event. */}
+        <motion.img src={IMG.heroMobile} alt="" aria-hidden
+          className="absolute inset-0 w-full h-full object-cover object-center md:hidden"
+          initial={{ opacity:0, scale:1.06 }} animate={{ opacity:1, scale:1 }}
+          transition={{ duration:1.6, ease:[0.16,1,0.3,1] }}
+        />
         <motion.img src={IMG.hero} alt="" aria-hidden
-          className="absolute inset-0 w-full h-full object-cover object-center"
+          className="absolute inset-0 w-full h-full object-cover object-center hidden md:block"
           initial={{ opacity:0, scale:1.06 }} animate={{ opacity:1, scale:1 }}
           transition={{ duration:1.6, ease:[0.16,1,0.3,1] }}
         />
