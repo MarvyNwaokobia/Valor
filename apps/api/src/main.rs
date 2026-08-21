@@ -18,6 +18,8 @@ pub struct AppState {
     pub chain:             Option<services::chain::ChainWriter>,
     pub push:              Option<services::push::PushService>,
     pub battle_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
+    pub chat_limiter:      std::sync::Arc<services::rate_limiter::RateLimiter>,
+    pub chat_hub:          services::chat_hub::ChatHub,
     pub game_server:       services::game_server::GameServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
@@ -77,6 +79,10 @@ async fn main() -> anyhow::Result<()> {
     // independent bucket, silently multiplying the real limit by worker count.
     // battle_limiter: 10 requests / 60s per IP
     let battle_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
+    // chat_limiter: 20 messages / 60s per sender wallet — generous for real conversation,
+    // enough to stop one wallet flooding the push/socket fan-out.
+    let chat_limiter   = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(20, 60));
+    let chat_hub       = services::chat_hub::new_hub();
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
 
     // Guards /battles/bounties/reconcile against pile-up: the GitHub Actions cron
@@ -120,6 +126,8 @@ async fn main() -> anyhow::Result<()> {
     HttpServer::new(move || {
         let origins = allowed_origins.clone();
         let battle_limiter = battle_limiter.clone();
+        let chat_limiter = chat_limiter.clone();
+        let chat_hub = chat_hub.clone();
         let reconcile_running = reconcile_running.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
@@ -139,6 +147,8 @@ async fn main() -> anyhow::Result<()> {
                 chain:          chain.clone(),
                 push:           push.clone(),
                 battle_limiter: battle_limiter.clone(),
+                chat_limiter:   chat_limiter.clone(),
+                chat_hub:       chat_hub.clone(),
                 game_server:    game_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
                 live_fight_sessions: live_fight_sessions.clone(),

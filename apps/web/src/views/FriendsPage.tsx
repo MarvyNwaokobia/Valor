@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, UserPlus, UserMinus, Swords, Check, X, Loader2 } from 'lucide-react'
+import { Users, UserPlus, UserMinus, Swords, MessageCircle, Check, X, Loader2 } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useFriends, type FriendEntry, type FriendRequestEntry } from '@/hooks/useFriends'
+import { useUnreadCounts } from '@/hooks/useChat'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 const who = (f: { username: string | null; character_name: string }) => f.username || f.character_name
@@ -26,6 +27,7 @@ export default function FriendsPage() {
   const player = usePlayerStore((s) => s.player)
   const { friends, incoming, outgoing, loading, error, sendRequest, acceptRequest, removeFriend } =
     useFriends(address)
+  const { byWallet: unreadByWallet } = useUnreadCounts(address)
 
   const [tab, setTab] = useState<Tab>('friends')
   const [addBy, setAddBy] = useState<'username' | 'character' | 'wallet'>('username')
@@ -208,6 +210,18 @@ export default function FriendsPage() {
                       <p className="text-white font-bold text-sm truncate">{who(f)}</p>
                       <p className="text-slate-500 text-[11px] uppercase tracking-wider">{f.rank}</p>
                     </div>
+                    <button
+                      onClick={() => router.push(`/friends/chat/${f.wallet}?name=${encodeURIComponent(who(f))}`)}
+                      className="relative shrink-0 w-9 h-9 rounded-lg border border-valor-border text-slate-300 hover:text-white hover:border-valor-gold/50 transition-colors flex items-center justify-center"
+                      aria-label={`Message ${who(f)}`}
+                    >
+                      <MessageCircle size={15} />
+                      {!!unreadByWallet[f.wallet] && (
+                        <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-valor-gold text-black text-[10px] font-black flex items-center justify-center">
+                          {unreadByWallet[f.wallet]}
+                        </span>
+                      )}
+                    </button>
                     <button
                       onClick={() => router.push(`/duels?challenge=${f.wallet}&name=${encodeURIComponent(who(f))}`)}
                       className="shrink-0 px-3 min-h-9 rounded-lg bg-valor-gold text-black font-bold text-xs hover:bg-valor-gold-light transition-colors flex items-center gap-1.5"

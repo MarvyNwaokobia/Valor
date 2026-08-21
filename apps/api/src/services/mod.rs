@@ -8,3 +8,4 @@ pub mod event_listener;
 pub mod rate_limiter;
 pub mod game_server;
 pub mod push;
+pub mod chat_hub;

@@ -10,6 +10,8 @@ pub mod duels;
 pub mod friends;
 pub mod rewards;
 pub mod ws;
+pub mod chat;
+pub mod chat_ws;
 pub mod endless;
 pub mod survival;
 pub mod gauntlet;
@@ -71,6 +73,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // Which reward pools this server actually loaded — see get_pools.
         .route("/pools", web::get().to(ledger::get_pools))
         .route("/ws/battle", web::get().to(ws::battle_ws))
+        .route("/ws/chat", web::get().to(chat_ws::chat_ws))
         .service(
             web::scope("/identity")
                 .route("/verify/{wallet}", web::get().to(identity::verify_identity)),
@@ -108,7 +111,11 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/friends/requests", web::get().to(friends::list_requests))
                 .route("/{wallet}/friends/request", web::post().to(friends::send_request))
                 .route("/{wallet}/friends/{other}/accept", web::post().to(friends::accept_request))
-                .route("/{wallet}/friends/{other}", web::delete().to(friends::remove_friend)),
+                .route("/{wallet}/friends/{other}", web::delete().to(friends::remove_friend))
+                .route("/{wallet}/messages/unread-counts", web::get().to(chat::unread_counts))
+                .route("/{wallet}/friends/{other}/messages", web::get().to(chat::list_messages))
+                .route("/{wallet}/friends/{other}/messages", web::post().to(chat::send_message))
+                .route("/{wallet}/friends/{other}/messages/read", web::post().to(chat::mark_read)),
         )
         .service(
             web::scope("/battles")

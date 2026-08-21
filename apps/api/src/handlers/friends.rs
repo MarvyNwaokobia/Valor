@@ -90,13 +90,13 @@ async fn resolve_person(state: &AppState, identifier: &str) -> Option<Resolved> 
 }
 
 #[derive(sqlx::FromRow)]
-struct ExistingFriendship {
-    id:               Uuid,
-    requester_wallet: String,
-    status:           String,
+pub(crate) struct ExistingFriendship {
+    pub id:               Uuid,
+    pub requester_wallet: String,
+    pub status:           String,
 }
 
-async fn find_between(state: &AppState, a: &str, b: &str) -> Option<ExistingFriendship> {
+pub(crate) async fn find_between(state: &AppState, a: &str, b: &str) -> Option<ExistingFriendship> {
     sqlx::query_as::<_, ExistingFriendship>(
         "SELECT id, requester_wallet, status FROM friendships
          WHERE (requester_wallet = $1 AND recipient_wallet = $2)

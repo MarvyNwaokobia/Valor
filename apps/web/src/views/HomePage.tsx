@@ -8,6 +8,7 @@ import { ShoppingBag, Trophy, ChevronRight, Zap, Flame, Users } from 'lucide-rea
 import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useUnreadCounts } from '@/hooks/useChat'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -37,6 +38,7 @@ export default function HomePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const syncFailed   = usePlayerStore(s => s.syncFailed)
   const router       = useRouter()
+  const { total: unreadMessages } = useUnreadCounts(address)
 
   useEffect(() => {
     // Once sync confirms no player exists (and it's not a network failure),
@@ -230,13 +232,18 @@ export default function HomePage() {
                 />
 
                 <div
-                  className="w-11 h-11 rounded-xl flex items-center justify-center transition-all"
+                  className="relative w-11 h-11 rounded-xl flex items-center justify-center transition-all"
                   style={{
                     background: `${color}14`,
                     border: `1px solid ${color}30`,
                   }}
                 >
                   <Icon size={22} style={{ color }} strokeWidth={1.8} />
+                  {to === '/friends' && unreadMessages > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-valor-gold text-black text-[10px] font-black flex items-center justify-center">
+                      {unreadMessages}
+                    </span>
+                  )}
                 </div>
 
                 <div className="relative z-10">

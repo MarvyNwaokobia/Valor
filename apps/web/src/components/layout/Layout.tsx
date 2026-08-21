@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from './Navbar'
 import MobileNav from './MobileNav'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useChatSocket } from '@/hooks/useChatSocket'
 
 // Ghost character art that bleeds into the background of every page. Easy one to
 // miss: it is faint, so the old fantasy art sat behind every signed-in screen
@@ -18,6 +20,10 @@ const CLASS_BG: Record<string, { img: string; accent: string; glow: string }> = 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const player = usePlayerStore(s => s.player)
   const theme  = player?.character_class ? CLASS_BG[player.character_class] : null
+  const { address } = useResolvedAuth()
+  // Kept alive for the whole app (not just the chat page) so a friend's
+  // message and unread badge land no matter where the player currently is.
+  useChatSocket(player ? address : undefined)
 
   const sparks = useMemo(() =>
     Array.from({ length: 8 }, (_, i) => ({
