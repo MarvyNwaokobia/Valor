@@ -29,7 +29,7 @@ const boxStyle: React.CSSProperties = {
   borderColor: 'rgba(42,42,58,0.8)',
 }
 
-/** Duolingo-style opt-in: "come back and play" reminder pushes. Lives in Profile
+/** Opt-in "come back and play" reminder pushes. Lives in Profile
  * rather than as a landing-page interruption (unlike InstallPrompt) because it's an
  * account preference, not a one-time acquisition nudge.
  *
