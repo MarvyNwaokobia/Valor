@@ -13,6 +13,7 @@ import { retryImport } from '@/lib/retryImport';
 import { AnimatePresence } from 'framer-motion';
 import LoadoutModal from '@/components/battle/LoadoutModal';
 import WaveBoard from '@/components/battle/WaveBoard';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 
 const tactical = Rajdhani({
   subsets: ['latin'],
@@ -50,7 +51,8 @@ const UNLOCK_LEVEL = 15;
 export default function EndlessPage() {
   const player = usePlayerStore((s) => s.player);
   const inventory = usePlayerStore((s) => s.inventory);
-  const { address } = useResolvedAuth();
+  const playerSynced = usePlayerStore((s) => s.playerSynced);
+  const { status, address } = useResolvedAuth();
   const router = useRouter();
   const progress = useEndlessProgress(address); // no season id → Campaign Endless
 
@@ -91,10 +93,19 @@ export default function EndlessPage() {
   // body threw `ReferenceError: location is not defined` out of an uncaught
   // exception handler and took the whole Next process down on any server-rendered
   // hit to /endless without a player. Same pattern HomePage already uses.
+  //
+  // Wait for playerSynced (and auth status) before redirecting — otherwise a hard
+  // reload whose player-sync or wallet-reconnect hasn't landed yet gets mistaken
+  // for "logged out" and bounces the player to the landing page. See the same
+  // guard on BattlePage/FriendsPage/DuelsPage/ChatThreadPage.
   useEffect(() => {
-    if (!player) router.replace('/');
-  }, [player, router]);
+    if (status === 'unauthenticated') router.replace('/');
+    else if (status === 'ready' && !player && playerSynced) router.replace('/');
+  }, [status, player, playerSynced, router]);
 
+  if (status === 'loading') return <LoadingScreen />;
+  if (status === 'unauthenticated') return null;
+  if (!player && !playerSynced) return <LoadingScreen />;
   if (!player) return null;
 
   const cleared = player.pve_level ?? 0;

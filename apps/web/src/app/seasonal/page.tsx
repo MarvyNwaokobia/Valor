@@ -14,6 +14,7 @@ import { retryImport } from '@/lib/retryImport';
 import { AnimatePresence } from 'framer-motion';
 import LoadoutModal from '@/components/battle/LoadoutModal';
 import { Rajdhani } from 'next/font/google';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 
 // The tactical HUD face, same as /fight — exposed as a CSS var for the scene.
 const tactical = Rajdhani({
@@ -48,7 +49,8 @@ function untilText(iso: string): string {
 export default function SeasonalPage() {
   const player = usePlayerStore((s) => s.player);
   const inventory = usePlayerStore((s) => s.inventory);
-  const { address } = useResolvedAuth();
+  const playerSynced = usePlayerStore((s) => s.playerSynced);
+  const { status, address } = useResolvedAuth();
   const router = useRouter();
   const { season, board, loading, refresh } = useSeasonalRun(address);
   const progress = useEndlessProgress(address, season?.id);
@@ -105,6 +107,13 @@ export default function SeasonalPage() {
   // so the board is up to date the moment they walk away.
   const leave = useCallback(() => { setPhase('lobby'); void refresh(); }, [refresh]);
 
+  // Wait for auth status and playerSynced before redirecting — otherwise a hard
+  // reload whose wallet-reconnect or player-sync hasn't landed yet gets mistaken
+  // for "logged out" and bounces the player to the landing page. Same guard as
+  // BattlePage/FriendsPage/DuelsPage/ChatThreadPage/EndlessPage.
+  if (status === 'loading') return <LoadingScreen />;
+  if (status === 'unauthenticated') { router.replace('/'); return null; }
+  if (!player && !playerSynced) return <LoadingScreen />;
   if (!player) {
     router.replace('/');
     return null;
