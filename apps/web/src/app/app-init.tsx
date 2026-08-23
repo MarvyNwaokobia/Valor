@@ -5,6 +5,7 @@ import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useEnsureActiveChain } from '@/hooks/useEnsureActiveChain'
 
 // NOTE: the heavy first-person scene chunk is NOT warmed here. Doing it for every
 // visitor cost mobile data + a parse hitch for people who never fight. It's now
@@ -32,5 +33,6 @@ export default function AppInit() {
   usePlayerSync(address)
   useRealtimePlayer(address)
   useDecayMonitor()
+  useEnsureActiveChain()
   return null
 }

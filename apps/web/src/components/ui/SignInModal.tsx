@@ -9,6 +9,7 @@ import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvide
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
 import { edition } from '@/editions'
 import { MOBILE_WALLETS, isMobileBrowser } from '@/lib/mobileWallets'
+import { activeChainId } from '@/editions/chain'
 
 interface Props {
   onClose: () => void
@@ -103,7 +104,13 @@ export default function SignInModal({ onClose }: Props) {
     setPending(connectorId)
     setError(null)
     try {
-      await connect({ connector })
+      // Ask for Celo as part of the connect handshake itself, not after: a
+      // wallet that connects on whatever chain it defaulted to (Ethereum
+      // Mainnet, for most fresh installs) leaves wagmi's own useWalletClient()
+      // permanently mismatched until something requests a switch. useEnsureActiveChain
+      // (mounted app-wide) is the real safety net for a session that's already
+      // stuck this way; this is just the cleaner first-connect prompt.
+      await connect({ connector, chainId: activeChainId() })
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not connect wallet — try again.')
