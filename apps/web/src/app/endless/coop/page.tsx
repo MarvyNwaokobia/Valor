@@ -1,16 +1,27 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { Users, Copy, Check, X, Loader2 } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useCoopSocket } from '@/hooks/useCoopSocket'
+import { useEndlessProgress } from '@/hooks/useEndlessProgress'
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns'
 import { retryImport } from '@/lib/retryImport'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import type { CoopHostSnapshot, CoopOpts, CoopRemoteInput } from '@/engine/scene/ValorScene'
+
+/** A fixed pseudo-season id, reusing `useEndlessProgress`'s existing
+ *  wallet+season_id partition (the same mechanism the real Seasonal
+ *  Campaign uses to keep its progress separate from Campaign Endless) so a
+ *  co-op clear pays out in its own bucket — never a player's real solo
+ *  Campaign Endless career, which would otherwise let two friends farm each
+ *  other's permanent progress for free. `season_id` is a `Uuid` server-side
+ *  (see endless.rs), not a free-form string, so this has to actually be one
+ *  — an arbitrary valid UUID no real season will ever collide with. */
+const COOP_SEASON_ID = '00000000-0000-0000-0000-00000000c0c0'
 
 const ValorScene = dynamic(
   () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
@@ -33,10 +44,15 @@ const ValorScene = dynamic(
  * MobileNav. Nothing here is on-chain: no stake picker, no signer flow,
  * unlike Duels/Face-Off's lobby.
  *
- * Reward wiring (each party member's own `/endless/wave` call on a host-
- * announced clear) isn't built yet — `onWaveCleared`/`onDeath` below are
- * placeholders for that; a co-op run is fully playable without it, it just
- * doesn't pay out yet.
+ * Reward wiring: every party member — host included — runs their OWN
+ * `useEndlessProgress` session (own `session_id`, own anti-script time
+ * floor) in the shared `COOP_SEASON_ID` bucket. Only the HOST's ValorScene
+ * ever locally detects a real wave clear (see `FpsWorld`'s co-op section —
+ * a non-host's own sim never has real enemies to clear), so it's relayed
+ * over `coop.sendWaveCleared`/drained here for everyone else to claim their
+ * own reward independently. Death reporting needs no such relay: ValorScene
+ * fires `onDeath` off `effectiveSnap` (the broadcast-corrected survival
+ * state for a non-host), so it already fires correctly on every client.
  */
 export default function CoopLobbyPage() {
   const { status, address } = useResolvedAuth()
@@ -45,6 +61,7 @@ export default function CoopLobbyPage() {
   const playerSynced = usePlayerStore((s) => s.playerSynced)
   const inventory = usePlayerStore((s) => s.inventory)
   const coop = useCoopSocket(address ?? '')
+  const progress = useEndlessProgress(address, COOP_SEASON_ID)
 
   const [joinCode, setJoinCode] = useState('')
   const [copied, setCopied] = useState(false)
@@ -86,22 +103,51 @@ export default function CoopLobbyPage() {
     }).catch(() => {})
   }, [coop.state.code])
 
+  // Every party member opens their own progress session the moment the run
+  // actually starts — same as solo Endless's own `enterWithLoadout`, just
+  // triggered by the party's `running` transition instead of a loadout
+  // modal close. `startedProgressRef` guards against re-firing on every
+  // render while `phase` stays 'running'.
+  const startedProgressRef = useRef(false)
+  useEffect(() => {
+    if (coop.state.phase === 'running' && !startedProgressRef.current) {
+      startedProgressRef.current = true
+      void progress.start()
+    }
+    if (coop.state.phase !== 'running') startedProgressRef.current = false
+  }, [coop.state.phase, progress])
+
+  // Only the HOST's own ValorScene ever detects a real wave clear locally
+  // (see FpsWorld's co-op section) — everyone else claims their own reward
+  // off the relay instead, polled rather than tied to a render, since
+  // nothing else here re-renders on every incoming WS message.
+  useEffect(() => {
+    if (coop.state.phase !== 'running' || coop.state.isHost) return
+    const id = setInterval(() => {
+      for (const _wave of coop.drainWaveClears()) void progress.clearWave()
+    }, 250)
+    return () => clearInterval(id)
+  }, [coop.state.phase, coop.state.isHost, coop, progress])
+
+  // Host only, via ValorScene's endlessOpts.onWaveCleared — its own local
+  // detection is what's trusted to fan a clear out to the rest of the
+  // party in the first place (see FpsWorld's coop.sendWaveCleared call).
+  const onWaveCleared = useCallback(() => { void progress.clearWave() }, [progress])
+  // Fires correctly on every client, host or not — ValorScene's death
+  // trigger reads `effectiveSnap` (the broadcast-corrected survival state
+  // for a non-host), not the local sim's always-healthy one.
+  const onDeath = useCallback((wave: number) => { void progress.reportDeath(wave) }, [progress])
+
+  const onExit = useCallback(() => {
+    coop.leaveParty()
+  }, [coop])
+
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
   const { phase, code, seed, members, isHost, error } = coop.state
-
-  // TODO(Phase 7): each party member's own reward call on a host-announced
-  // wave clear (`coop.drainWaveClears()`), and a death report. A run is
-  // fully playable without these — they just don't pay out G$ yet.
-  const onWaveCleared = useCallback(() => {}, [])
-  const onDeath = useCallback(() => {}, [])
-
-  const onExit = useCallback(() => {
-    coop.leaveParty()
-  }, [coop])
 
   if (phase === 'running' && coopOpts && seed !== null) {
     return (
