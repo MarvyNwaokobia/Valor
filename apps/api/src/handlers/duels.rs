@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::utils::{display_name, is_valid_wallet, normalize_wallet};
 use crate::services::push::notify;
+use crate::handlers::admin::verify_admin_token;
 use crate::AppState;
 
 /// House cut in BASIS POINTS (1 bp = 0.01%), taken out of the pot and left in the
@@ -820,6 +821,47 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
         "max_stake_g": tiers.last().copied().unwrap_or(MAX_STAKE_G),
         "house_cut_bps": HOUSE_CUT_BPS,
     }))
+}
+
+// ── POST /admin/duels/{id}/void ─────────────────────────────────────────────
+//
+// Manual recovery for an `accepted` duel whose live match never actually
+// happened — most concretely, a `face_off` duel where one or both sides never
+// connected to /ws/arena, so the room never paired and nothing will ever call
+// resolve_live_duel on its own. Until Phase 5's AFK/leaver handling exists,
+// this is the only way an accepted-but-dead duel's stake gets back to the
+// players rather than sitting in the pool forever.
+//
+// Deliberately just a refund (same as a draw), never a forced win — an admin
+// voiding a duel has no way to know who "should" have won a fight that never
+// happened, and awarding one side would be indistinguishable from favoritism.
+// Reuses resolve_live_duel/settle_draw exactly, so this is not a parallel
+// payout path: same idempotent on-chain reference, same no-house-cut-on-draw
+// rule as every other draw in the system.
+pub async fn void_duel(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) { return resp; }
+    let id = path.into_inner();
+
+    let duel: Option<DuelRow> = sqlx::query_as("SELECT * FROM duels WHERE id = $1")
+        .bind(id).fetch_optional(&state.db).await.unwrap_or(None);
+    let duel = match duel {
+        Some(d) => d,
+        None => return HttpResponse::NotFound().json(json!({"error": "Duel not found"})),
+    };
+    if duel.status != "accepted" {
+        return HttpResponse::Conflict().json(json!({
+            "error": "Only an accepted (unresolved) duel can be voided", "status": duel.status,
+        }));
+    }
+
+    match resolve_live_duel(&state, id, None).await {
+        Ok(resp) => resp,
+        Err(resp) => resp,
+    }
 }
 
 #[cfg(test)]
