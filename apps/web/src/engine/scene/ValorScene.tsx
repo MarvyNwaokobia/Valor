@@ -719,13 +719,19 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const startZ = zForWaveStart(wave, seed);
 
     // Drop every enemy and every wall, then lay the wave's opening window fresh.
+    // Co-op non-host: appendEnemies is skipped — this client's own sim never
+    // owns real enemies (see FpsWorld's coop section), so respawning here
+    // must not start populating them; resetEncounter/pruneBehind/appendCover
+    // are all still correct to run as-is (resetEncounter's own enemy loop is
+    // a no-op against an empty array, and geometry is real either way).
+    const isAiAuthorityForRespawn = !coop || coop.isHost;
     sim.pruneBehind(Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY);
     sim.resetEncounter();
     sim.appendCover(entryCap(startZ));
     const rooms = buildChain(first, ENDLESS_LOOKAHEAD, startZ, seed);
     for (const r of rooms) {
       sim.appendCover([...r.walls, ...r.cover]);
-      sim.appendEnemies(r.enemies);
+      if (isAiAuthorityForRespawn) sim.appendEnemies(r.enemies);
     }
     const last = rooms[rooms.length - 1];
     sim.setBounds(-ENDLESS_HALF_W, ENDLESS_HALF_W, last.zFar, rooms[0].zNear);
@@ -978,6 +984,11 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
    *  reason to broadcast 60x/sec what a lerp on the receiving end already
    *  smooths between ticks. */
   const lastCoopBroadcastAt = useRef(0);
+  /** Co-op Endless, non-host only — this client's own last known REAL hp
+   *  (from the host's broadcast `combatants` entry, not the local sim's
+   *  always-full one), so a frame-to-frame drop can be detected and turned
+   *  into a camera reaction. Null until the first broadcast arrives. */
+  const lastCoopHp = useRef<number | null>(null);
   const downAt = useRef(-99);
   /**
    * Second wind. Going down doesn't end the attempt while you have one of these:
@@ -2027,6 +2038,38 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       ? (coop.latestHostSnapshot?.current?.enemies ?? [])
       : snap.enemies;
 
+    // Co-op non-host: this client's own playerHp/playerAlive is a LIE —
+    // nothing ever damages an enemy-less local sim, so the real truth lives
+    // in the host's broadcast combatants entry instead. `effectiveSnap` is
+    // what every endless-flow read below uses in place of the raw `snap`
+    // for anything survival-related (HUD, low-hp cues, the death/respawn
+    // trigger) — every other mode (including the host's own client) is
+    // untouched, `effectiveSnap` just IS `snap` there.
+    let effectiveSnap = snap;
+    if (coop && !coop.isHost) {
+      const mine = coop.latestHostSnapshot?.current?.combatants[coop.myWallet];
+      if (mine) {
+        // A drop since the last frame is a hit landing — there's no discrete
+        // event for it (FpsSim's enemyFire never fires one for a combatant
+        // target, see its own doc), so this diff IS the detection. Reuses
+        // the exact same camera stagger/shake/vignette refs a real
+        // `playerHit` event already drives elsewhere in this loop — no part/
+        // direction crosses the broadcast, so this is a fixed torso-weight
+        // reaction rather than the fully directional one, a real but minor
+        // v1 simplification.
+        if (lastCoopHp.current !== null && mine.hp < lastCoopHp.current) {
+          const dmg = lastCoopHp.current - mine.hp;
+          const k = 0.02 + dmg * 0.0015;
+          staggerP.current = Math.min(0.05, staggerP.current + k);
+          shake.current = Math.min(0.05, shake.current + k * 0.6);
+          vignetteHit.current = 1;
+          audio.hurt();
+        }
+        lastCoopHp.current = mine.hp;
+        effectiveSnap = { ...snap, playerHp: mine.hp, playerAlive: mine.alive };
+      }
+    }
+
     // ── Co-op teammates: rendered ENTIRELY from whichever source is
     // authoritative for THIS client, never predicted — same discipline
     // Face-Off's ArenaScene uses for its opponent. The host reads each
@@ -2154,8 +2197,9 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
     }
 
-    // ── low-HP heartbeat ──
-    if (snap.playerAlive && snap.playerHp <= 35 && now - heartbeatAt.current > 0.45 + (snap.playerHp / 35) * 0.4) {
+    // ── low-HP heartbeat ── (effectiveSnap: real broadcast hp for a co-op
+    // non-host, unchanged snap everywhere else — see its own comment above)
+    if (effectiveSnap.playerAlive && effectiveSnap.playerHp <= 35 && now - heartbeatAt.current > 0.45 + (effectiveSnap.playerHp / 35) * 0.4) {
       audio.heartbeat();
       heartbeatAt.current = now;
     }
@@ -2240,6 +2284,29 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       const c = chain.current;
       const roomAt = (i: number) => c.rooms.find((r) => r.index === i);
 
+      // Whether THIS client owns the AI — solo play is its own host by
+      // definition. Every AI-authority statement below (waking a room,
+      // detecting a wave clear, spawning real enemies) is gated on this;
+      // a non-host still runs everything else in this block (geometry
+      // streaming, the room cursor, its own breach/audio beats) driven by
+      // its OWN position, exactly like a host would — only enemies
+      // themselves are never real on a non-host's own sim (see FpsWorld's
+      // co-op section above `sim.step`). Hoisted to the top of the whole
+      // endless block (not just the room-flow branch) since the waypoint
+      // check below also needs it.
+      const isAiAuthority = !coop || coop.isHost;
+      // Enemies-alive-in-room, whichever source is actually true for this
+      // client: the local sim (host/solo) or the host's broadcast (non-
+      // host, whose own sim never has real enemies to ask).
+      const roomAliveCount = (room: number): number => {
+        if (isAiAuthority) return sim.roomAlive(room);
+        const hostSnap = coop!.latestHostSnapshot?.current;
+        if (!hostSnap) return 0;
+        let n = 0;
+        for (const e of hostSnap.enemies) if (e.alive && e.room === room) n++;
+        return n;
+      };
+
       // ── The travelling rig: floor + sun follow the player ──
       //
       // The floor is a fixed-size plane and the sun's shadow camera only covers ±22
@@ -2279,34 +2346,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         }
       }
 
-      if (snap.playerAlive && !c.over) {
+      if (effectiveSnap.playerAlive && !c.over) {
         const cur = roomAt(c.cursor);
 
         // ARMING BEAT: the room you spawn in holds its fire until you move. Step off
         // the mark (or shoot) and it wakes. This gives the run the same breach rhythm
         // as every later room instead of opening mid-gunfight, and it costs nothing
         // to a player who just walks in shooting.
-        // Whether THIS client owns the AI — solo play is its own host by
-        // definition. Every AI-authority statement below (waking a room,
-        // detecting a wave clear, spawning real enemies) is gated on this;
-        // a non-host still runs everything else in this block (geometry
-        // streaming, the room cursor, its own breach/audio beats) driven by
-        // its OWN position, exactly like a host would — only enemies
-        // themselves are never real on a non-host's own sim (see FpsWorld's
-        // co-op section above `sim.step`).
-        const isAiAuthority = !coop || coop.isHost;
-        // Enemies-alive-in-room, whichever source is actually true for this
-        // client: the local sim (host/solo) or the host's broadcast (non-
-        // host, whose own sim never has real enemies to ask).
-        const roomAliveCount = (room: number): number => {
-          if (isAiAuthority) return sim.roomAlive(room);
-          const hostSnap = coop!.latestHostSnapshot?.current;
-          if (!hostSnap) return 0;
-          let n = 0;
-          for (const e of hostSnap.enemies) if (e.alive && e.room === room) n++;
-          return n;
-        };
-
         if (!c.armed) {
           const moved = Math.hypot(pos.current.x - START[0], pos.current.z - START[1]) > 1.2;
           if (moved || snap.stats.shotsFired > 0) {
@@ -2399,7 +2445,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // A pending second wind holds the wave restart off entirely — you are getting
       // back up, so the run has not ended and endlessOpts.onDeath (which is what
       // banks the checkpoint / submits a Seasonal score) must not fire.
-      if (!snap.playerAlive && !c.dying && reviveAt.current === 0) {
+      if (!effectiveSnap.playerAlive && !c.dying && reviveAt.current === 0) {
         c.dying = true;
         waveDoneUntil.current = 0;
         if (hud.current.waveDone) hud.current.waveDone.style.opacity = '0';
@@ -2419,7 +2465,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       // always legible. While enemies are up, the fight is the objective.
       if (waypointRef.current) {
         const cur = roomAt(c.cursor);
-        const clear = cur ? sim.roomAlive(cur.index + 1) === 0 : false;
+        const clear = cur ? roomAliveCount(cur.index + 1) === 0 : false;
         if (cur && clear && !c.over) {
           waypointRef.current.visible = true;
           waypointRef.current.position.set(cur.exitPos[0], 0, cur.exitPos[1]);
@@ -2431,10 +2477,10 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       }
 
       if (now > briefingUntil.current) say('opStart');
-      if (snap.playerAlive && snap.playerHp < 35) say('lowHp');
-      if (!snap.playerAlive) say('opHeroDown');
+      if (effectiveSnap.playerAlive && effectiveSnap.playerHp < 35) say('lowHp');
+      if (!effectiveSnap.playerAlive) say('opHeroDown');
       pumpStory(now);
-      updateHud(snap);
+      updateHud(effectiveSnap);
       return;
     }
 
