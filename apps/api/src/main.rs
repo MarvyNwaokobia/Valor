@@ -23,6 +23,7 @@ pub struct AppState {
     pub chat_hub:          services::chat_hub::ChatHub,
     pub game_server:       services::game_server::GameServerHandle,
     pub arena_server:      services::arena_server::ArenaServerHandle,
+    pub coop_server:       services::coop_server::CoopServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
     pub endless_sessions: std::sync::Arc<DashMap<Uuid, services::battle::EndlessSession>>,
@@ -95,6 +96,10 @@ async fn main() -> anyhow::Result<()> {
     let arena_state_cell: std::sync::Arc<std::sync::OnceLock<AppState>> =
         std::sync::Arc::new(std::sync::OnceLock::new());
     let arena_server = services::arena_server::ArenaServerHandle::spawn(db.clone(), arena_state_cell.clone());
+    // No AppState cell needed here (unlike arena_server above) — a co-op
+    // party never settles a payout, so it never needs to reach back into
+    // AppState at all. See coop_server.rs's module doc.
+    let coop_server = services::coop_server::CoopServerHandle::spawn();
 
     // Guards /battles/bounties/reconcile against pile-up: the GitHub Actions cron
     // fires it every 15 minutes regardless of whether the previous run finished, and
@@ -148,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         chat_hub:       chat_hub.clone(),
         game_server:    game_server.clone(),
         arena_server:   arena_server.clone(),
+        coop_server:    coop_server.clone(),
         bot_fight_sessions: bot_fight_sessions.clone(),
         live_fight_sessions: live_fight_sessions.clone(),
         endless_sessions: endless_sessions.clone(),
