@@ -69,7 +69,7 @@ struct EquippedBoost {
     category:   String,
 }
 
-async fn equipped_xp_multiplier(db: &sqlx::PgPool, wallet: &str) -> i32 {
+pub(crate) async fn equipped_xp_multiplier(db: &sqlx::PgPool, wallet: &str) -> i32 {
     let has_booster: bool = sqlx::query_scalar(
         "SELECT EXISTS (
             SELECT 1 FROM inventory

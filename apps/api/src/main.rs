@@ -12,6 +12,7 @@ mod models;
 mod services;
 mod utils;
 
+#[derive(Clone)]
 pub struct AppState {
     pub db:                sqlx::PgPool,
     pub rewards:           Option<services::rewards::RewardService>,
@@ -85,7 +86,15 @@ async fn main() -> anyhow::Result<()> {
     let chat_limiter   = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(20, 60));
     let chat_hub       = services::chat_hub::new_hub();
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
-    let arena_server   = services::arena_server::ArenaServerHandle::spawn(db.clone());
+    // The arena actor needs a full AppState to settle a finished match (stake
+    // payout + XP/rank go through the same functions HTTP handlers use), but
+    // it has to be spawned before AppState can exist (AppState names its own
+    // handle). This cell is how it gets one anyway: empty at spawn time, set
+    // once below after AppState is actually built. No match can end before
+    // then — the WS route isn't even being served until `.bind().run()`.
+    let arena_state_cell: std::sync::Arc<std::sync::OnceLock<AppState>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+    let arena_server = services::arena_server::ArenaServerHandle::spawn(db.clone(), arena_state_cell.clone());
 
     // Guards /battles/bounties/reconcile against pile-up: the GitHub Actions cron
     // fires it every 15 minutes regardless of whether the previous run finished, and
@@ -125,12 +134,29 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting Valor API on {}", bind_addr);
     tracing::info!("CORS allowed origins: {:?}", allowed_origins);
 
+    // Built ONCE — every field is Clone (PgPool, Arcs, cheap handles), so each
+    // worker below just clones this one value instead of re-assembling the
+    // struct from a dozen captured pieces. Also what lets the arena actor
+    // reach a real AppState after the fact (see arena_state_cell above).
+    let app_state = AppState {
+        db:             db.clone(),
+        rewards:        rewards.clone(),
+        chain:          chain.clone(),
+        push:           push.clone(),
+        battle_limiter: battle_limiter.clone(),
+        chat_limiter:   chat_limiter.clone(),
+        chat_hub:       chat_hub.clone(),
+        game_server:    game_server.clone(),
+        arena_server:   arena_server.clone(),
+        bot_fight_sessions: bot_fight_sessions.clone(),
+        live_fight_sessions: live_fight_sessions.clone(),
+        endless_sessions: endless_sessions.clone(),
+        reconcile_running: reconcile_running.clone(),
+    };
+    let _ = arena_state_cell.set(app_state.clone());
+
     HttpServer::new(move || {
         let origins = allowed_origins.clone();
-        let battle_limiter = battle_limiter.clone();
-        let chat_limiter = chat_limiter.clone();
-        let chat_hub = chat_hub.clone();
-        let reconcile_running = reconcile_running.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let s = origin.to_str().unwrap_or("");
@@ -143,21 +169,7 @@ async fn main() -> anyhow::Result<()> {
             .max_age(3600);
 
         App::new()
-            .app_data(web::Data::new(AppState {
-                db:             db.clone(),
-                rewards:        rewards.clone(),
-                chain:          chain.clone(),
-                push:           push.clone(),
-                battle_limiter: battle_limiter.clone(),
-                chat_limiter:   chat_limiter.clone(),
-                chat_hub:       chat_hub.clone(),
-                game_server:    game_server.clone(),
-                arena_server:   arena_server.clone(),
-                bot_fight_sessions: bot_fight_sessions.clone(),
-                live_fight_sessions: live_fight_sessions.clone(),
-                endless_sessions: endless_sessions.clone(),
-                reconcile_running: reconcile_running.clone(),
-            }))
+            .app_data(web::Data::new(app_state.clone()))
             .wrap(Logger::default())
             .wrap(cors)
             .configure(handlers::configure_routes)

@@ -260,15 +260,14 @@ async fn settle_cancel(state: &AppState, duel_id: Uuid, challenger: &str, stake:
 }
 
 /// Resolve a `face_off` duel once a live match has ended. Called by the arena
-/// server (not by an HTTP handler here) — there is no client-facing route for
-/// this, because a live match's winner is decided by the referee, not reported
-/// by either player.
+/// server's match-end settlement task (see `services::arena_server`), not by
+/// an HTTP handler — there is no client-facing route for this, because a live
+/// match's winner is decided by the referee, not reported by either player.
 ///
 /// `winner_wallet: None` means a draw (mutual timeout at equal HP); reuses the
 /// exact same `settle_win`/`settle_draw` payout rails `wave_race` resolution
 /// does, so the stake/house-cut/idempotency behaviour is identical between
 /// modes — only how a winner gets decided differs.
-#[allow(dead_code)] // wired in once the arena server (Phase 2/3) can call it
 pub async fn resolve_live_duel(
     state: &AppState,
     duel_id: Uuid,
