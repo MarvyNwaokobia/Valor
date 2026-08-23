@@ -450,16 +450,29 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
   const gunId = equippedGun ?? 'assault_rifle'
 
   const locked = useRef(false)
-  // Face the opponent's spawn side on mount: local player spawns at the near
-  // cap (z > 0) facing -Z if the wallet sorts first alphabetically among the
-  // pair (arbitrary but deterministic — the server itself decides real spawn
-  // sides by JOIN ORDER, not wallet sort, so this is only the starting camera
-  // guess, corrected within one reconcile tick regardless).
+  // Placeholder pose for the brief window before the first real
+  // state_update arrives (the server doesn't tick — and so never reports a
+  // position — until FightStart, a few seconds after this component mounts).
+  // Wallet-sort is NOT a reliable guess at which side we're actually on: the
+  // server assigns spawn sides by JOIN ORDER, which has no relationship to
+  // wallet string comparison, so this is right only by chance. It used to be
+  // treated as "corrected within one reconcile tick regardless" — false in
+  // practice, since the reconcile below only ever pulled POSITION toward the
+  // server, never yaw, so a wrong guess left the camera staring at a wall for
+  // the entire match while position silently slid out from under it. See
+  // `hasSnapped` below for the actual fix.
   const nearSide = walletAddress.toLowerCase() < opponentWallet.toLowerCase()
   const yaw = useRef(nearSide ? 0 : Math.PI)
   const pitch = useRef(0)
 
   const localPos = useRef({ x: 0, z: nearSide ? 7.3 : -7.3 })
+  // Flips true the first time a real server snapshot for US arrives, at
+  // which point position/yaw/pitch are HARD-set to it (not the soft pull
+  // below) — that's the one moment the guess above gets corrected, facing
+  // included. After that, the player's own look input owns yaw/pitch and
+  // only position keeps softly reconciling (ordinary latency jitter, not a
+  // wrong-guess correction).
+  const hasSnapped = useRef(false)
   const crouchCur = useRef(0)
   const adsCur = useRef(0)
 
@@ -694,11 +707,27 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
         audio.footstep()
       }
 
-      // Soft-reconcile toward the server's last-known truth for this wallet.
+      // The FIRST real snapshot is a hard snap, not a soft pull — this is
+      // what actually corrects a wrong near/far-side guess (position AND
+      // facing), instead of leaving the camera aimed at whatever wall the
+      // guess happened to be wrong about while position quietly slides
+      // elsewhere underneath it. Every snapshot after that is a gentle
+      // reconcile toward the server's truth — by then the guess is long
+      // since resolved, so this is purely smoothing over ordinary latency
+      // jitter, and must NOT touch yaw/pitch (the player's own look input
+      // owns those from here on; server-pulling them would fight aiming).
       const mine = latestPlayers.current.get(walletAddress)
       if (mine) {
-        localPos.current.x += (mine.x - localPos.current.x) * RECONCILE_STRENGTH * (dt * 20)
-        localPos.current.z += (mine.z - localPos.current.z) * RECONCILE_STRENGTH * (dt * 20)
+        if (!hasSnapped.current) {
+          hasSnapped.current = true
+          localPos.current.x = mine.x
+          localPos.current.z = mine.z
+          yaw.current = mine.yaw
+          pitch.current = mine.pitch
+        } else {
+          localPos.current.x += (mine.x - localPos.current.x) * RECONCILE_STRENGTH * (dt * 20)
+          localPos.current.z += (mine.z - localPos.current.z) * RECONCILE_STRENGTH * (dt * 20)
+        }
         onLocalHp(mine.hp)
         onAmmo(mine.ammo, mine.reloading)
 
