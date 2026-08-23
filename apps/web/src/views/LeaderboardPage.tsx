@@ -1,12 +1,17 @@
 'use client'
 
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Trophy } from 'lucide-react'
+import { Trophy, Users } from 'lucide-react'
 import LeaderboardTable from '@/components/leaderboard/LeaderboardTable'
+import CampaignLeaderboardTable from '@/components/leaderboard/CampaignLeaderboardTable'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+
+type BoardTab = 'gameplay' | 'campaign'
 
 export default function LeaderboardPage() {
   const { address } = useResolvedAuth()
+  const [tab, setTab] = useState<BoardTab>('gameplay')
 
   return (
     <div className="flex flex-col gap-6">
@@ -40,12 +45,33 @@ export default function LeaderboardPage() {
         </div>
       </motion.div>
 
+      {/* ── Board switcher ── */}
+      <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'rgba(8,8,14,0.9)', border: '1px solid rgba(42,42,58,0.6)' }}>
+        <button
+          onClick={() => setTab('gameplay')}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider py-2 rounded-md transition-colors"
+          style={tab === 'gameplay' ? { background: '#3b82f6', color: '#fff' } : { color: '#94a3b8' }}
+        >
+          <Trophy size={14} /> Gameplay
+        </button>
+        <button
+          onClick={() => setTab('campaign')}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider py-2 rounded-md transition-colors"
+          style={tab === 'campaign' ? { background: '#3b82f6', color: '#fff' } : { color: '#94a3b8' }}
+        >
+          <Users size={14} /> Campaign Board
+        </button>
+      </div>
+
       <motion.div
+        key={tab}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, delay: 0.12 }}
       >
-        <LeaderboardTable currentWallet={address} />
+        {tab === 'gameplay'
+          ? <LeaderboardTable currentWallet={address} />
+          : <CampaignLeaderboardTable currentWallet={address} />}
       </motion.div>
     </div>
   )
