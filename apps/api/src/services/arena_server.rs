@@ -30,10 +30,13 @@
 //! ARENA GEOMETRY: one fixed, hand-picked room straight out of the real
 //! Operation room generator (`apps/web/src/engine/fps/endless.ts`'s
 //! `generateRoom`, seed `"valor-faceoff"`, room 0, CRATE_LINE cover
-//! archetype) instead of an empty box — see `ROOM_WALLS`/`ROOM_COVER` below.
-//! The box list there MUST match `ArenaScene.tsx`'s copy exactly, the same
-//! mirroring discipline as `WALK_SPEED`/`ARENA_HALF_X`/`PITCH_LIMIT` already
-//! use between these two files.
+//! archetype) instead of an empty box — see `room_walls()`/`room_cover()`
+//! below. Both this server and `ArenaScene.tsx` load the SAME
+//! `faceoffArena.json` (embedded here at compile time via `include_str!`),
+//! so there is one source of truth for the box list, not two hand-copied
+//! arrays. `WALK_SPEED`/`ARENA_HALF_X`/`PITCH_LIMIT` and the rest of the
+//! tuning block below are still mirrored by hand between the two files —
+//! only the geometry itself moved to a shared file.
 //!
 //! V1 SCOPE, STILL DELIBERATELY NARROW: one fixed weapon/loadout (viewmodel
 //! is cosmetic-only on the client and may be reskinned per player, but
@@ -96,13 +99,13 @@ const TICK_INTERVAL: Duration = Duration::from_millis(50);
 // ── Arena tuning — a small hand-built symmetric box, one fixed loadout ───────
 
 /// Outer safety-net bounds, kept as a fallback even though the real walls
-/// (in `ROOM_WALLS`, via collide-and-slide — see `resolve_move`) do the actual
-/// work now. Interior clear space is x in [-9,9], z in [-8.5,8.5] (the real
-/// wall inner faces); inset by `PLAYER_RADIUS` so this clamp binds only if
-/// the collision pass is ever wrong, not in ordinary play.
+/// (from `room_walls()`, via collide-and-slide — see `resolve_move`) do the
+/// actual work now. Interior clear space is x in [-9,9], z in [-8.5,8.5] (the
+/// real wall inner faces); inset by `PLAYER_RADIUS` so this clamp binds only
+/// if the collision pass is ever wrong, not in ordinary play.
 const ARENA_HALF_X: f32 = 8.6;
 const ARENA_HALF_Z: f32 = 8.1;
-/// Collision radius used against `ROOM_WALLS`/`ROOM_COVER` — a human's
+/// Collision radius used against `room_walls()`/`room_cover()` — a human's
 /// shoulder width, not a tuned hitbox.
 const PLAYER_RADIUS: f32 = 0.35;
 /// Matches `WALK` in `ValorScene.tsx` — same walk speed as everywhere else in
@@ -159,34 +162,58 @@ const CROUCH_SPREAD_MULT: f32 = 0.7;
 // doorway is replaced with a solid cap (mirroring `entryCap`'s treatment of
 // the near side) so this is one sealed room, not a corridor segment.
 //
-// MUST match `ArenaScene.tsx`'s copy of the same boxes exactly.
+// Parsed once from `faceoffArena.json` — the same file `ArenaScene.tsx`
+// imports directly — rather than a hand-copied literal, so the two can no
+// longer silently drift apart.
 struct Obstacle { x: f32, z: f32, hx: f32, hz: f32, h: f32 }
 
 impl Obstacle {
-    const fn new(x: f32, z: f32, w: f32, d: f32, h: f32) -> Self {
-        Self { x, z, hx: w / 2.0, hz: d / 2.0, h }
-    }
     fn min(&self) -> (f32, f32, f32) { (self.x - self.hx, 0.0, self.z - self.hz) }
     fn max(&self) -> (f32, f32, f32) { (self.x + self.hx, self.h, self.z + self.hz) }
 }
 
-const ROOM_WALLS: &[Obstacle] = &[
-    Obstacle::new(-9.3, 0.0, 0.6, 17.0, 4.0),   // west wall
-    Obstacle::new(9.3, 0.0, 0.6, 17.0, 4.0),    // east wall
-    Obstacle::new(0.0, 8.8, 19.2, 0.6, 4.0),    // north cap (sealed, no chain doorway)
-    Obstacle::new(0.0, -8.8, 19.2, 0.6, 4.0),   // south cap (sealed)
-];
+#[derive(serde::Deserialize)]
+struct ObstacleData { x: f32, z: f32, w: f32, d: f32, h: f32 }
 
-const ROOM_COVER: &[Obstacle] = &[
-    Obstacle::new(-6.0, 0.0, 2.4, 1.6, 1.15),
-    Obstacle::new(-1.5, 1.2, 2.4, 1.6, 1.15),
-    Obstacle::new(3.0, 0.0, 2.4, 1.6, 1.15),
-    Obstacle::new(6.8, -1.4, 1.8, 1.6, 1.15),
-];
+impl From<ObstacleData> for Obstacle {
+    fn from(o: ObstacleData) -> Self {
+        Self { x: o.x, z: o.z, hx: o.w / 2.0, hz: o.d / 2.0, h: o.h }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ArenaGeometryFile { walls: Vec<ObstacleData>, cover: Vec<ObstacleData> }
+
+const ARENA_GEOMETRY_JSON: &str = include_str!("../../../web/src/engine/scene/faceoffArena.json");
+
+fn arena_geometry() -> &'static (Vec<Obstacle>, Vec<Obstacle>) {
+    static GEOMETRY: OnceLock<(Vec<Obstacle>, Vec<Obstacle>)> = OnceLock::new();
+    GEOMETRY.get_or_init(|| {
+        let parsed: ArenaGeometryFile = serde_json::from_str(ARENA_GEOMETRY_JSON)
+            .expect("faceoffArena.json must parse — it's checked in and shared with ArenaScene.tsx");
+        (
+            parsed.walls.into_iter().map(Obstacle::from).collect(),
+            parsed.cover.into_iter().map(Obstacle::from).collect(),
+        )
+    })
+}
+
+fn room_walls() -> &'static [Obstacle] { &arena_geometry().0 }
+fn room_cover() -> &'static [Obstacle] { &arena_geometry().1 }
 
 /// Safety net so a match can't hang forever if both players go idle mid-fight
 /// without disconnecting. Higher HP wins; an exact tie is a draw.
 const MATCH_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// How long a room stays paused, waiting for a dropped wallet to reconnect,
+/// before settling as a forfeit-loss for whoever never came back. This is the
+/// actual fix for the 2026-08-23 stuck-duel incident: before this, ANY
+/// disconnect tore the room down unsettled forever, recoverable only via
+/// `POST /admin/duels/{id}/void`. Now a real network blip (the common case on
+/// mobile) gets a fair window to reconnect into the SAME room and resume
+/// exactly where it left off; only a wallet that never comes back within this
+/// window loses the match, same as any other forfeit.
+const RECONNECT_GRACE: Duration = Duration::from_secs(25);
 
 /// Flat XP, matching the numbers the old turn-based Live PvP already used —
 /// not a new balance decision, just carried over.
@@ -224,19 +251,31 @@ pub struct InputSample {
 /// cover are kept as separate slices above only because `ArenaScene.tsx`
 /// renders them with different materials.
 fn obstacles() -> impl Iterator<Item = &'static Obstacle> {
-    ROOM_WALLS.iter().chain(ROOM_COVER.iter())
+    room_walls().iter().chain(room_cover().iter())
 }
 
 pub enum ServerMsg {
     Join(ClientEntry),
     Input { wallet: String, sample: InputSample },
+    /// An accidental drop (network loss, tab killed, backgrounding) — distinct
+    /// from `Forfeit`. Pauses the room and starts a `RECONNECT_GRACE` timer
+    /// rather than ending the match; see `on_leave`.
     Leave { wallet: String },
-    /// A deliberate "Exit" from the client, distinct from `Leave` (which also
-    /// fires on an accidental disconnect and stays on the old unsettled
-    /// teardown — see `on_leave`'s doc). This one always settles: the wallet
-    /// forfeits, its opponent gets a real `match_end` win, same payout rails
-    /// as any other finish.
+    /// A deliberate "Exit" from the client, distinct from `Leave`. This one
+    /// always settles immediately: the wallet forfeits, its opponent gets a
+    /// real `match_end` win, same payout rails as any other finish.
     Forfeit { wallet: String },
+    /// Fires `RECONNECT_GRACE` after a `Leave`, carrying the `Instant` that
+    /// disconnect was recorded at. Only acts if the room is STILL waiting on
+    /// that exact disconnect (i.e. `since` still matches) — a reconnect, or a
+    /// second disconnect-then-reconnect cycle in between, invalidates it, so
+    /// a stale timer is always a safe no-op rather than a race.
+    GraceExpired { room_id: String, wallet: String, since: Instant },
+    /// A read-only viewer for a live match — "anyone with the link", no
+    /// wallet check the way `Join` has one. The room map itself is the
+    /// access gate: a `duel_id` with no live room yet just gets told to
+    /// try again, no DB round-trip needed the way Join needs one.
+    Spectate { duel_id: Uuid, tx: UnboundedSender<String> },
     FightStart { room_id: String },
     Tick,
 }
@@ -288,6 +327,18 @@ struct ArenaRoom {
     started: Instant,
     active: bool,
     rng: Rng,
+    /// Wallets currently disconnected, and when — empty means both sides are
+    /// live. `on_tick` skips a room with `active == false`, which is how a
+    /// pause actually freezes HP/position instead of just hiding the fact.
+    disconnected: HashMap<String, Instant>,
+    /// Read-only viewers. Never receive `Input` capability — a spectate
+    /// connection has no `wallet` in `arena_ws.rs`, so even a malicious
+    /// client sending an `Input` frame on this socket is a no-op (`on_input`
+    /// only ever looks up a wallet in `player_rooms`, which spectators are
+    /// never added to). Dead senders (a viewer who left) are never swept —
+    /// a room's lifetime is one match, a few minutes at most, so a stale
+    /// entry just sits harmlessly until the room itself is dropped.
+    spectators: Vec<UnboundedSender<String>>,
 }
 
 struct ArenaServer {
@@ -322,8 +373,10 @@ impl ArenaServer {
         match msg {
             ServerMsg::Join(entry) => self.on_join(entry, self_tx),
             ServerMsg::Input { wallet, sample } => self.on_input(&wallet, sample),
-            ServerMsg::Leave { wallet } => self.on_leave(&wallet),
+            ServerMsg::Leave { wallet } => self.on_leave(&wallet, self_tx),
             ServerMsg::Forfeit { wallet } => self.on_forfeit(&wallet),
+            ServerMsg::GraceExpired { room_id, wallet, since } => self.on_grace_expired(&room_id, &wallet, since),
+            ServerMsg::Spectate { duel_id, tx } => self.on_spectate(duel_id, tx),
             ServerMsg::FightStart { room_id } => self.fight_start(&room_id),
             ServerMsg::Tick => self.on_tick(),
         }
@@ -332,9 +385,17 @@ impl ArenaServer {
     // ── Join / pairing ────────────────────────────────────────────────────────
 
     fn on_join(&mut self, entry: ClientEntry, self_tx: &UnboundedSender<ServerMsg>) {
-        // Already in a room (e.g. a stray reconnect) — ignore rather than
-        // double-seat them.
-        if self.player_rooms.contains_key(&entry.wallet) {
+        // Already seated somewhere. Two cases: a genuine reconnect (the room
+        // has this exact wallet marked disconnected — `on_leave` left the
+        // player_rooms entry in place for exactly this) or a stray duplicate
+        // join from a wallet that's already live — ignore that one rather
+        // than double-seat them.
+        if let Some(room_id) = self.player_rooms.get(&entry.wallet).cloned() {
+            let is_reconnect = self.rooms.get(&room_id)
+                .is_some_and(|r| r.disconnected.contains_key(&entry.wallet));
+            if is_reconnect {
+                self.reconnect(&room_id, entry);
+            }
             return;
         }
 
@@ -382,6 +443,8 @@ impl ArenaServer {
             started: Instant::now(),
             active: false,
             rng: Rng::new(rand_seed()),
+            disconnected: HashMap::new(),
+            spectators: Vec::new(),
         });
 
         let stx = self_tx.clone();
@@ -392,13 +455,73 @@ impl ArenaServer {
         });
     }
 
+    /// A wallet the room still has marked disconnected has come back on a
+    /// fresh socket — reseat them onto the SAME `PlayerState` (position, HP,
+    /// ammo, everything survives) rather than starting a new one, and resume
+    /// ticking once BOTH sides are present again (handles the rare case where
+    /// both players dropped and only one has come back so far).
+    fn reconnect(&mut self, room_id: &str, entry: ClientEntry) {
+        let Some(room) = self.rooms.get_mut(room_id) else { return };
+        room.disconnected.remove(&entry.wallet);
+
+        let p = if room.p1.wallet == entry.wallet { &mut room.p1 } else { &mut room.p2 };
+        p.tx = entry.tx.clone();
+        // Don't replay whatever input was in flight the instant they dropped
+        // (e.g. still "firing") — they get one clean tick to get their
+        // bearings before the sim acts on anything again.
+        p.last_input = InputSample::default();
+
+        let resumed = room.disconnected.is_empty();
+        if resumed {
+            room.active = true;
+        }
+        self.player_rooms.insert(entry.wallet.clone(), room_id.to_string());
+
+        tracing::info!("arena: {} reconnected to room {} (resumed={})", entry.wallet, room_id, resumed);
+
+        send(&entry.tx, json!({
+            "type": "reconnected",
+            "resumed": resumed,
+            "players": [player_json(&room.p1), player_json(&room.p2)],
+        }));
+        if resumed {
+            let other_tx = if room.p1.wallet == entry.wallet { room.p2.tx.clone() } else { room.p1.tx.clone() };
+            send(&other_tx, json!({ "type": "opponent_reconnected" }));
+        }
+    }
+
     fn fight_start(&mut self, room_id: &str) {
         if let Some(room) = self.rooms.get_mut(room_id) {
             room.active = true;
             room.started = Instant::now();
             let msg = json!({ "type": "fight_start" }).to_string();
             let _ = room.p1.tx.send(msg.clone());
-            let _ = room.p2.tx.send(msg);
+            let _ = room.p2.tx.send(msg.clone());
+            broadcast_to_spectators(room, &msg);
+        }
+    }
+
+    /// A viewer asking to watch a live match. No wallet check the way `Join`
+    /// has one — "anyone with the link" was the deliberate scope here. If
+    /// the room hasn't formed yet (still in matchmaking, or the duel_id is
+    /// bogus), they're told to try again rather than left queued — see
+    /// `ServerMsg::Spectate`'s doc for why no DB round-trip is needed either
+    /// way.
+    fn on_spectate(&mut self, duel_id: Uuid, tx: UnboundedSender<String>) {
+        let room_id = duel_id.to_string();
+        match self.rooms.get_mut(&room_id) {
+            Some(room) => {
+                send(&tx, json!({
+                    "type": "spectate_joined",
+                    "active": room.active,
+                    "players": [player_json(&room.p1), player_json(&room.p2)],
+                }));
+                room.spectators.push(tx);
+            }
+            None => send(&tx, json!({
+                "type": "error",
+                "message": "This match hasn't started yet — try again in a moment.",
+            })),
         }
     }
 
@@ -478,7 +601,8 @@ impl ArenaServer {
                         "damage": ev.damage, "target_hp": ev.target_hp,
                     }).to_string();
                     let _ = room.p1.tx.send(payload.clone());
-                    let _ = room.p2.tx.send(payload);
+                    let _ = room.p2.tx.send(payload.clone());
+                    broadcast_to_spectators(room, &payload);
                 }
 
                 let state_payload = json!({
@@ -486,7 +610,8 @@ impl ArenaServer {
                     "players": [player_json(&room.p1), player_json(&room.p2)],
                 }).to_string();
                 let _ = room.p1.tx.send(state_payload.clone());
-                let _ = room.p2.tx.send(state_payload);
+                let _ = room.p2.tx.send(state_payload.clone());
+                broadcast_to_spectators(room, &state_payload);
             }
 
             if let Some(info) = ended {
@@ -497,7 +622,15 @@ impl ArenaServer {
 
     // ── Disconnect ────────────────────────────────────────────────────────────
 
-    fn on_leave(&mut self, wallet: &str) {
+    /// An accidental drop — mobile network loss, tab killed, backgrounding.
+    /// Unlike the old behaviour (tear the room down unsettled forever,
+    /// recoverable only via `POST /admin/duels/{id}/void`), this now PAUSES
+    /// the room and gives the dropped wallet `RECONNECT_GRACE` to come back
+    /// into the exact same match. Only if they never do does it settle — as
+    /// a forfeit-loss, via `on_grace_expired` — so a flaky connection isn't
+    /// punished the same as a deliberate quit, but a genuine walkaway still
+    /// resolves the stake instead of stranding it.
+    fn on_leave(&mut self, wallet: &str, self_tx: &UnboundedSender<ServerMsg>) {
         // Not yet paired — just drop the waiting slot if it's theirs.
         let was_waiting = self.waiting.iter().any(|(_, e)| e.wallet == wallet);
         self.waiting.retain(|_, e| e.wallet != wallet);
@@ -509,38 +642,58 @@ impl ArenaServer {
             Some(id) => id.clone(),
             None => return,
         };
-        let other_tx = match self.rooms.get(&room_id) {
-            Some(r) => {
-                if r.p1.wallet == wallet { r.p2.tx.clone() } else { r.p1.tx.clone() }
-            }
-            None => return,
-        };
+        let Some(room) = self.rooms.get_mut(&room_id) else { return };
 
-        tracing::info!("arena: {} disconnected mid-match from room {} — tearing it down unsettled", wallet, room_id);
-        send(&other_tx, json!({ "type": "opponent_disconnected" }));
-        if let Some(room) = self.rooms.remove(&room_id) {
-            self.player_rooms.remove(&room.p1.wallet);
-            self.player_rooms.remove(&room.p2.wallet);
-            // Deliberately left unsettled, not an oversight: `on_forfeit`
-            // (the Exit button) is the settled path now — a wallet clicking
-            // Exit sends Forfeit before the socket ever closes, so this
-            // point is only reached by an ACCIDENTAL drop (mobile network
-            // loss, tab killed, backgrounding). Auto-forfeiting every such
-            // drop would turn a flaky connection into an instant loss, which
-            // is worse than the current gap. Recoverable via
-            // POST /admin/duels/{id}/void; real reconnect support (Phase 5)
-            // would be the actual fix, not an auto-forfeit here.
-            let _ = room.duel_id;
+        // A repeat Leave for a wallet already marked disconnected (e.g. the
+        // socket fires both a stream-end and a close event) — the grace
+        // timer is already running, don't restart its clock.
+        if room.disconnected.contains_key(wallet) {
+            return;
         }
+
+        let since = Instant::now();
+        room.disconnected.insert(wallet.to_string(), since);
+        room.active = false; // freezes the tick — see ArenaRoom::disconnected's doc
+
+        let other_tx = if room.p1.wallet == wallet { room.p2.tx.clone() } else { room.p1.tx.clone() };
+        tracing::info!(
+            "arena: {} disconnected from room {} — pausing up to {}s for reconnect",
+            wallet, room_id, RECONNECT_GRACE.as_secs(),
+        );
+        send(&other_tx, json!({ "type": "opponent_disconnected", "grace_seconds": RECONNECT_GRACE.as_secs() }));
+
+        let stx = self_tx.clone();
+        let rid = room_id.clone();
+        let w = wallet.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(RECONNECT_GRACE).await;
+            let _ = stx.send(ServerMsg::GraceExpired { room_id: rid, wallet: w, since });
+        });
     }
 
-    /// A deliberate Exit — always settles, forfeit-win for whoever stayed.
-    /// Separate from `on_leave`'s accidental-disconnect path on purpose:
-    /// mobile WS drops are common enough here (see the 2026-08-23 incident)
-    /// that turning EVERY disconnect into an instant forfeit would punish a
-    /// flaky connection the same as a deliberate quit. A player pressing
-    /// Exit has no such ambiguity.
+    /// The grace timer from `on_leave` firing. Only acts if the room is
+    /// STILL waiting on this exact disconnect — `since` has to match what's
+    /// currently recorded, which it won't if the wallet already reconnected
+    /// (cleared in `reconnect`) or the room ended some other way in between
+    /// (removed entirely). Both make this a safe no-op rather than a race.
+    fn on_grace_expired(&mut self, room_id: &str, wallet: &str, since: Instant) {
+        let still_disconnected = self.rooms.get(room_id)
+            .is_some_and(|r| r.disconnected.get(wallet) == Some(&since));
+        if !still_disconnected {
+            return;
+        }
+        tracing::info!("arena: {} never reconnected within the grace window on room {}", wallet, room_id);
+        self.settle_forfeit(wallet, "disconnect_timeout");
+    }
+
+    /// A deliberate Exit — always settles immediately, forfeit-win for
+    /// whoever stayed. No grace period: a player pressing Exit has no
+    /// ambiguity the way an accidental drop does.
     fn on_forfeit(&mut self, wallet: &str) {
+        self.settle_forfeit(wallet, "forfeit");
+    }
+
+    fn settle_forfeit(&mut self, wallet: &str, reason: &'static str) {
         let room_id = match self.player_rooms.get(wallet) {
             Some(id) => id.clone(),
             None => return,
@@ -550,11 +703,11 @@ impl ArenaServer {
             None => return,
         };
         let winner_wallet = if p1_wallet == wallet { p2_wallet.clone() } else { p1_wallet.clone() };
-        tracing::info!("arena: {} forfeited room {} — {} wins", wallet, room_id, winner_wallet);
+        tracing::info!("arena: {} settled as {} in room {} — {} wins", wallet, reason, room_id, winner_wallet);
         self.end_room(&room_id, MatchEndInfo {
             duel_id, p1_wallet, p2_wallet,
             winner_wallet: Some(winner_wallet),
-            reason: "forfeit",
+            reason,
         });
     }
 
@@ -580,6 +733,13 @@ impl ArenaServer {
         }).to_string();
         let _ = room.p1.tx.send(mk(&room.p1.wallet));
         let _ = room.p2.tx.send(mk(&room.p2.wallet));
+        // Spectators aren't a participant, so no personal win/loss framing —
+        // just who actually won.
+        broadcast_to_spectators(&room, &json!({
+            "type": "spectate_match_end",
+            "winner_wallet": info.winner_wallet,
+            "reason": info.reason,
+        }).to_string());
 
         match self.app_state.get() {
             Some(state) => {
@@ -644,20 +804,63 @@ async fn settle_face_off_match(app_state: AppState, info: MatchEndInfo) {
         .map_err(|_| tracing::error!("face-off award_player failed for {}", info.p2_wallet))
         .ok();
 
-    // The `battles` table has no draw representation — every other mode
-    // always has a winner. A draw here is rare (an exact-HP timeout tie), so
-    // skipping the historical row rather than inventing a fake winner is the
-    // honest choice; the stake is still refunded and both sides still get
-    // participation XP above, only the battle-history row is skipped.
-    if !is_draw {
-        if let (Some(a1), Some(a2)) = (&award1, &award2) {
-            let winner = info.winner_wallet.as_deref().unwrap_or(&info.p1_wallet);
-            let battle_id = Uuid::new_v4();
-            battles::persist_battle(
-                &app_state, battle_id, &info.p1_wallet, &info.p2_wallet, winner,
-                a1.xp_earned, a2.xp_earned, false, json!([]), true, "pvp", true,
-            ).await;
-        }
+    // `winner_wallet` column is nullable — a draw (rare: an exact-HP timeout
+    // tie) records as one honestly, rather than being skipped. `counts_result`
+    // must mirror `award_player`'s `!is_draw` above (same-fight numbers, see
+    // `persist_battle`'s own doc on why these two can never be allowed to drift).
+    if let (Some(a1), Some(a2)) = (&award1, &award2) {
+        let battle_id = Uuid::new_v4();
+        battles::persist_battle(
+            &app_state, battle_id, &info.p1_wallet, &info.p2_wallet, info.winner_wallet.as_deref(),
+            a1.xp_earned, a2.xp_earned, false, json!([]), true, "pvp", !is_draw,
+        ).await;
+    }
+
+    // Track + display only for now — no effect on matchmaking or stakes.
+    let p1_outcome = if is_draw { None } else { Some(p1_won) };
+    update_face_off_ratings(&app_state.db, &info.p1_wallet, &info.p2_wallet, p1_outcome).await;
+}
+
+const ELO_K: f64 = 32.0;
+const ELO_DEFAULT: i32 = 1200;
+
+async fn get_face_off_rating(db: &PgPool, wallet: &str) -> i32 {
+    sqlx::query_scalar::<_, i32>("SELECT rating FROM face_off_ratings WHERE wallet_address = $1")
+        .bind(wallet)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(ELO_DEFAULT)
+}
+
+/// Standard Elo: `expected_a` is A's win probability given the rating gap,
+/// and the rating moves toward the ACTUAL result by `K * (actual - expected)`.
+/// A draw (`score_a = 0.5`) still shifts ratings toward each other when
+/// they're unequal — that's correct Elo behaviour, not a bug: the lower-rated
+/// side "outperformed expectation" by merely drawing a stronger opponent.
+fn elo_delta(rating_a: i32, rating_b: i32, score_a: f64) -> i32 {
+    let expected_a = 1.0 / (1.0 + 10f64.powf((rating_b - rating_a) as f64 / 400.0));
+    (ELO_K * (score_a - expected_a)).round() as i32
+}
+
+/// `p1_won`: `Some(true)` = p1 won, `Some(false)` = p2 won, `None` = draw.
+async fn update_face_off_ratings(db: &PgPool, p1: &str, p2: &str, p1_won: Option<bool>) {
+    let r1 = get_face_off_rating(db, p1).await;
+    let r2 = get_face_off_rating(db, p2).await;
+    let score1 = match p1_won { Some(true) => 1.0, Some(false) => 0.0, None => 0.5 };
+    let new1 = r1 + elo_delta(r1, r2, score1);
+    let new2 = r2 + elo_delta(r2, r1, 1.0 - score1);
+
+    for (wallet, rating) in [(p1, new1), (p2, new2)] {
+        let _ = sqlx::query(
+            "INSERT INTO face_off_ratings (wallet_address, rating, updated_at) VALUES ($1, $2, now())
+             ON CONFLICT (wallet_address) DO UPDATE SET rating = EXCLUDED.rating, updated_at = now()",
+        )
+        .bind(wallet)
+        .bind(rating)
+        .execute(db)
+        .await;
     }
 }
 
@@ -921,6 +1124,12 @@ fn rand_seed() -> u64 {
 
 fn send(tx: &UnboundedSender<String>, val: serde_json::Value) {
     let _ = tx.send(val.to_string());
+}
+
+fn broadcast_to_spectators(room: &ArenaRoom, payload: &str) {
+    for tx in &room.spectators {
+        let _ = tx.send(payload.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -1201,15 +1410,128 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn leaving_mid_fight_notifies_the_opponent_and_tears_the_room_down() {
+    async fn leaving_mid_fight_pauses_the_room_instead_of_tearing_it_down() {
+        // The actual fix for the 2026-08-23 stuck-duel incident: an
+        // accidental drop no longer ends the match unsettled forever — it
+        // pauses (room stays alive, ticking stops) and gives the dropped
+        // wallet a grace window to reconnect. See the reconnect tests below
+        // for what happens on either side of that window.
         let mut server = new_server();
         let duel_id = Uuid::new_v4();
+        let (self_tx, _self_rx) = mpsc::unbounded_channel();
         let (_rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
 
-        server.on_leave("0xAAA");
-        assert_eq!(next_json(&mut rx2).await["type"], "opponent_disconnected");
-        assert!(server.rooms.is_empty());
-        assert!(server.player_rooms.is_empty());
+        server.on_leave("0xAAA", &self_tx);
+        let msg = next_json(&mut rx2).await;
+        assert_eq!(msg["type"], "opponent_disconnected");
+        assert!(msg["grace_seconds"].as_u64().unwrap() > 0);
+
+        let room = server.rooms.get(&duel_id.to_string()).expect("room must survive a plain disconnect");
+        assert!(!room.active, "ticking must freeze while a wallet is disconnected");
+        assert!(room.disconnected.contains_key("0xAAA"));
+        assert!(server.player_rooms.contains_key("0xAAA"), "the seat must stay reserved for a reconnect");
+    }
+
+    #[tokio::test]
+    async fn reconnecting_within_the_grace_window_resumes_the_match() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (self_tx, _self_rx) = mpsc::unbounded_channel();
+        let (_rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        server.on_leave("0xAAA", &self_tx);
+        let _ = next_json(&mut rx2).await; // opponent_disconnected, asserted above
+
+        let (rejoin, mut rx3) = entry(duel_id, "0xAAA");
+        server.on_join(rejoin, &self_tx);
+
+        let reconnected_msg = next_json(&mut rx3).await;
+        assert_eq!(reconnected_msg["type"], "reconnected");
+        assert_eq!(reconnected_msg["resumed"], true);
+        assert_eq!(reconnected_msg["players"].as_array().unwrap().len(), 2);
+
+        let opp_msg = next_json(&mut rx2).await;
+        assert_eq!(opp_msg["type"], "opponent_reconnected");
+
+        let room = server.rooms.get(&duel_id.to_string()).expect("room must still exist");
+        assert!(room.active, "ticking must resume once both sides are back");
+        assert!(room.disconnected.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failing_to_reconnect_within_the_grace_window_settles_as_a_forfeit_loss() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (self_tx, _self_rx) = mpsc::unbounded_channel();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        server.on_leave("0xAAA", &self_tx);
+        let _ = next_json(&mut rx2).await; // opponent_disconnected
+        let since = *server.rooms.get(&duel_id.to_string()).unwrap().disconnected.get("0xAAA").unwrap();
+
+        server.on_grace_expired(&duel_id.to_string(), "0xAAA", since);
+
+        let msg1 = next_json(&mut rx1).await;
+        let msg2 = next_json(&mut rx2).await;
+        assert_eq!(msg1["type"], "match_end");
+        assert_eq!(msg1["result"], "loss");
+        assert_eq!(msg1["reason"], "disconnect_timeout");
+        assert_eq!(msg2["type"], "match_end");
+        assert_eq!(msg2["result"], "win");
+        assert!(server.rooms.is_empty(), "a settled match's room must be torn down");
+    }
+
+    #[tokio::test]
+    async fn a_stale_grace_timer_is_a_no_op_once_the_wallet_has_reconnected() {
+        // Simulates the actual race the `since` check exists for: the grace
+        // timer that was scheduled at disconnect time still fires (it's a
+        // plain tokio::time::sleep, nothing cancels it), but by then the
+        // wallet is already back — this must NOT forfeit them anyway.
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (self_tx, _self_rx) = mpsc::unbounded_channel();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        server.on_leave("0xAAA", &self_tx);
+        let _ = next_json(&mut rx2).await; // opponent_disconnected
+        let stale_since = *server.rooms.get(&duel_id.to_string()).unwrap().disconnected.get("0xAAA").unwrap();
+
+        let (rejoin, mut rx3) = entry(duel_id, "0xAAA");
+        server.on_join(rejoin, &self_tx);
+        let _ = next_json(&mut rx3).await; // reconnected
+        let _ = next_json(&mut rx2).await; // opponent_reconnected
+
+        server.on_grace_expired(&duel_id.to_string(), "0xAAA", stale_since);
+
+        assert!(server.rooms.contains_key(&duel_id.to_string()), "the stale timer must not tear down a resumed match");
+        assert!(rx1.try_recv().is_err(), "no match_end should fire from a stale timer");
+        assert!(rx2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn both_sides_dropping_only_resumes_once_both_have_reconnected() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (self_tx, _self_rx) = mpsc::unbounded_channel();
+        let (_rx1, _rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        server.on_leave("0xAAA", &self_tx);
+        server.on_leave("0xBBB", &self_tx);
+        assert_eq!(server.rooms.get(&duel_id.to_string()).unwrap().disconnected.len(), 2);
+
+        let (rejoin_a, mut rx_a) = entry(duel_id, "0xAAA");
+        server.on_join(rejoin_a, &self_tx);
+        let msg_a = next_json(&mut rx_a).await;
+        assert_eq!(msg_a["resumed"], false, "the other side is still gone, so this reconnect alone shouldn't resume ticking");
+        assert!(!server.rooms.get(&duel_id.to_string()).unwrap().active);
+
+        let (rejoin_b, mut rx_b) = entry(duel_id, "0xBBB");
+        server.on_join(rejoin_b, &self_tx);
+        let msg_b = next_json(&mut rx_b).await;
+        assert_eq!(msg_b["resumed"], true);
+        let opp_msg = next_json(&mut rx_a).await;
+        assert_eq!(opp_msg["type"], "opponent_reconnected", "the first reconnector should be told once the second one is back too");
+        assert!(server.rooms.get(&duel_id.to_string()).unwrap().active);
     }
 
     #[tokio::test]
@@ -1249,6 +1571,59 @@ mod tests {
         assert!(rx3.try_recv().is_err(), "the stray duplicate connection gets nothing");
     }
 
+    #[tokio::test]
+    async fn spectating_a_live_match_gets_a_snapshot_then_live_ticks() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        let (spec_tx, mut spec_rx) = mpsc::unbounded_channel();
+        server.on_spectate(duel_id, spec_tx);
+        let joined = next_json(&mut spec_rx).await;
+        assert_eq!(joined["type"], "spectate_joined");
+        assert_eq!(joined["players"].as_array().unwrap().len(), 2);
+
+        server.on_tick();
+        let _ = next_json(&mut rx1).await;
+        let _ = next_json(&mut rx2).await;
+        let spec_update = next_json(&mut spec_rx).await;
+        assert_eq!(spec_update["type"], "state_update", "a spectator must see the same live ticks the players do");
+    }
+
+    #[tokio::test]
+    async fn spectating_a_duel_with_no_live_room_gets_a_clear_error_not_silence() {
+        let mut server = new_server();
+        let (spec_tx, mut spec_rx) = mpsc::unbounded_channel();
+        server.on_spectate(Uuid::new_v4(), spec_tx);
+        let msg = next_json(&mut spec_rx).await;
+        assert_eq!(msg["type"], "error");
+    }
+
+    #[tokio::test]
+    async fn a_spectator_sees_the_match_end_but_never_receives_input_capability() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        let (spec_tx, mut spec_rx) = mpsc::unbounded_channel();
+        server.on_spectate(duel_id, spec_tx);
+        let _ = next_json(&mut spec_rx).await; // spectate_joined
+
+        server.on_forfeit("0xAAA");
+        let _ = next_json(&mut rx1).await;
+        let _ = next_json(&mut rx2).await;
+        let spec_end = next_json(&mut spec_rx).await;
+        assert_eq!(spec_end["type"], "spectate_match_end");
+        assert_eq!(spec_end["winner_wallet"], "0xBBB");
+
+        // Nothing in ServerMsg lets a spectator's tx double as a wallet's
+        // input channel — there is no wallet to route Input through, since
+        // on_spectate never touches player_rooms. This is a structural
+        // guarantee, not a runtime check, so there is nothing further to
+        // assert here beyond the room having accepted no such capability.
+        assert!(server.player_rooms.is_empty());
+    }
+
     // ── Pure geometry/math, no actor needed ──────────────────────────────────
 
     #[test]
@@ -1274,6 +1649,38 @@ mod tests {
         // Should have moved a small amount, not ~2*PI - 0.1.
         let delta = (stepped - from).abs();
         assert!(delta < 1.5, "expected a short step across the wrap, moved {}", delta);
+    }
+
+    #[test]
+    fn equal_ratings_split_the_full_k_factor_on_a_decisive_result() {
+        // Two equally-rated players: expected win probability is exactly 50%
+        // either way, so the winner gains and the loser loses the same
+        // K*(1-0.5) = 16 points (K=32).
+        assert_eq!(elo_delta(1200, 1200, 1.0), 16);
+        assert_eq!(elo_delta(1200, 1200, 0.0), -16);
+    }
+
+    #[test]
+    fn an_upset_win_gains_more_than_a_win_over_a_weaker_opponent() {
+        let upset = elo_delta(1200, 1400, 1.0); // beating a HIGHER-rated opponent
+        let expected_win = elo_delta(1400, 1200, 1.0); // beating a LOWER-rated opponent
+        assert!(upset > expected_win, "an upset should gain more than a expected win, got {} vs {}", upset, expected_win);
+    }
+
+    #[test]
+    fn a_draw_between_unequal_ratings_still_shifts_toward_each_other() {
+        // The lower-rated side drawing a stronger opponent outperformed
+        // expectation — their rating should still rise, and the stronger
+        // side's should still fall, even though nobody "won".
+        let lower_delta = elo_delta(1200, 1400, 0.5);
+        let higher_delta = elo_delta(1400, 1200, 0.5);
+        assert!(lower_delta > 0, "the underdog drawing a stronger player should gain rating");
+        assert!(higher_delta < 0, "the favourite only drawing a weaker player should lose rating");
+    }
+
+    #[test]
+    fn equal_ratings_drawing_is_a_perfect_wash() {
+        assert_eq!(elo_delta(1200, 1200, 0.5), 0);
     }
 
     #[test]

@@ -15,8 +15,10 @@
  *   - Room: one frozen room straight out of the Operation room generator
  *     (`generateRoom` in `engine/fps/endless.ts`, seed "valor-faceoff",
  *     CRATE_LINE archetype), rendered with the same triplanar materials/zone
- *     lighting/IBL ValorScene uses. `ROOM_WALLS`/`ROOM_COVER` below MUST
- *     match `arena_server.rs`'s copy of the same boxes exactly.
+ *     lighting/IBL ValorScene uses. Geometry comes from `faceoffArena.json`
+ *     in this same folder — `arena_server.rs` embeds that exact file at
+ *     compile time too, so there is one source of truth, not two hand-copied
+ *     arrays that could silently drift apart.
  *   - Weapon viewmodel: same `makeGunMesh` + `buildViewmodelHands` +
  *     `WEAPON_VIEW`/`VIEWMODEL_HIP`/`VIEWMODEL_ADS` framing ValorScene uses —
  *     cosmetic only, the server's combat stats never vary by loadout.
@@ -56,6 +58,7 @@ import { makeTriplanarMaterial } from './triplanar'
 import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment'
 import { ZONE_THEMES } from '@/engine/fps/campaign'
 import { slideMove, rayAABB, aabbOfCover, type CoverBox } from '@/engine/fps/FpsSim'
+import arenaGeometry from './faceoffArena.json'
 import { GUN_FEEL } from '@/engine/combat/GunFeel'
 import { FpsAudio } from '@/engine/audio/FpsAudio'
 import type { GunId } from '@/engine/combat'
@@ -71,23 +74,12 @@ const ZONE_ID = 'ASHFALL'
 
 // ── Room geometry — frozen output of generateRoom(0, 0, seedFromString(
 // "valor-faceoff")) in engine/fps/endless.ts, recentred so the room's
-// midpoint sits at world origin. MUST match arena_server.rs's ROOM_WALLS/
-// ROOM_COVER exactly. ──────────────────────────────────────────────────────
+// midpoint sits at world origin. Loaded from faceoffArena.json, the single
+// source of truth arena_server.rs also embeds — see this file's module doc.
+// ─────────────────────────────────────────────────────────────────────────
 
-const ROOM_WALLS: CoverBox[] = [
-  { x: -9.3, z: 0, w: 0.6, d: 17, h: 4 },   // west wall
-  { x: 9.3, z: 0, w: 0.6, d: 17, h: 4 },    // east wall
-  { x: 0, z: 8.8, w: 19.2, d: 0.6, h: 4 },  // north cap (sealed — no chain doorway)
-  { x: 0, z: -8.8, w: 19.2, d: 0.6, h: 4 }, // south cap (sealed)
-]
-
-const ROOM_COVER: CoverBox[] = [
-  { x: -6, z: 0, w: 2.4, d: 1.6, h: 1.15 },
-  { x: -1.5, z: 1.2, w: 2.4, d: 1.6, h: 1.15 },
-  { x: 3, z: 0, w: 2.4, d: 1.6, h: 1.15 },
-  { x: 6.8, z: -1.4, w: 1.8, d: 1.6, h: 1.15 },
-]
-
+const ROOM_WALLS: CoverBox[] = arenaGeometry.walls
+const ROOM_COVER: CoverBox[] = arenaGeometry.cover
 const ROOM_OBSTACLES: CoverBox[] = [...ROOM_WALLS, ...ROOM_COVER]
 
 // Interior floor footprint: 18m wide (ROOM_W) x 17m deep.

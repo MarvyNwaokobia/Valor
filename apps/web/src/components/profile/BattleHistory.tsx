@@ -13,7 +13,8 @@ interface BattleRow {
   id: string
   challenger_wallet: string
   opponent_wallet: string
-  winner_wallet: string
+  /** Null = a draw (a Face-Off match can end in an exact-HP timeout tie). */
+  winner_wallet: string | null
   xp_awarded_challenger: number
   xp_awarded_opponent: number
   is_bot: boolean
@@ -126,7 +127,8 @@ export default function BattleHistory({ walletAddress }: Props) {
       <div className="flex flex-col gap-2">
         {battles.map((battle, i) => {
           const isChallenger = battle.challenger_wallet.toLowerCase() === walletAddress.toLowerCase()
-          const won          = battle.winner_wallet.toLowerCase() === walletAddress.toLowerCase()
+          const isDraw       = battle.winner_wallet === null
+          const won          = !isDraw && battle.winner_wallet!.toLowerCase() === walletAddress.toLowerCase()
           const opponent     = isChallenger ? battle.opponent_wallet : battle.challenger_wallet
           const xpEarned     = isChallenger ? battle.xp_awarded_challenger : battle.xp_awarded_opponent
           // The server's real number. This used to be the player's CURRENT rank
@@ -151,14 +153,14 @@ export default function BattleHistory({ walletAddress }: Props) {
               transition={{ delay: i * 0.03 }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg border"
               style={{
-                background:   won && !died ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.04)',
-                borderColor:  won && !died ? 'rgba(34,197,94,0.2)'  : 'rgba(239,68,68,0.15)',
+                background:   won && !died ? 'rgba(34,197,94,0.05)' : isDraw ? 'rgba(148,163,184,0.05)' : 'rgba(239,68,68,0.04)',
+                borderColor:  won && !died ? 'rgba(34,197,94,0.2)'  : isDraw ? 'rgba(148,163,184,0.2)'  : 'rgba(239,68,68,0.15)',
               }}
             >
-              {/* Win/loss indicator */}
+              {/* Win/loss/draw indicator */}
               <div
                 className="w-1 h-8 rounded-full shrink-0"
-                style={{ background: won && !died ? '#22c55e' : '#ef4444' }}
+                style={{ background: won && !died ? '#22c55e' : isDraw ? '#94a3b8' : '#ef4444' }}
               />
 
               {/* Opponent — a campaign op shows the mission, else the wallet/bot */}
@@ -176,12 +178,13 @@ export default function BattleHistory({ walletAddress }: Props) {
                   <span
                     className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm shrink-0"
                     style={{
-                      background: won && !died ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-                      color:       won && !died ? '#22c55e' : '#ef4444',
+                      background: won && !died ? 'rgba(34,197,94,0.15)' : isDraw ? 'rgba(148,163,184,0.15)' : 'rgba(239,68,68,0.15)',
+                      color:       won && !died ? '#22c55e' : isDraw ? '#94a3b8' : '#ef4444',
                     }}
                   >
                     {isEndless ? (died ? 'DIED' : 'WAVE CLEARED')
                       : mission ? (won ? 'CLEARED' : 'FAILED')
+                      : isDraw ? 'DRAW'
                       : (won ? 'WIN' : 'LOSS')}
                   </span>
                 </div>
@@ -217,7 +220,7 @@ export default function BattleHistory({ walletAddress }: Props) {
             the server does not count it either. */}
         <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">
           From {battles.filter(b =>
-            b.mode !== 'endless' && b.winner_wallet.toLowerCase() === walletAddress.toLowerCase(),
+            b.mode !== 'endless' && b.winner_wallet?.toLowerCase() === walletAddress.toLowerCase(),
           ).length} wins
         </p>
         <a

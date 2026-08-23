@@ -79,6 +79,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // should be built against the single-chain schema it leaves behind.
     ("collapse_to_single_chain.sql", include_str!("../migrations/collapse_to_single_chain.sql")),
     ("fix_decimal_columns.sql",   include_str!("../migrations/fix_decimal_columns.sql")),
+    ("fix_drop_dead_arena_room_id.sql", include_str!("../migrations/fix_drop_dead_arena_room_id.sql")),
     ("fix_ledger_categories.sql", include_str!("../migrations/fix_ledger_categories.sql")),
     ("fix_xp_cap.sql",            include_str!("../migrations/fix_xp_cap.sql")),
     ("add_push_subscriptions.sql", include_str!("../migrations/add_push_subscriptions.sql")),
@@ -91,6 +92,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_contact_email.sql",     include_str!("../migrations/add_contact_email.sql")),
     // Depends on the `duels` table too — tacked on at the end for the same reason.
     ("add_duel_modes.sql",        include_str!("../migrations/add_duel_modes.sql")),
+    ("add_face_off_ratings.sql",  include_str!("../migrations/add_face_off_ratings.sql")),
 ];
 
 /// Apply every migration not yet recorded, in order, each in its own transaction. Called

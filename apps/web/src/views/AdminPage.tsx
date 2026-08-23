@@ -187,6 +187,14 @@ export default function AdminPage() {
   const [granting, setGranting] = useState(false)
   const [grantResults, setGrantResults] = useState<GrantResult[] | null>(null)
 
+  // Stuck Face-Off duel recovery — see security_faceoff_stuck_duel_incident.
+  // Before this, the only way to void a duel was a raw curl with an admin
+  // JWT pulled from Railway env vars. This is that same call, from the UI.
+  const [showVoidDuel, setShowVoidDuel] = useState(false)
+  const [voidDuelId, setVoidDuelId] = useState('')
+  const [voiding, setVoiding] = useState(false)
+  const [voidResult, setVoidResult] = useState<{ ok: boolean; message: string } | null>(null)
+
   useEffect(() => { setSession(loadSession()) }, [])
 
   async function handleAdminLogin() {
@@ -429,6 +437,33 @@ export default function AdminPage() {
       }
     } finally {
       setGranting(false)
+    }
+  }
+
+  async function handleVoidDuel() {
+    const id = voidDuelId.trim()
+    if (!id) return
+    if (!window.confirm(
+      `Void duel ${id}?\n\nThis only works on a duel stuck at "accepted" with no resolved match — ` +
+      `it refunds BOTH stakes in full (no house cut) and marks it resolved. Cannot be undone.`,
+    )) return
+
+    setVoiding(true)
+    setVoidResult(null)
+    try {
+      const res = await authedFetch(`/admin/duels/${id}/void`, { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const txs = Array.isArray(body.refund_txs) ? body.refund_txs.filter(Boolean) : []
+        setVoidResult({ ok: true, message: `Voided — both stakes refunded${txs.length ? ` (${txs.length} tx)` : ''}.` })
+        setVoidDuelId('')
+      } else {
+        setVoidResult({ ok: false, message: body.error ?? `Failed (${res.status})` })
+      }
+    } catch (err) {
+      setVoidResult({ ok: false, message: err instanceof Error ? err.message : 'Request failed' })
+    } finally {
+      setVoiding(false)
     }
   }
 
@@ -798,6 +833,45 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
+          )}
+        </>)}
+      </div>
+
+      {/* Stuck Face-Off duel recovery */}
+      <div className="flex flex-col gap-3 rounded-xl border p-4" style={{ borderColor: 'rgba(42,42,58,0.8)', background: 'rgba(10,10,18,0.4)' }}>
+        <button
+          onClick={() => setShowVoidDuel((v) => !v)}
+          className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 hover:text-slate-300 text-left"
+        >
+          {showVoidDuel ? '▾ Void a stuck duel (refund both stakes)' : '▸ Void a stuck duel (refund both stakes)'}
+        </button>
+        {showVoidDuel && (<>
+          <p className="text-xs text-slate-500">
+            For a Face-Off duel stuck at &quot;accepted&quot; with no live match and no resolution — e.g. a
+            player who disconnected and never reconnected before this existed, or the arena crashed mid-match.
+            Refunds both stakes in full and marks the duel resolved. Only works on an accepted, unresolved duel.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={voidDuelId}
+              onChange={(e) => setVoidDuelId(e.target.value)}
+              placeholder="Duel ID (UUID)"
+              className="flex-1 px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white placeholder:text-slate-600 focus:outline-none font-mono"
+            />
+            <button
+              onClick={handleVoidDuel}
+              disabled={voiding || !voidDuelId.trim()}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50 shrink-0"
+              style={{ background: '#eab308' }}
+            >
+              {voiding ? 'Voiding…' : 'Void & refund'}
+            </button>
+          </div>
+          {voidResult && (
+            <p className={`text-xs font-medium ${voidResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+              {voidResult.message}
+            </p>
           )}
         </>)}
       </div>

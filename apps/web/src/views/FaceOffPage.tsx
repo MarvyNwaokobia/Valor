@@ -10,6 +10,7 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useActiveWalletClientError } from '@/hooks/useActiveWalletClient'
 import { useDuels, type DuelRun } from '@/hooks/useDuels'
 import { useArenaSocket } from '@/hooks/useArenaSocket'
+import { useFaceOffRating } from '@/hooks/useFaceOffRating'
 import { retryImport } from '@/lib/retryImport'
 import { equippedGunId } from '@/lib/guns'
 import LoadingScreen from '@/components/ui/LoadingScreen'
@@ -64,6 +65,7 @@ export default function FaceOffPage() {
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, cancelDuel } = useDuels(address)
   const walletClientError = useActiveWalletClientError()
   const arena = useArenaSocket(address ?? '')
+  const { data: rating } = useFaceOffRating(address)
 
   const challengeWallet = searchParams.get('challenge')
   const challengeName = searchParams.get('name')
@@ -134,6 +136,21 @@ export default function FaceOffPage() {
     backToLobby()
   }, [arena, backToLobby])
 
+  // Re-challenge the same opponent at the same stake — reuses the exact same
+  // create-duel flow a fresh challenge does, just pre-filled. Reads the
+  // opponent wallet before disconnect() wipes arena.state back to idle.
+  const onRematch = useCallback(() => {
+    if (!activeDuel || !arena.state.opponent) return
+    const stake = activeDuel.stake_g
+    const opponentWallet = arena.state.opponent.wallet
+    arena.disconnect()
+    setConnected(false)
+    setPickingLoadout(false)
+    setActiveDuel(null)
+    setLocalHp(100); setOpponentHp(100); setAmmo(30); setReloading(false)
+    void onCreate(stake, opponentWallet)
+  }, [activeDuel, arena, onCreate])
+
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   if (!player && !playerSynced) return <LoadingScreen />
@@ -179,6 +196,7 @@ export default function FaceOffPage() {
         )}
         <FaceOffHud
           phase={arena.state.phase}
+          pause={arena.state.pause}
           countdown={arena.state.countdown}
           opponentName={opponent ? who(null, opponent.wallet) : '…'}
           localHp={localHp} opponentHp={opponentHp}
@@ -216,11 +234,22 @@ export default function FaceOffPage() {
         <p className="text-slate-400 text-sm">
           {r.reason === 'forfeit'
             ? (r.result === 'win' ? 'Your opponent left the match.' : 'You left the match.')
+            : r.reason === 'disconnect_timeout'
+            ? (r.result === 'win' ? "Your opponent didn't reconnect in time." : "You didn't reconnect in time.")
             : r.reason === 'timeout' ? 'Decided on time — higher HP took it.' : 'Decided by elimination.'}
         </p>
-        <button onClick={backToLobby} className="mt-2 px-5 py-2.5 rounded-xl bg-valor-gold text-black font-bold text-sm">
-          Back to Face-Off
-        </button>
+        <div className="mt-2 flex gap-2">
+          {arena.state.opponent && (
+            <button onClick={onRematch} disabled={pending}
+              className="px-5 py-2.5 rounded-xl border border-valor-gold/50 text-valor-gold font-bold text-sm hover:bg-valor-gold/10 transition-colors disabled:opacity-40"
+            >
+              Rematch
+            </button>
+          )}
+          <button onClick={backToLobby} className="px-5 py-2.5 rounded-xl bg-valor-gold text-black font-bold text-sm">
+            Back to Face-Off
+          </button>
+        </div>
       </div>
     )
   }
@@ -277,7 +306,14 @@ export default function FaceOffPage() {
         <div className="flex items-center gap-3">
           <Crosshair className="text-red-400" size={22} />
           <div className="flex-1">
-            <h1 className="font-display font-black text-white text-xl">Face-Off</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-display font-black text-white text-xl">Face-Off</h1>
+              {rating !== undefined && (
+                <span className="text-[10px] font-bold text-slate-400 px-1.5 py-0.5 rounded-sm border border-valor-border" title="Face-Off rating — tracked, doesn't affect matchmaking or stakes">
+                  {rating} ELO
+                </span>
+              )}
+            </div>
             <p className="text-slate-400 text-xs mt-0.5">
               Live, head-to-head. Same standard-issue rifle for both fighters — winner takes the pot.
             </p>
@@ -450,6 +486,14 @@ export default function FaceOffPage() {
                       vs {who(d.opponent_name, d.opponent)} · {d.stake_g.toLocaleString()} {currency}
                     </p>
                   </div>
+                  {d.status === 'accepted' && (
+                    <button
+                      onClick={() => router.push(`/faceoff/watch/${d.id}`)}
+                      className="shrink-0 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/10 transition-colors"
+                    >
+                      Watch
+                    </button>
+                  )}
                   <span className={`shrink-0 text-[11px] font-bold uppercase tracking-wider ${
                     won ? 'text-valor-gold' : drew ? 'text-slate-400' : d.status === 'resolved' ? 'text-slate-500' : 'text-slate-400'
                   }`}>
@@ -467,8 +511,9 @@ export default function FaceOffPage() {
 
 // ── In-match HUD ──────────────────────────────────────────────────────────
 
-function FaceOffHud({ phase, countdown, opponentName, localHp, opponentHp, ammo, reloading, onExit }: {
+function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp, ammo, reloading, onExit }: {
   phase: 'idle' | 'connecting' | 'waiting' | 'countdown' | 'fighting' | 'result'
+  pause: { reason: 'opponent_disconnected' | 'reconnecting'; graceSeconds: number } | null
   countdown: number
   opponentName: string
   localHp: number
@@ -526,6 +571,21 @@ function FaceOffHud({ phase, countdown, opponentName, localHp, opponentHp, ammo,
       {phase === 'countdown' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.6)' }}>
           <p className="text-valor-gold font-display font-black text-6xl">{countdown}</p>
+        </div>
+      )}
+      {/* The match is frozen, not over — arena_server.rs pauses HP/position
+          on either side dropping and gives them a window to reconnect into
+          this same fight before it settles as a forfeit. */}
+      {pause && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.85)', textAlign: 'center', padding: 24 }}>
+          <p className="text-white font-display font-black text-lg">
+            {pause.reason === 'reconnecting' ? 'Reconnecting…' : `${opponentName} disconnected`}
+          </p>
+          <p className="text-slate-400 text-sm max-w-xs">
+            {pause.reason === 'reconnecting'
+              ? "Your connection dropped — trying to get you back into the fight. Nothing is lost yet."
+              : `Waiting up to ${pause.graceSeconds}s for them to reconnect. If they don't, you win by forfeit.`}
+          </p>
         </div>
       )}
       {phase === 'fighting' && (

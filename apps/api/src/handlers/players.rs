@@ -955,7 +955,9 @@ pub async fn get_battles(
         id:                    Uuid,
         challenger_wallet:     String,
         opponent_wallet:       String,
-        winner_wallet:         String,
+        // Null = a draw (an exact-HP timeout tie in a Face-Off match) — the
+        // column has always allowed it, nothing wrote one until now.
+        winner_wallet:         Option<String>,
         xp_awarded_challenger: i32,
         xp_awarded_opponent:   i32,
         is_bot:                bool,
@@ -1380,6 +1382,26 @@ pub async fn get_referrals(
         "recruited": count,
         "earned_g": earned.unwrap_or(0),
     }))
+}
+
+// ── GET /players/:wallet/face-off-rating ───────────────────────────────────────
+/// Face-Off ELO — track + display only, no effect on matchmaking or stakes.
+/// See `arena_server.rs`'s `update_face_off_ratings`. Public for the same
+/// reason referrals are: it's a stat the lobby shows, not a secret.
+pub async fn get_face_off_rating(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let wallet = normalize_wallet(&path.into_inner());
+    let rating: Option<i32> = sqlx::query_scalar(
+        "SELECT rating FROM face_off_ratings WHERE wallet_address = $1",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    HttpResponse::Ok().json(json!({ "rating": rating.unwrap_or(1200) }))
 }
 
 // ── GET /players/:wallet/achievements ─────────────────────────────────────────

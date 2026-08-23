@@ -493,7 +493,11 @@ pub(crate) async fn persist_battle(
     battle_id: Uuid,
     challenger: &str,
     opponent: &str,
-    winner_wallet: &str,
+    // None = a draw. The column is nullable for exactly this — every mode
+    // used to always pass a real winner, which is what made a drawn Face-Off
+    // match (an exact-HP timeout tie, see arena_server.rs) look like it had
+    // "no representation" here. It always had one; nothing used it.
+    winner_wallet: Option<&str>,
     xp_challenger: i32,
     xp_opponent: i32,
     is_bot: bool,
@@ -531,6 +535,12 @@ pub(crate) async fn persist_battle(
     .bind(counts_result)
     .execute(&state.db)
     .await;
+
+    // A draw has no winner/loser to record — ValorGameRecord's on-chain shape
+    // needs both, and inventing one would misrepresent a real tie. The DB row
+    // above already captures the draw for history; only the on-chain write
+    // (and only for a draw) is skipped.
+    let Some(winner_wallet) = winner_wallet else { return };
 
     if let Some(chain) = state.chain.as_ref().filter(|_| record_on_chain).cloned() {
         let loser_wallet = if winner_wallet == challenger { opponent } else { challenger };
@@ -577,7 +587,7 @@ async fn finalize_fight(
     let award = award_player(state, wallet, won, base_xp, xp_multiplier, reward_eligible, COUNTS).await?;
     let battle_id = Uuid::new_v4();
     let winner = if won { wallet } else { "bot" };
-    persist_battle(state, battle_id, wallet, "bot", winner, award.xp_earned, 0, true, rounds_data, record_on_chain, mode, COUNTS).await;
+    persist_battle(state, battle_id, wallet, "bot", Some(winner), award.xp_earned, 0, true, rounds_data, record_on_chain, mode, COUNTS).await;
     Ok(FightOutcome {
         won,
         xp_earned: award.xp_earned,
@@ -1547,7 +1557,7 @@ pub async fn complete_pvp_match(
     };
 
     let battle_id = Uuid::new_v4();
-    persist_battle(&state, battle_id, &winner, &loser, &winner, aw_w.xp_earned, aw_l.xp_earned, false, json!([]), true, "pvp", true).await;
+    persist_battle(&state, battle_id, &winner, &loser, Some(&winner), aw_w.xp_earned, aw_l.xp_earned, false, json!([]), true, "pvp", true).await;
 
     let side = |w: &str, a: &PlayerAward| json!({
         "wallet": w, "xp_awarded": a.xp_earned, "new_xp": a.new_xp,

@@ -25,6 +25,11 @@ struct JoinMsg {
 }
 
 #[derive(Deserialize)]
+struct SpectateMsg {
+    duel_id: Uuid,
+}
+
+#[derive(Deserialize)]
 struct InputMsg {
     move_x: f32,
     move_y: f32,
@@ -49,6 +54,9 @@ enum ClientMsg {
     /// `ServerMsg::Forfeit`'s doc for why this is a distinct, always-settled
     /// path from an ordinary connection drop.
     Forfeit,
+    /// A read-only viewer — "anyone with the link", deliberately no wallet
+    /// field and no DB gate the way `Join` has one. See `on_spectate`'s doc.
+    Spectate(SpectateMsg),
 }
 
 /// What `on_join` needs from the `duels` row to admit a wallet into a room —
@@ -177,6 +185,10 @@ pub async fn arena_ws(
                                 tracing::info!("arena_ws: {} sent forfeit", w);
                                 let _ = server_tx.send(ServerMsg::Forfeit { wallet: w.clone() });
                             }
+                        }
+                        ClientMsg::Spectate(s) => {
+                            tracing::info!("arena_ws: spectator joined duel {}", s.duel_id);
+                            let _ = server_tx.send(ServerMsg::Spectate { duel_id: s.duel_id, tx: client_tx.clone() });
                         }
                     }
                 }

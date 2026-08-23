@@ -377,7 +377,7 @@ pub async fn endless_wave(
         Uuid::new_v4(),
         &wallet,
         "bot",
-        &wallet,            // the player won this wave
+        Some(&wallet),      // the player won this wave
         ENDLESS_WAVE_XP, 0,
         true,               // is_bot
         json!({ "mode": "endless", "wave": wave, "result": "wave_cleared" }),
@@ -571,7 +571,7 @@ pub async fn record_death(state: web::Data<AppState>, body: web::Json<DeathReque
         Uuid::new_v4(),
         &wallet,
         "bot",
-        "bot",              // the bot "won"
+        Some("bot"),        // the bot "won"
         0, 0,
         true,               // is_bot
         json!({ "mode": "endless", "wave": body.wave, "result": "death" }),
