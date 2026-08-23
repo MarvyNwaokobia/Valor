@@ -66,6 +66,34 @@ export interface FpsEnemy {
   // ── Incendiary DoT (B) ──
   burnUntil: number; // sim-time the thermite burn stops (0 = not burning)
   burnDps: number;   // HP/s the active burn ticks for
+  // ── Co-op targeting (Endless party mode only) ──
+  /** Who this enemy is currently engaging — `LOCAL_TARGET` (the local
+   *  player) for every mode but co-op. Sticky: only re-picked when the
+   *  current target dies or drops out of sight while someone else is
+   *  visible — see `pickTarget`. With zero registered `combatants` (every
+   *  mode except co-op) this always resolves back to `LOCAL_TARGET`, which
+   *  is what keeps every other mode's behavior byte-identical to before
+   *  this field existed. */
+  targetId: string;
+}
+
+/** Sentinel `targetId`/combatant key meaning "the local player" — every
+ *  mode but co-op only ever has this one target. Not a real wallet, just a
+ *  stable id `resolveTarget`/`pickTarget` can compare against. */
+const LOCAL_TARGET = '__local__';
+
+/** A teammate in a co-op Endless party, tracked as a live target for enemy
+ *  AI alongside the local player. HP/alive are HOST-owned (this `FpsSim`
+ *  instance only ever runs on the party host — see `ValorScene`'s `coop`
+ *  prop) — a teammate's own client never reports its own HP, only its
+ *  position/aim, exactly like the local player never reports its own HP
+ *  either. */
+interface Combatant {
+  x: number;
+  z: number;
+  eyeY: number;
+  hp: number;
+  alive: boolean;
 }
 
 /** A wall or crate: an axis-aligned box that blocks movement and bullets. */
@@ -92,8 +120,11 @@ export interface FpsInput {
 export type FpsEvent =
   | { kind: 'fire'; ammo: number; spread: number }
   | { kind: 'empty' }
-  | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean; crit: boolean }
-  | { kind: 'kill'; enemyId: number }
+  // `shooterId` is undefined for the local player's own shots (every mode
+  // but co-op never sets it) — present and set to a teammate's wallet when
+  // `resolveRemoteShot` (co-op only) is what landed the hit.
+  | { kind: 'hit'; enemyId: number; part: HitPart; damage: number; point: Vec3; killed: boolean; crit: boolean; shooterId?: string }
+  | { kind: 'kill'; enemyId: number; shooterId?: string }
   // The round struck a surface. `normal` points OUT of whatever it hit (the face of
   // a wall or crate, or straight up off the ground) — impact VFX needs it to throw
   // sparks back the right way and to lay a bullet hole flat against the surface.
@@ -360,6 +391,14 @@ export class FpsSim {
   private playerEyeY = 1.6;
   playerAlive = true;
   private mercyUntil = 0;
+  /** Co-op Endless only (see `setCombatant`) — teammates as additional live
+   *  AI targets, keyed by wallet. Empty in every other mode, which is what
+   *  makes `allTargets`/`pickTarget` resolve back to `LOCAL_TARGET` unconditionally
+   *  when co-op isn't active. */
+  private combatants: Map<string, Combatant> = new Map();
+  /** Per-combatant mercy window, mirroring `mercyUntil` but keyed — a burst
+   *  landing on one teammate must not grant another a free window. */
+  private combatantMercyUntil: Map<string, number> = new Map();
   /** Where the player actually is, refreshed every step. Only the sim's own
    *  bookkeeping may read this — an ENEMY must go through its own `seen` position,
    *  or it is omniscient again. */
@@ -409,6 +448,7 @@ export class FpsSim {
       e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
       e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
       e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+      e.targetId = LOCAL_TARGET;
       this.events.push({ kind: 'spawn', enemyId: e.id });
       n++;
     }
@@ -445,6 +485,7 @@ export class FpsSim {
       phase: spec.boss ? 1 : 0,
       burnUntil: 0,
       burnDps: 0,
+      targetId: LOCAL_TARGET,
     };
     this.enemies.push(e);
     // Store the CLEARED spawn so reinforce/respawn also come back out of geometry.
@@ -748,8 +789,43 @@ export class FpsSim {
     this.events.push(ev);
   }
 
-  /** One bullet: jitter the ray within the cone, find the nearest thing it hits. */
+  /** Local player's own shot — the only caller in every mode but co-op.
+   *  Increments personal session stats (hits/headshots/kills); a
+   *  teammate's shot in co-op goes through `resolveRemoteShot` instead,
+   *  which shares this same raycast/damage core but never touches these. */
   private resolveShot(origin: Vec3, dir: Vec3, spread: number, out: FpsEvent[]): void {
+    const r = this.traceAndApply(origin, dir, spread, out);
+    if (r.hit) {
+      this.hits++;
+      if (r.headshot) this.headshots++;
+      if (r.killed) this.kills++;
+    }
+  }
+
+  /** A teammate's shot, co-op Endless only (see `ValorScene`'s `coop`
+   *  prop) — reuses the exact same raycast/damage resolution
+   *  `resolveShot` uses for the local player (cover, ground, enemy
+   *  hitboxes, crit roll, burn DoT), tagging the resulting `hit`/`kill`
+   *  events with `shooterId` so the host's own scene can tell whose gun
+   *  did it. Deliberately does NOT touch `hits`/`headshots`/`kills` —
+   *  those are the local player's own session stats, and a teammate's
+   *  kill isn't yours. No ammo/fire-rate gate here either: the trust
+   *  model for an unstaked co-op mode is "the host believes what a
+   *  teammate's client says it fired," the same leniency
+   *  `arena_server.rs`'s module doc explicitly contrasts against for
+   *  Face-Off's STAKED case. Not called from within `step()`, so there's
+   *  no per-frame `produced` array to also populate — events land in
+   *  `this.events` via `push`, same as every other path; `drain()` is
+   *  what the scene actually reads regardless. */
+  resolveRemoteShot(shooterId: string, origin: Vec3, dir: Vec3, spread: number): void {
+    this.traceAndApply(origin, dir, spread, [], shooterId);
+  }
+
+  /** One bullet: jitter the ray within the cone, find the nearest thing it
+   *  hits. Shared by `resolveShot` (local) and `resolveRemoteShot` (a
+   *  teammate's, co-op only) — never touches personal session stats, see
+   *  both callers above for why. */
+  private traceAndApply(origin: Vec3, dir: Vec3, spread: number, out: FpsEvent[], shooterId?: string): { hit: boolean; headshot: boolean; killed: boolean } {
     const ray = jitter(normalize(dir), spread, this.rng);
 
     let bestT: number = FPS_TUNING.MAX_RAY;
@@ -814,14 +890,11 @@ export class FpsSim {
       const crit = this.rng() < this.gun.critChance;
       const dmg = this.damageFor(hitPart, bestT) * (crit ? this.gun.critMult : 1);
       hitEnemy.hp -= dmg;
-      this.hits++;
-      if (hitPart === 'head') this.headshots++;
       const killed = hitEnemy.hp <= 0;
       if (killed) {
         hitEnemy.alive = false;
         hitEnemy.hp = 0;
         hitEnemy.deadAt = this.time;
-        this.kills++;
       } else {
         // Incendiary (B): each hit refreshes a thermite burn that keeps ticking
         // after you stop firing, and can finish a wounded target on its own.
@@ -831,13 +904,16 @@ export class FpsSim {
           hitEnemy.burnDps = burn;
         }
       }
-      this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed, crit });
-      if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id });
+      this.push(out, { kind: 'hit', enemyId: hitEnemy.id, part: hitPart, damage: dmg, point, killed, crit, shooterId });
+      if (killed) this.push(out, { kind: 'kill', enemyId: hitEnemy.id, shooterId });
+      return { hit: true, headshot: hitPart === 'head', killed };
     } else if (bestT < FPS_TUNING.MAX_RAY) {
       const normal: Vec3 = hitGround ? UP : hitBox ? aabbFaceNormal(point, hitBox) : negate(ray);
       this.push(out, { kind: 'wall', point, normal });
+      return { hit: false, headshot: false, killed: false };
     } else {
       this.push(out, { kind: 'miss', point });
+      return { hit: false, headshot: false, killed: false };
     }
   }
 
@@ -853,11 +929,53 @@ export class FpsSim {
     return dmg;
   }
 
+  /** Every live target an enemy could possibly engage this frame — the
+   *  local player plus every registered co-op combatant. Computed once per
+   *  `updateEnemies` call, not per-enemy. In every mode but co-op,
+   *  `this.combatants` is empty and this returns a single-element array,
+   *  which is what makes `pickTarget` resolve back to `LOCAL_TARGET`
+   *  unconditionally when co-op isn't active. */
+  private allTargets(input: FpsInput): Array<{ id: string; x: number; z: number; eyeY: number; alive: boolean }> {
+    // `input.origin[1]` here, NOT `this.playerEyeY` — `updateEnemies` runs
+    // before `this.playerEyeY` is refreshed for this frame (see `step()`),
+    // so it would still be reading last frame's crouch state. The caller's
+    // own `input.origin` is already correct for THIS frame, which is
+    // exactly what the local-only code this replaced used to read.
+    const list = [{ id: LOCAL_TARGET, x: input.origin[0], z: input.origin[2], eyeY: input.origin[1], alive: this.playerAlive }];
+    for (const [id, c] of this.combatants) list.push({ id, x: c.x, z: c.z, eyeY: c.eyeY, alive: c.alive });
+    return list;
+  }
+
+  /** Sticky target selection: an enemy keeps engaging whoever it's already
+   *  engaging as long as it can still see them. It only re-picks — nearest
+   *  ALIVE target it currently has line of sight to — when the current
+   *  target dies or drops out of sight. If nobody at all is visible this
+   *  frame, the enemy simply keeps its last-known target id (its stale
+   *  `seenX`/`seenZ` still drive the existing hunt-then-give-up behavior
+   *  unchanged), unless that target is now confirmed dead, in which case it
+   *  falls back to whichever target is still alive (or the local player as
+   *  a harmless default — nobody will actually be there if they're dead
+   *  too, so LOS simply stays false). */
+  private pickTarget(e: FpsEnemy, targets: ReturnType<typeof this.allTargets>): void {
+    const current = targets.find((t) => t.id === e.targetId);
+    if (current?.alive && this.hasLOS(e, [current.x, current.eyeY, current.z])) return;
+
+    let best: (typeof targets)[number] | null = null;
+    let bestDist = Infinity;
+    for (const t of targets) {
+      if (!t.alive || !this.hasLOS(e, [t.x, t.eyeY, t.z])) continue;
+      const d = Math.hypot(t.x - e.x, t.z - e.z);
+      if (d < bestDist) { bestDist = d; best = t; }
+    }
+    if (best) { e.targetId = best.id; return; }
+    if (!current?.alive) e.targetId = targets.find((t) => t.alive)?.id ?? LOCAL_TARGET;
+  }
+
   // ── Enemy AI (slice 3): hide → peek → telegraph → fire → recover, fairly ──
   private updateEnemies(dt: number, input: FpsInput, out: FpsEvent[]): void {
     const E = FPS_TUNING.ENEMY;
     const B = FPS_TUNING.BOSS;
-    const px = input.origin[0], pz = input.origin[2];
+    const targets = this.allTargets(input);
 
     // Before anyone thinks: is the player standing in a room that hasn't noticed?
     this.wakeEnteredRoom(input);
@@ -882,7 +1000,11 @@ export class FpsSim {
       // survival waves spawned already-active, `setAllActive(true)` — so none of them
       // can come online believing you are nowhere. Without it, `hunting` would be
       // false from birth and a whole survival wave would spawn, decide it had lost
-      // you, and walk back to its own spawn points.
+      // you, and walk back to its own spawn points. `markContact` always assumes
+      // contact with the LOCAL player specifically — room-wake is always triggered
+      // by the local client's own position (see `ValorScene`'s coop host path), so
+      // that's the correct first guess; `pickTarget` below re-evaluates for real
+      // the very same frame regardless.
       if (e.seenAt === 0) this.markContact(e);
 
       // A boss escalates as it bleeds — announce each new phase once.
@@ -896,20 +1018,24 @@ export class FpsSim {
       }
       const ph = e.boss ? e.phase - 1 : 0; // phase index into the BOSS tables
 
-      const los = this.playerAlive && this.hasLOS(e, input.origin);
-      if (los) { e.seenX = px; e.seenZ = pz; e.seenAt = this.time; }
+      this.pickTarget(e, targets);
+      const tgt = targets.find((t) => t.id === e.targetId)!;
+      const tx = tgt.x, tz = tgt.z;
 
-      // What this enemy BELIEVES. With eyes on you that is the truth; without, it is
-      // the last place it saw you, and it goes stale. Everything below reads these
-      // and not px/pz — an enemy that reads the real position while it cannot see
-      // you is an enemy you cannot hide from, which is what this used to be: it
-      // faced you through walls and walked straight to you with its eyes shut.
+      const los = tgt.alive && this.hasLOS(e, [tx, tgt.eyeY, tz]);
+      if (los) { e.seenX = tx; e.seenZ = tz; e.seenAt = this.time; }
+
+      // What this enemy BELIEVES. With eyes on its target that is the truth; without,
+      // it is the last place it saw them, and it goes stale. Everything below reads
+      // these and not tx/tz — an enemy that reads the real position while it cannot
+      // see its target is an enemy you cannot hide from, which is what this used to
+      // be: it faced you through walls and walked straight to you with its eyes shut.
       const hunting = e.seenAt > 0 && this.time - e.seenAt < E.SEARCH_SECS;
 
       // Watch where you believe he is. Having given up, that means watching the last
       // place you saw him from your post, which reads as a guard back on his arc.
       e.facing = Math.atan2(e.seenX - e.x, e.seenZ - e.z);
-      const dist = Math.hypot(px - e.x, pz - e.z);
+      const dist = Math.hypot(tx - e.x, tz - e.z);
 
       // stand to shoot, duck otherwise
       const duckTarget = e.ai === 'aim' || e.ai === 'fire' ? 0 : 1;
@@ -938,10 +1064,10 @@ export class FpsSim {
           // offset, so they close in and flank instead of standing still and bobbing.
           const preferred = e.boss ? B.PREFERRED_DIST[ph] : E.PREFERRED_DIST;
           for (let tries = 0; tries < 6; tries++) {
-            const bearing = Math.atan2(e.x - px, e.z - pz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
+            const bearing = Math.atan2(e.x - tx, e.z - tz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
             const d = preferred + (this.rng() - 0.5) * 5;
-            e.goalX = px + Math.sin(bearing) * d;
-            e.goalZ = pz + Math.cos(bearing) * d;
+            e.goalX = tx + Math.sin(bearing) * d;
+            e.goalZ = tz + Math.cos(bearing) * d;
             if (!this.inCover(e.goalX, e.goalZ)) break;
           }
           e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
@@ -976,8 +1102,12 @@ export class FpsSim {
       }
 
       // Earn a token to peek + shoot: mooks share the MAX_ATTACKERS budget, a
-      // boss always may (it fights outside the fairness cap).
-      if (this.playerAlive && (e.boss || tokens < E.MAX_ATTACKERS) && los && dist < E.ENGAGE_RANGE && this.time >= e.aiUntil) {
+      // boss always may (it fights outside the fairness cap). `los` already
+      // requires the current target to be alive (see `pickTarget`), so no
+      // separate aliveness check is needed here — and must not hardcode
+      // `this.playerAlive`, which would wrongly block a valid engagement
+      // against a still-living teammate after the local player has died.
+      if ((e.boss || tokens < E.MAX_ATTACKERS) && los && dist < E.ENGAGE_RANGE && this.time >= e.aiUntil) {
         e.token = true; if (!e.boss) tokens++;
         e.ai = 'aim';
         const aimMs = e.boss ? B.AIM_MS[ph] : E.AIM_MS;
@@ -987,10 +1117,31 @@ export class FpsSim {
     }
   }
 
+  /** Resolves a `targetId` to a firing-position (co-op only ever passes a
+   *  non-`LOCAL_TARGET` id — see `pickTarget`). Mirrors the `LOCAL_TARGET`
+   *  entry `allTargets` builds; kept separate since this is a single-target
+   *  lookup at the point of firing, not a full target-selection pass. */
+  private resolveFireTarget(id: string, input: FpsInput): { x: number; z: number; eyeY: number; alive: boolean } {
+    if (id !== LOCAL_TARGET) {
+      const c = this.combatants.get(id);
+      if (c) return { x: c.x, z: c.z, eyeY: c.eyeY, alive: c.alive };
+    }
+    return { x: input.origin[0], z: input.origin[2], eyeY: this.playerEyeY, alive: this.playerAlive };
+  }
+
+  private getMercyUntil(id: string): number {
+    return id === LOCAL_TARGET ? this.mercyUntil : (this.combatantMercyUntil.get(id) ?? 0);
+  }
+  private setMercyUntil(id: string, at: number): void {
+    if (id === LOCAL_TARGET) this.mercyUntil = at;
+    else this.combatantMercyUntil.set(id, at);
+  }
+
   private enemyFire(e: FpsEnemy, input: FpsInput, out: FpsEvent[], spreadMult = 1): void {
     const E = FPS_TUNING.ENEMY;
-    const px = input.origin[0], pz = input.origin[2];
-    const eyeY = this.playerEyeY;
+    const tgt = this.resolveFireTarget(e.targetId, input);
+    const px = tgt.x, pz = tgt.z;
+    const eyeY = tgt.eyeY;
 
     // The muzzle of the rifle in their hands, not a point inside their chest.
     const fx = Math.sin(e.facing), fz = Math.cos(e.facing);
@@ -1036,19 +1187,36 @@ export class FpsSim {
       : null;
 
     this.enemyShots++;
-    this.push(out, { kind: 'enemyFire', enemyId: e.id, from, dir, impact, hit: part !== null, part, normal });
+    // Visual/audio "an enemy shot at you" event only makes sense for the
+    // LOCAL player — every existing consumer (tracers, impact sparks,
+    // camera shake) assumes it's about the client running this sim. A shot
+    // at a teammate still deals real damage below; the teammate's own
+    // client learns about it by diffing their own hp across successive
+    // broadcast snapshots (see `ValorScene`'s coop wiring), not from an
+    // event here.
+    if (e.targetId === LOCAL_TARGET) {
+      this.push(out, { kind: 'enemyFire', enemyId: e.id, from, dir, impact, hit: part !== null, part, normal });
+    }
 
-    if (part && this.playerAlive && this.time >= this.mercyUntil) {
-      this.mercyUntil = this.time + E.MERCY_MS;
-      const dmg = Math.round(E.DMG * FPS_TUNING.PLAYER_HIT.PART_MULT[part]);
+    if (!part || !tgt.alive || this.time < this.getMercyUntil(e.targetId)) return;
+    this.setMercyUntil(e.targetId, this.time + E.MERCY_MS);
+    const dmg = Math.round(E.DMG * FPS_TUNING.PLAYER_HIT.PART_MULT[part]);
+    const fromDir = normalize([e.x - px, 0, e.z - pz]);
+
+    if (e.targetId === LOCAL_TARGET) {
       this.lastHitPart = part;
       this.hitParts[part]++;
       this.playerHp = Math.max(0, this.playerHp - dmg);
-      const fromDir = normalize([e.x - px, 0, e.z - pz]);
       this.push(out, { kind: 'playerHit', damage: dmg, part, from, fromDir, hp: this.playerHp });
       if (this.playerHp <= 0) {
         this.playerAlive = false;
         this.push(out, { kind: 'playerDown' });
+      }
+    } else {
+      const c = this.combatants.get(e.targetId);
+      if (c) {
+        c.hp = Math.max(0, c.hp - dmg);
+        if (c.hp <= 0) c.alive = false;
       }
     }
   }
@@ -1177,6 +1345,7 @@ export class FpsSim {
       e.ai = 'hidden'; e.phase = e.boss ? 1 : 0;
       e.goalX = sx; e.goalZ = sz; e.nextGoalAt = 0;
       e.aiUntil = this.time + this.rng() * FPS_TUNING.ENEMY.HIDE_MS;
+      e.targetId = LOCAL_TARGET;
       this.events.push({ kind: 'spawn', enemyId: e.id });
       n++;
     }
@@ -1232,6 +1401,30 @@ export class FpsSim {
       const c = this.cover[i];
       if (c.z - c.d / 2 > zBehind) this.cover.splice(i, 1);
     }
+  }
+
+  // ── Co-op Endless (party mode) — see `ValorScene`'s `coop` prop ────────────
+
+  /** Registers or updates a teammate as a live AI target — called once per
+   *  frame per teammate by the HOST's own client, fed from the party
+   *  relay's reported peer positions. Only position/aim ever come from the
+   *  teammate's own client; hp/alive are host-owned from here on (set on
+   *  first call, then only ever mutated by `enemyFire`'s damage
+   *  resolution) — the same "the sim owns survival, the client only
+   *  reports where it wants to be" split the local player already has. */
+  setCombatant(id: string, x: number, z: number, eyeY: number): void {
+    const existing = this.combatants.get(id);
+    if (existing) { existing.x = x; existing.z = z; existing.eyeY = eyeY; return; }
+    this.combatants.set(id, { x, z, eyeY, hp: FPS_TUNING.PLAYER_HP, alive: true });
+  }
+
+  /** A teammate left the party mid-run — stop targeting them and forget
+   *  their state entirely. Any enemy currently engaging them re-picks a
+   *  target on its very next `updateEnemies` pass (`pickTarget` always
+   *  re-checks LOS to whatever `targetId` currently resolves to). */
+  removeCombatant(id: string): void {
+    this.combatants.delete(id);
+    this.combatantMercyUntil.delete(id);
   }
 
   /** Survival re-arm · REVIVE: bring the player back from death at full health
@@ -1339,6 +1532,13 @@ export class FpsSim {
       stats: { shotsFired: this.shotsFired, hits: this.hits, headshots: this.headshots, kills: this.kills, enemyShots: this.enemyShots },
       lastHitPart: this.lastHitPart,
       hitParts: { ...this.hitParts },
+      // Co-op Endless only — empty in every other mode. This is what the
+      // HOST's client broadcasts over `useCoopSocket`'s `sendHostState` so
+      // every teammate's own client can render everyone else and detect
+      // its own hp dropping (see `ValorScene`'s coop wiring).
+      combatants: Object.fromEntries(
+        [...this.combatants].map(([id, c]) => [id, { x: c.x, z: c.z, hp: c.hp, alive: c.alive }]),
+      ),
     };
   }
 }

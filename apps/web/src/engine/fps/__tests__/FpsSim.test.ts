@@ -453,6 +453,85 @@ describe('FpsSim enemies fighting back (slice 3)', () => {
   });
 });
 
+// Co-op Endless (party mode): a HOST's own FpsSim additionally tracks
+// teammates as live AI targets via setCombatant/resolveRemoteShot. Every
+// other describe block in this file never calls either — these tests are
+// what actually proves that path stays inert until something does.
+describe('FpsSim co-op combatants (party mode)', () => {
+  const idle = (over: Partial<FpsInput> = {}): FpsInput =>
+    ({ firing: false, wantReload: false, origin: [0, 1.6, 0], dir: [0, 0, -1], adsFactor: 0, moving: false, crouched: false, ...over });
+
+  it('with zero registered combatants, an enemy always stays locked on the local player', () => {
+    const sim = new FpsSim({ gunId: 'sidearm', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    for (let i = 0; i < 10; i++) sim.step(0.1, idle());
+    expect(sim.getEnemies()[0].targetId).toBe('__local__');
+  });
+
+  it('an enemy the local player cannot see still engages a teammate who has a clean line of sight', () => {
+    const sim = new FpsSim({
+      gunId: 'sidearm',
+      enemies: [{ pos: [0, -10] }],
+      cover: [{ x: 0, z: -4, w: 40, d: 1, h: 3 }], // blocks the local player's LOS entirely
+      rng: () => 0,
+    });
+    sim.setCombatant('teammate', 3, -9, 1.6); // same side of the wall as the enemy — clear LOS
+    for (let i = 0; i < 60; i++) sim.step(0.1, idle());
+
+    expect(sim.playerHp).toBe(100); // never engaged — the wall protected them
+    expect(sim.snapshot().combatants.teammate.hp).toBeLessThan(100); // the teammate took the fire instead
+  });
+
+  it("a teammate's shot kills an enemy without inflating the local player's own session stats", () => {
+    const sim = new FpsSim({ gunId: 'sidearm', enemies: [{ pos: [0, -6], hp: 1 }], rng: () => 0 });
+    sim.resolveRemoteShot('teammate', [0, 1.6, -3], [0, 0, -1], 0);
+    expect(sim.getEnemies()[0].alive).toBe(false);
+    expect(sim.hits).toBe(0);
+    expect(sim.kills).toBe(0);
+    expect(sim.headshots).toBe(0);
+  });
+
+  it("a teammate's landed hit is tagged with their id, not the local player's", () => {
+    const sim = new FpsSim({ gunId: 'sidearm', enemies: [{ pos: [0, -6] }], rng: () => 0 });
+    sim.resolveRemoteShot('teammate', [0, 1.6, -3], [0, 0, -1], 0);
+    const hit = sim.drain().find((e) => e.kind === 'hit');
+    expect(hit).toBeTruthy();
+    expect((hit as { shooterId?: string }).shooterId).toBe('teammate');
+  });
+
+  it('removeCombatant makes an enemy drop them as a target instead of firing at a ghost', () => {
+    const sim = new FpsSim({
+      gunId: 'sidearm',
+      enemies: [{ pos: [0, -10] }],
+      cover: [{ x: 0, z: -4, w: 40, d: 1, h: 3 }],
+      rng: () => 0,
+    });
+    sim.setCombatant('teammate', 3, -9, 1.6);
+    for (let i = 0; i < 10; i++) sim.step(0.1, idle());
+    expect(sim.getEnemies()[0].targetId).toBe('teammate');
+
+    sim.removeCombatant('teammate');
+    sim.step(0.1, idle());
+    expect(sim.getEnemies()[0].targetId).not.toBe('teammate');
+  });
+
+  it("a downed teammate stops being targeted, and the local player is never touched", () => {
+    const sim = new FpsSim({
+      gunId: 'sidearm',
+      enemies: [{ pos: [0, -9] }, { pos: [2, -9] }],
+      cover: [{ x: 0, z: -4, w: 40, d: 1, h: 3 }],
+      rng: () => 0,
+    });
+    sim.setCombatant('teammate', 3, -8, 1.6);
+    for (let i = 0; i < 300; i++) sim.step(0.1, idle());
+
+    const teammate = sim.snapshot().combatants.teammate;
+    expect(teammate.alive).toBe(false);
+    expect(teammate.hp).toBe(0);
+    expect(sim.playerAlive).toBe(true);
+    expect(sim.playerHp).toBe(100);
+  });
+});
+
 describe('FpsSim boss phases', () => {
   const idle = (over: Partial<FpsInput> = {}): FpsInput =>
     ({ firing: false, wantReload: false, origin: [0, 1.6, 0], dir: [0, 0, -1], adsFactor: 0, moving: false, crouched: false, ...over });
