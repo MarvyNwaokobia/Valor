@@ -21,6 +21,7 @@ pub struct AppState {
     pub chat_limiter:      std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub chat_hub:          services::chat_hub::ChatHub,
     pub game_server:       services::game_server::GameServerHandle,
+    pub arena_server:      services::arena_server::ArenaServerHandle,
     pub bot_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::BotFightSession>>,
     pub live_fight_sessions: std::sync::Arc<DashMap<Uuid, services::battle::LiveFightSession>>,
     pub endless_sessions: std::sync::Arc<DashMap<Uuid, services::battle::EndlessSession>>,
@@ -84,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     let chat_limiter   = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(20, 60));
     let chat_hub       = services::chat_hub::new_hub();
     let game_server    = services::game_server::GameServerHandle::spawn(db.clone());
+    let arena_server   = services::arena_server::ArenaServerHandle::spawn(db.clone());
 
     // Guards /battles/bounties/reconcile against pile-up: the GitHub Actions cron
     // fires it every 15 minutes regardless of whether the previous run finished, and
@@ -150,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
                 chat_limiter:   chat_limiter.clone(),
                 chat_hub:       chat_hub.clone(),
                 game_server:    game_server.clone(),
+                arena_server:   arena_server.clone(),
                 bot_fight_sessions: bot_fight_sessions.clone(),
                 live_fight_sessions: live_fight_sessions.clone(),
                 endless_sessions: endless_sessions.clone(),

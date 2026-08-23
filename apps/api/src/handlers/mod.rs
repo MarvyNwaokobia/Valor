@@ -10,6 +10,7 @@ pub mod duels;
 pub mod friends;
 pub mod rewards;
 pub mod ws;
+pub mod arena_ws;
 pub mod chat;
 pub mod chat_ws;
 pub mod endless;
@@ -73,6 +74,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // Which reward pools this server actually loaded — see get_pools.
         .route("/pools", web::get().to(ledger::get_pools))
         .route("/ws/battle", web::get().to(ws::battle_ws))
+        .route("/ws/arena", web::get().to(arena_ws::arena_ws))
         .route("/ws/chat", web::get().to(chat_ws::chat_ws))
         .service(
             web::scope("/identity")
