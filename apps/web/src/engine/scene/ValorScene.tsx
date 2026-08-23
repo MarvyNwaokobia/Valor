@@ -416,6 +416,38 @@ export interface EndlessOpts {
    *  not for tearing the session down. */
   onDeath?: (wave: number, stats: { kills: number; headshots: number }) => void;
 }
+
+/** A non-host teammate's reported position/aim/fire-intent, sent every frame
+ *  over `useCoopSocket`'s relay. World eye position + a normalized aim
+ *  direction rather than yaw/pitch — the sender already HAS these (its own
+ *  `cam.position`/`cam.getWorldDirection`), so there's no trig to
+ *  reconstruct on either end. */
+export interface CoopRemoteInput {
+  x: number; y: number; z: number;
+  dirX: number; dirY: number; dirZ: number;
+  firing: boolean;
+}
+
+/** Co-op Endless (party mode) — layered alongside `EndlessOpts`, present
+ *  only when this run is a party, not solo. `useCoopSocket`'s own snapshot/
+ *  peer-input fields are typed `unknown` on purpose (that hook is a dumb
+ *  relay and never needs to know their shape) — this is where they get a
+ *  real shape, tied directly to `FpsSim.snapshot()`'s actual return type so
+ *  the two can never drift apart. */
+export interface CoopOpts {
+  isHost: boolean;
+  /** Non-host only — the host's latest broadcast, read every frame. */
+  latestHostSnapshot?: React.RefObject<ReturnType<FpsSim['snapshot']> | null>;
+  /** Host only — called on ValorScene's own broadcast cadence. */
+  sendHostState?: (snapshot: ReturnType<FpsSim['snapshot']>) => void;
+  /** Non-host only — this frame's local input; the caller/hook decides
+   *  transport rate, not this. */
+  sendRemoteInput?: (payload: CoopRemoteInput) => void;
+  /** Host only — every teammate's latest reported input, wallet -> payload. */
+  latestPeerInputs?: React.RefObject<Map<string, CoopRemoteInput>>;
+  /** Host only — fans a wave-clear out to the party over the relay. */
+  sendWaveCleared?: (wave: number) => void;
+}
 const REACH_RADIUS = 3.5;
 // A defend hold banks time within a WIDER ring than a reach touch, so you can pull
 // back to adjacent cover to recover and still be "holding the point" — the hold no
@@ -537,7 +569,7 @@ function PerfHud({ hud }: { hud: React.MutableRefObject<Hud> }) {
   return null;
 }
 
-function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, endlessOpts }: {
+function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, onComplete, onDeath, pausedRef, gateRef, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, endlessOpts, coop }: {
   hud: React.MutableRefObject<Hud>; controls: React.MutableRefObject<Controls>;
   // lowSpec = touch device (drives touch input/aim-assist). lightFx = drop the
   // expensive postprocessing. minimal = the aggressive tier for a struggling
@@ -568,6 +600,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // ENDLESS: the run's parameters and its two callbacks. Present only for the
   // generated-chain modes (Campaign Endless / Seasonal Campaign).
   endlessOpts?: EndlessOpts;
+  // Co-op Endless (party mode). See `CoopOpts`.
+  coop?: CoopOpts;
 }) {
   const { camera, gl, scene } = useThree();
 
@@ -911,6 +945,12 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   useEffect(() => () => impactFx.dispose(), [impactFx]);
   const caOffset = useMemo(() => new THREE.Vector2(lowSpec ? 0.0003 : 0.0007, lowSpec ? 0.0004 : 0.0009), [lowSpec]);
   const heartbeatAt = useRef(0);
+  /** Co-op Endless (party mode), host only — last time sim.snapshot() went
+   *  out over the relay. Throttled well below frame rate on purpose: a
+   *  handful of enemies/combatants is small either way, but there's no
+   *  reason to broadcast 60x/sec what a lerp on the receiving end already
+   *  smooths between ticks. */
+  const lastCoopBroadcastAt = useRef(0);
   const downAt = useRef(-99);
   /**
    * Second wind. Going down doesn't end the attempt while you have one of these:
@@ -1736,6 +1776,26 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       crouched: crouchCur.current > 0.5,
     };
     wantReload.current = false;
+
+    // ── Co-op Endless (party mode) ──
+    if (coop?.isHost) {
+      // Register every teammate as a live AI target BEFORE stepping the sim,
+      // so this frame's updateEnemies pass already sees them — see
+      // FpsSim.ts's setCombatant/pickTarget.
+      for (const [wallet, peer] of coop.latestPeerInputs?.current ?? []) {
+        sim.setCombatant(wallet, peer.x, peer.z, peer.y);
+      }
+    } else if (coop && !coop.isHost) {
+      // Report this frame's real position/aim to the host — the host's sim
+      // is the only one that ever gets real enemies (see the endless flow
+      // below), so this is what lets it target/render this player at all.
+      coop.sendRemoteInput?.({
+        x: cam.position.x, y: cam.position.y, z: cam.position.z,
+        dirX: fwd.x, dirY: fwd.y, dirZ: fwd.z,
+        firing: input.firing,
+      });
+    }
+
     sim.step(dt, input);
 
     // ── Consume events → VFX / HUD ──
@@ -1898,15 +1958,33 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
     // ── Dummies: pose from snapshot (upright / falling), hit flash ──
     const snap = sim.snapshot();
+
+    // Co-op Endless (party mode), host only — fan this same snapshot out to
+    // the rest of the party at a conservative rate (~6-7Hz; tune up only if
+    // playtesting shows visible jitter, per the plan). Every non-host client
+    // reads it back via `latestHostSnapshot` for enemy positions/hp AND
+    // teammate positions/hp — one payload, one source of truth.
+    if (coop?.isHost && now - lastCoopBroadcastAt.current > 0.15) {
+      lastCoopBroadcastAt.current = now;
+      coop.sendHostState?.(snap);
+    }
+    // Co-op non-host: this client's own sim never has real enemies (only the
+    // host's does — see FpsWorld's co-op section above), so what actually
+    // gets rendered/animated comes from the host's broadcast instead. Every
+    // other mode (including the host's own client) reads snap.enemies
+    // exactly as before this existed.
+    const liveEnemies = (coop && !coop.isHost)
+      ? (coop.latestHostSnapshot?.current?.enemies ?? [])
+      : snap.enemies;
     // Endless maps a live, changing enemy list onto a fixed rig pool, so any slot past
     // the current count is parked out of sight — otherwise a pruned room's bodies stay
     // frozen on screen as ghosts.
-    for (let i = snap.enemies.length; i < dummyRefs.current.length; i++) {
+    for (let i = liveEnemies.length; i < dummyRefs.current.length; i++) {
       const g = dummyRefs.current[i];
       if (g) g.visible = false;
     }
-    for (let i = 0; i < snap.enemies.length; i++) {
-      const e = snap.enemies[i];
+    for (let i = 0; i < liveEnemies.length; i++) {
+      const e = liveEnemies[i];
       const g = dummyRefs.current[i];
       if (!g) continue;
       // Bodies stay upright and un-squashed: the sim's hitboxes are fixed, so
@@ -2105,10 +2183,31 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         // the mark (or shoot) and it wakes. This gives the run the same breach rhythm
         // as every later room instead of opening mid-gunfight, and it costs nothing
         // to a player who just walks in shooting.
+        // Whether THIS client owns the AI — solo play is its own host by
+        // definition. Every AI-authority statement below (waking a room,
+        // detecting a wave clear, spawning real enemies) is gated on this;
+        // a non-host still runs everything else in this block (geometry
+        // streaming, the room cursor, its own breach/audio beats) driven by
+        // its OWN position, exactly like a host would — only enemies
+        // themselves are never real on a non-host's own sim (see FpsWorld's
+        // co-op section above `sim.step`).
+        const isAiAuthority = !coop || coop.isHost;
+        // Enemies-alive-in-room, whichever source is actually true for this
+        // client: the local sim (host/solo) or the host's broadcast (non-
+        // host, whose own sim never has real enemies to ask).
+        const roomAliveCount = (room: number): number => {
+          if (isAiAuthority) return sim.roomAlive(room);
+          const hostSnap = coop!.latestHostSnapshot?.current;
+          if (!hostSnap) return 0;
+          let n = 0;
+          for (const e of hostSnap.enemies) if (e.alive && e.room === room) n++;
+          return n;
+        };
+
         if (!c.armed) {
           const moved = Math.hypot(pos.current.x - START[0], pos.current.z - START[1]) > 1.2;
           if (moved || snap.stats.shotsFired > 0) {
-            sim.setRoomActive(c.cursor + 1, true);
+            if (isAiAuthority) sim.setRoomActive(c.cursor + 1, true);
             c.armed = true;
             say('opBreach');
           }
@@ -2116,9 +2215,13 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
 
         // A wave banks the instant its LAST room is emptied — that's the beat the
         // "+G$ / WAVE N CLEARED" moment hangs on, not the walk to the next door.
-        if (cur && cur.wavesEnd && cur.wave > c.bankedThrough && sim.roomAlive(cur.index + 1) === 0) {
+        // Host-only: only the host's sim has real enemies to actually clear, and
+        // only the host's own detection is trusted to fan a wave-clear out to the
+        // rest of the party (see coop_server.rs's WaveCleared relay).
+        if (isAiAuthority && cur && cur.wavesEnd && cur.wave > c.bankedThrough && sim.roomAlive(cur.index + 1) === 0) {
           c.bankedThrough = cur.wave;
           endlessOpts?.onWaveCleared?.(cur.wave);
+          coop?.sendWaveCleared?.(cur.wave);
           say('missionCleared');
           // The wave-cleared beat. This is the payoff moment of the whole mode, and
           // without it a wave banks in total silence — the player has no way to know
@@ -2144,7 +2247,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
           const ofWave = roomsForWave(cur.wave);
           if (hud.current.waveLabel) hud.current.waveLabel.textContent = `WAVE ${cur.wave}`;
           if (hud.current.waveRooms) {
-            const left = sim.roomAlive(cur.index + 1);
+            const left = roomAliveCount(cur.index + 1);
             hud.current.waveRooms.textContent = left > 0
               ? `ROOM ${roomInWave} / ${ofWave} · ${left} LEFT`
               : `ROOM ${roomInWave} / ${ofWave} · CLEAR — MOVE UP`;
@@ -2152,16 +2255,20 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         }
 
         // Crossing the far wall puts the player in the next room: wake it, build one
-        // more room ahead, and drop the one that's now well behind.
+        // more room ahead, and drop the one that's now well behind. Geometry
+        // streaming (generateRoom/appendCover/pruneBehind) runs for EVERY client —
+        // it's pure and seeded, so a non-host needs it too, purely to give their own
+        // movement real walls to collide with. Only appendEnemies/setRoomActive are
+        // AI-authority — a non-host's own sim never gets real enemies at all.
         if (cur && pos.current.z < cur.zFar) {
           c.cursor = cur.index + 1;
-          sim.setRoomActive(c.cursor + 1, true);
+          if (isAiAuthority) sim.setRoomActive(c.cursor + 1, true);
           c.wave = roomAt(c.cursor)?.wave ?? c.wave;
           if (c.cursor === firstRoomOfWave(c.wave)) say('opBreach');
 
           const built = generateRoom(c.nextIndex, c.nextZ, endlessOpts?.seed ?? 1);
           sim.appendCover([...built.walls, ...built.cover]);
-          sim.appendEnemies(built.enemies);
+          if (isAiAuthority) sim.appendEnemies(built.enemies);
           c.rooms.push(built);
           c.nextIndex += 1;
           c.nextZ = built.zFar;
@@ -3442,11 +3549,14 @@ function GauntletRunController({ walletAddress }: { walletAddress: string }) {
   return null;
 }
 
-export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit, endless, seasonal }: {
+export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, resumeLevel, walletAddress, accountRank, accountXp, equippedGun, equippedAmmo, equippedMods, fieldKit, onExit, endless, seasonal, coop }: {
   /** Boot straight into an ENDLESS run on the generated room chain, bypassing the
    *  campaign entirely. Present for Campaign Endless and the Seasonal Campaign;
    *  absent everywhere else. */
   endless?: EndlessOpts;
+  /** Co-op Endless (party mode) — present only when `endless` is also present
+   *  AND the run is a party, not solo. See `CoopOpts`. */
+  coop?: CoopOpts;
   /** Label the run as the Seasonal Campaign rather than Campaign Endless. Cosmetic
    *  only — the rules difference lives in what the page passes as `endless`
    *  (seasonal always starts at wave 1 and never resumes). */
@@ -4048,7 +4158,7 @@ export function ValorScene({ onOpStart, onOpCleared, onOpFailed, startMission, r
         <AdaptiveDpr />
         {perfOn && <PerfHud hud={hud} />}
         <Suspense fallback={null}>
-          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} endlessOpts={mode === 'endless' ? endless : undefined} />
+          <FpsWorld key={`${mode}-${missionIndex}-${runNonce}`} hud={hud} controls={controls} audio={audio} lowSpec={isTouch} lightFx={lightFx} minimal={minimal} mission={mission} onComplete={handleComplete} onDeath={handleDeath} pausedRef={menuOpenRef} gateRef={gateRef} accountRank={accountRank} accountXp={accountXp} equippedGun={equippedGun} equippedAmmo={equippedAmmo} equippedMods={equippedMods} fieldKit={fieldKit} endlessOpts={mode === 'endless' ? endless : undefined} coop={mode === 'endless' ? coop : undefined} />
         </Suspense>
       </Canvas>
 
