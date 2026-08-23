@@ -428,6 +428,29 @@ export interface CoopRemoteInput {
   firing: boolean;
 }
 
+/** `FpsSim.snapshot()` plus the host's own world position — that class is
+ *  headless and never owns camera/position state, only combat state, so a
+ *  non-host client needs this bolted on separately to render the host's
+ *  own operator rig (the `combatants` map only ever contains OTHER
+ *  non-host teammates — the host is never a combatant of itself). */
+export type CoopHostSnapshot = ReturnType<FpsSim['snapshot']> & {
+  hostPos: { x: number; z: number; eyeY: number };
+};
+
+/** Host + this many teammates. MUST match `MAX_PARTY_SIZE` in
+ *  `coop_server.rs` — this is what the client actually has rig slots for,
+ *  the server is what actually enforces the cap. */
+const MAX_PARTY_SIZE = 4;
+/** A reasonable fixed cadence for a teammate's remote-resolved shots — the
+ *  host doesn't know their exact weapon's fire rate (loadout is per-client
+ *  cosmetic in every mode but Face-Off), so this is a simple, ammo-free
+ *  approximation rather than modeling their real gun stats server-side. */
+const TEAMMATE_FIRE_INTERVAL = 0.12;
+/** Zero spread — a teammate's remote shot goes exactly where they reported
+ *  aiming. Matches the trust model `resolveRemoteShot`'s own doc states:
+ *  the host believes what a teammate's client says it fired. */
+const TEAMMATE_SPREAD = 0;
+
 /** Co-op Endless (party mode) — layered alongside `EndlessOpts`, present
  *  only when this run is a party, not solo. `useCoopSocket`'s own snapshot/
  *  peer-input fields are typed `unknown` on purpose (that hook is a dumb
@@ -436,10 +459,14 @@ export interface CoopRemoteInput {
  *  the two can never drift apart. */
 export interface CoopOpts {
   isHost: boolean;
+  /** This client's own wallet — used to filter "myself" out of whatever a
+   *  non-host renders from the host's broadcast (I already render my own
+   *  first-person view; I don't also want a third-person rig of myself). */
+  myWallet: string;
   /** Non-host only — the host's latest broadcast, read every frame. */
-  latestHostSnapshot?: React.RefObject<ReturnType<FpsSim['snapshot']> | null>;
+  latestHostSnapshot?: React.RefObject<CoopHostSnapshot | null>;
   /** Host only — called on ValorScene's own broadcast cadence. */
-  sendHostState?: (snapshot: ReturnType<FpsSim['snapshot']>) => void;
+  sendHostState?: (snapshot: CoopHostSnapshot) => void;
   /** Non-host only — this frame's local input; the caller/hook decides
    *  transport rate, not this. */
   sendRemoteInput?: (payload: CoopRemoteInput) => void;
@@ -1060,6 +1087,18 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
   // sampled — a puff of dust is spent per STRIDE walked (see the rig loop).
   const enemyStepDist = useRef<number[]>(ENEMY_SLOTS.map(() => 0));
   const enemyStepPos = useRef<[number, number][]>(ENEMY_SLOTS.map((e) => [e.pos[0], e.pos[1]]));
+
+  // Co-op Endless (party mode) — a small fixed pool of teammate rigs,
+  // repositioned each frame from the coop section of the loop below.
+  // Unlike ENEMY_SLOTS this is never resized live: MAX_PARTY_SIZE - 1 is
+  // the most teammates that can ever exist (the local player is the +1,
+  // never a slot of its own — it's the first-person view).
+  const teammateRefs = useRef<Array<THREE.Group | null>>([]);
+  const teammateRigApis = useRef<Array<OperatorApi | null>>([]);
+  const teammateStepDist = useRef<number[]>(Array.from({ length: MAX_PARTY_SIZE - 1 }, () => 0));
+  const teammateStepPos = useRef<[number, number][]>(Array.from({ length: MAX_PARTY_SIZE - 1 }, () => [0, 0]));
+  /** Host only — per-teammate remote-fire cooldown, wallet -> sim.time. */
+  const teammateNextShotAt = useRef<Map<string, number>>(new Map());
 
   // Rounds you can SEE. Slow enough to read (a real bullet would be invisible),
   // fast enough to feel lethal. Yours fly out; theirs come at you.
@@ -1781,9 +1820,20 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     if (coop?.isHost) {
       // Register every teammate as a live AI target BEFORE stepping the sim,
       // so this frame's updateEnemies pass already sees them — see
-      // FpsSim.ts's setCombatant/pickTarget.
+      // FpsSim.ts's setCombatant/pickTarget. Also resolves their fire
+      // intent directly against the host's enemy pool, gated to a fixed
+      // cadence PER TEAMMATE (FpsSim.resolveRemoteShot itself has no
+      // ammo/fire-rate gate — see its own doc — so this is the one place
+      // that has to exist, or a held trigger would fire every frame).
       for (const [wallet, peer] of coop.latestPeerInputs?.current ?? []) {
         sim.setCombatant(wallet, peer.x, peer.z, peer.y);
+        if (peer.firing) {
+          const nextAt = teammateNextShotAt.current.get(wallet) ?? 0;
+          if (sim.time >= nextAt) {
+            teammateNextShotAt.current.set(wallet, sim.time + TEAMMATE_FIRE_INTERVAL);
+            sim.resolveRemoteShot(wallet, [peer.x, peer.y, peer.z], [peer.dirX, peer.dirY, peer.dirZ], TEAMMATE_SPREAD);
+          }
+        }
       }
     } else if (coop && !coop.isHost) {
       // Report this frame's real position/aim to the host — the host's sim
@@ -1966,7 +2016,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // teammate positions/hp — one payload, one source of truth.
     if (coop?.isHost && now - lastCoopBroadcastAt.current > 0.15) {
       lastCoopBroadcastAt.current = now;
-      coop.sendHostState?.(snap);
+      coop.sendHostState?.({ ...snap, hostPos: { x: cam.position.x, z: cam.position.z, eyeY: cam.position.y } });
     }
     // Co-op non-host: this client's own sim never has real enemies (only the
     // host's does — see FpsWorld's co-op section above), so what actually
@@ -1976,6 +2026,59 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     const liveEnemies = (coop && !coop.isHost)
       ? (coop.latestHostSnapshot?.current?.enemies ?? [])
       : snap.enemies;
+
+    // ── Co-op teammates: rendered ENTIRELY from whichever source is
+    // authoritative for THIS client, never predicted — same discipline
+    // Face-Off's ArenaScene uses for its opponent. The host reads each
+    // teammate's own raw report directly; a non-host reads the host's
+    // broadcast, which covers the host itself (hostPos, since the host is
+    // never a combatant of its own sim) plus every OTHER non-host teammate
+    // (combatants, with this client's own wallet excluded). ──
+    if (coop) {
+      const seats: Array<{ x: number; z: number; facing?: number }> = [];
+      if (coop.isHost) {
+        for (const peer of coop.latestPeerInputs?.current?.values() ?? []) {
+          seats.push({ x: peer.x, z: peer.z, facing: Math.atan2(peer.dirX, peer.dirZ) });
+        }
+      } else {
+        const hostSnap = coop.latestHostSnapshot?.current;
+        if (hostSnap) {
+          seats.push({ x: hostSnap.hostPos.x, z: hostSnap.hostPos.z });
+          for (const [wallet, c] of Object.entries(hostSnap.combatants)) {
+            if (wallet === coop.myWallet || !c.alive) continue;
+            seats.push({ x: c.x, z: c.z });
+          }
+        }
+      }
+
+      for (let i = 0; i < teammateRefs.current.length; i++) {
+        const g = teammateRefs.current[i];
+        if (!g) continue;
+        const seat = seats[i];
+        if (!seat) { g.visible = false; continue; }
+        g.visible = true;
+        g.position.set(seat.x, 0, seat.z);
+
+        const prev = teammateStepPos.current[i];
+        const moved = Math.hypot(seat.x - prev[0], seat.z - prev[1]);
+        // Facing: the host knows a teammate's REAL aim direction (reported
+        // every frame); a non-host only ever sees positions, so it falls
+        // back to facing the way they're walking — a real but minor v1
+        // asymmetry, not worth carrying aim direction through the broadcast
+        // for every party member just for this.
+        const facing = seat.facing ?? (moved > 0.001 ? Math.atan2(seat.x - prev[0], seat.z - prev[1]) : null);
+        if (facing !== null) g.rotation.set(0, facing, 0);
+        if (moved > 0.001) {
+          prev[0] = seat.x; prev[1] = seat.z;
+          teammateStepDist.current[i] += moved;
+          if (teammateStepDist.current[i] >= STRIDE) {
+            teammateStepDist.current[i] = 0;
+            impactFx.scuff([seat.x, 0, seat.z], 0.7);
+          }
+        }
+        teammateRigApis.current[i]?.setClip(moved > 0.02 ? 'run' : 'idle');
+      }
+    }
     // Endless maps a live, changing enemy list onto a fixed rig pool, so any slot past
     // the current count is parked out of sight — otherwise a pruned room's bodies stay
     // frozen on screen as ghosts.
@@ -3057,6 +3160,15 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
       {ENEMY_SLOTS.map((e, i) => (
         <group key={i} ref={(g) => { dummyRefs.current[i] = g; }} position={[e.pos[0], 0, e.pos[1]]}>
           <OperatorRig ref={(a) => { rigApis.current[i] = a; }} modelPath={OPERATOR_GLB} />
+        </group>
+      ))}
+
+      {/* co-op teammates: same rig, no weapon tint — never a target, never
+          hostile. Hidden by default; the frame loop's coop section decides
+          each frame who (if anyone) occupies which slot. */}
+      {!!coop && Array.from({ length: MAX_PARTY_SIZE - 1 }).map((_, i) => (
+        <group key={`coop-${i}`} ref={(g) => { teammateRefs.current[i] = g; }} visible={false}>
+          <OperatorRig ref={(a) => { teammateRigApis.current[i] = a; }} modelPath={OPERATOR_GLB} />
         </group>
       ))}
 

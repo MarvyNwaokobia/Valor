@@ -94,6 +94,11 @@ struct CoopParty {
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_LEN: usize = 5;
 
+/// Host + this many teammates. Mirrored in ValorScene.tsx's MAX_PARTY_SIZE
+/// (the teammate rig pool size) — same "kept in sync by hand, comment on
+/// both sides" discipline arena_server.rs's tuning block already uses.
+const MAX_PARTY_SIZE: usize = 4;
+
 fn gen_code() -> String {
     let mut rng = rand::rng();
     (0..CODE_LEN)
@@ -176,6 +181,12 @@ impl CoopServer {
         };
         if party.started {
             send_err(&tx, "This run has already started");
+            return;
+        }
+        // MUST match MAX_PARTY_SIZE mirrored in ValorScene.tsx — that's how
+        // many teammate rig slots the client pool actually has.
+        if party.members.len() >= MAX_PARTY_SIZE {
+            send_err(&tx, "This party is full");
             return;
         }
 
@@ -332,6 +343,28 @@ mod tests {
         let notice = next_json(&mut hrx);
         assert_eq!(notice["type"], "member_joined");
         assert_eq!(notice["wallet"], "0xBBB");
+    }
+
+    #[test]
+    fn a_full_party_rejects_the_next_joiner() {
+        let mut server = CoopServer::new();
+        let (htx, mut hrx) = client();
+        server.on_create_party("0xHOST".into(), "Host".into(), htx);
+        let code = next_json(&mut hrx)["code"].as_str().unwrap().to_string();
+
+        for i in 0..MAX_PARTY_SIZE - 1 {
+            let (tx, mut rx) = client();
+            server.on_join_party(code.clone(), format!("0xM{i}"), format!("M{i}"), tx);
+            assert_eq!(next_json(&mut rx)["type"], "party_joined");
+            let _ = next_json(&mut hrx); // member_joined
+        }
+        assert_eq!(server.parties[&code].members.len(), MAX_PARTY_SIZE);
+
+        let (tx, mut rx) = client();
+        server.on_join_party(code.clone(), "0xOneTooMany".into(), "Late".into(), tx);
+        let msg = next_json(&mut rx);
+        assert_eq!(msg["type"], "error");
+        assert_eq!(server.parties[&code].members.len(), MAX_PARTY_SIZE);
     }
 
     #[test]

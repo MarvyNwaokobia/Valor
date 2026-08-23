@@ -1,38 +1,72 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { Users, Copy, Check, X, Loader2 } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useCoopSocket } from '@/hooks/useCoopSocket'
+import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns'
+import { retryImport } from '@/lib/retryImport'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import type { CoopHostSnapshot, CoopOpts, CoopRemoteInput } from '@/engine/scene/ValorScene'
+
+const ValorScene = dynamic(
+  () => retryImport(() => import('@/engine/scene/ValorScene')).then((m) => m.ValorScene),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="text-2xl font-black text-white">LOADING ARENA…</div>
+      </div>
+    ),
+  },
+)
 
 /**
- * Co-op Endless — free, unstaked party lobby. Sits OUTSIDE the `(main)`
- * route group, same as solo Endless (`apps/web/src/app/endless/page.tsx`) —
- * the actual run is a fullscreen `ValorScene`, and that's exactly the class
- * of route Face-Off had a real z-index bug over when it stayed inside
- * `(main)`'s persistent Navbar/MobileNav. Nothing here is on-chain: no
- * stake picker, no signer flow, unlike Duels/Face-Off's lobby.
+ * Co-op Endless — free, unstaked party lobby + the live run itself. Sits
+ * OUTSIDE the `(main)` route group, same as solo Endless
+ * (`apps/web/src/app/endless/page.tsx`) — the run is a fullscreen
+ * `ValorScene`, and that's exactly the class of route Face-Off had a real
+ * z-index bug over when it stayed inside `(main)`'s persistent Navbar/
+ * MobileNav. Nothing here is on-chain: no stake picker, no signer flow,
+ * unlike Duels/Face-Off's lobby.
  *
- * This is Phase 2 of the co-op build (see the plan) — create/join/lobby
- * only. `startRun()` genuinely reaches the server and flips every member to
- * `running`, but nothing consumes that phase yet (no `ValorScene` wiring
- * until Phase 4+), so it's a real signal with a placeholder screen on the
- * other end for now.
+ * Reward wiring (each party member's own `/endless/wave` call on a host-
+ * announced clear) isn't built yet — `onWaveCleared`/`onDeath` below are
+ * placeholders for that; a co-op run is fully playable without it, it just
+ * doesn't pay out yet.
  */
 export default function CoopLobbyPage() {
   const { status, address } = useResolvedAuth()
   const router = useRouter()
   const player = usePlayerStore((s) => s.player)
   const playerSynced = usePlayerStore((s) => s.playerSynced)
+  const inventory = usePlayerStore((s) => s.inventory)
   const coop = useCoopSocket(address ?? '')
 
   const [joinCode, setJoinCode] = useState('')
   const [copied, setCopied] = useState(false)
 
+  const equippedGun = useMemo(() => equippedGunId(inventory), [inventory])
+  const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory])
+  const equippedMods = useMemo(() => equippedAttachments(inventory), [inventory])
+
   const displayName = player?.character_name || 'Operator'
+
+  const coopOpts: CoopOpts | undefined = useMemo(() => {
+    if (!address || coop.state.phase !== 'running') return undefined
+    return {
+      isHost: coop.state.isHost,
+      myWallet: address,
+      latestHostSnapshot: coop.latestHostSnapshot as React.RefObject<CoopHostSnapshot | null>,
+      sendHostState: coop.sendHostState as (s: CoopHostSnapshot) => void,
+      sendRemoteInput: coop.sendRemoteInput as (p: CoopRemoteInput) => void,
+      latestPeerInputs: coop.latestPeerInputs as React.RefObject<Map<string, CoopRemoteInput>>,
+      sendWaveCleared: coop.sendWaveCleared,
+    }
+  }, [address, coop.state.phase, coop.state.isHost, coop.latestHostSnapshot, coop.sendHostState, coop.sendRemoteInput, coop.latestPeerInputs, coop.sendWaveCleared])
 
   const onCreate = useCallback(() => {
     coop.createParty(displayName)
@@ -57,7 +91,35 @@ export default function CoopLobbyPage() {
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
-  const { phase, code, members, isHost, error } = coop.state
+  const { phase, code, seed, members, isHost, error } = coop.state
+
+  // TODO(Phase 7): each party member's own reward call on a host-announced
+  // wave clear (`coop.drainWaveClears()`), and a death report. A run is
+  // fully playable without these — they just don't pay out G$ yet.
+  const onWaveCleared = useCallback(() => {}, [])
+  const onDeath = useCallback(() => {}, [])
+
+  const onExit = useCallback(() => {
+    coop.leaveParty()
+  }, [coop])
+
+  if (phase === 'running' && coopOpts && seed !== null) {
+    return (
+      <div style={{ position: 'fixed', inset: 0 }}>
+        <ValorScene
+          endless={{ seed, startWave: 1, onWaveCleared, onDeath }}
+          coop={coopOpts}
+          walletAddress={address}
+          accountRank={player?.rank}
+          accountXp={player?.xp}
+          equippedGun={equippedGun}
+          equippedAmmo={equippedAmmo}
+          equippedMods={equippedMods}
+          onExit={onExit}
+        />
+      </div>
+    )
+  }
 
   return (
     <div
@@ -167,7 +229,7 @@ export default function CoopLobbyPage() {
         {phase === 'running' && (
           <div className="flex flex-col items-center gap-3 py-12">
             <Loader2 className="animate-spin text-emerald-400" size={28} />
-            <p className="text-slate-400 text-sm">Run starting — arena wiring lands in a later phase.</p>
+            <p className="text-slate-400 text-sm">Entering the arena…</p>
           </div>
         )}
 
