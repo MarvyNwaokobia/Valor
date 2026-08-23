@@ -259,6 +259,7 @@ impl ArenaServer {
         match self.waiting.remove(&entry.duel_id) {
             Some(first) => self.create_room(first, entry, self_tx),
             None => {
+                tracing::info!("arena: {} waiting alone on duel {}", entry.wallet, entry.duel_id);
                 send(&entry.tx, json!({ "type": "waiting_for_opponent" }));
                 self.waiting.insert(entry.duel_id, entry);
             }
@@ -267,6 +268,7 @@ impl ArenaServer {
 
     fn create_room(&mut self, e1: ClientEntry, e2: ClientEntry, self_tx: &UnboundedSender<ServerMsg>) {
         let room_id = e1.duel_id.to_string();
+        tracing::info!("arena: paired {} vs {} on duel {}", e1.wallet, e2.wallet, e1.duel_id);
 
         send(&e1.tx, json!({
             "type": "match_found",
@@ -409,7 +411,11 @@ impl ArenaServer {
 
     fn on_leave(&mut self, wallet: &str) {
         // Not yet paired — just drop the waiting slot if it's theirs.
+        let was_waiting = self.waiting.iter().any(|(_, e)| e.wallet == wallet);
         self.waiting.retain(|_, e| e.wallet != wallet);
+        if was_waiting {
+            tracing::info!("arena: {} left the waiting slot before anyone joined", wallet);
+        }
 
         let room_id = match self.player_rooms.get(wallet) {
             Some(id) => id.clone(),
@@ -422,6 +428,7 @@ impl ArenaServer {
             None => return,
         };
 
+        tracing::info!("arena: {} disconnected mid-match from room {} — tearing it down unsettled", wallet, room_id);
         send(&other_tx, json!({ "type": "opponent_disconnected" }));
         if let Some(room) = self.rooms.remove(&room_id) {
             self.player_rooms.remove(&room.p1.wallet);
@@ -431,6 +438,7 @@ impl ArenaServer {
             // the same way end_room() does on a clean finish. Left as a hard
             // room-teardown with no settlement for now — a deliberate gap,
             // not an oversight (see Phase 5 in the plan: AFK/leaver handling).
+            // Recoverable in the meantime via POST /admin/duels/{id}/void.
             let _ = room.duel_id;
         }
     }
@@ -442,6 +450,10 @@ impl ArenaServer {
             Some(r) => r,
             None => return,
         };
+        tracing::info!(
+            "arena: match ended for duel {} — winner={:?} reason={}",
+            info.duel_id, info.winner_wallet, info.reason,
+        );
         self.player_rooms.remove(&room.p1.wallet);
         self.player_rooms.remove(&room.p2.wallet);
 

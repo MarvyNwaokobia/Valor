@@ -112,6 +112,28 @@ export function useArenaSocket(walletAddress: string) {
    *  drain() pattern for VFX/hitmarker triggering without a re-render. */
   const pendingHits = useRef<HitEvent[]>([])
 
+  /** The 2026-08-23 incident: a client that silently never reached the
+   *  server left a player staring at "waiting for opponent" forever, with
+   *  no way to tell "still legitimately waiting" from "something's wrong"
+   *  apart from watching a clock themselves. This is that clock — a single
+   *  in-flight timer, re-armed at each stage with a budget appropriate to
+   *  it, cleared the moment that stage is actually left. It does NOT touch
+   *  the stake either way; a stuck match is recoverable via the admin void
+   *  endpoint regardless of what this says.
+   */
+  const stuckTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearStuckTimer = () => {
+    if (stuckTimer.current) { clearTimeout(stuckTimer.current); stuckTimer.current = null }
+  }
+  const armStuckTimer = (ms: number, message: string) => {
+    clearStuckTimer()
+    stuckTimer.current = setTimeout(() => {
+      dispatch({ t: 'ERROR', message })
+      dispatch({ t: 'RESET' })
+      ws.current?.close()
+    }, ms)
+  }
+
   const connect = useCallback((duelId: string) => {
     if (ws.current?.readyState === WebSocket.OPEN) return
 
@@ -120,6 +142,7 @@ export function useArenaSocket(walletAddress: string) {
     const socket = new WebSocket(`${wsUrl}/ws/arena`)
     ws.current = socket
     dispatch({ t: 'CONNECTING' })
+    armStuckTimer(20_000, "Couldn't reach the arena server — try again.")
 
     socket.onopen = () => {
       socket.send(JSON.stringify({ type: 'join', duel_id: duelId, wallet: walletAddress }))
@@ -133,9 +156,15 @@ export function useArenaSocket(walletAddress: string) {
       switch (msg.type) {
         case 'waiting_for_opponent':
           dispatch({ t: 'WAITING' })
+          // A legitimate wait covers however long the OTHER player takes to
+          // accept (async) plus their own connect — generous on purpose, but
+          // not infinite. If they never show, this is what turns silence
+          // into an actionable message instead of an indefinite spinner.
+          armStuckTimer(90_000, "Still haven't found your opponent — they may not have connected. Your stake is safe either way; check your Face-Off history.")
           break
 
         case 'match_found': {
+          clearStuckTimer()
           const opp = msg.opponent as OpponentInfo
           const countdown = (msg.countdown as number) ?? 3
           dispatch({ t: 'MATCH_FOUND', opponent: opp, countdown })
@@ -149,6 +178,7 @@ export function useArenaSocket(walletAddress: string) {
         }
 
         case 'fight_start':
+          clearStuckTimer()
           dispatch({ t: 'FIGHT_START' })
           break
 
@@ -169,6 +199,7 @@ export function useArenaSocket(walletAddress: string) {
           break
 
         case 'match_end':
+          clearStuckTimer()
           dispatch({ t: 'END', result: { result: msg.result as MatchResult['result'], reason: msg.reason as MatchResult['reason'] } })
           break
 
@@ -177,16 +208,19 @@ export function useArenaSocket(walletAddress: string) {
           // disconnect (see arena_server.rs's TODO on settlement there) —
           // surface it as a distinct, unresolved outcome rather than
           // pretending it was a win.
+          clearStuckTimer()
           dispatch({ t: 'ERROR', message: 'Your opponent disconnected.' })
           break
 
         case 'error':
+          clearStuckTimer()
           dispatch({ t: 'ERROR', message: msg.message as string })
           break
       }
     }
 
     socket.onclose = () => {
+      clearStuckTimer()
       const cur = stateRef.current
       if (cur.phase === 'connecting' || cur.phase === 'waiting' || cur.phase === 'countdown' || cur.phase === 'fighting') {
         dispatch({ t: 'ERROR', message: 'Connection lost.' })
@@ -195,6 +229,7 @@ export function useArenaSocket(walletAddress: string) {
     }
 
     socket.onerror = () => {
+      clearStuckTimer()
       dispatch({ t: 'ERROR', message: 'Could not connect to the arena.' })
     }
   }, [walletAddress])
@@ -221,14 +256,16 @@ export function useArenaSocket(walletAddress: string) {
   }, [])
 
   const disconnect = useCallback(() => {
+    clearStuckTimer()
     ws.current?.close()
     ws.current = null
     latestPlayers.current.clear()
     pendingHits.current = []
     dispatch({ t: 'RESET' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => () => { ws.current?.close() }, [])
+  useEffect(() => () => { clearStuckTimer(); ws.current?.close() }, [])
 
   return { state, connect, sendInput, drainHits, latestPlayers, disconnect }
 }
