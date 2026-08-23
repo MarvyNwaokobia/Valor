@@ -22,6 +22,11 @@ const BALANCE_ABI = [
   { name: 'balanceOf', type: 'function', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
 ] as const
 
+/** 'wave_race' is the original async score-duel; 'face_off' is the real-time
+ *  head-to-head arena. Every row carries one, defaulting to 'wave_race' on the
+ *  server for anything created before this existed. */
+export type DuelMode = 'wave_race' | 'face_off'
+
 /** A duel someone has opened and not yet had accepted. */
 export interface OpenDuel {
   id: string
@@ -31,6 +36,7 @@ export interface OpenDuel {
   stake_g: number
   winner_takes_g: number
   created_at: string
+  mode: DuelMode
 }
 
 /** One of the caller's own duels, in any state. */
@@ -45,6 +51,7 @@ export interface MyDuel {
   winner: string | null
   challenger_score: number | null
   opponent_score: number | null
+  mode: DuelMode
 }
 
 export interface DuelsList {
@@ -63,9 +70,15 @@ export interface DuelsList {
   house_cut_bps: number
 }
 
-/** Everything needed to play one side of a duel. */
+/** Everything needed to play one side of a duel. `seed`/`run_token` are
+ *  meaningless for a `face_off` duel (server sends them back null — there's
+ *  no async run to seed or prove; the match is refereed live once both sides
+ *  connect to /ws/arena with `id`) — kept required here since every existing
+ *  caller (DuelsPage, wave_race-only) depends on them being real; FaceOffPage
+ *  only ever reads `.id`/`.stake_g`/`.mode` off this type. */
 export interface DuelRun {
   id: string
+  mode: DuelMode
   seed: number
   stake_g: number
   run_token: string
@@ -246,14 +259,16 @@ export function useDuels(walletAddress: string | undefined) {
   }, [walletAddress, walletClient, relayAddress, config, source])
 
   /** `invitedWallet` reserves the duel for one specific friend instead of
-   *  opening it to anyone — see the `invited_wallet` column on the API side. */
-  const createDuel = useCallback(async (stakeG: number, invitedWallet?: string): Promise<DuelRun> => {
+   *  opening it to anyone — see the `invited_wallet` column on the API side.
+   *  `mode` defaults to 'wave_race' (the server does too) so every existing
+   *  caller keeps working unchanged. */
+  const createDuel = useCallback(async (stakeG: number, invitedWallet?: string, mode: DuelMode = 'wave_race'): Promise<DuelRun> => {
     if (!walletAddress) throw new Error('Not signed in')
     setPending(true)
     try {
       const permit = await signStake(stakeG)
       const run = await post<DuelRun>('/duels', {
-        wallet: walletAddress, stake_g: stakeG,
+        wallet: walletAddress, stake_g: stakeG, mode,
         ...(invitedWallet ? { invited_wallet: invitedWallet } : {}),
         ...permit,
       })

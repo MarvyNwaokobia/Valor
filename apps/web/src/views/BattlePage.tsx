@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight, Swords } from 'lucide-react'
+import { Target, Crosshair, Infinity as InfinityIcon, ChevronLeft, ChevronRight, Swords, Flame } from 'lucide-react'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useDuelsAvailable } from '@/hooks/useDuels'
 import { usePlayerStore } from '@/stores/usePlayerStore'
@@ -163,9 +163,45 @@ export default function BattlePage() {
         </motion.button>
       )}
 
-      {/* Live PvP is OFF the menu pending its rebuild as a real-time FPS 1v1 (first
-          kill wins, optionally staked). The BattlePvP component and its `pvp` view
-          are intentionally left in place so it can come straight back. */}
+      {/* Face-Off — the real-time head-to-head rebuild of live PvP: both fighters
+          connect live, the server referees movement/aim/shooting directly (see
+          arena_server.rs), and the stake goes through the exact same escrow/payout
+          rails Duels uses (see useDuels' mode:'face_off'). Gated on the same
+          feature-detect as Duels since both share one API contract. The
+          turn-based BattlePvP component and its `pvp` view stay in place below,
+          unlinked — this is the rebuild it was waiting on, not a replacement wired
+          in yet. */}
+      {duelsAvailable && (
+        <motion.button
+          onClick={() => router.push('/faceoff')}
+          className="group relative overflow-hidden p-6 rounded-2xl border text-left transition-all"
+          style={{ background: 'rgba(8,8,14,0.9)', borderColor: 'rgba(249,115,22,0.35)' }}
+          whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+        >
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: 'radial-gradient(ellipse 80% 80% at 20% 50%, rgba(249,115,22,0.1), transparent)' }} />
+          <div className="absolute inset-y-0 left-0 w-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: '#f97316' }} />
+          <div className="flex items-center gap-5 relative z-10">
+            <div className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.25)' }}>
+              <Flame size={28} style={{ color: '#f97316' }} strokeWidth={1.5} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="font-display font-black text-white text-xl group-hover:text-amber-400 transition-colors">Face-Off</p>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                  style={{ background: 'rgba(234,179,8,0.15)', color: '#eab308' }}>
+                  Stakes G$
+                </span>
+              </div>
+              <p className="text-slate-500 text-sm mt-0.5">Live, head-to-head · same arena, same time · winner takes the pot</p>
+            </div>
+            <ChevronRight size={16} className="shrink-0 text-slate-700 group-hover:text-white transition-colors" />
+          </div>
+        </motion.button>
+      )}
 
       {/* Seasonal Campaign — the competitive room-wave mode. Live only inside a
           scheduled season window; the page itself shows the countdown when it isn't. */}
