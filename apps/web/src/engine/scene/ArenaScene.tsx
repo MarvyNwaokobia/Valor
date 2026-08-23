@@ -25,7 +25,7 @@
  * copy of the rules.
  */
 
-import { useEffect, useMemo, useRef, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { OperatorRig, type OperatorApi } from './OperatorRig'
@@ -41,6 +41,7 @@ const ARENA_HALF_X = 12
 const ARENA_HALF_Z = 12
 const PITCH_LIMIT = 1.45
 const LOOK_SENS = 0.0010
+const TOUCH_LOOK_SENS = 0.0022
 const MOUSE_MAX_STEP = 120
 /** How hard local position snaps back toward the server's truth each tick it
  *  arrives — a blend, not a hard correction, so ordinary latency jitter
@@ -49,6 +50,43 @@ const RECONCILE_STRENGTH = 0.25
 /** How quickly the opponent's rendered position/yaw chases its latest
  *  snapshot — a simple critically-damped-ish lerp, not real interpolation. */
 const OPPONENT_SMOOTH = 0.35
+
+/** Same detection ValorScene uses (not exported from there, so mirrored here
+ *  rather than pulling in the 4500-line file for one helper). */
+function detectTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  if (/iPhone|iPod|iPad|Android|Windows Phone|IEMobile|BlackBerry/i.test(ua)) return true
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 0) return true
+  if (navigator.maxTouchPoints > 0 && window.matchMedia?.('(pointer: coarse)')?.matches) return true
+  return false
+}
+
+/** Shared, mutable input state — written by whichever input source is active
+ *  (keyboard+mouse via pointer lock, or the touch overlay) and read once a
+ *  frame by ArenaWorld's useFrame. Living outside React state on purpose:
+ *  this changes every frame, and re-rendering React for it would be waste. */
+interface InputRefs {
+  keys: MutableRefObject<Set<string>>
+  mouseDX: MutableRefObject<number>
+  mouseDY: MutableRefObject<number>
+  touchMoveX: MutableRefObject<number>
+  touchMoveY: MutableRefObject<number>
+  firing: MutableRefObject<boolean>
+  wantReload: MutableRefObject<boolean>
+}
+
+function useInputRefs(): InputRefs {
+  return {
+    keys: useRef<Set<string>>(new Set()),
+    mouseDX: useRef(0),
+    mouseDY: useRef(0),
+    touchMoveX: useRef(0),
+    touchMoveY: useRef(0),
+    firing: useRef(false),
+    wantReload: useRef(false),
+  }
+}
 
 export interface ArenaSceneProps {
   walletAddress: string
@@ -63,17 +101,21 @@ export interface ArenaSceneProps {
 }
 
 export function ArenaScene(props: ArenaSceneProps) {
+  const input = useInputRefs()
+  const [isTouch] = useState(detectTouchDevice)
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#050608', cursor: 'none' }}>
+    <div style={{ position: 'fixed', inset: 0, background: '#0a0c12', cursor: isTouch ? 'default' : 'none' }}>
       <Canvas
         shadows
         gl={{ antialias: false, powerPreference: 'high-performance' }}
         dpr={[1, 2]}
         camera={{ position: [-ARENA_HALF_X * 0.6, EYE_HEIGHT, 0], fov: 60, near: 0.01, far: 200 }}
       >
-        <ArenaWorld {...props} />
+        <ArenaWorld {...props} input={input} isTouch={isTouch} />
       </Canvas>
       <ArenaHud />
+      {isTouch && <TouchControls input={input} />}
     </div>
   )
 }
@@ -92,20 +134,116 @@ function ArenaHud() {
   )
 }
 
+// ── Touch controls (mobile) ──────────────────────────────────────────────
+//
+// Two zones, matching the split ValorScene's own touch layer uses: a
+// floating joystick bottom-left for movement, and the whole right half of
+// the screen doubles as look-drag + hold-to-fire (one thumb aims and shoots,
+// same as ValorScene's fire pad) so a phone player isn't hunting for a
+// separate aim surface. A reload button sits above the fire zone.
+
+function TouchControls({ input }: { input: InputRefs }) {
+  const joyRef = useRef<HTMLDivElement>(null)
+  const joyKnobRef = useRef<HTMLDivElement>(null)
+  const joyId = useRef<number | null>(null)
+  const joyCenter = useRef({ x: 0, y: 0 })
+  const JOY_R = 52
+
+  const updateJoy = (x: number, y: number) => {
+    const c = joyCenter.current
+    let dx = x - c.x, dy = y - c.y
+    const len = Math.hypot(dx, dy) || 1
+    if (len > JOY_R) { dx = (dx / len) * JOY_R; dy = (dy / len) * JOY_R }
+    input.touchMoveX.current = dx / JOY_R
+    input.touchMoveY.current = -dy / JOY_R // screen-down is backward
+    if (joyKnobRef.current) joyKnobRef.current.style.transform = `translate(${dx}px, ${dy}px)`
+  }
+
+  const joyStart = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0]
+    joyId.current = t.identifier
+    const r = joyRef.current!.getBoundingClientRect()
+    joyCenter.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    updateJoy(t.clientX, t.clientY)
+  }
+  const joyMove = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === joyId.current) updateJoy(t.clientX, t.clientY)
+  }
+  const joyEnd = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === joyId.current) {
+      joyId.current = null
+      input.touchMoveX.current = 0
+      input.touchMoveY.current = 0
+      if (joyKnobRef.current) joyKnobRef.current.style.transform = 'translate(0,0)'
+    }
+  }
+
+  const lookId = useRef<number | null>(null)
+  const lookLast = useRef({ x: 0, y: 0 })
+  const lookStart = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0]
+    lookId.current = t.identifier
+    lookLast.current = { x: t.clientX, y: t.clientY }
+    input.firing.current = true
+  }
+  const lookMove = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
+      input.mouseDX.current += t.clientX - lookLast.current.x
+      input.mouseDY.current += t.clientY - lookLast.current.y
+      lookLast.current = { x: t.clientX, y: t.clientY }
+    }
+  }
+  const lookEnd = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
+      lookId.current = null
+      input.firing.current = false
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50" style={{ touchAction: 'none' }}>
+      {/* Right half — look + fire, one thumb */}
+      <div
+        onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
+        style={{ position: 'absolute', right: 0, top: 0, width: '55%', height: '100%' }}
+      />
+      {/* Movement joystick — bottom left */}
+      <div
+        ref={joyRef}
+        onTouchStart={joyStart} onTouchMove={joyMove} onTouchEnd={joyEnd} onTouchCancel={joyEnd}
+        style={{
+          position: 'absolute', left: 28, bottom: 90, width: 112, height: 112, borderRadius: '50%',
+          background: 'radial-gradient(circle at 50% 45%, rgba(255,255,255,0.06), rgba(8,8,14,0.55))',
+          border: '1px solid rgba(255,255,255,0.18)',
+        }}
+      >
+        <div ref={joyKnobRef} style={{
+          position: 'absolute', left: '50%', top: '50%', width: 40, height: 40, marginLeft: -20, marginTop: -20,
+          borderRadius: '50%', background: 'rgba(255,255,255,0.75)', boxShadow: '0 0 10px rgba(0,0,0,0.4)',
+        }} />
+      </div>
+      {/* Reload — small tap target above the fire zone */}
+      <button
+        onTouchStart={(e) => { e.preventDefault(); input.wantReload.current = true }}
+        style={{
+          position: 'absolute', right: 28, bottom: 90, width: 64, height: 64, borderRadius: '50%',
+          background: 'rgba(234,179,8,0.18)', border: '1px solid rgba(234,179,8,0.4)',
+          color: '#eab308', fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+        }}
+      >
+        Reload
+      </button>
+    </div>
+  )
+}
+
 // ── World ─────────────────────────────────────────────────────────────────
 
-function ArenaWorld(props: ArenaSceneProps) {
-  const { walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers, onLocalHp, onAmmo, onOpponentHp } = props
+function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean }) {
+  const { walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers, onLocalHp, onAmmo, onOpponentHp, input, isTouch } = props
   const { camera, gl } = useThree()
+  const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, wantReload } = input
 
-  // ── Local input capture — same pointer-lock/WASD idiom ValorScene uses,
-  // trimmed to just what the server's protocol needs (no attachments/slots/
-  // crouch/ADS — Face-Off's v1 loadout is fixed).
-  const keys = useRef<Set<string>>(new Set())
-  const mouseDX = useRef(0)
-  const mouseDY = useRef(0)
-  const firing = useRef(false)
-  const wantReload = useRef(false)
   const locked = useRef(false)
   // Face the opponent's spawn side on mount: local player spawns at -X facing
   // +X if the wallet sorts first alphabetically among the pair (arbitrary but
@@ -120,7 +258,11 @@ function ArenaWorld(props: ArenaSceneProps) {
     z: 0,
   })
 
+  // Desktop input — pointer lock + WASD + mouse. Skipped on touch devices
+  // (no pointer lock support on mobile Safari, and it would just fight the
+  // TouchControls overlay for the same refs).
   useEffect(() => {
+    if (isTouch) return
     const canvas = gl.domElement
     const wantLock = () => {
       if (locked.current || document.pointerLockElement === canvas) return
@@ -163,7 +305,7 @@ function ArenaWorld(props: ArenaSceneProps) {
       document.removeEventListener('pointerlockchange', lockChange)
       canvas.removeEventListener('contextmenu', noMenu)
     }
-  }, [gl])
+  }, [gl, isTouch, keys, mouseDX, mouseDY, firing, wantReload])
 
   useEffect(() => {
     const p = camera as THREE.PerspectiveCamera
@@ -191,19 +333,22 @@ function ArenaWorld(props: ArenaSceneProps) {
 
   useFrame((_state, rawDt) => {
     const dt = Math.min(rawDt, 1 / 20)
+    const lookSens = isTouch ? TOUCH_LOOK_SENS : LOOK_SENS
 
-    // Aim — accumulate mouse delta into yaw/pitch, exactly like ValorScene.
-    yaw.current -= mouseDX.current * LOOK_SENS
-    pitch.current -= mouseDY.current * LOOK_SENS
+    // Aim — accumulate mouse/touch-drag delta into yaw/pitch, exactly like
+    // ValorScene does for both input sources.
+    yaw.current -= mouseDX.current * lookSens
+    pitch.current -= mouseDY.current * lookSens
     pitch.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch.current))
     mouseDX.current = 0
     mouseDY.current = 0
 
-    // Movement — camera-relative WASD, clamped to a unit disk before scaling,
-    // then rotated by yaw. MUST match arena_server.rs's integrate_movement_and_aim.
+    // Movement — camera-relative WASD (or touch stick), clamped to a unit
+    // disk before scaling, then rotated by yaw. MUST match arena_server.rs's
+    // integrate_movement_and_aim.
     const held = (c: string) => keys.current.has(c)
-    let mx = (held('KeyD') ? 1 : 0) - (held('KeyA') ? 1 : 0)
-    let my = (held('KeyW') ? 1 : 0) - (held('KeyS') ? 1 : 0)
+    let mx = (held('KeyD') ? 1 : 0) - (held('KeyA') ? 1 : 0) + touchMoveX.current
+    let my = (held('KeyW') ? 1 : 0) - (held('KeyS') ? 1 : 0) + touchMoveY.current
     const rawLen = Math.hypot(mx, my)
     if (rawLen > 1) { mx /= rawLen; my /= rawLen }
 
@@ -286,23 +431,33 @@ function ArenaWorld(props: ArenaSceneProps) {
 
   return (
     <>
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[8, 14, 6]} intensity={1.2} castShadow />
-      <fog attach="fog" args={['#0a0c12', 20, 60]} />
+      {/* Bright enough to actually see by — a small enclosed arena has no sun
+          or sky doing lighting's job for free the way an outdoor op does. */}
+      <hemisphereLight args={['#6b7a94', '#1a1c22', 1.1]} />
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[8, 14, 6]} intensity={1.6} castShadow />
+      <directionalLight position={[-8, 10, -6]} intensity={0.5} />
+      <fog attach="fog" args={['#0a0c12', 34, 70]} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[ARENA_HALF_X * 2, ARENA_HALF_Z * 2]} />
-        <meshStandardMaterial color="#14161c" roughness={0.95} />
+        <meshStandardMaterial color="#3a3f4a" roughness={0.92} />
       </mesh>
-      {/* Boundary markers — the arena has no interior cover in v1, just a
-          visible edge so the wall of invisible clamping isn't a mystery. */}
+      {/* Grid lines — the arena has no texture/prop variety yet (v1), and a
+          featureless flat plane gives the eye nothing to read movement
+          against. A grid is the cheapest possible fix (no asset, one draw
+          call) and is worth keeping even once real dressing lands. */}
+      <gridHelper args={[ARENA_HALF_X * 2, 24, '#5a6577', '#4a5262']} position={[0, 0.01, 0]} />
+
+      {/* Boundary walls — the arena has no interior cover in v1, just a
+          visible edge so the invisible position clamp isn't a mystery. */}
       {[
         [0, ARENA_HALF_Z] as const, [0, -ARENA_HALF_Z] as const,
         [ARENA_HALF_X, 0] as const, [-ARENA_HALF_X, 0] as const,
       ].map(([x, z], i) => (
-        <mesh key={i} position={[x, 0.6, z]} rotation={[0, x !== 0 ? Math.PI / 2 : 0, 0]}>
-          <boxGeometry args={[ARENA_HALF_X * 2, 1.2, 0.15]} />
-          <meshStandardMaterial color="#2a2e38" roughness={0.8} />
+        <mesh key={i} position={[x, 0.75, z]} rotation={[0, x !== 0 ? Math.PI / 2 : 0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[ARENA_HALF_X * 2, 1.5, 0.2]} />
+          <meshStandardMaterial color="#565f70" roughness={0.75} />
         </mesh>
       ))}
 
