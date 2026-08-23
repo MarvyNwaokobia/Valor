@@ -1,0 +1,15 @@
+{
+  "_comment": "Face-Off arena geometry — the SINGLE source of truth for both the client render (ArenaScene.tsx) and the server's collision/hitscan model (apps/api/src/services/arena_server.rs, which embeds this exact file at compile time via include_str!). Previously these were two hand-copied literal arrays that had to be kept in sync manually; this file replaces both. Frozen output of generateRoom(0, 0, seedFromString('valor-faceoff')) in apps/web/src/engine/fps/endless.ts (CRATE_LINE cover archetype, depth 17), recentred so the room's midpoint sits at world origin, with the far wall's chain doorway replaced by a solid cap so this is one sealed room. Each box: x/z = centre position, w/d = full extent on X/Z, h = height from y=0.",
+  "walls": [
+    { "x": -9.3, "z": 0.0, "w": 0.6, "d": 17.0, "h": 4.0, "_label": "west wall" },
+    { "x": 9.3, "z": 0.0, "w": 0.6, "d": 17.0, "h": 4.0, "_label": "east wall" },
+    { "x": 0.0, "z": 8.8, "w": 19.2, "d": 0.6, "h": 4.0, "_label": "north cap (sealed, no chain doorway)" },
+    { "x": 0.0, "z": -8.8, "w": 19.2, "d": 0.6, "h": 4.0, "_label": "south cap (sealed)" }
+  ],
+  "cover": [
+    { "x": -6.0, "z": 0.0, "w": 2.4, "d": 1.6, "h": 1.15 },
+    { "x": -1.5, "z": 1.2, "w": 2.4, "d": 1.6, "h": 1.15 },
+    { "x": 3.0, "z": 0.0, "w": 2.4, "d": 1.6, "h": 1.15 },
+    { "x": 6.8, "z": -1.4, "w": 1.8, "d": 1.6, "h": 1.15 }
+  ]
+}

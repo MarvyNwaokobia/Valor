@@ -31,11 +31,17 @@
 //! Operation room generator (`apps/web/src/engine/fps/endless.ts`'s
 //! `generateRoom`, seed `"valor-faceoff"`, room 0, CRATE_LINE cover
 //! archetype) instead of an empty box — see `room_walls()`/`room_cover()`
-//! below. Both this server and `ArenaScene.tsx` load the SAME
-//! `faceoffArena.json` (embedded here at compile time via `include_str!`),
-//! so there is one source of truth for the box list, not two hand-copied
-//! arrays. `WALK_SPEED`/`ARENA_HALF_X`/`PITCH_LIMIT` and the rest of the
-//! tuning block below are still mirrored by hand between the two files —
+//! below. The box list is JSON (`faceoff_arena.json`, next to this file),
+//! not a hand-copied literal array, and `ArenaScene.tsx` loads its own copy
+//! of the exact same content (`apps/web/src/engine/scene/faceoffArena.json`)
+//! — a test below (`the_local_copy_matches_web`) enforces the two never
+//! drift apart. They're two physical files, not one shared one, because this
+//! service's Docker build context is scoped to `apps/api` alone (see the
+//! Dockerfile) and can't reach into `apps/web` at build time — but the test
+//! makes that duplication a loud CI failure instead of a silent runtime
+//! mismatch, which is the property that actually matters here.
+//! `WALK_SPEED`/`ARENA_HALF_X`/`PITCH_LIMIT` and the rest of the tuning
+//! block below are still mirrored by hand between the two files —
 //! only the geometry itself moved to a shared file.
 //!
 //! V1 SCOPE, STILL DELIBERATELY NARROW: one fixed weapon/loadout (viewmodel
@@ -184,7 +190,19 @@ impl From<ObstacleData> for Obstacle {
 #[derive(serde::Deserialize)]
 struct ArenaGeometryFile { walls: Vec<ObstacleData>, cover: Vec<ObstacleData> }
 
-const ARENA_GEOMETRY_JSON: &str = include_str!("../../../web/src/engine/scene/faceoffArena.json");
+// Embeds a LOCAL copy (`faceoff_arena.json`, right next to this file) rather
+// than reaching into apps/web directly: Railway's Docker build context for
+// this service is scoped to apps/api alone (see Dockerfile's `COPY src
+// ./src` — apps/web is never copied in at all), so an `include_str!` path
+// crossing that boundary compiles fine locally but fails the moment it's
+// actually built in that container. This is the exact same class of break
+// the Dockerfile's own comment already warns about for `migrations/`.
+// A test below (`the_local_copy_matches_web`) enforces this file and
+// `apps/web/src/engine/scene/faceoffArena.json` never drift apart, WITHOUT
+// the production build depending on the web tree existing at all — the
+// `#[cfg(test)]` include only ever runs under `cargo test` (full monorepo
+// checkout), never under `cargo build --release` (what the Docker image runs).
+const ARENA_GEOMETRY_JSON: &str = include_str!("faceoff_arena.json");
 
 fn arena_geometry() -> &'static (Vec<Obstacle>, Vec<Obstacle>) {
     static GEOMETRY: OnceLock<(Vec<Obstacle>, Vec<Obstacle>)> = OnceLock::new();
@@ -1136,6 +1154,21 @@ fn broadcast_to_spectators(room: &ArenaRoom, payload: &str) {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    // Only ever evaluated under `cargo test` (this whole module is
+    // `#[cfg(test)]`), never under the `cargo build --release` Railway's
+    // Docker image actually runs — so this is safe to point at apps/web even
+    // though the embedded copy above deliberately isn't. See this file's
+    // module doc for why there are two physical files at all.
+    #[test]
+    fn the_local_copy_matches_web() {
+        const WEB_COPY: &str = include_str!("../../../web/src/engine/scene/faceoffArena.json");
+        assert_eq!(
+            ARENA_GEOMETRY_JSON, WEB_COPY,
+            "faceoff_arena.json (apps/api) and faceoffArena.json (apps/web) have drifted apart — \
+             copy one over the other, they must be byte-identical",
+        );
+    }
 
     // `db`/`app_state` are unused by anything these tests exercise directly
     // (match-end settlement is exercised separately, see below) —
