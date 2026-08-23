@@ -26,6 +26,11 @@ interface PartyState {
   hostWallet: string | null
   members: MemberInfo[]
   error: string | null
+  /** A non-host teammate whose connection just dropped mid-run — their seat
+   *  is held server-side (see coop_server.rs's `on_leave`), not lost, so
+   *  this is a "waiting for them" state, not a departure. Null when nobody
+   *  is currently disconnected. */
+  pausedWallet: string | null
 }
 
 type Msg =
@@ -34,13 +39,15 @@ type Msg =
   | { t: 'PARTY_JOINED'; code: string; seed: number; hostWallet: string; members: MemberInfo[] }
   | { t: 'MEMBER_JOINED'; member: MemberInfo }
   | { t: 'MEMBER_LEFT'; wallet: string }
+  | { t: 'MEMBER_DISCONNECTED'; wallet: string }
+  | { t: 'MEMBER_RECONNECTED'; wallet: string }
   | { t: 'RUN_STARTED' }
   | { t: 'HOST_LEFT' }
   | { t: 'ERROR'; message: string }
   | { t: 'RESET' }
 
 const INIT: PartyState = {
-  phase: 'idle', code: null, seed: null, isHost: false, hostWallet: null, members: [], error: null,
+  phase: 'idle', code: null, seed: null, isHost: false, hostWallet: null, members: [], error: null, pausedWallet: null,
 }
 
 function reduce(s: PartyState, a: Msg): PartyState {
@@ -49,11 +56,13 @@ function reduce(s: PartyState, a: Msg): PartyState {
     case 'PARTY_CREATED':
       return { ...s, phase: 'lobby', code: a.code, seed: a.seed, isHost: true, hostWallet: a.wallet, members: [{ wallet: a.wallet, name: a.name }] }
     case 'PARTY_JOINED':
-      return { ...s, phase: 'lobby', code: a.code, seed: a.seed, isHost: false, hostWallet: a.hostWallet, members: a.members }
+      return { ...s, phase: 'lobby', code: a.code, seed: a.seed, isHost: false, hostWallet: a.hostWallet, members: a.members, pausedWallet: null }
     case 'MEMBER_JOINED':
       return s.members.some((m) => m.wallet === a.member.wallet) ? s : { ...s, members: [...s.members, a.member] }
     case 'MEMBER_LEFT':
       return { ...s, members: s.members.filter((m) => m.wallet !== a.wallet) }
+    case 'MEMBER_DISCONNECTED': return { ...s, pausedWallet: a.wallet }
+    case 'MEMBER_RECONNECTED': return s.pausedWallet === a.wallet ? { ...s, pausedWallet: null } : s
     case 'RUN_STARTED': return { ...s, phase: 'running' }
     // The host owns the one authoritative sim (see coop_server.rs's module
     // doc) — no migration in v1, so this is terminal for everyone else.
@@ -63,6 +72,14 @@ function reduce(s: PartyState, a: Msg): PartyState {
     default: return s
   }
 }
+
+/** How many times a non-host silently retries rejoining after an
+ *  unintentional drop before giving up and surfacing the error — their
+ *  seat is held server-side (coop_server.rs), so a quick reconnect is
+ *  invisible to them; only a truly dead connection falls through to the
+ *  old reset-to-idle path. */
+const RECONNECT_ATTEMPTS = 4
+const RECONNECT_RETRY_MS = 1_500
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -76,10 +93,13 @@ function reduce(s: PartyState, a: Msg): PartyState {
  * re-render React for it" idiom `useArenaSocket.ts` already uses for
  * `latestPlayers`.
  *
- * Reconnect is deliberately much simpler than `useArenaSocket.ts`'s: nothing
- * is staked, so a dropped connection just surfaces an error and resets to
- * `idle` — a non-host player rejoins by calling `joinParty` again with the
- * same code, no automatic retry loop needed.
+ * Reconnect is simpler than `useArenaSocket.ts`'s but not absent: a non-host
+ * whose connection drops mid-run gets a few silent automatic retries (their
+ * seat is held server-side regardless — see `coop_server.rs`'s `on_leave` —
+ * so a quick drop is invisible to them), and only resets to `idle` with an
+ * error if all of them fail. The HOST has no equivalent: it owns the one
+ * authoritative sim, so its own disconnect is terminal for the whole party
+ * either way (see `HOST_LEFT`), nothing to reconnect back into.
  */
 export function useCoopSocket(walletAddress: string) {
   const [state, dispatch] = useReducer(reduce, INIT)
@@ -100,14 +120,27 @@ export function useCoopSocket(walletAddress: string) {
   const pendingWaveClears = useRef<number[]>([])
 
   const intentionalRef = useRef(false)
+  /** The join args that got us into the CURRENT party, non-host only — what
+   *  a reconnect attempt replays. Null for the host (nothing to reconnect
+   *  into) and cleared by `leaveParty`. */
+  const lastJoinRef = useRef<{ code: string; name: string } | null>(null)
+  /** In-flight reconnect state: null when not currently retrying, else how
+   *  many attempts are left. Distinct from `intentionalRef` — a retry
+   *  reopening the socket must not be mistaken for the leaveParty() case
+   *  that flag guards against. */
+  const reconnectAttemptsLeft = useRef<number | null>(null)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearReconnectTimer = () => {
+    if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
+  }
 
-  const openSocket = useCallback((onOpenMsg: Record<string, unknown>) => {
+  const openSocket = useCallback((onOpenMsg: Record<string, unknown>, isReconnectAttempt = false) => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
     const wsUrl = apiUrl.replace(/^http/, 'ws')
     const socket = new WebSocket(`${wsUrl}/ws/coop`)
     ws.current = socket
     intentionalRef.current = false
-    dispatch({ t: 'CONNECTING' })
+    if (!isReconnectAttempt) dispatch({ t: 'CONNECTING' })
 
     socket.onopen = () => {
       socket.send(JSON.stringify(onOpenMsg))
@@ -127,6 +160,12 @@ export function useCoopSocket(walletAddress: string) {
           break
 
         case 'party_joined':
+          // A reconnect landing successfully — stop retrying and drop back
+          // into the ordinary flow. `phase` was never disturbed for a
+          // reconnect attempt (see below), so this just needs to clear the
+          // retry bookkeeping.
+          reconnectAttemptsLeft.current = null
+          clearReconnectTimer()
           dispatch({
             t: 'PARTY_JOINED', code: msg.code as string, seed: msg.seed as number,
             hostWallet: msg.host_wallet as string, members: msg.members as MemberInfo[],
@@ -134,11 +173,17 @@ export function useCoopSocket(walletAddress: string) {
           break
 
         case 'member_joined':
+        case 'member_reconnected':
           dispatch({ t: 'MEMBER_JOINED', member: { wallet: msg.wallet as string, name: msg.name as string } })
+          if (msg.type === 'member_reconnected') dispatch({ t: 'MEMBER_RECONNECTED', wallet: msg.wallet as string })
           break
 
         case 'member_left':
           dispatch({ t: 'MEMBER_LEFT', wallet: msg.wallet as string })
+          break
+
+        case 'member_disconnected':
+          dispatch({ t: 'MEMBER_DISCONNECTED', wallet: msg.wallet as string })
           break
 
         case 'run_started':
@@ -170,6 +215,25 @@ export function useCoopSocket(walletAddress: string) {
     socket.onclose = () => {
       if (intentionalRef.current) return // our own leaveParty()/disconnect()
       const cur = stateRef.current
+
+      // Only a non-host mid-party has anything worth silently retrying —
+      // their seat is held server-side either way (coop_server.rs's
+      // on_leave), so a quick reconnect is invisible to them. The host has
+      // no equivalent (see this hook's own module doc): its disconnect
+      // already ended the party for everyone by the time this fires.
+      if (!cur.isHost && (cur.phase === 'lobby' || cur.phase === 'running') && lastJoinRef.current) {
+        if (reconnectAttemptsLeft.current === null) reconnectAttemptsLeft.current = RECONNECT_ATTEMPTS
+        if (reconnectAttemptsLeft.current > 0) {
+          reconnectAttemptsLeft.current -= 1
+          const { code, name } = lastJoinRef.current
+          reconnectTimer.current = setTimeout(() => {
+            openSocketRef.current({ type: 'join_party', code, wallet: walletAddress, name }, true)
+          }, RECONNECT_RETRY_MS)
+          return
+        }
+      }
+
+      reconnectAttemptsLeft.current = null
       if (cur.phase === 'lobby' || cur.phase === 'running') {
         dispatch({ t: 'ERROR', message: 'Connection lost. If you were mid-run, nothing was at stake — just rejoin.' })
       }
@@ -181,11 +245,20 @@ export function useCoopSocket(walletAddress: string) {
     }
   }, [walletAddress])
 
+  /** Latest `openSocket` — `onclose`'s retry closes over whatever identity
+   *  existed when the socket that just closed was OPENED, not the current
+   *  one. A ref sidesteps that without a circular useCallback dep, same
+   *  pattern `useArenaSocket.ts` already uses for the same reason. */
+  const openSocketRef = useRef<(onOpenMsg: Record<string, unknown>, isReconnectAttempt?: boolean) => void>(() => {})
+  openSocketRef.current = openSocket
+
   const createParty = useCallback((name: string) => {
+    lastJoinRef.current = null // nothing to reconnect into as the host — see this hook's module doc
     openSocket({ type: 'create_party', wallet: walletAddress, name })
   }, [walletAddress, openSocket])
 
   const joinParty = useCallback((code: string, name: string) => {
+    lastJoinRef.current = { code, name }
     openSocket({ type: 'join_party', code, wallet: walletAddress, name })
   }, [walletAddress, openSocket])
 
@@ -228,6 +301,9 @@ export function useCoopSocket(walletAddress: string) {
 
   const leaveParty = useCallback(() => {
     intentionalRef.current = true
+    clearReconnectTimer()
+    reconnectAttemptsLeft.current = null
+    lastJoinRef.current = null
     if (ws.current?.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify({ type: 'leave' }))
     }
@@ -239,7 +315,7 @@ export function useCoopSocket(walletAddress: string) {
     dispatch({ t: 'RESET' })
   }, [])
 
-  useEffect(() => () => { intentionalRef.current = true; ws.current?.close() }, [])
+  useEffect(() => () => { intentionalRef.current = true; clearReconnectTimer(); ws.current?.close() }, [])
 
   return {
     state, createParty, joinParty, startRun,

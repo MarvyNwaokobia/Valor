@@ -144,10 +144,11 @@ impl CoopServer {
         // A stray double-create (double-tap, a reconnect racing a fresh
         // create) — drop them from whatever party they were already in
         // first, same "don't double-seat" instinct `arena_server.rs`'s
-        // on_join has, just simpler since there's no reconnect-into-the-
-        // same-fight case to preserve here.
+        // on_join has. Full `abandon`, not `on_leave` — starting something
+        // new is a deliberate departure from the old one, not a disconnect
+        // to hold a seat open for (see `on_leave`'s doc for that distinction).
         if self.player_party.contains_key(&wallet) {
-            self.on_leave(&wallet);
+            self.abandon(&wallet);
         }
 
         let mut code = gen_code();
@@ -171,21 +172,32 @@ impl CoopServer {
     }
 
     fn on_join_party(&mut self, code: String, wallet: String, name: String, tx: UnboundedSender<String>) {
+        // Joining somewhere new is a deliberate departure from wherever this
+        // wallet was before — full `abandon`, same reasoning as
+        // `on_create_party`. A genuine RECONNECT to THIS SAME party never
+        // hits this branch: `on_leave` (an actual disconnect) removes the
+        // wallet from `player_party` but deliberately leaves their
+        // `party.members` seat in place for a started run, so
+        // `player_party.contains_key` is already false by the time they're
+        // back.
         if self.player_party.contains_key(&wallet) {
-            self.on_leave(&wallet);
+            self.abandon(&wallet);
         }
 
         let Some(party) = self.parties.get_mut(&code) else {
             send_err(&tx, "Party not found");
             return;
         };
-        if party.started {
+        // A wallet already holding a seat (see `on_leave`) is reconnecting,
+        // not joining fresh — the only case a started party still accepts a
+        // "join". Everyone else is a genuinely new member, blocked once the
+        // run is live (no mid-run recruiting) or the roster's full.
+        let reconnecting = party.members.contains_key(&wallet);
+        if party.started && !reconnecting {
             send_err(&tx, "This run has already started");
             return;
         }
-        // MUST match MAX_PARTY_SIZE mirrored in ValorScene.tsx — that's how
-        // many teammate rig slots the client pool actually has.
-        if party.members.len() >= MAX_PARTY_SIZE {
+        if !reconnecting && party.members.len() >= MAX_PARTY_SIZE {
             send_err(&tx, "This party is full");
             return;
         }
@@ -196,13 +208,16 @@ impl CoopServer {
         let roster: Vec<Value> = party.members.iter()
             .map(|(w, m)| json!({ "wallet": w, "name": m.name }))
             .collect();
-        tracing::info!("coop: {} joined party {}", wallet, code);
+        tracing::info!("coop: {} {} party {}", wallet, if reconnecting { "reconnected to" } else { "joined" }, code);
         send(&tx, json!({
             "type": "party_joined", "code": code, "seed": party.seed,
-            "host_wallet": party.host_wallet, "members": roster,
+            "host_wallet": party.host_wallet, "members": roster, "reconnected": reconnecting,
         }).to_string());
 
-        let joined_msg = json!({ "type": "member_joined", "wallet": wallet, "name": name }).to_string();
+        let joined_msg = json!({
+            "type": if reconnecting { "member_reconnected" } else { "member_joined" },
+            "wallet": wallet, "name": name,
+        }).to_string();
         for (w, m) in party.members.iter() {
             if w != &wallet {
                 send(&m.tx, joined_msg.clone());
@@ -262,31 +277,60 @@ impl CoopServer {
 
     // ── Leave ──────────────────────────────────────────────────────────────────
 
-    fn on_leave(&mut self, wallet: &str) {
+    /// A deliberate, permanent departure — explicitly leaving the lobby, or
+    /// abandoning one party to create/join a different one. Always removes
+    /// the seat outright. Contrast `on_leave`, the actual WS-disconnect
+    /// path, which holds a non-host's seat open once the run has started
+    /// (see its own doc) instead of removing it.
+    fn abandon(&mut self, wallet: &str) {
         let Some(code) = self.player_party.remove(wallet) else { return };
         let Some(party) = self.parties.get_mut(&code) else { return };
         party.members.remove(wallet);
 
         if party.host_wallet == wallet {
-            // No host migration in v1 — the host owns the one authoritative
-            // sim, so there's nothing left to tick once they're gone. Soft
-            // failure only (nothing was staked), unlike an unresolved
-            // Face-Off duel.
-            tracing::info!("coop: host {} left party {}, ending it for everyone", wallet, code);
+            tracing::info!("coop: host {} abandoned party {}, ending it for everyone", wallet, code);
             let msg = json!({ "type": "host_left" }).to_string();
-            for m in party.members.values() {
-                send(&m.tx, msg.clone());
-            }
+            for m in party.members.values() { send(&m.tx, msg.clone()); }
             self.parties.remove(&code);
         } else {
             tracing::info!("coop: {} left party {}", wallet, code);
             let msg = json!({ "type": "member_left", "wallet": wallet }).to_string();
-            for m in party.members.values() {
-                send(&m.tx, msg.clone());
-            }
-            if party.members.is_empty() {
-                self.parties.remove(&code);
-            }
+            for m in party.members.values() { send(&m.tx, msg.clone()); }
+            if party.members.is_empty() { self.parties.remove(&code); }
+        }
+    }
+
+    /// The actual `ServerMsg::Leave` path — fired from `coop_ws.rs` on a WS
+    /// close, which covers both a deliberate "Exit" tap AND an accidental
+    /// drop (network loss, tab killed, backgrounding) identically; nothing
+    /// here can tell those apart, same as `arena_server.rs`'s equivalent.
+    ///
+    /// Before the run starts, this is exactly `abandon` — leaving the lobby
+    /// is unambiguous. Once it's LIVE, a non-host's seat is held open
+    /// instead of removed: their stale `tx` just goes quiet (sending to a
+    /// closed channel is a harmless no-op — see `send`), and
+    /// `on_join_party` recognizes them as a RECONNECT rather than a new
+    /// member if they come back with the same code. No grace timer, no
+    /// forfeit — unlike Face-Off's disconnect handling this doesn't need
+    /// one, since nothing is staked; the seat just waits indefinitely. The
+    /// HOST disconnecting is unchanged either way: no migration in v1, the
+    /// party ends outright the moment they're gone.
+    fn on_leave(&mut self, wallet: &str) {
+        let Some(code) = self.player_party.get(wallet).cloned() else { return };
+        let held_open = self.parties.get(&code)
+            .is_some_and(|p| p.started && p.host_wallet != wallet);
+
+        if !held_open {
+            self.abandon(wallet);
+            return;
+        }
+
+        self.player_party.remove(wallet);
+        let Some(party) = self.parties.get(&code) else { return };
+        tracing::info!("coop: {} disconnected mid-run from party {} — seat held for reconnect", wallet, code);
+        let msg = json!({ "type": "member_disconnected", "wallet": wallet }).to_string();
+        for (w, m) in party.members.iter() {
+            if w != wallet { send(&m.tx, msg.clone()); }
         }
     }
 }
@@ -343,6 +387,75 @@ mod tests {
         let notice = next_json(&mut hrx);
         assert_eq!(notice["type"], "member_joined");
         assert_eq!(notice["wallet"], "0xBBB");
+    }
+
+    #[test]
+    fn a_non_host_who_disconnects_mid_run_can_reconnect_with_the_same_code() {
+        let mut server = CoopServer::new();
+        let (htx, mut hrx) = client();
+        server.on_create_party("0xHOST".into(), "Host".into(), htx);
+        let code = next_json(&mut hrx)["code"].as_str().unwrap().to_string();
+        let (jtx, mut jrx) = client();
+        server.on_join_party(code.clone(), "0xBBB".into(), "Friend".into(), jtx);
+        let _ = next_json(&mut jrx); // party_joined
+        let _ = next_json(&mut hrx); // member_joined
+        server.on_start_run("0xHOST");
+        let _ = next_json(&mut hrx); // run_started
+        let _ = next_json(&mut jrx); // run_started
+
+        // The network drops — NOT a deliberate leave (that's `abandon`,
+        // exercised by the leave-in-lobby test below).
+        server.on_leave("0xBBB");
+        let notice = next_json(&mut hrx);
+        assert_eq!(notice["type"], "member_disconnected");
+        assert_eq!(notice["wallet"], "0xBBB");
+        assert!(server.parties[&code].members.contains_key("0xBBB"), "the seat is held, not removed");
+        assert!(!server.player_party.contains_key("0xBBB"));
+
+        // Reconnecting with the same code succeeds even though the run has
+        // already started — a fresh stranger in the same spot would not
+        // (see `cannot_join_a_party_that_already_started`).
+        let (rtx, mut rrx) = client();
+        server.on_join_party(code.clone(), "0xBBB".into(), "Friend".into(), rtx);
+        let rejoined = next_json(&mut rrx);
+        assert_eq!(rejoined["type"], "party_joined");
+        assert_eq!(rejoined["reconnected"], true);
+        assert_eq!(rejoined["members"].as_array().unwrap().len(), 2);
+
+        let reconnect_notice = next_json(&mut hrx);
+        assert_eq!(reconnect_notice["type"], "member_reconnected");
+        assert_eq!(reconnect_notice["wallet"], "0xBBB");
+    }
+
+    #[test]
+    fn a_stranger_still_cannot_join_a_started_party() {
+        let mut server = CoopServer::new();
+        let (htx, mut hrx) = client();
+        server.on_create_party("0xHOST".into(), "Host".into(), htx);
+        let code = next_json(&mut hrx)["code"].as_str().unwrap().to_string();
+        server.on_start_run("0xHOST");
+        let _ = next_json(&mut hrx); // run_started
+
+        let (tx, mut rx) = client();
+        server.on_join_party(code, "0xSTRANGER".into(), "Nobody".into(), tx);
+        assert_eq!(next_json(&mut rx)["type"], "error");
+    }
+
+    #[test]
+    fn leaving_the_lobby_before_the_run_starts_frees_the_seat_normally() {
+        let mut server = CoopServer::new();
+        let (htx, mut hrx) = client();
+        server.on_create_party("0xHOST".into(), "Host".into(), htx);
+        let code = next_json(&mut hrx)["code"].as_str().unwrap().to_string();
+        let (jtx, mut jrx) = client();
+        server.on_join_party(code.clone(), "0xBBB".into(), "Friend".into(), jtx);
+        let _ = next_json(&mut jrx);
+        let _ = next_json(&mut hrx);
+
+        server.on_leave("0xBBB"); // still in the lobby — not started yet
+        let notice = next_json(&mut hrx);
+        assert_eq!(notice["type"], "member_left");
+        assert!(!server.parties[&code].members.contains_key("0xBBB"), "the seat is freed, not held, before a run starts");
     }
 
     #[test]

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
-import { Users, Copy, Check, X, Loader2 } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Users, Copy, Check, X, Loader2, Link2 } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useCoopSocket } from '@/hooks/useCoopSocket'
@@ -57,6 +57,7 @@ const ValorScene = dynamic(
 export default function CoopLobbyPage() {
   const { status, address } = useResolvedAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const player = usePlayerStore((s) => s.player)
   const playerSynced = usePlayerStore((s) => s.playerSynced)
   const inventory = usePlayerStore((s) => s.inventory)
@@ -65,6 +66,15 @@ export default function CoopLobbyPage() {
 
   const [joinCode, setJoinCode] = useState('')
   const [copied, setCopied] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  // Deep link — a shared `/endless/coop?code=XXXXX` prefills the join box
+  // rather than auto-joining outright, so a stray click on an old/expired
+  // link doesn't commit anyone to a party sight-unseen.
+  useEffect(() => {
+    const fromUrl = searchParams.get('code')
+    if (fromUrl) setJoinCode(fromUrl.toUpperCase().slice(0, 5))
+  }, [searchParams])
 
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory])
   const equippedAmmo = useMemo(() => equippedAmmoId(inventory), [inventory])
@@ -100,6 +110,18 @@ export default function CoopLobbyPage() {
     navigator.clipboard?.writeText(coop.state.code).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
+    }).catch(() => {})
+  }, [coop.state.code])
+
+  // A link a friend can just tap — no code to relay verbally or retype.
+  // Prefills their join box on open (see the deep-link effect above);
+  // deliberately doesn't auto-join for them either.
+  const copyInviteLink = useCallback(() => {
+    if (!coop.state.code || typeof window === 'undefined') return
+    const url = `${window.location.origin}/endless/coop?code=${coop.state.code}`
+    navigator.clipboard?.writeText(url).then(() => {
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 1500)
     }).catch(() => {})
   }, [coop.state.code])
 
@@ -147,9 +169,10 @@ export default function CoopLobbyPage() {
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
 
-  const { phase, code, seed, members, isHost, error } = coop.state
+  const { phase, code, seed, members, isHost, error, pausedWallet } = coop.state
 
   if (phase === 'running' && coopOpts && seed !== null) {
+    const pausedName = pausedWallet ? (members.find((m) => m.wallet === pausedWallet)?.name || 'A teammate') : null
     return (
       <div style={{ position: 'fixed', inset: 0 }}>
         <ValorScene
@@ -163,6 +186,15 @@ export default function CoopLobbyPage() {
           equippedMods={equippedMods}
           onExit={onExit}
         />
+        {/* Their seat is held server-side (coop_server.rs) — this is a
+            "waiting" note, not an error; the run keeps going regardless. */}
+        {pausedName && (
+          <div style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+            <p style={{ background: 'rgba(4,3,12,0.75)', color: '#fbbf24', fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 10 }}>
+              {pausedName} disconnected — reconnecting…
+            </p>
+          </div>
+        )}
       </div>
     )
   }
@@ -241,6 +273,10 @@ export default function CoopLobbyPage() {
               <button onClick={copyCode} className="flex items-center gap-2 font-display font-black text-3xl tracking-[0.3em] text-emerald-400">
                 {code}
                 {copied ? <Check size={18} /> : <Copy size={18} className="opacity-50" />}
+              </button>
+              <button onClick={copyInviteLink} className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-emerald-400 transition-colors">
+                {linkCopied ? <Check size={13} /> : <Link2 size={13} />}
+                {linkCopied ? 'Link copied' : 'Copy invite link'}
               </button>
             </div>
 

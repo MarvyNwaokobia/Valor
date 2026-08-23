@@ -2078,18 +2078,23 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
     // never a combatant of its own sim) plus every OTHER non-host teammate
     // (combatants, with this client's own wallet excluded). ──
     if (coop) {
-      const seats: Array<{ x: number; z: number; facing?: number }> = [];
+      const seats: Array<{ x: number; z: number; facing?: number; alive: boolean }> = [];
       if (coop.isHost) {
-        for (const peer of coop.latestPeerInputs?.current?.values() ?? []) {
-          seats.push({ x: peer.x, z: peer.z, facing: Math.atan2(peer.dirX, peer.dirZ) });
+        // The host's own client never learns a teammate's hp/alive from
+        // their input reports (those only ever carry position/aim/fire-
+        // intent) — sim.getCombatant is the one place it lives, since this
+        // sim is the authoritative one actually applying enemy damage to it.
+        for (const [wallet, peer] of coop.latestPeerInputs?.current ?? []) {
+          const c = sim.getCombatant(wallet);
+          seats.push({ x: peer.x, z: peer.z, facing: Math.atan2(peer.dirX, peer.dirZ), alive: c?.alive ?? true });
         }
       } else {
         const hostSnap = coop.latestHostSnapshot?.current;
         if (hostSnap) {
-          seats.push({ x: hostSnap.hostPos.x, z: hostSnap.hostPos.z });
+          seats.push({ x: hostSnap.hostPos.x, z: hostSnap.hostPos.z, alive: hostSnap.playerAlive });
           for (const [wallet, c] of Object.entries(hostSnap.combatants)) {
-            if (wallet === coop.myWallet || !c.alive) continue;
-            seats.push({ x: c.x, z: c.z });
+            if (wallet === coop.myWallet) continue;
+            seats.push({ x: c.x, z: c.z, alive: c.alive });
           }
         }
       }
@@ -2110,8 +2115,8 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
         // asymmetry, not worth carrying aim direction through the broadcast
         // for every party member just for this.
         const facing = seat.facing ?? (moved > 0.001 ? Math.atan2(seat.x - prev[0], seat.z - prev[1]) : null);
-        if (facing !== null) g.rotation.set(0, facing, 0);
-        if (moved > 0.001) {
+        if (facing !== null && seat.alive) g.rotation.set(0, facing, 0);
+        if (moved > 0.001 && seat.alive) {
           prev[0] = seat.x; prev[1] = seat.z;
           teammateStepDist.current[i] += moved;
           if (teammateStepDist.current[i] >= STRIDE) {
@@ -2119,7 +2124,7 @@ function FpsWorld({ hud, controls, audio, lowSpec, lightFx, minimal, mission, on
             impactFx.scuff([seat.x, 0, seat.z], 0.7);
           }
         }
-        teammateRigApis.current[i]?.setClip(moved > 0.02 ? 'run' : 'idle');
+        teammateRigApis.current[i]?.setClip(!seat.alive ? 'death' : moved > 0.02 ? 'run' : 'idle');
       }
     }
     // Endless maps a live, changing enemy list onto a fixed rig pool, so any slot past

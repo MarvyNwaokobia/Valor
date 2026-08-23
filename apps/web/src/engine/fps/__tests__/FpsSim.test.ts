@@ -479,6 +479,11 @@ describe('FpsSim co-op combatants (party mode)', () => {
 
     expect(sim.playerHp).toBe(100); // never engaged — the wall protected them
     expect(sim.snapshot().combatants.teammate.hp).toBeLessThan(100); // the teammate took the fire instead
+    // getCombatant is the same truth by a different door — the host's own
+    // client (never a target itself) has no other way to read a teammate's
+    // hp/alive, unlike a non-host reading it off the broadcast snapshot.
+    expect(sim.getCombatant('teammate')?.hp).toBe(sim.snapshot().combatants.teammate.hp);
+    expect(sim.getCombatant('nobody-registered')).toBeNull();
   });
 
   it("a teammate's shot kills an enemy without inflating the local player's own session stats", () => {

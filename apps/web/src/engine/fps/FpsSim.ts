@@ -1427,6 +1427,15 @@ export class FpsSim {
     this.combatantMercyUntil.delete(id);
   }
 
+  /** Read-only lookup for the HOST's own client — it doesn't otherwise
+   *  learn a teammate's hp/alive state at all (that lives only in this
+   *  private map), unlike a non-host, who reads it straight off the
+   *  broadcast `combatants` snapshot alongside everything else. */
+  getCombatant(id: string): { hp: number; alive: boolean } | null {
+    const c = this.combatants.get(id);
+    return c ? { hp: c.hp, alive: c.alive } : null;
+  }
+
   /** Survival re-arm · REVIVE: bring the player back from death at full health
    *  with a longer mercy window, and clear the swarm that downed them so the
    *  restart is fair. The scene resumes the wave loop from here. No-op if alive.
