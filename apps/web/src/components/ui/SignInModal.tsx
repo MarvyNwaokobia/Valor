@@ -8,6 +8,7 @@ import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
 import { edition } from '@/editions'
+import { MOBILE_WALLETS, isMobileBrowser } from '@/lib/mobileWallets'
 
 interface Props {
   onClose: () => void
@@ -33,8 +34,10 @@ export default function SignInModal({ onClose }: Props) {
   // to the generic one if a legacy (non-EIP-6963) provider is actually
   // present, and hide it entirely once a named one exists.
   const [hasLegacyProvider, setHasLegacyProvider] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
     setHasLegacyProvider(typeof window !== 'undefined' && !!(window as unknown as { ethereum?: unknown }).ethereum)
+    setIsMobile(isMobileBrowser())
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
 
@@ -42,6 +45,16 @@ export default function SignInModal({ onClose }: Props) {
   // branching the markup on it during render would desync SSR from hydration.
   const [inMiniPay, setInMiniPay] = useState(false)
   useEffect(() => { setInMiniPay(edition().id === 'minipay') }, [])
+
+  // A mobile browser with no wallet already injected has no direct connector to
+  // reach MetaMask/Coinbase/Trust with (see visibleConnectors below), so the only
+  // remaining route was Web3Auth's chooser — which reaches them over WalletConnect,
+  // whose relay (relay.walletconnect.org) is exactly the host a prior incident found
+  // silently blocked by some carrier/ISP resolvers. Deep-linking straight into each
+  // wallet's own in-app browser needs no relay at all: the wallet re-opens this same
+  // URL itself and injects window.ethereum, so wagmi's plain `injected()` connector
+  // takes it from there with no network hop in the loop.
+  const showMobileWalletLinks = isMobile && !hasLegacyProvider && !hasNamedInjected && !inMiniPay
 
   // Inside MiniPay's WebView, every wallet row EXCEPT MiniPay's own is false.
   // No other wallet app can inject a provider there. MetaMask nonetheless still
@@ -273,11 +286,11 @@ export default function SignInModal({ onClose }: Props) {
           )}
         </div>
 
-        {/* Bring-your-own-wallet. Ordered by how likely each is to just work:
-            a wallet already injected into this page connects with no network
-            hop at all, then Web3Auth's chooser for everything else, then the
-            relay-free deep-links if that hangs. */}
-        {(visibleConnectors.length > 0 || isWeb3AuthConfigured) && (
+        {/* Bring-your-own-wallet. Ordered by how likely each is to just work: a
+            wallet already injected into this page connects with no network hop
+            at all, then the relay-free mobile deep-links, then Web3Auth's
+            chooser last for everything neither of those covers. */}
+        {(visibleConnectors.length > 0 || isWeb3AuthConfigured || showMobileWalletLinks) && (
           <>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-valor-border" />
@@ -311,6 +324,30 @@ export default function SignInModal({ onClose }: Props) {
                 </button>
               ))}
 
+              {/* Relay-free fallback for mobile: with no wallet already injected,
+                  the only other route to these was Web3Auth's chooser below, which
+                  reaches them over WalletConnect's public relay
+                  (relay.walletconnect.org) — the exact host a prior incident found
+                  silently blocked by some carrier/ISP resolvers. A deep link needs
+                  no relay: the wallet's own app re-opens this page and injects
+                  window.ethereum itself, so it connects the same way desktop's
+                  injected connector does above. */}
+              {showMobileWalletLinks && MOBILE_WALLETS.map((wallet) => (
+                <a
+                  key={wallet.id}
+                  href={wallet.build()}
+                  className="group flex items-center gap-3 w-full px-3.5 py-3 text-left transition-colors hover:bg-valor-gold/[0.07]"
+                >
+                  <span className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg bg-valor-surface border border-valor-border text-slate-300 transition-colors group-hover:border-valor-gold/50 group-hover:text-valor-gold">
+                    <Wallet size={16} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-white font-bold text-sm truncate">{wallet.name}</span>
+                    <span className="block text-[11px] text-slate-500 truncate">Opens the {wallet.name} app</span>
+                  </span>
+                </a>
+              ))}
+
               {/* Hidden inside MiniPay: the chooser's options (WalletConnect,
                   Coinbase, Trust) all require leaving the WebView for another
                   app that cannot connect back into it. It is also the second
@@ -326,16 +363,16 @@ export default function SignInModal({ onClose }: Props) {
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="block text-white font-bold text-sm truncate">
-                      {visibleConnectors.length > 0 ? 'Other Wallets' : 'Connect a Wallet'}
+                      {visibleConnectors.length > 0 || showMobileWalletLinks ? 'Other Wallets' : 'Connect a Wallet'}
                     </span>
                     <span className="block text-[11px] text-slate-500 truncate">
                       {pending === 'web3auth'
                         ? 'Opening wallets…'
                         : !web3authReady
                           ? 'Loading…'
-                          : visibleConnectors.length > 0
+                          : visibleConnectors.length > 0 || showMobileWalletLinks
                             // Don't name a wallet that already has its own row above.
-                            ? 'WalletConnect, Coinbase, Trust and more'
+                            ? 'WalletConnect and other wallets'
                             : 'MetaMask, Coinbase, Trust and more'}
                     </span>
                   </span>
