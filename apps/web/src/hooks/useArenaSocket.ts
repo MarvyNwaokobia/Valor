@@ -40,7 +40,7 @@ export interface HitEvent {
 
 export interface MatchResult {
   result: 'win' | 'loss' | 'draw'
-  reason: 'hp_zero' | 'timeout'
+  reason: 'hp_zero' | 'timeout' | 'forfeit'
 }
 
 /** What a client asks the server to do this frame — a REQUEST, not a fact.
@@ -251,6 +251,15 @@ export function useArenaSocket(walletAddress: string) {
     }))
   }, [])
 
+  /** The Exit button — a deliberate quit, distinct from just closing the
+   *  socket. Sent BEFORE disconnecting so the server can settle it as a real
+   *  forfeit-win for the opponent (see `ServerMsg::Forfeit`'s doc) rather
+   *  than the ambiguous, unsettled path an ordinary connection drop takes. */
+  const forfeit = useCallback(() => {
+    if (ws.current?.readyState !== WebSocket.OPEN) return
+    ws.current.send(JSON.stringify({ type: 'forfeit' }))
+  }, [])
+
   /** Drains and returns hits since the last call — same contract as
    *  FpsSim.drain(). */
   const drainHits = useCallback((): HitEvent[] => {
@@ -272,5 +281,5 @@ export function useArenaSocket(walletAddress: string) {
 
   useEffect(() => () => { clearStuckTimer(); ws.current?.close() }, [])
 
-  return { state, connect, sendInput, drainHits, latestPlayers, disconnect }
+  return { state, connect, sendInput, drainHits, latestPlayers, disconnect, forfeit }
 }

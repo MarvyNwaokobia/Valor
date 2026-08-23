@@ -231,6 +231,12 @@ pub enum ServerMsg {
     Join(ClientEntry),
     Input { wallet: String, sample: InputSample },
     Leave { wallet: String },
+    /// A deliberate "Exit" from the client, distinct from `Leave` (which also
+    /// fires on an accidental disconnect and stays on the old unsettled
+    /// teardown — see `on_leave`'s doc). This one always settles: the wallet
+    /// forfeits, its opponent gets a real `match_end` win, same payout rails
+    /// as any other finish.
+    Forfeit { wallet: String },
     FightStart { room_id: String },
     Tick,
 }
@@ -317,6 +323,7 @@ impl ArenaServer {
             ServerMsg::Join(entry) => self.on_join(entry, self_tx),
             ServerMsg::Input { wallet, sample } => self.on_input(&wallet, sample),
             ServerMsg::Leave { wallet } => self.on_leave(&wallet),
+            ServerMsg::Forfeit { wallet } => self.on_forfeit(&wallet),
             ServerMsg::FightStart { room_id } => self.fight_start(&room_id),
             ServerMsg::Tick => self.on_tick(),
         }
@@ -514,14 +521,41 @@ impl ArenaServer {
         if let Some(room) = self.rooms.remove(&room_id) {
             self.player_rooms.remove(&room.p1.wallet);
             self.player_rooms.remove(&room.p2.wallet);
-            // TODO: a disconnect mid-fight should settle the stake (probably
-            // a forfeit-win for whoever stayed) via duels::resolve_live_duel,
-            // the same way end_room() does on a clean finish. Left as a hard
-            // room-teardown with no settlement for now — a deliberate gap,
-            // not an oversight (see Phase 5 in the plan: AFK/leaver handling).
-            // Recoverable in the meantime via POST /admin/duels/{id}/void.
+            // Deliberately left unsettled, not an oversight: `on_forfeit`
+            // (the Exit button) is the settled path now — a wallet clicking
+            // Exit sends Forfeit before the socket ever closes, so this
+            // point is only reached by an ACCIDENTAL drop (mobile network
+            // loss, tab killed, backgrounding). Auto-forfeiting every such
+            // drop would turn a flaky connection into an instant loss, which
+            // is worse than the current gap. Recoverable via
+            // POST /admin/duels/{id}/void; real reconnect support (Phase 5)
+            // would be the actual fix, not an auto-forfeit here.
             let _ = room.duel_id;
         }
+    }
+
+    /// A deliberate Exit — always settles, forfeit-win for whoever stayed.
+    /// Separate from `on_leave`'s accidental-disconnect path on purpose:
+    /// mobile WS drops are common enough here (see the 2026-08-23 incident)
+    /// that turning EVERY disconnect into an instant forfeit would punish a
+    /// flaky connection the same as a deliberate quit. A player pressing
+    /// Exit has no such ambiguity.
+    fn on_forfeit(&mut self, wallet: &str) {
+        let room_id = match self.player_rooms.get(wallet) {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let (duel_id, p1_wallet, p2_wallet) = match self.rooms.get(&room_id) {
+            Some(r) => (r.duel_id, r.p1.wallet.clone(), r.p2.wallet.clone()),
+            None => return,
+        };
+        let winner_wallet = if p1_wallet == wallet { p2_wallet.clone() } else { p1_wallet.clone() };
+        tracing::info!("arena: {} forfeited room {} — {} wins", wallet, room_id, winner_wallet);
+        self.end_room(&room_id, MatchEndInfo {
+            duel_id, p1_wallet, p2_wallet,
+            winner_wallet: Some(winner_wallet),
+            reason: "forfeit",
+        });
     }
 
     // ── End of match ──────────────────────────────────────────────────────────
@@ -1175,6 +1209,29 @@ mod tests {
         server.on_leave("0xAAA");
         assert_eq!(next_json(&mut rx2).await["type"], "opponent_disconnected");
         assert!(server.rooms.is_empty());
+        assert!(server.player_rooms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn forfeiting_ends_the_match_as_a_real_win_for_the_opponent() {
+        // Unlike on_leave (an ambiguous drop — could be a flaky connection),
+        // on_forfeit (the Exit button) is a deliberate action and always
+        // settles: the remaining player gets a proper match_end, not the
+        // vaguer opponent_disconnected.
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        server.on_forfeit("0xAAA");
+        let msg1 = next_json(&mut rx1).await;
+        let msg2 = next_json(&mut rx2).await;
+        assert_eq!(msg1["type"], "match_end");
+        assert_eq!(msg1["result"], "loss");
+        assert_eq!(msg1["reason"], "forfeit");
+        assert_eq!(msg2["type"], "match_end");
+        assert_eq!(msg2["result"], "win");
+        assert_eq!(msg2["reason"], "forfeit");
+        assert!(server.rooms.is_empty(), "the room must be torn down like any other finished match");
         assert!(server.player_rooms.is_empty());
     }
 

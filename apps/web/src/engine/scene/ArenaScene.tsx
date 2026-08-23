@@ -55,7 +55,7 @@ import { usePbr } from './usePbr'
 import { makeTriplanarMaterial } from './triplanar'
 import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment'
 import { ZONE_THEMES } from '@/engine/fps/campaign'
-import { slideMove, type CoverBox } from '@/engine/fps/FpsSim'
+import { slideMove, rayAABB, aabbOfCover, type CoverBox } from '@/engine/fps/FpsSim'
 import { GUN_FEEL } from '@/engine/combat/GunFeel'
 import { FpsAudio } from '@/engine/audio/FpsAudio'
 import type { GunId } from '@/engine/combat'
@@ -623,6 +623,7 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     const firingNow = isTouch ? touchFiring.current : (firing.current || keys.current.has('Space'))
     crouchCur.current += ((crouchWant ? 1 : 0) - crouchCur.current) * Math.min(1, dt * 10)
     adsCur.current += ((adsWant ? 1 : 0) - adsCur.current) * Math.min(1, dt * 10)
+    const eyeY = THREE.MathUtils.lerp(EYE_HEIGHT, EYE_HEIGHT_CROUCH, crouchCur.current)
 
     const lookSens = (isTouch ? TOUCH_LOOK_SENS : LOOK_SENS) * THREE.MathUtils.lerp(1, ADS_LOOK_SENS_MULT, adsCur.current)
 
@@ -630,9 +631,49 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     // ValorScene does for both input sources.
     yaw.current -= mouseDX.current * lookSens
     pitch.current -= mouseDY.current * lookSens
-    pitch.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch.current))
     mouseDX.current = 0
     mouseDY.current = 0
+
+    // ── Touch aim-assist ── gentle magnetism toward the opponent while
+    // engaging (firing or ADS) — matching ValorScene's real "mobile aim
+    // assist": desktop keeps raw mouse aim (skill decides the hit), touch
+    // gets the same accessibility nudge the rest of the game gives it, so
+    // touch-vs-touch and touch-vs-desktop feel consistent with everywhere
+    // else instead of uniquely disadvantaged in Face-Off specifically.
+    // Occlusion-aware (never pulls aim through a wall) and only nudges
+    // within a real cone — it helps the fine aim, it doesn't aim for you,
+    // and there's no hard lock-on (that would trivialize 1v1 combat).
+    if (isTouch && fighting && (firingNow || adsCur.current > 0.35)) {
+      const opp = latestPlayers.current.get(opponentWallet)
+      if (opp && opp.hp > 0) {
+        const px = localPos.current.x, pz = localPos.current.z
+        const dx = opp.x - px, dz = opp.z - pz
+        const dyC = 1.15 - eyeY // aim toward roughly chest height
+        const dh = Math.hypot(dx, dz)
+        if (dh > 0.8) {
+          const len = Math.hypot(dx, dyC, dz)
+          const origin: [number, number, number] = [px, eyeY, pz]
+          const dir: [number, number, number] = [dx / len, dyC / len, dz / len]
+          let occluded = false
+          for (const c of ROOM_OBSTACLES) {
+            const tc = rayAABB(origin, dir, aabbOfCover(c))
+            if (tc !== null && tc < len - 0.5) { occluded = true; break }
+          }
+          if (!occluded) {
+            const wantYaw = Math.atan2(-dx, -dz)
+            const wantPitch = Math.atan2(dyC, dh)
+            const diff = Math.hypot(angleDelta(wantYaw, yaw.current), wantPitch - pitch.current)
+            if (diff < 0.3) { // ~17° acquisition cone
+              const k = Math.min(0.22, (firingNow ? 6 : 3.5) * dt)
+              yaw.current = lerpAngle(yaw.current, wantYaw, k)
+              pitch.current += (wantPitch - pitch.current) * k
+            }
+          }
+        }
+      }
+    }
+
+    pitch.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch.current))
 
     // Movement — camera-relative WASD (or touch stick), clamped to a unit
     // disk before scaling, then rotated by yaw. Speed MUST match
@@ -688,7 +729,6 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       })
     }
 
-    const eyeY = THREE.MathUtils.lerp(EYE_HEIGHT, EYE_HEIGHT_CROUCH, crouchCur.current)
     camera.position.set(localPos.current.x, eyeY, localPos.current.z)
     camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ')
     audio.setListener(localPos.current.x, localPos.current.z, yaw.current)
@@ -819,4 +859,12 @@ function lerpAngle(from: number, to: number, t: number): number {
   if (diff > Math.PI) diff -= Math.PI * 2
   if (diff < -Math.PI) diff += Math.PI * 2
   return from + diff * t
+}
+
+/** Shortest signed distance from `a` to `b` around the circle. */
+function angleDelta(a: number, b: number): number {
+  let d = a - b
+  while (d > Math.PI) d -= Math.PI * 2
+  while (d < -Math.PI) d += Math.PI * 2
+  return d
 }

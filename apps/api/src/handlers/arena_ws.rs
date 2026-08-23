@@ -45,6 +45,10 @@ struct InputMsg {
 enum ClientMsg {
     Join(JoinMsg),
     Input(InputMsg),
+    /// Sent by the client's Exit button, before it closes the socket — see
+    /// `ServerMsg::Forfeit`'s doc for why this is a distinct, always-settled
+    /// path from an ordinary connection drop.
+    Forfeit,
 }
 
 /// What `on_join` needs from the `duels` row to admit a wallet into a room —
@@ -166,6 +170,12 @@ pub async fn arena_ws(
                                         crouching: i.crouching, ads: i.ads,
                                     },
                                 });
+                            }
+                        }
+                        ClientMsg::Forfeit => {
+                            if let Some(ref w) = wallet {
+                                tracing::info!("arena_ws: {} sent forfeit", w);
+                                let _ = server_tx.send(ServerMsg::Forfeit { wallet: w.clone() });
                             }
                         }
                     }

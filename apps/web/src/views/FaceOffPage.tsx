@@ -13,6 +13,7 @@ import { useArenaSocket } from '@/hooks/useArenaSocket'
 import { retryImport } from '@/lib/retryImport'
 import { equippedGunId } from '@/lib/guns'
 import LoadingScreen from '@/components/ui/LoadingScreen'
+import LoadoutModal from '@/components/battle/LoadoutModal'
 
 const ArenaScene = dynamic(
   () => retryImport(() => import('@/engine/scene/ArenaScene')).then((m) => m.ArenaScene),
@@ -72,10 +73,18 @@ export default function FaceOffPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeDuel, setActiveDuel] = useState<DuelRun | null>(null)
   const [connected, setConnected] = useState(false)
+  const [pickingLoadout, setPickingLoadout] = useState(false)
   const [localHp, setLocalHp] = useState(100)
   const [opponentHp, setOpponentHp] = useState(100)
   const [ammo, setAmmo] = useState(30)
   const [reloading, setReloading] = useState(false)
+
+  const enterArena = useCallback(() => {
+    if (!activeDuel) return
+    setPickingLoadout(false)
+    arena.connect(activeDuel.id)
+    setConnected(true)
+  }, [activeDuel, arena])
 
   // Face-Off duels only — wave_race rows share the same table/list but have
   // nothing to do with this page.
@@ -90,13 +99,10 @@ export default function FaceOffPage() {
   // a fallback, not the only signal). The accepter already knows immediately
   // (acceptDuel's response) and connects directly instead of via this effect.
   useEffect(() => {
-    if (!activeDuel || connected) return
+    if (!activeDuel || connected || pickingLoadout) return
     const mine = myFaceOff.find((d) => d.id === activeDuel.id)
-    if (mine?.status === 'accepted') {
-      arena.connect(activeDuel.id)
-      setConnected(true)
-    }
-  }, [activeDuel, connected, myFaceOff, arena])
+    if (mine?.status === 'accepted') setPickingLoadout(true)
+  }, [activeDuel, connected, pickingLoadout, myFaceOff])
 
   const onCreate = useCallback(async (amount: number, invitedWallet?: string) => {
     setError(null)
@@ -111,22 +117,46 @@ export default function FaceOffPage() {
     try {
       const run = await acceptDuel(id, stakeG)
       setActiveDuel(run)
-      arena.connect(run.id)
-      setConnected(true)
+      setPickingLoadout(true)
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not accept') }
-  }, [acceptDuel, arena])
+  }, [acceptDuel])
 
   const backToLobby = useCallback(() => {
     arena.disconnect()
     setConnected(false)
+    setPickingLoadout(false)
     setActiveDuel(null)
     setLocalHp(100); setOpponentHp(100); setAmmo(30); setReloading(false)
   }, [arena])
+
+  const onExitMatch = useCallback(() => {
+    arena.forfeit()
+    backToLobby()
+  }, [arena, backToLobby])
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
   if (!player && !playerSynced) return <LoadingScreen />
   if (!player) { router.replace('/'); return null }
+
+  // ── Pick a weapon before the fight — same pre-match loadout screen Duels
+  // and every Operation use, right before the moment you'd actually deploy.
+  // Stakes are already committed by this point (accept/create already
+  // happened), so both onDeploy and closing the modal proceed into the
+  // arena either way — there's no safe "cancel" once G$ has moved.
+  if (pickingLoadout && activeDuel) {
+    return (
+      <LoadoutModal
+        opName="Face-Off"
+        label={`Loadout · ${activeDuel.stake_g.toLocaleString()} G$ staked`}
+        cta="ENTER THE ARENA"
+        walletAddress={address}
+        weaponOnly
+        onClose={enterArena}
+        onDeploy={enterArena}
+      />
+    )
+  }
 
   // ── The live match itself ────────────────────────────────────────────────
   if (connected && activeDuel && arena.state.phase !== 'idle' && arena.state.phase !== 'result') {
@@ -153,6 +183,7 @@ export default function FaceOffPage() {
           opponentName={opponent ? who(null, opponent.wallet) : '…'}
           localHp={localHp} opponentHp={opponentHp}
           ammo={ammo} reloading={reloading}
+          onExit={onExitMatch}
         />
       </div>
     )
@@ -183,7 +214,9 @@ export default function FaceOffPage() {
           {r.result === 'win' ? 'You won' : r.result === 'draw' ? 'Draw' : 'You lost'}
         </p>
         <p className="text-slate-400 text-sm">
-          {r.reason === 'timeout' ? 'Decided on time — higher HP took it.' : 'Decided by elimination.'}
+          {r.reason === 'forfeit'
+            ? (r.result === 'win' ? 'Your opponent left the match.' : 'You left the match.')
+            : r.reason === 'timeout' ? 'Decided on time — higher HP took it.' : 'Decided by elimination.'}
         </p>
         <button onClick={backToLobby} className="mt-2 px-5 py-2.5 rounded-xl bg-valor-gold text-black font-bold text-sm">
           Back to Face-Off
@@ -434,7 +467,7 @@ export default function FaceOffPage() {
 
 // ── In-match HUD ──────────────────────────────────────────────────────────
 
-function FaceOffHud({ phase, countdown, opponentName, localHp, opponentHp, ammo, reloading }: {
+function FaceOffHud({ phase, countdown, opponentName, localHp, opponentHp, ammo, reloading, onExit }: {
   phase: 'idle' | 'connecting' | 'waiting' | 'countdown' | 'fighting' | 'result'
   countdown: number
   opponentName: string
@@ -442,9 +475,47 @@ function FaceOffHud({ phase, countdown, opponentName, localHp, opponentHp, ammo,
   opponentHp: number
   ammo: number
   reloading: boolean
+  onExit: () => void
 }) {
+  const [confirmExit, setConfirmExit] = useState(false)
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: 'var(--font-display, sans-serif)', color: '#e9edf2' }}>
+      {/* Exit — a deliberate quit, not just closing the tab. Real G$ is
+          staked, so this always confirms before forfeiting it. */}
+      <button
+        onClick={() => setConfirmExit(true)}
+        style={{
+          position: 'absolute', left: 16, top: 'calc(env(safe-area-inset-top, 0px) + 16px)', pointerEvents: 'auto',
+          padding: '6px 12px', borderRadius: 8, background: 'rgba(4,3,12,0.6)', border: '1px solid rgba(255,255,255,0.18)',
+          color: '#cbd5e1', fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
+        }}
+      >
+        Exit
+      </button>
+      {confirmExit && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.88)', padding: 24 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, textAlign: 'center', maxWidth: 280 }}>
+            <p className="font-display font-black text-white text-lg">Exit the fight?</p>
+            <p className="text-slate-400 text-sm">
+              You forfeit your stake — {opponentName} wins the pot. This can&apos;t be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+              <button
+                onClick={() => setConfirmExit(false)}
+                style={{ flex: 1, minHeight: 44, borderRadius: 10, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', fontWeight: 700, fontSize: 13 }}
+              >
+                Keep fighting
+              </button>
+              <button
+                onClick={onExit}
+                style={{ flex: 1, minHeight: 44, borderRadius: 10, border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.18)', color: '#fca5a5', fontWeight: 700, fontSize: 13 }}
+              >
+                Exit & forfeit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {(phase === 'connecting' || phase === 'waiting') && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.85)' }}>
           <p className="text-white font-display font-black text-lg">

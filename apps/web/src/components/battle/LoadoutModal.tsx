@@ -48,6 +48,11 @@ interface Props {
   walletAddress?: string
   onClose: () => void
   onDeploy: (kit: KitId[]) => void
+  /** Face-Off: combat stats are fixed for staked-money fairness (see
+   *  arena_server.rs's module doc), so ammo/attachments/field-kit have
+   *  nothing to affect there. Hides those sections — only the weapon
+   *  (cosmetic there, but still equipped for real everywhere else) stays. */
+  weaponOnly?: boolean
 }
 
 function Row({ selected, onClick, title, sub, accent }: {
@@ -76,7 +81,7 @@ function Row({ selected, onClick, title, sub, accent }: {
   )
 }
 
-export default function LoadoutModal({ opIndex, opName, label, cta, walletAddress, onClose, onDeploy }: Props) {
+export default function LoadoutModal({ opIndex, opName, label, cta, walletAddress, onClose, onDeploy, weaponOnly }: Props) {
   const inventory = usePlayerStore((s) => s.inventory)
   const toggleEquip = usePlayerStore((s) => s.toggleEquip)
 
@@ -198,7 +203,14 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
             )}
           </section>
 
+          {weaponOnly && (
+            <p className="text-[11px] text-slate-500 -mt-2">
+              Face-Off stakes real G$ — combat stats are the same for both fighters. Your weapon shows up cosmetically; ammo, attachments, and field kit don&apos;t apply here.
+            </p>
+          )}
+
           {/* Ammo */}
+          {!weaponOnly && (
           <section>
             <p className="text-[11px] uppercase tracking-[0.2em] font-bold text-slate-500 mb-2">Ammunition</p>
             <div className="flex flex-col gap-2">
@@ -214,9 +226,10 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
               })}
             </div>
           </section>
+          )}
 
           {/* Attachments per slot */}
-          {ownedAttach.length > 0 && (
+          {!weaponOnly && ownedAttach.length > 0 && (
             <section>
               <p className="text-[11px] uppercase tracking-[0.2em] font-bold text-slate-500 mb-2">Attachments</p>
               <div className="flex flex-col gap-3">
@@ -246,6 +259,7 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
           )}
 
           {/* Field kit — only what you own */}
+          {!weaponOnly && (
           <section>
             <p className="text-[11px] uppercase tracking-[0.2em] font-bold text-slate-500 mb-2">Field Kit</p>
             {ownedKit.length === 0 ? (
@@ -262,13 +276,14 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
               </div>
             )}
           </section>
+          )}
         </div>
 
         {/* Deploy */}
         <div className="sticky bottom-0 p-5 pt-3" style={{ background: '#0a0c12', borderTop: '1px solid #1c1f28' }}>
           <div className="flex items-center justify-between mb-2 text-[11px]">
             <span className="text-slate-500">Carrying</span>
-            <span className="text-slate-300 font-bold">{chosenGun.name}{ammo !== 'standard' ? ` · ${AMMO_CATALOG[ammo].name}` : ''}</span>
+            <span className="text-slate-300 font-bold">{chosenGun.name}{!weaponOnly && ammo !== 'standard' ? ` · ${AMMO_CATALOG[ammo].name}` : ''}</span>
           </div>
           <motion.button
             onClick={handleDeploy} disabled={deploying}
