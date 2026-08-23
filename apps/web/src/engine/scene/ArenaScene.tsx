@@ -3,19 +3,29 @@
 /**
  * Face-Off — the real-time arena scene.
  *
- * Deliberately NOT ValorScene. ValorScene's `FpsSim` is a local, trusted
- * combat simulation against AI enemies; here the server (arena_server.rs) is
- * the sole authority over position, aim, ammo, and hits — this component's
- * only job is to capture input, send it, and render whatever the server says
- * is true. It never constructs or steps a local combat sim.
+ * Deliberately NOT ValorScene's SIMULATION — ValorScene's `FpsSim` is a
+ * local, trusted combat sim against AI enemies; here the server
+ * (arena_server.rs) is the sole authority over position, aim, ammo, and
+ * hits, and this component's job is to capture input, send it, and render
+ * whatever the server says is true. It never constructs or steps a local
+ * combat sim.
  *
- * The ROOM ITSELF, though, is the real thing: one frozen room straight out of
- * the Operation room generator (`generateRoom` in `engine/fps/endless.ts`,
- * seed "valor-faceoff", CRATE_LINE archetype), rendered with the same
- * triplanar materials/zone lighting/IBL ValorScene uses, not a placeholder
- * box. `ROOM_WALLS`/`ROOM_COVER` below MUST match `arena_server.rs`'s copy of
- * the same boxes exactly — same mirroring discipline as WALK_SPEED/
- * ARENA_HALF_X/PITCH_LIMIT already need between these two files.
+ * Everything else — room, weapon, controls, sound — is the SAME machinery
+ * real Operations use, reused rather than reinvented:
+ *   - Room: one frozen room straight out of the Operation room generator
+ *     (`generateRoom` in `engine/fps/endless.ts`, seed "valor-faceoff",
+ *     CRATE_LINE archetype), rendered with the same triplanar materials/zone
+ *     lighting/IBL ValorScene uses. `ROOM_WALLS`/`ROOM_COVER` below MUST
+ *     match `arena_server.rs`'s copy of the same boxes exactly.
+ *   - Weapon viewmodel: same `makeGunMesh` + `buildViewmodelHands` +
+ *     `WEAPON_VIEW`/`VIEWMODEL_HIP`/`VIEWMODEL_ADS` framing ValorScene uses —
+ *     cosmetic only, the server's combat stats never vary by loadout.
+ *   - Touch controls: the same look-zone/joystick/fire-pad/ADS-toggle/
+ *     crouch-toggle layout and interaction model as ValorScene's mobile HUD
+ *     (see `touchBtn`/`pressFx` below, copied rather than imported — they're
+ *     unexported locals in a 4500-line file).
+ *   - Sound: the real `FpsAudio` director — shots, impacts, hitmarkers,
+ *     reload, footsteps, and a spatialised cue for the opponent's shots.
  *
  * Local player: rendered from LOCAL prediction (instant camera response),
  * collide-and-slide against the room's real geometry (`slideMove`, the same
@@ -28,12 +38,10 @@
  * not this client's job to guess where the other player is), smoothed with a
  * simple exponential lerp between ticks rather than buffered interpolation.
  *
- * Movement speed is NOT reduced while crouching/ADS, unlike ValorScene's real
- * Operations — the server (arena_server.rs) doesn't model that in v1 either,
- * and slowing down here while the authoritative server doesn't would just
- * fight the soft-reconcile every tick. Crouch/ADS still narrow the server's
- * hit spread and change hitbox height; here they're eye-height + cosmetic
- * viewmodel/FOV feedback so it reads the same either way.
+ * Movement speed is NOT reduced while crouching/ADS, unlike real Operations —
+ * the server (arena_server.rs) doesn't model that in v1 either, and slowing
+ * down here while the authoritative server doesn't would just fight the
+ * soft-reconcile every tick.
  */
 
 import { Suspense, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
@@ -41,11 +49,15 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { OperatorRig, type OperatorApi } from './OperatorRig'
 import { makeGunMesh } from './GunMesh'
+import { buildViewmodelHands, VIEWMODEL_HIP, VIEWMODEL_ADS, WEAPON_VIEW } from './viewmodelHands'
+import { GUN_LENGTH } from './gunModels'
 import { usePbr } from './usePbr'
 import { makeTriplanarMaterial } from './triplanar'
 import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment'
 import { ZONE_THEMES } from '@/engine/fps/campaign'
 import { slideMove, type CoverBox } from '@/engine/fps/FpsSim'
+import { GUN_FEEL } from '@/engine/combat/GunFeel'
+import { FpsAudio } from '@/engine/audio/FpsAudio'
 import type { GunId } from '@/engine/combat'
 import type { ArenaInput, HitEvent, PlayerSnapshot } from '@/hooks/useArenaSocket'
 
@@ -55,6 +67,7 @@ const OPERATOR_GLB = '/characters/glb/operator.glb'
  *  look for v1; a small rotation of zones/rooms is a natural, easy follow-up
  *  once this is proven, not something to build ahead of need. */
 const THEME = ZONE_THEMES.ASHFALL
+const ZONE_ID = 'ASHFALL'
 
 // ── Room geometry — frozen output of generateRoom(0, 0, seedFromString(
 // "valor-faceoff")) in engine/fps/endless.ts, recentred so the room's
@@ -104,6 +117,8 @@ const RECONCILE_STRENGTH = 0.25
 /** How quickly the opponent's rendered position/yaw chases its latest
  *  snapshot — a simple critically-damped-ish lerp, not real interpolation. */
 const OPPONENT_SMOOTH = 0.35
+/** Metres between footfalls — matches ValorScene's STRIDE. */
+const STRIDE = 0.95
 
 /** Same detection ValorScene uses (not exported from there, so mirrored here
  *  rather than pulling in the 4500-line file for one helper). */
@@ -116,6 +131,31 @@ function detectTouchDevice(): boolean {
   return false
 }
 
+/** A glassy, tactile circular touch button — copied from ValorScene's
+ *  (unexported) `touchBtn`, the shared look for the real mobile HUD. */
+function touchBtn(color: string, size: number, strong = false): React.CSSProperties {
+  return {
+    position: 'absolute', width: size, height: size, borderRadius: '50%',
+    border: `1.5px solid ${color}${strong ? 'cc' : '55'}`,
+    background: `radial-gradient(circle at 50% 34%, ${color}${strong ? '40' : '22'}, ${color}0f 66%, rgba(6,10,16,.74))`,
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,.22), inset 0 -8px 16px ${color}14, 0 6px 16px rgba(0,0,0,.5)`,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color, fontWeight: 700, letterSpacing: 1, touchAction: 'none', userSelect: 'none', WebkitTapHighlightColor: 'transparent',
+    transition: 'transform .11s cubic-bezier(.34,1.56,.64,1), box-shadow .11s, filter .11s', willChange: 'transform',
+  }
+}
+
+/** Momentary press feedback for a touch button — copied from ValorScene's
+ *  `pressFx`. */
+function pressFx(el: HTMLElement | null, down: boolean, color: string) {
+  if (!el) return
+  el.style.transform = down ? 'scale(0.86)' : 'scale(1)'
+  el.style.filter = down ? 'brightness(1.5)' : 'brightness(1)'
+  el.style.boxShadow = down
+    ? `inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 3px ${color}44, 0 8px 20px rgba(0,0,0,.5)`
+    : `inset 0 1px 0 rgba(255,255,255,.22), inset 0 -8px 16px ${color}14, 0 6px 16px rgba(0,0,0,.5)`
+}
+
 /** Shared, mutable input state — written by whichever input source is active
  *  (keyboard+mouse via pointer lock, or the touch overlay) and read once a
  *  frame by ArenaWorld's useFrame. Living outside React state on purpose:
@@ -126,7 +166,11 @@ interface InputRefs {
   mouseDY: MutableRefObject<number>
   touchMoveX: MutableRefObject<number>
   touchMoveY: MutableRefObject<number>
+  /** Desktop mouse-button-driven fire state; touch's dedicated fire button
+   *  writes `touchFiring` instead — see ArenaWorld's useFrame for how the
+   *  two combine (mirrors ValorScene's `held('Space') || mouseBtn.has(0)`). */
   firing: MutableRefObject<boolean>
+  touchFiring: MutableRefObject<boolean>
   rightMouseDown: MutableRefObject<boolean>
   wantReload: MutableRefObject<boolean>
   /** Touch-only toggles — desktop reads crouch/ADS off `keys`/mouse buttons
@@ -145,6 +189,7 @@ function useInputRefs(): InputRefs {
     touchMoveX: useRef(0),
     touchMoveY: useRef(0),
     firing: useRef(false),
+    touchFiring: useRef(false),
     rightMouseDown: useRef(false),
     wantReload: useRef(false),
     touchCrouch: useRef(false),
@@ -205,21 +250,23 @@ function ArenaHud() {
 
 // ── Touch controls (mobile) ──────────────────────────────────────────────
 //
-// Movement joystick bottom-left, look-drag + hold-to-fire on the right half
-// (matching ValorScene's own touch split), plus three small toggle/tap
-// buttons above the fire zone: reload, crouch, and ADS. Crouch and ADS are
-// TOGGLES rather than holds — the stick and the fire pad already own both
-// thumbs, same reasoning ValorScene's own mobile crouch button uses.
+// The SAME layout and interaction model as ValorScene's real mobile HUD:
+// a full-screen look-drag zone underneath everything, a movement joystick
+// bottom-left, a dedicated visible FIRE button bottom-right (press to shoot,
+// slide to steer — one thumb aims and shoots together), and ADS/CROUCH as
+// lit toggle buttons beside it. Face-Off has no weapon-swap or target-lock
+// (one fixed weapon, no AI to lock onto), so those two real-HUD buttons are
+// the only ones NOT reproduced here.
 
 function TouchControls({ input }: { input: InputRefs }) {
   const joyRef = useRef<HTMLDivElement>(null)
   const joyKnobRef = useRef<HTMLDivElement>(null)
   const joyId = useRef<number | null>(null)
   const joyCenter = useRef({ x: 0, y: 0 })
-  const JOY_R = 52
+  const JOY_R = 58
 
-  const [crouchOn, setCrouchOn] = useState(false)
-  const [adsOn, setAdsOn] = useState(false)
+  const adsBtnRef = useRef<HTMLDivElement>(null)
+  const crouchBtnRef = useRef<HTMLDivElement>(null)
 
   const updateJoy = (x: number, y: number) => {
     const c = joyCenter.current
@@ -250,13 +297,15 @@ function TouchControls({ input }: { input: InputRefs }) {
     }
   }
 
+  // Look — drag ANYWHERE to aim, matching ValorScene's full-screen look zone.
+  // Rendered first (see JSX below) so the joystick/buttons, added after it in
+  // DOM order, sit on top and capture their own touches instead.
   const lookId = useRef<number | null>(null)
   const lookLast = useRef({ x: 0, y: 0 })
   const lookStart = (e: React.TouchEvent) => {
     const t = e.changedTouches[0]
     lookId.current = t.identifier
     lookLast.current = { x: t.clientX, y: t.clientY }
-    input.firing.current = true
   }
   const lookMove = (e: React.TouchEvent) => {
     for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
@@ -266,79 +315,120 @@ function TouchControls({ input }: { input: InputRefs }) {
     }
   }
   const lookEnd = (e: React.TouchEvent) => {
-    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) {
-      lookId.current = null
-      input.firing.current = false
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === lookId.current) lookId.current = null
+  }
+
+  // Fire — a dedicated visible button (not folded into the look zone): press
+  // to shoot, slide to also steer the aim, exactly like ValorScene's real
+  // fire pad.
+  const fireId = useRef<number | null>(null)
+  const fireLast = useRef({ x: 0, y: 0 })
+  const fireStart = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0]
+    fireId.current = t.identifier
+    fireLast.current = { x: t.clientX, y: t.clientY }
+    input.touchFiring.current = true
+    pressFx(e.currentTarget as HTMLElement, true, '#ff6a4d')
+  }
+  const fireMove = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
+      input.mouseDX.current += t.clientX - fireLast.current.x
+      input.mouseDY.current += t.clientY - fireLast.current.y
+      fireLast.current = { x: t.clientX, y: t.clientY }
+    }
+  }
+  const fireEnd = (e: React.TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === fireId.current) {
+      fireId.current = null
+      input.touchFiring.current = false
+      pressFx(e.currentTarget as HTMLElement, false, '#ff6a4d')
     }
   }
 
+  const paintToggle = (el: HTMLElement | null, on: boolean, color: string) => {
+    if (!el) return
+    el.style.background = on ? `radial-gradient(circle at 50% 40%, ${color}66, ${color}38)` : ''
+    el.style.borderColor = on ? `${color}f2` : ''
+    el.style.color = on ? '#04141a' : ''
+    el.style.fontWeight = on ? '800' : ''
+  }
+
+  const tap = (color: string, run: () => void) => ({
+    onPointerDown: (e: React.PointerEvent) => { e.preventDefault(); pressFx(e.currentTarget as HTMLElement, true, color); run() },
+    onPointerUp: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onPointerLeave: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+    onPointerCancel: (e: React.PointerEvent) => pressFx(e.currentTarget as HTMLElement, false, color),
+  })
+
   return (
     <div className="fixed inset-0 z-50" style={{ touchAction: 'none' }}>
-      {/* Right half — look + fire, one thumb */}
+      {/* Look — full-screen drag, underneath everything else. */}
       <div
         onTouchStart={lookStart} onTouchMove={lookMove} onTouchEnd={lookEnd} onTouchCancel={lookEnd}
-        style={{ position: 'absolute', right: 0, top: 0, width: '55%', height: '100%' }}
+        style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
       />
-      {/* Movement joystick — bottom left */}
+
+      {/* Movement joystick — bottom left, same position/size as the real HUD. */}
       <div
         ref={joyRef}
         onTouchStart={joyStart} onTouchMove={joyMove} onTouchEnd={joyEnd} onTouchCancel={joyEnd}
-        style={{
-          position: 'absolute', left: 28, bottom: 90, width: 112, height: 112, borderRadius: '50%',
-          background: 'radial-gradient(circle at 50% 45%, rgba(255,255,255,0.06), rgba(8,8,14,0.55))',
-          border: '1px solid rgba(255,255,255,0.18)',
-        }}
+        style={{ ...touchBtn('#eab308', 116), left: 24, bottom: 24, background: 'radial-gradient(circle at 50% 45%, rgba(234,179,8,.07), rgba(6,10,16,.45))', border: '1px solid rgba(234,179,8,.28)' }}
       >
         <div ref={joyKnobRef} style={{
-          position: 'absolute', left: '50%', top: '50%', width: 40, height: 40, marginLeft: -20, marginTop: -20,
-          borderRadius: '50%', background: 'rgba(255,255,255,0.75)', boxShadow: '0 0 10px rgba(0,0,0,0.4)',
+          position: 'absolute', left: '50%', top: '50%', width: 44, height: 44, marginLeft: -22, marginTop: -22,
+          borderRadius: '50%', background: 'radial-gradient(circle at 40% 35%, rgba(234,179,8,.9), rgba(180,120,8,.7))',
+          border: '1px solid rgba(255,255,255,.35)', boxShadow: '0 0 12px rgba(234,179,8,.45), 0 3px 8px rgba(0,0,0,.5)',
         }} />
       </div>
-      {/* Reload — small tap target above the fire zone */}
-      <button
-        onTouchStart={(e) => { e.preventDefault(); input.wantReload.current = true }}
-        style={{
-          position: 'absolute', right: 28, bottom: 90, width: 64, height: 64, borderRadius: '50%',
-          background: 'rgba(234,179,8,0.18)', border: '1px solid rgba(234,179,8,0.4)',
-          color: '#eab308', fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-        }}
+
+      {/* Fire — the button that was missing: visible, red, a crosshair icon,
+          bottom-right, same spot the real fire pad sits. */}
+      <div
+        onTouchStart={fireStart} onTouchMove={fireMove} onTouchEnd={fireEnd} onTouchCancel={fireEnd}
+        style={{ ...touchBtn('#ff6a4d', 78, true), right: 20, bottom: 24 }}
       >
-        Reload
-      </button>
-      {/* Crouch / ADS toggles — lit while active, same idiom as ValorScene's
-          mobile crouch/ADS buttons. */}
-      <button
-        onTouchStart={(e) => {
-          e.preventDefault()
-          const next = !input.touchCrouch.current
-          input.touchCrouch.current = next
-          setCrouchOn(next)
-        }}
-        style={{
-          position: 'absolute', right: 106, bottom: 168, width: 56, height: 56, borderRadius: '50%',
-          background: crouchOn ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.08)',
-          border: `1px solid ${crouchOn ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.2)'}`,
-          color: crouchOn ? '#4ade80' : '#cbd5e1', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-        }}
-      >
-        Crouch
-      </button>
-      <button
-        onTouchStart={(e) => {
-          e.preventDefault()
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="12" cy="12" r="7" />
+          <path d="M12 1v4M12 19v4M1 12h4M19 12h4" strokeLinecap="round" />
+        </svg>
+      </div>
+
+      {/* ADS — toggle, lit while active, left of fire. */}
+      <div
+        ref={adsBtnRef}
+        {...tap('#cfe0ea', () => {
           const next = !input.touchAds.current
           input.touchAds.current = next
-          setAdsOn(next)
-        }}
-        style={{
-          position: 'absolute', right: 28, bottom: 168, width: 56, height: 56, borderRadius: '50%',
-          background: adsOn ? 'rgba(56,189,248,0.35)' : 'rgba(255,255,255,0.08)',
-          border: `1px solid ${adsOn ? 'rgba(56,189,248,0.7)' : 'rgba(255,255,255,0.2)'}`,
-          color: adsOn ? '#7dd3fc' : '#cbd5e1', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-        }}
+          paintToggle(adsBtnRef.current, next, '#cfe0ea')
+        })}
+        style={{ ...touchBtn('#cfe0ea', 52), right: 108, bottom: 30, fontSize: 11 }}
       >
         ADS
-      </button>
+      </div>
+
+      {/* CROUCH — toggle, lit while active, left of ADS. */}
+      <div
+        ref={crouchBtnRef}
+        {...tap('#8fb8d0', () => {
+          const next = !input.touchCrouch.current
+          input.touchCrouch.current = next
+          paintToggle(crouchBtnRef.current, next, '#8fb8d0')
+        })}
+        style={{ ...touchBtn('#8fb8d0', 52), right: 170, bottom: 30, fontSize: 9, letterSpacing: 0 }}
+      >
+        CROUCH
+      </div>
+
+      {/* Reload — icon button, secondary column above the gun. */}
+      <div
+        {...tap('#ffb454', () => { input.wantReload.current = true })}
+        style={{ ...touchBtn('#ffb454', 44), right: 22, bottom: 116 }}
+      >
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 12a9 9 0 11-3-6.7" strokeLinecap="round" />
+          <path d="M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
     </div>
   )
 }
@@ -351,7 +441,8 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     onLocalHp, onAmmo, onOpponentHp, input, isTouch, equippedGun,
   } = props
   const { camera, gl, scene } = useThree()
-  const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, rightMouseDown, wantReload, touchCrouch, touchAds } = input
+  const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, touchFiring, rightMouseDown, wantReload, touchCrouch, touchAds } = input
+  const gunId = equippedGun ?? 'assault_rifle'
 
   const locked = useRef(false)
   // Face the opponent's spawn side on mount: local player spawns at the near
@@ -366,6 +457,15 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
   const localPos = useRef({ x: 0, z: nearSide ? 7.3 : -7.3 })
   const crouchCur = useRef(0)
   const adsCur = useRef(0)
+
+  // ── Audio — the real tactical audio director, not silence. Self-contained
+  // WebAudio synthesis (see FpsAudio's own module doc), so no assets to load.
+  const audio = useMemo(() => new FpsAudio(), [])
+  useEffect(() => () => audio.dispose(), [audio])
+  useEffect(() => { audio.setZone(ZONE_ID) }, [audio])
+  const prevAmmo = useRef<number | null>(null)
+  const prevReloading = useRef(false)
+  const strideDist = useRef(0)
 
   // Desktop input — pointer lock + WASD + mouse. Skipped on touch devices
   // (no pointer lock support on mobile Safari, and it would just fight the
@@ -384,12 +484,14 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault()
       keys.current.add(e.code)
       if (e.code === 'KeyR') wantReload.current = true
+      audio.unlock()
       wantLock()
     }
     const up = (e: KeyboardEvent) => keys.current.delete(e.code)
     const mdown = (e: MouseEvent) => {
       if (e.button === 0) firing.current = true
       if (e.button === 2) rightMouseDown.current = true
+      audio.unlock()
       wantLock()
     }
     const mup = (e: MouseEvent) => {
@@ -421,7 +523,7 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       document.removeEventListener('pointerlockchange', lockChange)
       canvas.removeEventListener('contextmenu', noMenu)
     }
-  }, [gl, isTouch, keys, mouseDX, mouseDY, firing, rightMouseDown, wantReload])
+  }, [gl, isTouch, keys, mouseDX, mouseDY, firing, rightMouseDown, wantReload, audio])
 
   useEffect(() => {
     const p = camera as THREE.PerspectiveCamera
@@ -467,16 +569,27 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     }
   }, [gl, scene])
 
-  // ── Local weapon viewmodel — cosmetic only, the server doesn't know or
-  // care what this looks like or what it's called. Reskinned to the
-  // player's actual equipped gun if given; combat stats never vary (see
+  // ── Local weapon viewmodel — the REAL gun rig: same mesh, same hands
+  // (`buildViewmodelHands`), same per-weapon framing (`WEAPON_VIEW`) real
+  // Operations use. Cosmetic only — the server doesn't know or care what
+  // this looks like; combat stats never vary by loadout (see
   // arena_server.rs's module doc — real money is staked on this fight).
   const gunMesh = useMemo(() => {
-    const g = makeGunMesh(equippedGun ?? 'assault_rifle')
-    g.scale.setScalar(0.9)
+    const g = makeGunMesh(gunId)
+    // The viewmodel inherits the camera's orientation, and a camera looks
+    // down its own -Z; the barrel is +Z, so unturned it fires into your
+    // face — same fix ValorScene applies.
+    g.rotateY(Math.PI)
+    const view = WEAPON_VIEW[gunId] ?? WEAPON_VIEW.assault_rifle
+    g.scale.setScalar(view.scale)
+    const hands = buildViewmodelHands(gunId, g, GUN_LENGTH[gunId] ?? GUN_LENGTH.assault_rifle)
+    g.add(hands)
     return g
-  }, [equippedGun])
+  }, [gunId])
+  const gunView = WEAPON_VIEW[gunId] ?? WEAPON_VIEW.assault_rifle
+  const gunAudio = GUN_FEEL[gunId]?.audio ?? GUN_FEEL.assault_rifle.audio
   const vmRef = useRef<THREE.Group>(null)
+  const vmTmp = useRef(new THREE.Vector3())
   const recoilKick = useRef(0)
 
   // ── Opponent rig ──
@@ -492,6 +605,10 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
 
     const crouchWant = isTouch ? touchCrouch.current : keys.current.has('KeyC')
     const adsWant = isTouch ? touchAds.current : (rightMouseDown.current || keys.current.has('ShiftLeft') || keys.current.has('ShiftRight'))
+    // Fire: Space OR left mouse on desktop (matches ValorScene's real
+    // binding — `held('Space') || mouseBtn.has(0)`), the dedicated fire
+    // button on touch.
+    const firingNow = isTouch ? touchFiring.current : (firing.current || keys.current.has('Space'))
     crouchCur.current += ((crouchWant ? 1 : 0) - crouchCur.current) * Math.min(1, dt * 10)
     adsCur.current += ((adsWant ? 1 : 0) - adsCur.current) * Math.min(1, dt * 10)
 
@@ -522,8 +639,15 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       const targetX = localPos.current.x + dirX * WALK_SPEED * dt
       const targetZ = localPos.current.z + dirZ * WALK_SPEED * dt
       const [nx, nz] = slideMove(localPos.current.x, localPos.current.z, targetX, targetZ, PLAYER_RADIUS, ROOM_OBSTACLES)
+      const movedDist = Math.hypot(nx - localPos.current.x, nz - localPos.current.z)
       localPos.current.x = clamp(nx, -ARENA_HALF_X, ARENA_HALF_X)
       localPos.current.z = clamp(nz, -ARENA_HALF_Z, ARENA_HALF_Z)
+
+      strideDist.current += movedDist
+      if (strideDist.current >= STRIDE) {
+        strideDist.current = 0
+        audio.footstep()
+      }
 
       // Soft-reconcile toward the server's last-known truth for this wallet.
       const mine = latestPlayers.current.get(walletAddress)
@@ -532,13 +656,22 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
         localPos.current.z += (mine.z - localPos.current.z) * RECONCILE_STRENGTH * (dt * 20)
         onLocalHp(mine.hp)
         onAmmo(mine.ammo, mine.reloading)
+
+        // A dropped ammo count between snapshots is a real fired shot
+        // (server-confirmed, whether it hit or missed) — the actual cue to
+        // play the gun's own sound, not the raw "firing held" input.
+        if (prevAmmo.current !== null && mine.ammo < prevAmmo.current) audio.shot(gunAudio)
+        prevAmmo.current = mine.ammo
+        if (mine.reloading && !prevReloading.current) audio.reloadStart()
+        if (!mine.reloading && prevReloading.current) audio.reloadDone()
+        prevReloading.current = mine.reloading
       }
 
       const sentReload = wantReload.current
       wantReload.current = false
       sendInput({
         moveX: mx, moveY: my, yaw: yaw.current, pitch: pitch.current,
-        firing: firing.current, wantReload: sentReload,
+        firing: firingNow, wantReload: sentReload,
         crouching: crouchWant, ads: adsWant,
       })
     }
@@ -546,6 +679,7 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     const eyeY = THREE.MathUtils.lerp(EYE_HEIGHT, EYE_HEIGHT_CROUCH, crouchCur.current)
     camera.position.set(localPos.current.x, eyeY, localPos.current.z)
     camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ')
+    audio.setListener(localPos.current.x, localPos.current.z, yaw.current)
 
     // Cosmetic ADS zoom — the server has no FOV state to reflect, this is
     // purely a feel cue matching ValorScene's own aim-down-sights zoom.
@@ -556,24 +690,34 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       p.updateProjectionMatrix()
     }
 
-    // Viewmodel — a static hip-hold offset with a light recoil kick, glued to
-    // the camera, lerping toward a centred ADS offset. No sway system here;
-    // that's cosmetic polish, not correctness, and the server has no ADS
-    // pose to reflect anyway.
+    // Viewmodel — the real hip/ADS framing (VIEWMODEL_HIP/VIEWMODEL_ADS +
+    // this weapon's own z/y offset from WEAPON_VIEW), plus a light recoil
+    // kick. Hands are for the hip pose only — same reasoning ValorScene
+    // documents: at full ADS the grip sits mid-screen and a hand there would
+    // cover the target.
     if (vmRef.current) {
       recoilKick.current = Math.max(0, recoilKick.current - dt * 6)
-      const hip = new THREE.Vector3(0.16, -0.14 - recoilKick.current * 0.02, -0.32 + recoilKick.current * 0.03)
-      const ads = new THREE.Vector3(0.0, -0.16 - recoilKick.current * 0.01, -0.22)
-      const local = hip.lerp(ads, adsCur.current)
+      const local = vmTmp.current.copy(VIEWMODEL_HIP).lerp(VIEWMODEL_ADS, adsCur.current)
+      local.z += gunView.z; local.y += gunView.y
+      local.y -= recoilKick.current * 0.02
+      local.z += recoilKick.current * 0.03
       const world = camera.localToWorld(local.clone())
       vmRef.current.position.copy(world)
       vmRef.current.quaternion.copy(camera.quaternion)
+      const hands = gunMesh.getObjectByName('hands')
+      if (hands) hands.visible = adsCur.current < 0.45
     }
 
-    // Hits — drive the viewmodel recoil kick on OUR OWN shots and hitmarker
-    // feedback; damage-taken feedback lives in FaceOffPage's HUD state.
+    // Hits — recoil kick + audio on OUR OWN shots landing, hurt cue on shots
+    // WE took; damage-taken HUD feedback lives in FaceOffPage's HUD state.
     for (const hit of drainHits()) {
-      if (hit.shooter === walletAddress) recoilKick.current = 1
+      if (hit.shooter === walletAddress) {
+        recoilKick.current = 1
+        audio.impact('flesh', [opponentRendered.current.x, 1.2, opponentRendered.current.z])
+        audio.hitmarker(hit.target_hp <= 0)
+      } else if (hit.target === walletAddress) {
+        audio.hurt()
+      }
     }
 
     // Opponent — smoothly chase the latest snapshot, never predicted.
@@ -597,6 +741,9 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
         } else if (opp.hp > 0) {
           if (lastOpponentAmmo.current !== null && opp.ammo < lastOpponentAmmo.current) {
             api.playOnce('fire', 1.4)
+            // Spatialised — you hear which side an incoming shot came from,
+            // same as ValorScene's enemyShot cue.
+            audio.enemyShot([opp.x, EYE_HEIGHT, opp.z])
           } else {
             const moved = Math.hypot(opp.x - opponentRendered.current.x, opp.z - opponentRendered.current.z) > 0.01
             api.setClip(moved ? 'walk' : 'idle')
