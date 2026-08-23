@@ -27,11 +27,20 @@
 //! it, which is fine for AI enemies and not fine when the "enemy" is another
 //! human with G$ on the line.
 //!
-//! V1 SCOPE, DELIBERATELY NARROW: one fixed weapon/loadout, one small
-//! symmetric rectangular arena (no interior cover — an axis-bound clamp is
-//! today's whole "collision"), two hitbox zones (head sphere + one body box,
-//! not FpsSim's five), no ADS/crouch/attachments/crit. Tuned constants below
-//! are a first pass, not a balance pass.
+//! ARENA GEOMETRY: one fixed, hand-picked room straight out of the real
+//! Operation room generator (`apps/web/src/engine/fps/endless.ts`'s
+//! `generateRoom`, seed `"valor-faceoff"`, room 0, CRATE_LINE cover
+//! archetype) instead of an empty box — see `ROOM_WALLS`/`ROOM_COVER` below.
+//! The box list there MUST match `ArenaScene.tsx`'s copy exactly, the same
+//! mirroring discipline as `WALK_SPEED`/`ARENA_HALF_X`/`PITCH_LIMIT` already
+//! use between these two files.
+//!
+//! V1 SCOPE, STILL DELIBERATELY NARROW: one fixed weapon/loadout (viewmodel
+//! is cosmetic-only on the client and may be reskinned per player, but
+//! stats never vary — staked real money, so both fighters get the same gun),
+//! two hitbox zones (head sphere + one body box, not FpsSim's five), no
+//! attachments/crit/leaning/sliding. Crouch and ADS ARE modeled (spread-only
+//! — no server-side FOV/pose beyond hitbox height, that's cosmetic).
 
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
@@ -86,12 +95,22 @@ const TICK_INTERVAL: Duration = Duration::from_millis(50);
 
 // ── Arena tuning — a small hand-built symmetric box, one fixed loadout ───────
 
-const ARENA_HALF_X: f32 = 12.0;
-const ARENA_HALF_Z: f32 = 12.0;
+/// Outer safety-net bounds, kept as a fallback even though the real walls
+/// (in `ROOM_WALLS`, via collide-and-slide — see `resolve_move`) do the actual
+/// work now. Interior clear space is x in [-9,9], z in [-8.5,8.5] (the real
+/// wall inner faces); inset by `PLAYER_RADIUS` so this clamp binds only if
+/// the collision pass is ever wrong, not in ordinary play.
+const ARENA_HALF_X: f32 = 8.6;
+const ARENA_HALF_Z: f32 = 8.1;
+/// Collision radius used against `ROOM_WALLS`/`ROOM_COVER` — a human's
+/// shoulder width, not a tuned hitbox.
+const PLAYER_RADIUS: f32 = 0.35;
 /// Matches `WALK` in `ValorScene.tsx` — same walk speed as everywhere else in
 /// the game, so Face-Off doesn't feel like a different engine.
 const WALK_SPEED: f32 = 3.4;
 const EYE_HEIGHT: f32 = 1.6;
+/// Matches `ValorScene.tsx`'s own `input.crouched ? 1.02 : 1.6` split.
+const EYE_HEIGHT_CROUCH: f32 = 1.02;
 /// Matches `PITCH_LIMIT` in `ValorScene.tsx`.
 const PITCH_LIMIT: f32 = 1.45;
 /// Bounded turn rate is the actual anti-aimbot mechanism: a client can *ask*
@@ -107,6 +126,11 @@ const BODY_HALF_X: f32 = 0.35;
 const BODY_HALF_Z: f32 = 0.35;
 const BODY_MIN_Y: f32 = 0.2;
 const BODY_MAX_Y: f32 = 1.5;
+/// Crouched target's body box top — dropped by the same 0.58m the eye height
+/// drops (1.6 → 1.02), an approximation (the client's real 5-zone FpsSim
+/// model has no single "crouched box height" to mirror exactly) but good
+/// enough to make crouching behind cover actually shrink your profile.
+const BODY_MAX_Y_CROUCH: f32 = 0.92;
 
 const FIRE_INTERVAL: Duration = Duration::from_millis(100); // 600 rpm
 const MAG_SIZE: i32 = 30;
@@ -116,8 +140,49 @@ const DAMAGE_HEAD: i32 = 45;
 /// Half-angle of the hitscan spread cone, in radians — a shot's true
 /// direction is the server-owned aim jittered within this cone, drawn from
 /// the room's seeded RNG rather than `Math.random`, so a disputed shot
-/// sequence is reproducible from the seed.
+/// sequence is reproducible from the seed. This is the HIP-FIRE baseline;
+/// `ADS_SPREAD_MULT`/`CROUCH_SPREAD_MULT` narrow it further, same shape as
+/// `FpsSim.ts`'s `spreadFor`.
 const SPREAD_HALF_ANGLE: f32 = 0.02;
+/// Matches `FPS_TUNING.ADS_SPREAD_MULT` in `FpsSim.ts`.
+const ADS_SPREAD_MULT: f32 = 0.14;
+/// Matches `FPS_TUNING.CROUCH_SPREAD_MULT` in `FpsSim.ts`.
+const CROUCH_SPREAD_MULT: f32 = 0.7;
+
+// ── Room geometry — ONE fixed Operation room, both ends sealed ───────────────
+//
+// Frozen output of `generateRoom(0, 0, seedFromString("valor-faceoff"))` in
+// `apps/web/src/engine/fps/endless.ts` (CRATE_LINE cover archetype, depth
+// 17), recentred so the room's midpoint sits at world origin (z was
+// `zNear=0..zFar=-17`, shifted +8.5 so play space is symmetric around 0,0 —
+// matches the ARENA_HALF_X/Z clamp convention above). The far wall's chain
+// doorway is replaced with a solid cap (mirroring `entryCap`'s treatment of
+// the near side) so this is one sealed room, not a corridor segment.
+//
+// MUST match `ArenaScene.tsx`'s copy of the same boxes exactly.
+struct Obstacle { x: f32, z: f32, hx: f32, hz: f32, h: f32 }
+
+impl Obstacle {
+    const fn new(x: f32, z: f32, w: f32, d: f32, h: f32) -> Self {
+        Self { x, z, hx: w / 2.0, hz: d / 2.0, h }
+    }
+    fn min(&self) -> (f32, f32, f32) { (self.x - self.hx, 0.0, self.z - self.hz) }
+    fn max(&self) -> (f32, f32, f32) { (self.x + self.hx, self.h, self.z + self.hz) }
+}
+
+const ROOM_WALLS: &[Obstacle] = &[
+    Obstacle::new(-9.3, 0.0, 0.6, 17.0, 4.0),   // west wall
+    Obstacle::new(9.3, 0.0, 0.6, 17.0, 4.0),    // east wall
+    Obstacle::new(0.0, 8.8, 19.2, 0.6, 4.0),    // north cap (sealed, no chain doorway)
+    Obstacle::new(0.0, -8.8, 19.2, 0.6, 4.0),   // south cap (sealed)
+];
+
+const ROOM_COVER: &[Obstacle] = &[
+    Obstacle::new(-6.0, 0.0, 2.4, 1.6, 1.15),
+    Obstacle::new(-1.5, 1.2, 2.4, 1.6, 1.15),
+    Obstacle::new(3.0, 0.0, 2.4, 1.6, 1.15),
+    Obstacle::new(6.8, -1.4, 1.8, 1.6, 1.15),
+];
 
 /// Safety net so a match can't hang forever if both players go idle mid-fight
 /// without disconnecting. Higher HP wins; an exact tie is a draw.
@@ -150,6 +215,16 @@ pub struct InputSample {
     pub pitch: f32,
     pub firing: bool,
     pub want_reload: bool,
+    pub crouching: bool,
+    pub ads: bool,
+}
+
+/// Combined wall + interior cover geometry, for the two things that need
+/// "everything solid": movement collision and shot obstruction. Walls and
+/// cover are kept as separate slices above only because `ArenaScene.tsx`
+/// renders them with different materials.
+fn obstacles() -> impl Iterator<Item = &'static Obstacle> {
+    ROOM_WALLS.iter().chain(ROOM_COVER.iter())
 }
 
 pub enum ServerMsg {
@@ -189,10 +264,10 @@ struct PlayerState {
 }
 
 impl PlayerState {
-    fn spawn(wallet: String, name: String, stake_g: i64, tx: UnboundedSender<String>, x: f32, yaw: f32) -> Self {
+    fn spawn(wallet: String, name: String, stake_g: i64, tx: UnboundedSender<String>, x: f32, z: f32, yaw: f32) -> Self {
         Self {
             wallet, name, stake_g, tx,
-            x, z: 0.0, yaw, pitch: 0.0, hp: MAX_HP, alive: true,
+            x, z, yaw, pitch: 0.0, hp: MAX_HP, alive: true,
             ammo: MAG_SIZE, reloading: false, reload_ends_at: None,
             next_shot_at: Instant::now(),
             last_input: InputSample::default(),
@@ -284,9 +359,15 @@ impl ArenaServer {
         self.player_rooms.insert(e1.wallet.clone(), room_id.clone());
         self.player_rooms.insert(e2.wallet.clone(), room_id.clone());
 
-        // Spawned facing each other from opposite ends of the arena.
-        let p1 = PlayerState::spawn(e1.wallet, e1.name, e1.stake_g, e1.tx, -ARENA_HALF_X * 0.6, 0.0);
-        let p2 = PlayerState::spawn(e2.wallet, e2.name, e2.stake_g, e2.tx, ARENA_HALF_X * 0.6, PI);
+        // Spawned facing each other from opposite ends of the real room, just
+        // inside each sealed cap — same 1.5m standoff `spawnPointFor` uses for
+        // a chain room's entry point. yaw=0.0 at z=7.3 (and yaw=PI at z=-7.3)
+        // face INTO the room, away from the cap immediately behind — verified
+        // against `ArenaScene.tsx`'s camera rendering, not assumed from the
+        // aim_dir formula alone (empirically the two are opposite of what a
+        // naive reading of aim_dir suggests — see that file's spawn comment).
+        let p1 = PlayerState::spawn(e1.wallet, e1.name, e1.stake_g, e1.tx, 0.0, 7.3, 0.0);
+        let p2 = PlayerState::spawn(e2.wallet, e2.name, e2.stake_g, e2.tx, 0.0, -7.3, PI);
 
         self.rooms.insert(room_id.clone(), ArenaRoom {
             duel_id: e1.duel_id,
@@ -550,6 +631,7 @@ fn player_json(p: &PlayerState) -> serde_json::Value {
     json!({
         "wallet": p.wallet, "x": p.x, "z": p.z, "yaw": p.yaw, "pitch": p.pitch,
         "hp": p.hp, "ammo": p.ammo, "reloading": p.reloading,
+        "crouching": p.last_input.crouching, "ads": p.last_input.ads,
     })
 }
 
@@ -566,15 +648,19 @@ fn integrate_movement_and_aim(p: &mut PlayerState, dt: f32) {
     p.pitch = step_toward(p.pitch, target_pitch, MAX_PITCH_RATE * dt).clamp(-PITCH_LIMIT, PITCH_LIMIT);
 
     // Movement: camera-relative WASD at a fixed walk speed — same "instant
-    // velocity, no accel curve" feel ValorScene.tsx uses client-side, just
-    // integrated here against the arena bounds instead of trusted outright.
+    // velocity, no accel curve" feel ValorScene.tsx uses client-side, now
+    // integrated against the room's real walls/cover (collide-and-slide, see
+    // `resolve_move`) instead of trusting an open box.
     let raw_len = (input.move_x * input.move_x + input.move_y * input.move_y).sqrt();
     let (mx, my) = if raw_len > 1.0 { (input.move_x / raw_len, input.move_y / raw_len) } else { (input.move_x, input.move_y) };
     let (sy, cy) = p.yaw.sin_cos();
     let dir_x = sy * my + cy * mx;
     let dir_z = cy * my + (-sy) * mx;
-    p.x = (p.x + dir_x * WALK_SPEED * dt).clamp(-ARENA_HALF_X, ARENA_HALF_X);
-    p.z = (p.z + dir_z * WALK_SPEED * dt).clamp(-ARENA_HALF_Z, ARENA_HALF_Z);
+    let target_x = p.x + dir_x * WALK_SPEED * dt;
+    let target_z = p.z + dir_z * WALK_SPEED * dt;
+    let (resolved_x, resolved_z) = resolve_move(p.x, p.z, target_x, target_z, PLAYER_RADIUS);
+    p.x = resolved_x.clamp(-ARENA_HALF_X, ARENA_HALF_X);
+    p.z = resolved_z.clamp(-ARENA_HALF_Z, ARENA_HALF_Z);
 
     if p.reloading {
         if let Some(ends) = p.reload_ends_at {
@@ -588,6 +674,36 @@ fn integrate_movement_and_aim(p: &mut PlayerState, dt: f32) {
         p.reloading = true;
         p.reload_ends_at = Some(Instant::now() + Duration::from_secs_f32(RELOAD_SECS));
     }
+}
+
+/// Does a circle of radius `r` centred at `(cx, cz)` overlap `o` in the XZ
+/// plane? (2D only — obstacle height doesn't matter for ground movement.)
+fn circle_hits_obstacle(cx: f32, cz: f32, r: f32, o: &Obstacle) -> bool {
+    (cx - o.x).abs() < o.hx + r && (cz - o.z).abs() < o.hz + r
+}
+
+fn blocked(x: f32, z: f32, r: f32) -> bool {
+    obstacles().any(|o| circle_hits_obstacle(x, z, r, o))
+}
+
+/// Collide-and-slide from `(px, pz)` toward `(tx, tz)`: take the full move if
+/// clear, otherwise try each axis alone (so sliding along a wall you're
+/// walking into still works), otherwise stay put. A discrete overlap test
+/// rather than a continuous sweep — same simplification `slideMove` in
+/// `FpsSim.ts` makes conceptually, and safe here because one tick's move
+/// (WALK_SPEED * dt ≈ 0.17m) is small next to every wall's 0.6m thickness, so
+/// there's no tunneling risk to sweep against.
+fn resolve_move(px: f32, pz: f32, tx: f32, tz: f32, r: f32) -> (f32, f32) {
+    if !blocked(tx, tz, r) {
+        return (tx, tz);
+    }
+    if !blocked(tx, pz, r) {
+        return (tx, pz);
+    }
+    if !blocked(px, tz, r) {
+        return (px, tz);
+    }
+    (px, pz)
 }
 
 fn step_toward(current: f32, target: f32, max_delta: f32) -> f32 {
@@ -612,6 +728,15 @@ struct HitEvent {
     part: HitPart,
     damage: i32,
     target_hp: i32,
+}
+
+/// Spread narrows multiplicatively under ADS and/or crouch — same shape as
+/// `FpsSim.ts`'s `spreadFor` (`ADS_SPREAD_MULT`/`CROUCH_SPREAD_MULT` above).
+fn effective_spread_half_angle(crouching: bool, ads: bool) -> f32 {
+    let mut s = SPREAD_HALF_ANGLE;
+    if ads { s *= ADS_SPREAD_MULT; }
+    if crouching { s *= CROUCH_SPREAD_MULT; }
+    s
 }
 
 fn aim_dir(yaw: f32, pitch: f32) -> (f32, f32, f32) {
@@ -639,9 +764,11 @@ fn try_fire(rng: &mut Rng, shooter: &mut PlayerState, target: &mut PlayerState) 
         return None;
     }
 
-    let jitter_yaw = (rng.next_f32() - 0.5) * 2.0 * SPREAD_HALF_ANGLE;
-    let jitter_pitch = (rng.next_f32() - 0.5) * 2.0 * SPREAD_HALF_ANGLE;
-    let origin = (shooter.x, EYE_HEIGHT, shooter.z);
+    let spread = effective_spread_half_angle(shooter.last_input.crouching, shooter.last_input.ads);
+    let jitter_yaw = (rng.next_f32() - 0.5) * 2.0 * spread;
+    let jitter_pitch = (rng.next_f32() - 0.5) * 2.0 * spread;
+    let shooter_eye = if shooter.last_input.crouching { EYE_HEIGHT_CROUCH } else { EYE_HEIGHT };
+    let origin = (shooter.x, shooter_eye, shooter.z);
     let dir = aim_dir(shooter.yaw + jitter_yaw, shooter.pitch + jitter_pitch);
 
     let part = resolve_shot(origin, dir, target)?;
@@ -658,19 +785,37 @@ fn try_fire(rng: &mut Rng, shooter: &mut PlayerState, target: &mut PlayerState) 
 
 /// Nearest of the target's two hitboxes the ray crosses — a head sphere and
 /// one body box, deliberately simpler than `FpsSim.ts`'s five-zone player
-/// model (head/torso/legs/2×arms) for this first pass.
+/// model (head/torso/legs/2×arms) for this first pass — OR `None` if a wall
+/// or cover box sits closer along the ray than either hitbox, in which case
+/// the shot is obstructed and never reaches the target at all.
 fn resolve_shot(origin: (f32, f32, f32), dir: (f32, f32, f32), target: &PlayerState) -> Option<HitPart> {
-    let head_t = ray_sphere(origin, dir, (target.x, EYE_HEIGHT, target.z), HEAD_RADIUS);
+    let target_crouched = target.last_input.crouching;
+    let target_eye = if target_crouched { EYE_HEIGHT_CROUCH } else { EYE_HEIGHT };
+    let body_max_y = if target_crouched { BODY_MAX_Y_CROUCH } else { BODY_MAX_Y };
+
+    let head_t = ray_sphere(origin, dir, (target.x, target_eye, target.z), HEAD_RADIUS);
     let body_min = (target.x - BODY_HALF_X, BODY_MIN_Y, target.z - BODY_HALF_Z);
-    let body_max = (target.x + BODY_HALF_X, BODY_MAX_Y, target.z + BODY_HALF_Z);
+    let body_max = (target.x + BODY_HALF_X, body_max_y, target.z + BODY_HALF_Z);
     let body_t = ray_aabb(origin, dir, body_min, body_max);
 
-    match (head_t, body_t) {
-        (Some(ht), Some(bt)) => Some(if ht <= bt { HitPart::Head } else { HitPart::Body }),
-        (Some(_), None) => Some(HitPart::Head),
-        (None, Some(_)) => Some(HitPart::Body),
+    let hit = match (head_t, body_t) {
+        (Some(ht), Some(bt)) => Some((if ht <= bt { HitPart::Head } else { HitPart::Body }, ht.min(bt))),
+        (Some(ht), None) => Some((HitPart::Head, ht)),
+        (None, Some(bt)) => Some((HitPart::Body, bt)),
         (None, None) => None,
+    };
+    let (part, hit_t) = hit?;
+
+    // Obstructed if any wall/cover box's own ray intersection is nearer than
+    // the hitbox that would otherwise be hit — a wall in front of the target
+    // beats the target every time.
+    let block_t = obstacles()
+        .filter_map(|o| ray_aabb(origin, dir, o.min(), o.max()))
+        .fold(f32::INFINITY, f32::min);
+    if block_t < hit_t {
+        return None;
     }
+    Some(part)
 }
 
 /// `dir` must already be unit length — `aim_dir` guarantees that.
@@ -849,7 +994,8 @@ mod tests {
         let duel_id = Uuid::new_v4();
         let (mut rx1, _rx2) = paired_and_fighting(&mut server, duel_id).await;
 
-        // Request a full 180-degree flip in one input sample.
+        // Request a full 180-degree flip in one input sample — p1 spawns
+        // facing yaw=0.0 (see `create_room`), so the flip target is PI.
         server.on_input("0xAAA", InputSample { yaw: PI, ..Default::default() });
         server.on_tick();
         let _ = next_json(&mut rx1).await;
@@ -918,6 +1064,106 @@ mod tests {
             }
         }
         assert!(saw_hit, "a point-blank shot at a stationary, correctly-aimed target should land within a few ticks");
+    }
+
+    #[tokio::test]
+    async fn crouched_shot_through_chest_high_cover_is_blocked_but_standing_clears_it() {
+        // Cover box 1 (ROOM_COVER[0]) sits at x=-6, z=0, spanning z=[-0.8,0.8],
+        // height 1.15 — chest-high: a standing shot (eye 1.6) flies over it,
+        // a crouched one (eye 1.02, inside the box's 0..1.15 span) doesn't.
+        // Both fighters stand at x=-6 (well inside the box's x-span) on
+        // opposite sides of it, aimed straight at each other (yaw=0 = +Z).
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+        {
+            let room = server.rooms.get_mut(&duel_id.to_string()).unwrap();
+            room.p1.x = -6.0; room.p1.z = -3.0;
+            room.p2.x = -6.0; room.p2.z = 3.0;
+        }
+
+        // Standing: let aim settle, then fire — should land (nothing at
+        // standing eye height 1.6 obstructs it).
+        server.on_input("0xAAA", InputSample { yaw: 0.0, pitch: 0.0, ..Default::default() });
+        for _ in 0..5 { server.on_tick(); let _ = next_json(&mut rx1).await; let _ = next_json(&mut rx2).await; }
+        server.on_input("0xAAA", InputSample { firing: true, yaw: 0.0, pitch: 0.0, ..Default::default() });
+        let mut standing_hit = false;
+        for _ in 0..5 {
+            server.on_tick();
+            let msg = next_json(&mut rx1).await;
+            let _ = next_json(&mut rx2).await;
+            if msg["type"] == "hit_confirm" { standing_hit = true; break; }
+        }
+        assert!(standing_hit, "a standing shot over chest-high cover should land");
+
+        // Reset and try again, both crouched — should now be blocked.
+        let mut server = new_server();
+        let (mut rx1, mut rx2) = paired_and_fighting(&mut server, duel_id).await;
+        {
+            let room = server.rooms.get_mut(&duel_id.to_string()).unwrap();
+            room.p1.x = -6.0; room.p1.z = -3.0;
+            room.p2.x = -6.0; room.p2.z = 3.0;
+        }
+        server.on_input("0xAAA", InputSample { yaw: 0.0, pitch: 0.0, crouching: true, ..Default::default() });
+        server.on_input("0xBBB", InputSample { crouching: true, ..Default::default() });
+        for _ in 0..5 { server.on_tick(); let _ = next_json(&mut rx1).await; let _ = next_json(&mut rx2).await; }
+        server.on_input("0xAAA", InputSample { firing: true, yaw: 0.0, pitch: 0.0, crouching: true, ..Default::default() });
+        let mut crouched_hit = false;
+        for _ in 0..8 {
+            server.on_tick();
+            let msg = next_json(&mut rx1).await;
+            let _ = next_json(&mut rx2).await;
+            if msg["type"] == "hit_confirm" { crouched_hit = true; break; }
+        }
+        assert!(!crouched_hit, "a crouched shot through chest-high cover should be blocked");
+    }
+
+    #[tokio::test]
+    async fn walking_straight_into_the_far_wall_stops_before_crossing_it() {
+        let mut server = new_server();
+        let duel_id = Uuid::new_v4();
+        let (mut rx1, _rx2) = paired_and_fighting(&mut server, duel_id).await;
+
+        // Moved to x=5.0 first — a lane clear of every ROOM_COVER box's
+        // buffered footprint (box3 at x=3 ends at 4.35+PLAYER_RADIUS, box4 at
+        // x=6.8 starts at 5.55-PLAYER_RADIUS) but still well inside the side
+        // walls, so this run isolates WALL collision from cover collision
+        // (there's a separate test for cover). Facing yaw=PI (forward = -Z)
+        // straight down that lane toward the sealed south cap at z=-8.8
+        // (inner face -8.5) — enough ticks to cross the whole ~15.8m room if
+        // nothing stopped it. yaw is held at PI explicitly on every input —
+        // it defaults to 0.0 otherwise, which would steer the aim (and so the
+        // camera-relative movement direction) away from spawn-facing within
+        // a few ticks at MAX_YAW_RATE, sending the player the wrong way.
+        {
+            let room = server.rooms.get_mut(&duel_id.to_string()).unwrap();
+            room.p1.x = 5.0; room.p1.z = 7.3;
+        }
+        server.on_input("0xAAA", InputSample { move_y: 1.0, yaw: PI, ..Default::default() });
+        for _ in 0..200 {
+            server.on_tick();
+            let _ = next_json(&mut rx1).await;
+        }
+        let z_after = server.rooms.get(&duel_id.to_string()).unwrap().p1.z;
+        assert!(
+            z_after > -8.5,
+            "collision with the sealed south wall must stop the player before its inner face, got z={}",
+            z_after,
+        );
+        assert!(z_after < 0.0, "should have travelled well into the room before being stopped");
+    }
+
+    #[test]
+    fn crouching_and_ads_each_narrow_spread_and_stack_together() {
+        let hip_standing = effective_spread_half_angle(false, false);
+        let hip_crouched = effective_spread_half_angle(true, false);
+        let ads_standing = effective_spread_half_angle(false, true);
+        let ads_crouched = effective_spread_half_angle(true, true);
+
+        assert!(hip_crouched < hip_standing, "crouching should tighten spread");
+        assert!(ads_standing < hip_standing, "ADS should tighten spread");
+        assert!(ads_crouched < ads_standing, "crouching while ADS should tighten it further");
+        assert!(ads_crouched < hip_crouched, "ADS while crouching should tighten it further");
     }
 
     #[tokio::test]

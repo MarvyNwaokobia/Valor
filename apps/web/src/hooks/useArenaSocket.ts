@@ -26,6 +26,8 @@ export interface PlayerSnapshot {
   hp: number
   ammo: number
   reloading: boolean
+  crouching: boolean
+  ads: boolean
 }
 
 export interface HitEvent {
@@ -52,6 +54,8 @@ export interface ArenaInput {
   pitch: number
   firing: boolean
   wantReload: boolean
+  crouching: boolean
+  ads: boolean
 }
 
 interface ArenaState {
@@ -243,6 +247,7 @@ export function useArenaSocket(walletAddress: string) {
       move_x: input.moveX, move_y: input.moveY,
       yaw: input.yaw, pitch: input.pitch,
       firing: input.firing, want_reload: input.wantReload,
+      crouching: input.crouching, ads: input.ads,
     }))
   }, [])
 

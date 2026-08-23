@@ -9,40 +9,94 @@
  * only job is to capture input, send it, and render whatever the server says
  * is true. It never constructs or steps a local combat sim.
  *
+ * The ROOM ITSELF, though, is the real thing: one frozen room straight out of
+ * the Operation room generator (`generateRoom` in `engine/fps/endless.ts`,
+ * seed "valor-faceoff", CRATE_LINE archetype), rendered with the same
+ * triplanar materials/zone lighting/IBL ValorScene uses, not a placeholder
+ * box. `ROOM_WALLS`/`ROOM_COVER` below MUST match `arena_server.rs`'s copy of
+ * the same boxes exactly — same mirroring discipline as WALK_SPEED/
+ * ARENA_HALF_X/PITCH_LIMIT already need between these two files.
+ *
  * Local player: rendered from LOCAL prediction (instant camera response),
- * softly reconciled toward the server's returned x/z on every state_update
- * rather than hard-snapped — the arena is small and open (no cover to
- * desync badly against), so this simple correction is enough without the
- * sequence-numbered replay a tighter shooter would need.
+ * collide-and-slide against the room's real geometry (`slideMove`, the same
+ * function FpsSim.ts uses for Operations) so it doesn't walk through walls
+ * even before the server's next snapshot arrives, then softly reconciled
+ * toward the server's returned x/z on every state_update rather than
+ * hard-snapped.
  *
  * Opponent: rendered ENTIRELY from server snapshots (never predicted — it's
  * not this client's job to guess where the other player is), smoothed with a
  * simple exponential lerp between ticks rather than buffered interpolation.
  *
- * All tuning constants below (WALK_SPEED, EYE_HEIGHT, ARENA_HALF_X/Z,
- * PITCH_LIMIT) MUST match apps/api/src/services/arena_server.rs — this is
- * cosmetic prediction of a simulation the server truly owns, not a second
- * copy of the rules.
+ * Movement speed is NOT reduced while crouching/ADS, unlike ValorScene's real
+ * Operations — the server (arena_server.rs) doesn't model that in v1 either,
+ * and slowing down here while the authoritative server doesn't would just
+ * fight the soft-reconcile every tick. Crouch/ADS still narrow the server's
+ * hit spread and change hitbox height; here they're eye-height + cosmetic
+ * viewmodel/FOV feedback so it reads the same either way.
  */
 
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { OperatorRig, type OperatorApi } from './OperatorRig'
 import { makeGunMesh } from './GunMesh'
+import { usePbr } from './usePbr'
+import { makeTriplanarMaterial } from './triplanar'
+import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment'
+import { ZONE_THEMES } from '@/engine/fps/campaign'
+import { slideMove, type CoverBox } from '@/engine/fps/FpsSim'
+import type { GunId } from '@/engine/combat'
 import type { ArenaInput, HitEvent, PlayerSnapshot } from '@/hooks/useArenaSocket'
 
 const OPERATOR_GLB = '/characters/glb/operator.glb'
 
+/** Ashfall — daytime, warm, the flagship zone. Picked as Face-Off's one fixed
+ *  look for v1; a small rotation of zones/rooms is a natural, easy follow-up
+ *  once this is proven, not something to build ahead of need. */
+const THEME = ZONE_THEMES.ASHFALL
+
+// ── Room geometry — frozen output of generateRoom(0, 0, seedFromString(
+// "valor-faceoff")) in engine/fps/endless.ts, recentred so the room's
+// midpoint sits at world origin. MUST match arena_server.rs's ROOM_WALLS/
+// ROOM_COVER exactly. ──────────────────────────────────────────────────────
+
+const ROOM_WALLS: CoverBox[] = [
+  { x: -9.3, z: 0, w: 0.6, d: 17, h: 4 },   // west wall
+  { x: 9.3, z: 0, w: 0.6, d: 17, h: 4 },    // east wall
+  { x: 0, z: 8.8, w: 19.2, d: 0.6, h: 4 },  // north cap (sealed — no chain doorway)
+  { x: 0, z: -8.8, w: 19.2, d: 0.6, h: 4 }, // south cap (sealed)
+]
+
+const ROOM_COVER: CoverBox[] = [
+  { x: -6, z: 0, w: 2.4, d: 1.6, h: 1.15 },
+  { x: -1.5, z: 1.2, w: 2.4, d: 1.6, h: 1.15 },
+  { x: 3, z: 0, w: 2.4, d: 1.6, h: 1.15 },
+  { x: 6.8, z: -1.4, w: 1.8, d: 1.6, h: 1.15 },
+]
+
+const ROOM_OBSTACLES: CoverBox[] = [...ROOM_WALLS, ...ROOM_COVER]
+
+// Interior floor footprint: 18m wide (ROOM_W) x 17m deep.
+const FLOOR_W = 18
+const FLOOR_D = 17
+
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
+
 // Must match arena_server.rs's tuning block exactly.
 const WALK_SPEED = 3.4
 const EYE_HEIGHT = 1.6
-const ARENA_HALF_X = 12
-const ARENA_HALF_Z = 12
+const EYE_HEIGHT_CROUCH = 1.02
+const ARENA_HALF_X = 8.6
+const ARENA_HALF_Z = 8.1
+/** Collision radius against ROOM_OBSTACLES — matches PLAYER_RADIUS server-side. */
+const PLAYER_RADIUS = 0.35
 const PITCH_LIMIT = 1.45
 const LOOK_SENS = 0.0010
 const TOUCH_LOOK_SENS = 0.0022
 const MOUSE_MAX_STEP = 120
+/** Matches ValorScene's ADS_SENS — look slows while aiming down sights. */
+const ADS_LOOK_SENS_MULT = 0.55
 /** How hard local position snaps back toward the server's truth each tick it
  *  arrives — a blend, not a hard correction, so ordinary latency jitter
  *  doesn't visibly pop the camera. */
@@ -73,7 +127,14 @@ interface InputRefs {
   touchMoveX: MutableRefObject<number>
   touchMoveY: MutableRefObject<number>
   firing: MutableRefObject<boolean>
+  rightMouseDown: MutableRefObject<boolean>
   wantReload: MutableRefObject<boolean>
+  /** Touch-only toggles — desktop reads crouch/ADS off `keys`/mouse buttons
+   *  directly instead (see ArenaWorld's useFrame), same split ValorScene's
+   *  own touch crouch toggle uses ("a hold-to-crouch button is a button you
+   *  cannot use while playing"). */
+  touchCrouch: MutableRefObject<boolean>
+  touchAds: MutableRefObject<boolean>
 }
 
 function useInputRefs(): InputRefs {
@@ -84,7 +145,10 @@ function useInputRefs(): InputRefs {
     touchMoveX: useRef(0),
     touchMoveY: useRef(0),
     firing: useRef(false),
+    rightMouseDown: useRef(false),
     wantReload: useRef(false),
+    touchCrouch: useRef(false),
+    touchAds: useRef(false),
   }
 }
 
@@ -98,6 +162,9 @@ export interface ArenaSceneProps {
   onLocalHp: (hp: number) => void
   onAmmo: (ammo: number, reloading: boolean) => void
   onOpponentHp: (hp: number) => void
+  /** Cosmetic only — the server's combat stats never vary by loadout (see
+   *  arena_server.rs's module doc). Defaults to the standard-issue rifle. */
+  equippedGun?: GunId
 }
 
 export function ArenaScene(props: ArenaSceneProps) {
@@ -105,14 +172,16 @@ export function ArenaScene(props: ArenaSceneProps) {
   const [isTouch] = useState(detectTouchDevice)
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#0a0c12', cursor: isTouch ? 'default' : 'none' }}>
+    <div style={{ position: 'fixed', inset: 0, background: THEME.fog[0], cursor: isTouch ? 'default' : 'none' }}>
       <Canvas
         shadows
         gl={{ antialias: false, powerPreference: 'high-performance' }}
         dpr={[1, 2]}
-        camera={{ position: [-ARENA_HALF_X * 0.6, EYE_HEIGHT, 0], fov: 60, near: 0.01, far: 200 }}
+        camera={{ position: [0, EYE_HEIGHT, ARENA_HALF_Z * 0.85], fov: 60, near: 0.01, far: 200 }}
       >
-        <ArenaWorld {...props} input={input} isTouch={isTouch} />
+        <Suspense fallback={null}>
+          <ArenaWorld {...props} input={input} isTouch={isTouch} />
+        </Suspense>
       </Canvas>
       <ArenaHud />
       {isTouch && <TouchControls input={input} />}
@@ -136,11 +205,11 @@ function ArenaHud() {
 
 // ── Touch controls (mobile) ──────────────────────────────────────────────
 //
-// Two zones, matching the split ValorScene's own touch layer uses: a
-// floating joystick bottom-left for movement, and the whole right half of
-// the screen doubles as look-drag + hold-to-fire (one thumb aims and shoots,
-// same as ValorScene's fire pad) so a phone player isn't hunting for a
-// separate aim surface. A reload button sits above the fire zone.
+// Movement joystick bottom-left, look-drag + hold-to-fire on the right half
+// (matching ValorScene's own touch split), plus three small toggle/tap
+// buttons above the fire zone: reload, crouch, and ADS. Crouch and ADS are
+// TOGGLES rather than holds — the stick and the fire pad already own both
+// thumbs, same reasoning ValorScene's own mobile crouch button uses.
 
 function TouchControls({ input }: { input: InputRefs }) {
   const joyRef = useRef<HTMLDivElement>(null)
@@ -148,6 +217,9 @@ function TouchControls({ input }: { input: InputRefs }) {
   const joyId = useRef<number | null>(null)
   const joyCenter = useRef({ x: 0, y: 0 })
   const JOY_R = 52
+
+  const [crouchOn, setCrouchOn] = useState(false)
+  const [adsOn, setAdsOn] = useState(false)
 
   const updateJoy = (x: number, y: number) => {
     const c = joyCenter.current
@@ -233,6 +305,40 @@ function TouchControls({ input }: { input: InputRefs }) {
       >
         Reload
       </button>
+      {/* Crouch / ADS toggles — lit while active, same idiom as ValorScene's
+          mobile crouch/ADS buttons. */}
+      <button
+        onTouchStart={(e) => {
+          e.preventDefault()
+          const next = !input.touchCrouch.current
+          input.touchCrouch.current = next
+          setCrouchOn(next)
+        }}
+        style={{
+          position: 'absolute', right: 106, bottom: 168, width: 56, height: 56, borderRadius: '50%',
+          background: crouchOn ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.08)',
+          border: `1px solid ${crouchOn ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.2)'}`,
+          color: crouchOn ? '#4ade80' : '#cbd5e1', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+        }}
+      >
+        Crouch
+      </button>
+      <button
+        onTouchStart={(e) => {
+          e.preventDefault()
+          const next = !input.touchAds.current
+          input.touchAds.current = next
+          setAdsOn(next)
+        }}
+        style={{
+          position: 'absolute', right: 28, bottom: 168, width: 56, height: 56, borderRadius: '50%',
+          background: adsOn ? 'rgba(56,189,248,0.35)' : 'rgba(255,255,255,0.08)',
+          border: `1px solid ${adsOn ? 'rgba(56,189,248,0.7)' : 'rgba(255,255,255,0.2)'}`,
+          color: adsOn ? '#7dd3fc' : '#cbd5e1', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+        }}
+      >
+        ADS
+      </button>
     </div>
   )
 }
@@ -240,23 +346,26 @@ function TouchControls({ input }: { input: InputRefs }) {
 // ── World ─────────────────────────────────────────────────────────────────
 
 function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean }) {
-  const { walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers, onLocalHp, onAmmo, onOpponentHp, input, isTouch } = props
-  const { camera, gl } = useThree()
-  const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, wantReload } = input
+  const {
+    walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers,
+    onLocalHp, onAmmo, onOpponentHp, input, isTouch, equippedGun,
+  } = props
+  const { camera, gl, scene } = useThree()
+  const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, rightMouseDown, wantReload, touchCrouch, touchAds } = input
 
   const locked = useRef(false)
-  // Face the opponent's spawn side on mount: local player spawns at -X facing
-  // +X if the wallet sorts first alphabetically among the pair (arbitrary but
-  // deterministic — the server itself decides real spawn sides by join order,
-  // this is only the starting camera direction, corrected within one
-  // reconcile tick regardless).
-  const yaw = useRef(walletAddress.toLowerCase() < opponentWallet.toLowerCase() ? Math.PI / 2 : -Math.PI / 2)
+  // Face the opponent's spawn side on mount: local player spawns at the near
+  // cap (z > 0) facing -Z if the wallet sorts first alphabetically among the
+  // pair (arbitrary but deterministic — the server itself decides real spawn
+  // sides by JOIN ORDER, not wallet sort, so this is only the starting camera
+  // guess, corrected within one reconcile tick regardless).
+  const nearSide = walletAddress.toLowerCase() < opponentWallet.toLowerCase()
+  const yaw = useRef(nearSide ? 0 : Math.PI)
   const pitch = useRef(0)
 
-  const localPos = useRef({
-    x: walletAddress.toLowerCase() < opponentWallet.toLowerCase() ? -ARENA_HALF_X * 0.6 : ARENA_HALF_X * 0.6,
-    z: 0,
-  })
+  const localPos = useRef({ x: 0, z: nearSide ? 7.3 : -7.3 })
+  const crouchCur = useRef(0)
+  const adsCur = useRef(0)
 
   // Desktop input — pointer lock + WASD + mouse. Skipped on touch devices
   // (no pointer lock support on mobile Safari, and it would just fight the
@@ -278,8 +387,15 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       wantLock()
     }
     const up = (e: KeyboardEvent) => keys.current.delete(e.code)
-    const mdown = (e: MouseEvent) => { if (e.button === 0) firing.current = true; wantLock() }
-    const mup = (e: MouseEvent) => { if (e.button === 0) firing.current = false }
+    const mdown = (e: MouseEvent) => {
+      if (e.button === 0) firing.current = true
+      if (e.button === 2) rightMouseDown.current = true
+      wantLock()
+    }
+    const mup = (e: MouseEvent) => {
+      if (e.button === 0) firing.current = false
+      if (e.button === 2) rightMouseDown.current = false
+    }
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement === canvas) {
         mouseDX.current += Math.max(-MOUSE_MAX_STEP, Math.min(MOUSE_MAX_STEP, e.movementX))
@@ -305,35 +421,81 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       document.removeEventListener('pointerlockchange', lockChange)
       canvas.removeEventListener('contextmenu', noMenu)
     }
-  }, [gl, isTouch, keys, mouseDX, mouseDY, firing, wantReload])
+  }, [gl, isTouch, keys, mouseDX, mouseDY, firing, rightMouseDown, wantReload])
 
   useEffect(() => {
     const p = camera as THREE.PerspectiveCamera
     p.rotation.order = 'YXZ'
   }, [camera])
 
+  // ── Room materials — same triplanar system + zone theme ValorScene's real
+  // Operations use, not a flat-color placeholder. usePbr suspends while
+  // loading (this component sits under the Canvas's own implicit Suspense
+  // via ArenaScene's dynamic import boundary — see below for the explicit
+  // Suspense wrapper).
+  const floorMaps = usePbr('burned_ground_01', [6, 6])
+  const brickMaps = usePbr('broken_brick_wall', [7, 1.6])
+  const plasterMaps = usePbr('damaged_plaster', [4, 1.4])
+
+  const shellMaterials = useMemo(() => ({
+    floor: makeTriplanarMaterial(floorMaps, { color: THEME.floorTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.9, detail: 9.7, detailAmount: 0.6, macro: 0.11, macroAmount: 0.4 }),
+    brick: makeTriplanarMaterial(brickMaps, { color: THEME.wallTint, roughness: 1, metalness: 0 }, { metresPerTile: 1.7, detail: 9.3, detailAmount: 0.62, macro: 0.13, macroAmount: 0.3 }),
+    // Plaster tinted brown, NOT the actual plank texture — matches ValorScene's
+    // cover material exactly (see its comment: the plank set's near-black
+    // albedo renders as a flat black slab under a color tint, plaster doesn't).
+    plank: makeTriplanarMaterial(plasterMaps, { color: '#8a6f4e', roughness: 0.95, metalness: 0.05 }, { metresPerTile: 0.6, blend: true, detail: 8.3, detailAmount: 0.85, detailFade: [9, 20], macro: 0.16, macroAmount: 0.26 }),
+  }), [floorMaps, brickMaps, plasterMaps])
+
+  useEffect(() => () => {
+    for (const m of Object.values(shellMaterials)) m.dispose()
+  }, [shellMaterials])
+
+  // ── Image-based lighting — generated from this zone's own sky, same reason
+  // ValorScene does this: without it every envMapIntensity on the viewmodel
+  // multiplies a black environment and reads as grey plastic instead of steel.
+  useEffect(() => {
+    const target = buildZoneEnvironment(gl, {
+      skyTop: THEME.sky.top, skyBottom: THEME.sky.bottom,
+      sunColor: THEME.sun.color, sunIntensity: THEME.sun.intensity,
+      groundColor: THEME.hemi[1], floorTint: THEME.floorTint,
+    })
+    scene.environment = target.texture
+    scene.environmentIntensity = ENV_INTENSITY
+    return () => {
+      scene.environment = null
+      target.dispose()
+    }
+  }, [gl, scene])
+
   // ── Local weapon viewmodel — cosmetic only, the server doesn't know or
-  // care what this looks like. One fixed gun, matching the arena's one fixed
-  // server-side loadout.
+  // care what this looks like or what it's called. Reskinned to the
+  // player's actual equipped gun if given; combat stats never vary (see
+  // arena_server.rs's module doc — real money is staked on this fight).
   const gunMesh = useMemo(() => {
-    const g = makeGunMesh('assault_rifle')
+    const g = makeGunMesh(equippedGun ?? 'assault_rifle')
     g.scale.setScalar(0.9)
     return g
-  }, [])
+  }, [equippedGun])
   const vmRef = useRef<THREE.Group>(null)
   const recoilKick = useRef(0)
 
   // ── Opponent rig ──
   const opponentApi = useRef<OperatorApi | null>(null)
   const opponentGroup = useRef<THREE.Group>(null)
-  const opponentRendered = useRef(new THREE.Vector3(ARENA_HALF_X * 0.6, 0, 0))
+  const opponentRendered = useRef(new THREE.Vector3(0, 0, nearSide ? -7.3 : 7.3))
   const opponentRenderedYaw = useRef(0)
   const lastOpponentAmmo = useRef<number | null>(null)
   const lastOpponentHp = useRef<number | null>(null)
 
   useFrame((_state, rawDt) => {
     const dt = Math.min(rawDt, 1 / 20)
-    const lookSens = isTouch ? TOUCH_LOOK_SENS : LOOK_SENS
+
+    const crouchWant = isTouch ? touchCrouch.current : keys.current.has('KeyC')
+    const adsWant = isTouch ? touchAds.current : (rightMouseDown.current || keys.current.has('ShiftLeft') || keys.current.has('ShiftRight'))
+    crouchCur.current += ((crouchWant ? 1 : 0) - crouchCur.current) * Math.min(1, dt * 10)
+    adsCur.current += ((adsWant ? 1 : 0) - adsCur.current) * Math.min(1, dt * 10)
+
+    const lookSens = (isTouch ? TOUCH_LOOK_SENS : LOOK_SENS) * THREE.MathUtils.lerp(1, ADS_LOOK_SENS_MULT, adsCur.current)
 
     // Aim — accumulate mouse/touch-drag delta into yaw/pitch, exactly like
     // ValorScene does for both input sources.
@@ -344,8 +506,8 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     mouseDY.current = 0
 
     // Movement — camera-relative WASD (or touch stick), clamped to a unit
-    // disk before scaling, then rotated by yaw. MUST match arena_server.rs's
-    // integrate_movement_and_aim.
+    // disk before scaling, then rotated by yaw. Speed MUST match
+    // arena_server.rs's WALK_SPEED (no crouch/ADS slowdown — see module doc).
     const held = (c: string) => keys.current.has(c)
     let mx = (held('KeyD') ? 1 : 0) - (held('KeyA') ? 1 : 0) + touchMoveX.current
     let my = (held('KeyW') ? 1 : 0) - (held('KeyS') ? 1 : 0) + touchMoveY.current
@@ -357,8 +519,11 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       const cy = Math.cos(yaw.current)
       const dirX = sy * my + cy * mx
       const dirZ = cy * my + (-sy) * mx
-      localPos.current.x = clamp(localPos.current.x + dirX * WALK_SPEED * dt, -ARENA_HALF_X, ARENA_HALF_X)
-      localPos.current.z = clamp(localPos.current.z + dirZ * WALK_SPEED * dt, -ARENA_HALF_Z, ARENA_HALF_Z)
+      const targetX = localPos.current.x + dirX * WALK_SPEED * dt
+      const targetZ = localPos.current.z + dirZ * WALK_SPEED * dt
+      const [nx, nz] = slideMove(localPos.current.x, localPos.current.z, targetX, targetZ, PLAYER_RADIUS, ROOM_OBSTACLES)
+      localPos.current.x = clamp(nx, -ARENA_HALF_X, ARENA_HALF_X)
+      localPos.current.z = clamp(nz, -ARENA_HALF_Z, ARENA_HALF_Z)
 
       // Soft-reconcile toward the server's last-known truth for this wallet.
       const mine = latestPlayers.current.get(walletAddress)
@@ -374,18 +539,32 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       sendInput({
         moveX: mx, moveY: my, yaw: yaw.current, pitch: pitch.current,
         firing: firing.current, wantReload: sentReload,
+        crouching: crouchWant, ads: adsWant,
       })
     }
 
-    camera.position.set(localPos.current.x, EYE_HEIGHT, localPos.current.z)
+    const eyeY = THREE.MathUtils.lerp(EYE_HEIGHT, EYE_HEIGHT_CROUCH, crouchCur.current)
+    camera.position.set(localPos.current.x, eyeY, localPos.current.z)
     camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ')
 
+    // Cosmetic ADS zoom — the server has no FOV state to reflect, this is
+    // purely a feel cue matching ValorScene's own aim-down-sights zoom.
+    const p = camera as THREE.PerspectiveCamera
+    const targetFov = THREE.MathUtils.lerp(60, 48, adsCur.current)
+    if (Math.abs(p.fov - targetFov) > 0.01) {
+      p.fov = targetFov
+      p.updateProjectionMatrix()
+    }
+
     // Viewmodel — a static hip-hold offset with a light recoil kick, glued to
-    // the camera. No ADS/sway system here; that's cosmetic polish, not
-    // correctness, and the server has no ADS state to reflect anyway.
+    // the camera, lerping toward a centred ADS offset. No sway system here;
+    // that's cosmetic polish, not correctness, and the server has no ADS
+    // pose to reflect anyway.
     if (vmRef.current) {
       recoilKick.current = Math.max(0, recoilKick.current - dt * 6)
-      const local = new THREE.Vector3(0.16, -0.14 - recoilKick.current * 0.02, -0.32 + recoilKick.current * 0.03)
+      const hip = new THREE.Vector3(0.16, -0.14 - recoilKick.current * 0.02, -0.32 + recoilKick.current * 0.03)
+      const ads = new THREE.Vector3(0.0, -0.16 - recoilKick.current * 0.01, -0.22)
+      const local = hip.lerp(ads, adsCur.current)
       const world = camera.localToWorld(local.clone())
       vmRef.current.position.copy(world)
       vmRef.current.quaternion.copy(camera.quaternion)
@@ -431,33 +610,35 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
 
   return (
     <>
-      {/* Bright enough to actually see by — a small enclosed arena has no sun
-          or sky doing lighting's job for free the way an outdoor op does. */}
-      <hemisphereLight args={['#6b7a94', '#1a1c22', 1.1]} />
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[8, 14, 6]} intensity={1.6} castShadow />
-      <directionalLight position={[-8, 10, -6]} intensity={0.5} />
-      <fog attach="fog" args={['#0a0c12', 34, 70]} />
+      <fog attach="fog" args={[THEME.fog[0], THEME.fog[1], THEME.fog[2]]} />
+      <hemisphereLight args={[THEME.hemi[0], THEME.hemi[1], THEME.hemi[2]]} />
+      <ambientLight intensity={THEME.ambient} />
+      <directionalLight position={[9, 16, 10]} color={THEME.sun.color} intensity={THEME.sun.intensity} castShadow
+        shadow-mapSize-width={1024} shadow-mapSize-height={1024}
+        shadow-camera-near={0.5} shadow-camera-far={40}
+        shadow-camera-left={-12} shadow-camera-right={12} shadow-camera-top={12} shadow-camera-bottom={-12}
+        shadow-bias={-0.001}
+      />
+      <directionalLight position={[-8, 10, -6]} color={THEME.fill.color} intensity={THEME.fill.intensity} />
+      {/* A couple of warm practicals so the room doesn't read as flat-lit —
+          same zone practical color/intensity Operations use. */}
+      <pointLight position={[0, 2.6, 4]} color={THEME.practical} intensity={THEME.practicalIntensity} distance={10} decay={2} />
+      <pointLight position={[0, 2.6, -4]} color={THEME.practical} intensity={THEME.practicalIntensity} distance={10} decay={2} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[ARENA_HALF_X * 2, ARENA_HALF_Z * 2]} />
-        <meshStandardMaterial color="#3a3f4a" roughness={0.92} />
+        <planeGeometry args={[FLOOR_W, FLOOR_D]} />
+        <primitive object={shellMaterials.floor} attach="material" />
       </mesh>
-      {/* Grid lines — the arena has no texture/prop variety yet (v1), and a
-          featureless flat plane gives the eye nothing to read movement
-          against. A grid is the cheapest possible fix (no asset, one draw
-          call) and is worth keeping even once real dressing lands. */}
-      <gridHelper args={[ARENA_HALF_X * 2, 24, '#5a6577', '#4a5262']} position={[0, 0.01, 0]} />
 
-      {/* Boundary walls — the arena has no interior cover in v1, just a
-          visible edge so the invisible position clamp isn't a mystery. */}
-      {[
-        [0, ARENA_HALF_Z] as const, [0, -ARENA_HALF_Z] as const,
-        [ARENA_HALF_X, 0] as const, [-ARENA_HALF_X, 0] as const,
-      ].map(([x, z], i) => (
-        <mesh key={i} position={[x, 0.75, z]} rotation={[0, x !== 0 ? Math.PI / 2 : 0, 0]} castShadow receiveShadow>
-          <boxGeometry args={[ARENA_HALF_X * 2, 1.5, 0.2]} />
-          <meshStandardMaterial color="#565f70" roughness={0.75} />
+      {ROOM_WALLS.map((w) => (
+        <mesh key={`w${w.x}_${w.z}`} geometry={UNIT_BOX} position={[w.x, w.h / 2, w.z]} scale={[w.w, w.h, w.d]} castShadow receiveShadow>
+          <primitive object={shellMaterials.brick} attach="material" />
+        </mesh>
+      ))}
+
+      {ROOM_COVER.map((c) => (
+        <mesh key={`c${c.x}_${c.z}`} geometry={UNIT_BOX} position={[c.x, c.h / 2, c.z]} scale={[c.w, c.h, c.d]} castShadow receiveShadow>
+          <primitive object={shellMaterials.plank} attach="material" />
         </mesh>
       ))}
 

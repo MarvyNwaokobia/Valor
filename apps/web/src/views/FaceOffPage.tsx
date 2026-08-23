@@ -11,6 +11,7 @@ import { useActiveWalletClientError } from '@/hooks/useActiveWalletClient'
 import { useDuels, type DuelRun } from '@/hooks/useDuels'
 import { useArenaSocket } from '@/hooks/useArenaSocket'
 import { retryImport } from '@/lib/retryImport'
+import { equippedGunId } from '@/lib/guns'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 
 const ArenaScene = dynamic(
@@ -57,6 +58,8 @@ export default function FaceOffPage() {
   const searchParams = useSearchParams()
   const player = usePlayerStore((s) => s.player)
   const playerSynced = usePlayerStore((s) => s.playerSynced)
+  const inventory = usePlayerStore((s) => s.inventory)
+  const equippedGun = useMemo(() => equippedGunId(inventory), [inventory])
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, cancelDuel } = useDuels(address)
   const walletClientError = useActiveWalletClientError()
   const arena = useArenaSocket(address ?? '')
@@ -141,6 +144,7 @@ export default function FaceOffPage() {
             onLocalHp={setLocalHp}
             onAmmo={(a, r) => { setAmmo(a); setReloading(r) }}
             onOpponentHp={setOpponentHp}
+            equippedGun={equippedGun}
           />
         )}
         <FaceOffHud

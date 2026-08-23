@@ -34,6 +34,10 @@ struct InputMsg {
     firing: bool,
     #[serde(default)]
     want_reload: bool,
+    #[serde(default)]
+    crouching: bool,
+    #[serde(default)]
+    ads: bool,
 }
 
 #[derive(Deserialize)]
@@ -159,6 +163,7 @@ pub async fn arena_ws(
                                         move_x: i.move_x, move_y: i.move_y,
                                         yaw: i.yaw, pitch: i.pitch,
                                         firing: i.firing, want_reload: i.want_reload,
+                                        crouching: i.crouching, ads: i.ads,
                                     },
                                 });
                             }
