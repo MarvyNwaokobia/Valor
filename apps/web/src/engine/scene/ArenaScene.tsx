@@ -56,6 +56,8 @@ import { GUN_LENGTH } from './gunModels'
 import { usePbr } from './usePbr'
 import { makeTriplanarMaterial } from './triplanar'
 import { buildZoneEnvironment, ENV_INTENSITY } from './zoneEnvironment'
+import { ImpactFX } from '../vfx/ImpactFX'
+import { useImpactTextures } from '../vfx/useImpactTextures'
 import { ZONE_THEMES } from '@/engine/fps/campaign'
 import { slideMove, rayAABB, aabbOfCover, type CoverBox } from '@/engine/fps/FpsSim'
 import arenaGeometry from './faceoffArena.json'
@@ -643,6 +645,14 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
   const vmTmp = useRef(new THREE.Vector3())
   const recoilKick = useRef(0)
 
+  // ── Blood/particle impact FX — same pooled system real Operations use,
+  // fired only where OUR shots land on the opponent (mirrors ValorScene's
+  // spawnFleshImpact/spawnDeathPool; a hit landing on US gets no burst of
+  // its own — the camera stagger/shake/vignette already sell that one).
+  const impactMaps = useImpactTextures()
+  const impactFx = useMemo(() => new ImpactFX(impactMaps), [impactMaps])
+  useEffect(() => () => impactFx.dispose(), [impactFx])
+
   // ── Opponent rig ──
   const opponentApi = useRef<OperatorApi | null>(null)
   const opponentGroup = useRef<THREE.Group>(null)
@@ -812,6 +822,8 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     vignetteHit.current = Math.max(0, vignetteHit.current - dt * 2.5)
     if (hitFxDom.current.vignette) hitFxDom.current.vignette.style.opacity = String(vignetteHit.current)
 
+    impactFx.update(dt)
+
     // Cosmetic ADS zoom — the server has no FOV state to reflect, this is
     // purely a feel cue matching ValorScene's own aim-down-sights zoom.
     const p = camera as THREE.PerspectiveCamera
@@ -845,9 +857,17 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
     for (const hit of drainHits()) {
       if (hit.shooter === walletAddress) {
         recoilKick.current = 1
-        audio.impact('flesh', [opponentRendered.current.x, 1.2, opponentRendered.current.z])
+        const at: [number, number, number] = [opponentRendered.current.x, 1.2, opponentRendered.current.z]
+        audio.impact('flesh', at)
         audio.hitmarker(hit.target_hp <= 0)
         onHit?.(hit)
+        // Mist sprays back toward whoever fired it, same as ValorScene's
+        // spawnFleshImpact — visible to the shooter instead of hidden
+        // behind the target.
+        const bdx = localPos.current.x - at[0], bdy = eyeY - at[1], bdz = localPos.current.z - at[2]
+        const blen = Math.hypot(bdx, bdy, bdz) || 1
+        impactFx.burst(at, [bdx / blen, bdy / blen, bdz / blen], 'flesh', 1)
+        if (hit.target_hp <= 0) impactFx.pool(at, 1)
       } else if (hit.target === walletAddress) {
         audio.hurt()
         // Direction TOWARD the shooter — same semantics as FpsSim's
@@ -951,6 +971,7 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       </group>
 
       <primitive ref={vmRef} object={gunMesh} />
+      <primitive object={impactFx.group} />
     </>
   )
 }
