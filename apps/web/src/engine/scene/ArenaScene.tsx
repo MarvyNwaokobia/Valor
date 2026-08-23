@@ -221,6 +221,13 @@ export function ArenaScene(props: ArenaSceneProps) {
   useEffect(() => () => audio.dispose(), [audio])
   useEffect(() => { audio.setZone(ZONE_ID) }, [audio])
 
+  // Getting-shot feedback (damage vignette + directional indicator) is
+  // written to these DOM nodes directly from ArenaWorld's per-frame loop,
+  // same as ValorScene's `hud` ref — those values change every tick, and
+  // routing them through React state would re-render outside the Canvas
+  // 60 times a second for nothing.
+  const hitFxDom = useRef<HitFxDom>({ vignette: null, hitDir: null })
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: THEME.fog[0], cursor: isTouch ? 'default' : 'none' }}>
       <Canvas
@@ -230,18 +237,26 @@ export function ArenaScene(props: ArenaSceneProps) {
         camera={{ position: [0, EYE_HEIGHT, ARENA_HALF_Z * 0.85], fov: 60, near: 0.01, far: 200 }}
       >
         <Suspense fallback={null}>
-          <ArenaWorld {...props} input={input} isTouch={isTouch} audio={audio} />
+          <ArenaWorld {...props} input={input} isTouch={isTouch} audio={audio} hitFxDom={hitFxDom} />
         </Suspense>
       </Canvas>
-      <ArenaHud />
+      <ArenaHud hitFxDom={hitFxDom} />
       {isTouch && <TouchControls input={input} audio={audio} />}
     </div>
   )
 }
 
-// ── HUD (crosshair only — HP/ammo/timer chrome lives in FaceOffPage) ────────
+/** DOM nodes for getting-shot feedback — written to directly, not via React
+ *  state (see ArenaScene's comment on `hitFxDom`). */
+interface HitFxDom {
+  vignette: HTMLDivElement | null
+  hitDir: HTMLDivElement | null
+}
 
-function ArenaHud() {
+// ── HUD (crosshair + hit feedback — HP/ammo/timer chrome lives in
+// FaceOffPage) ───────────────────────────────────────────────────────────
+
+function ArenaHud({ hitFxDom }: { hitFxDom: MutableRefObject<HitFxDom> }) {
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       <div style={{
@@ -249,6 +264,11 @@ function ArenaHud() {
         transform: 'translate(-50%,-50%)', borderRadius: '50%',
         background: 'rgba(255,255,255,0.85)', boxShadow: '0 0 3px rgba(0,0,0,0.8)',
       }} />
+      {/* damage vignette (red edges on hit) — same look ValorScene's real
+          Operations use, opacity driven per-frame from ArenaWorld. */}
+      <div ref={(r) => { hitFxDom.current.vignette = r }} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', boxShadow: 'inset 0 0 150px 44px rgba(200,20,10,.85)', transition: 'opacity .09s' }} />
+      {/* directional damage indicator — rotated to point at whoever shot you */}
+      <div ref={(r) => { hitFxDom.current.hitDir = r }} style={{ position: 'absolute', left: '50%', top: '50%', width: 64, height: 300, marginLeft: -32, marginTop: -150, opacity: 0, pointerEvents: 'none', transformOrigin: '50% 50%', background: 'linear-gradient(to top, transparent 62%, rgba(255,64,44,.9) 100%)', transition: 'opacity .1s' }} />
     </div>
   )
 }
@@ -443,10 +463,10 @@ function TouchControls({ input, audio }: { input: InputRefs; audio: FpsAudio }) 
 
 // ── World ─────────────────────────────────────────────────────────────────
 
-function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean; audio: FpsAudio }) {
+function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean; audio: FpsAudio; hitFxDom: MutableRefObject<HitFxDom> }) {
   const {
     walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers,
-    onLocalHp, onAmmo, onOpponentHp, onHit, input, isTouch, equippedGun, audio,
+    onLocalHp, onAmmo, onOpponentHp, onHit, input, isTouch, equippedGun, audio, hitFxDom,
   } = props
   const { camera, gl, scene } = useThree()
   const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, touchFiring, rightMouseDown, wantReload, touchCrouch, touchAds } = input
@@ -478,6 +498,17 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
   const hasSnapped = useRef(false)
   const crouchCur = useRef(0)
   const adsCur = useRef(0)
+
+  // ── Getting-shot camera feedback — same formula/decay ValorScene uses:
+  // a headshot kicks harder, the kick recovers to fully stable within a
+  // moment (not an endless exponential tail), and the raw yaw/pitch used
+  // for aiming/sendInput are never touched — only what the CAMERA renders.
+  const vignetteHit = useRef(0)  // decaying red damage-flash intensity
+  const staggerP = useRef(0)
+  const staggerY = useRef(0)
+  const shake = useRef(0)
+  const shoveX = useRef(0)       // knocked off the line you were shot from
+  const shoveZ = useRef(0)
 
   // ── Audio — `audio` is owned by ArenaScene (the parent) and passed down,
   // not created here: TouchControls needs the SAME instance to call
@@ -753,9 +784,33 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       })
     }
 
-    camera.position.set(localPos.current.x, eyeY, localPos.current.z)
-    camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ')
+    // Getting-shot feedback is layered on TOP of the real position/aim here,
+    // never written back into localPos/yaw/pitch — sendInput above already
+    // sent the real aim, and the server never sees this jitter.
+    const sh = shake.current
+    camera.position.set(localPos.current.x + shoveX.current, eyeY, localPos.current.z + shoveZ.current)
+    camera.rotation.set(
+      pitch.current + staggerP.current + (Math.random() - 0.5) * sh * 0.5,
+      yaw.current + staggerY.current + (Math.random() - 0.5) * sh * 0.5,
+      (Math.random() - 0.5) * sh,
+      'YXZ',
+    )
     audio.setListener(localPos.current.x, localPos.current.z, yaw.current)
+
+    // Getting-shot stagger/shake/shove recover to FULLY STABLE within a
+    // moment — the snap-to-zero matters, an exponential decay never quite
+    // reaches 0 and any leftover `shake` jitters the view forever.
+    const settle = (v: number) => {
+      const n = v + (0 - v) * Math.min(1, dt * 7)
+      return Math.abs(n) < 0.0006 ? 0 : n
+    }
+    staggerP.current = settle(staggerP.current)
+    staggerY.current = settle(staggerY.current)
+    shake.current = settle(shake.current)
+    shoveX.current = settle(shoveX.current)
+    shoveZ.current = settle(shoveZ.current)
+    vignetteHit.current = Math.max(0, vignetteHit.current - dt * 2.5)
+    if (hitFxDom.current.vignette) hitFxDom.current.vignette.style.opacity = String(vignetteHit.current)
 
     // Cosmetic ADS zoom — the server has no FOV state to reflect, this is
     // purely a feel cue matching ValorScene's own aim-down-sights zoom.
@@ -784,8 +839,9 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
       if (hands) hands.visible = adsCur.current < 0.45
     }
 
-    // Hits — recoil kick + audio on OUR OWN shots landing, hurt cue on shots
-    // WE took; damage-taken HUD feedback lives in FaceOffPage's HUD state.
+    // Hits — recoil kick + audio on OUR OWN shots landing, hurt cue + camera
+    // stagger/shake/shove/vignette on shots WE took; damage-taken HP/ammo
+    // HUD feedback lives in FaceOffPage's HUD state.
     for (const hit of drainHits()) {
       if (hit.shooter === walletAddress) {
         recoilKick.current = 1
@@ -794,6 +850,30 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
         onHit?.(hit)
       } else if (hit.target === walletAddress) {
         audio.hurt()
+        // Direction TOWARD the shooter — same semantics as FpsSim's
+        // `fromDir` (normalize(shooterPos - playerPos)) — used to lean the
+        // stagger/shove away from the hit and to point the HUD arrow.
+        const dx = opponentRendered.current.x - localPos.current.x
+        const dz = opponentRendered.current.z - localPos.current.z
+        const dlen = Math.hypot(dx, dz) || 1
+        const fx = dx / dlen, fz = dz / dlen
+        const partKick = hit.part === 'head' ? 1.6 : 1.0
+        const k = (0.02 + hit.damage * 0.0015) * partKick
+        staggerP.current = Math.min(0.05, staggerP.current + k)
+        staggerY.current = Math.max(-0.05, Math.min(0.05, staggerY.current + (fx >= 0 ? -1 : 1) * k * 0.5))
+        shake.current = Math.min(0.05, shake.current + k * 0.6)
+        shoveX.current = Math.max(-0.10, Math.min(0.10, shoveX.current - fx * k * 0.8))
+        shoveZ.current = Math.max(-0.10, Math.min(0.10, shoveZ.current - fz * k * 0.8))
+        vignetteHit.current = 1
+        const hitDirEl = hitFxDom.current.hitDir
+        if (hitDirEl) {
+          const cy = Math.cos(yaw.current), sy = Math.sin(yaw.current)
+          const forward = fx * -sy + fz * -cy
+          const right = fx * cy + fz * -sy
+          hitDirEl.style.opacity = '1'
+          hitDirEl.style.transform = `rotate(${Math.atan2(right, forward)}rad)`
+          window.setTimeout(() => { if (hitDirEl) hitDirEl.style.opacity = '0' }, 500)
+        }
       }
     }
 
