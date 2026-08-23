@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -9,7 +9,7 @@ import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useActiveWalletClientError } from '@/hooks/useActiveWalletClient'
 import { useDuels, type DuelRun } from '@/hooks/useDuels'
-import { useArenaSocket } from '@/hooks/useArenaSocket'
+import { useArenaSocket, type HitEvent } from '@/hooks/useArenaSocket'
 import { useFaceOffRating } from '@/hooks/useFaceOffRating'
 import { retryImport } from '@/lib/retryImport'
 import { equippedGunId } from '@/lib/guns'
@@ -27,6 +27,11 @@ const ArenaScene = dynamic(
     ),
   },
 )
+
+// Mirrors arena_server.rs's MATCH_TIMEOUT (180s) — purely a display clock,
+// the server is the actual authority on when a match times out.
+const MATCH_DURATION_S = 180
+const formatClock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
 const short = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`
 const who = (name: string | null | undefined, wallet: string | null | undefined) =>
@@ -80,6 +85,24 @@ export default function FaceOffPage() {
   const [opponentHp, setOpponentHp] = useState(100)
   const [ammo, setAmmo] = useState(30)
   const [reloading, setReloading] = useState(false)
+  const [hitmarker, setHitmarker] = useState<{ id: number; part: 'head' | 'body'; kill: boolean } | null>(null)
+  const hitmarkerId = useRef(0)
+  const onHit = useCallback((hit: HitEvent) => {
+    setHitmarker({ id: ++hitmarkerId.current, part: hit.part, kill: hit.target_hp <= 0 })
+  }, [])
+  const [timeLeft, setTimeLeft] = useState(MATCH_DURATION_S)
+
+  // Client-side-only display clock — arena_server.rs owns the real timeout
+  // and never reports elapsed time over the wire, so this just counts down
+  // from the moment fight_start flips the phase, close enough for a HUD.
+  useEffect(() => {
+    if (arena.state.phase !== 'fighting') { setTimeLeft(MATCH_DURATION_S); return }
+    const start = Date.now()
+    const id = setInterval(() => {
+      setTimeLeft(Math.max(0, MATCH_DURATION_S - Math.floor((Date.now() - start) / 1000)))
+    }, 500)
+    return () => clearInterval(id)
+  }, [arena.state.phase])
 
   const enterArena = useCallback(() => {
     if (!activeDuel) return
@@ -129,6 +152,7 @@ export default function FaceOffPage() {
     setPickingLoadout(false)
     setActiveDuel(null)
     setLocalHp(100); setOpponentHp(100); setAmmo(30); setReloading(false)
+    setHitmarker(null)
   }, [arena])
 
   const onExitMatch = useCallback(() => {
@@ -148,6 +172,7 @@ export default function FaceOffPage() {
     setPickingLoadout(false)
     setActiveDuel(null)
     setLocalHp(100); setOpponentHp(100); setAmmo(30); setReloading(false)
+    setHitmarker(null)
     void onCreate(stake, opponentWallet)
   }, [activeDuel, arena, onCreate])
 
@@ -191,6 +216,7 @@ export default function FaceOffPage() {
             onLocalHp={setLocalHp}
             onAmmo={(a, r) => { setAmmo(a); setReloading(r) }}
             onOpponentHp={setOpponentHp}
+            onHit={onHit}
             equippedGun={equippedGun}
           />
         )}
@@ -201,6 +227,8 @@ export default function FaceOffPage() {
           opponentName={opponent ? who(null, opponent.wallet) : '…'}
           localHp={localHp} opponentHp={opponentHp}
           ammo={ammo} reloading={reloading}
+          hitmarker={hitmarker}
+          timeLeft={timeLeft}
           onExit={onExitMatch}
         />
       </div>
@@ -511,7 +539,7 @@ export default function FaceOffPage() {
 
 // ── In-match HUD ──────────────────────────────────────────────────────────
 
-function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp, ammo, reloading, onExit }: {
+function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp, ammo, reloading, hitmarker, timeLeft, onExit }: {
   phase: 'idle' | 'connecting' | 'waiting' | 'countdown' | 'fighting' | 'result'
   pause: { reason: 'opponent_disconnected' | 'reconnecting'; graceSeconds: number } | null
   countdown: number
@@ -520,6 +548,8 @@ function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp
   opponentHp: number
   ammo: number
   reloading: boolean
+  hitmarker: { id: number; part: 'head' | 'body'; kill: boolean } | null
+  timeLeft: number
   onExit: () => void
 }) {
   const [confirmExit, setConfirmExit] = useState(false)
@@ -569,8 +599,12 @@ function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp
         </div>
       )}
       {phase === 'countdown' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.6)' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', justifyContent: 'center', background: 'rgba(4,3,12,0.6)', padding: 24 }}>
           <p className="text-valor-gold font-display font-black text-6xl">{countdown}</p>
+          <p className="text-slate-300 text-xs text-center max-w-60 leading-relaxed">
+            100 HP each · headshots deal 45, body shots 20 · win by elimination, or by holding
+            more HP when the clock hits 0:00
+          </p>
         </div>
       )}
       {/* The match is frozen, not over — arena_server.rs pauses HP/position
@@ -601,7 +635,59 @@ function FaceOffHud({ phase, pause, countdown, opponentName, localHp, opponentHp
             <p className="text-white text-xs font-bold uppercase tracking-wider">{opponentName}</p>
             <HpBar hp={opponentHp} color="#ef4444" />
           </div>
+          {/* The 3-minute match clock — arena_server.rs's MATCH_TIMEOUT has
+              no on-screen warning otherwise, so a timeout win/loss can land
+              with zero buildup. */}
+          <div style={{ position: 'absolute', left: '50%', top: 16, transform: 'translateX(-50%)' }}>
+            <p
+              className="font-display font-black text-sm tabular-nums"
+              style={{ color: timeLeft <= 30 ? '#f87171' : '#e9edf2', animation: timeLeft <= 30 && timeLeft > 0 ? 'pulse-glow 1s ease-in-out infinite' : undefined }}
+            >
+              {formatClock(timeLeft)}
+            </p>
+          </div>
         </>
+      )}
+      {/* Hitmarker — X ticks at screen centre, gold for a headshot, red for a
+          kill; re-mounts per hit via the key to restart the animation. Mirrors
+          GameScene.tsx's real Operation hitmarker so the feedback language is
+          the same one players already know. */}
+      {hitmarker && phase === 'fighting' && (
+        <div key={hitmarker.id} className="absolute left-1/2 top-1/2" style={{ animation: 'hitmarker 220ms ease-out forwards' }}>
+          <div className="relative w-7 h-7">
+            {([
+              { top: 0, left: 0, rot: -45 },
+              { top: 0, right: 0, rot: 45 },
+              { bottom: 0, left: 0, rot: 45 },
+              { bottom: 0, right: 0, rot: -45 },
+            ] as const).map((p, i) => (
+              <span
+                key={i}
+                style={{
+                  position: 'absolute',
+                  width: 3,
+                  height: 11,
+                  borderRadius: 1,
+                  background: hitmarker.kill ? '#ff5252' : hitmarker.part === 'head' ? '#ffd24a' : 'rgba(255,255,255,0.95)',
+                  boxShadow: '0 0 5px rgba(0,0,0,0.7)',
+                  transform: `rotate(${p.rot}deg)`,
+                  ...('top' in p ? { top: p.top } : {}),
+                  ...('bottom' in p ? { bottom: p.bottom } : {}),
+                  ...('left' in p ? { left: p.left } : {}),
+                  ...('right' in p ? { right: p.right } : {}),
+                }}
+              />
+            ))}
+          </div>
+          {(hitmarker.kill || hitmarker.part === 'head') && (
+            <p
+              className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap text-[11px] font-black uppercase tracking-wider"
+              style={{ color: hitmarker.kill ? '#ff5252' : '#ffd24a' }}
+            >
+              {hitmarker.kill ? 'Eliminated' : 'Headshot'}
+            </p>
+          )}
+        </div>
       )}
     </div>
   )

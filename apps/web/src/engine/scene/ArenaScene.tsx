@@ -199,6 +199,9 @@ export interface ArenaSceneProps {
   onLocalHp: (hp: number) => void
   onAmmo: (ammo: number, reloading: boolean) => void
   onOpponentHp: (hp: number) => void
+  /** OUR OWN shot landing on the opponent — drives FaceOffPage's on-screen
+   *  hitmarker/headshot chrome. Not called for shots we took. */
+  onHit?: (hit: HitEvent) => void
   /** Cosmetic only — the server's combat stats never vary by loadout (see
    *  arena_server.rs's module doc). Defaults to the standard-issue rifle. */
   equippedGun?: GunId
@@ -443,7 +446,7 @@ function TouchControls({ input, audio }: { input: InputRefs; audio: FpsAudio }) 
 function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean; audio: FpsAudio }) {
   const {
     walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers,
-    onLocalHp, onAmmo, onOpponentHp, input, isTouch, equippedGun, audio,
+    onLocalHp, onAmmo, onOpponentHp, onHit, input, isTouch, equippedGun, audio,
   } = props
   const { camera, gl, scene } = useThree()
   const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, touchFiring, rightMouseDown, wantReload, touchCrouch, touchAds } = input
@@ -788,6 +791,7 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
         recoilKick.current = 1
         audio.impact('flesh', [opponentRendered.current.x, 1.2, opponentRendered.current.z])
         audio.hitmarker(hit.target_hp <= 0)
+        onHit?.(hit)
       } else if (hit.target === walletAddress) {
         audio.hurt()
       }
