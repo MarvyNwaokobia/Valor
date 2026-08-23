@@ -88,6 +88,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_duel_invites.sql",      include_str!("../migrations/add_duel_invites.sql")),
     ("add_chat_messages.sql",     include_str!("../migrations/add_chat_messages.sql")),
     ("add_contact_email.sql",     include_str!("../migrations/add_contact_email.sql")),
+    // Depends on the `duels` table too — tacked on at the end for the same reason.
+    ("add_duel_modes.sql",        include_str!("../migrations/add_duel_modes.sql")),
 ];
 
 /// Apply every migration not yet recorded, in order, each in its own transaction. Called

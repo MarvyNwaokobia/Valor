@@ -56,6 +56,21 @@ fn stake_tiers() -> &'static [i64] {
 const MIN_STAKE_G: i64 = STAKE_TIERS[0];
 const MAX_STAKE_G: i64 = STAKE_TIERS[STAKE_TIERS.len() - 1];
 
+/// `wave_race` is the original async score-duel (add_duels.sql): both players run
+/// the same seeded solo Endless session independently and submit a score.
+///
+/// `face_off` is the real-time head-to-head arena: both players connect to the
+/// same live match over `/ws/arena` and shoot each other; the server referees the
+/// fight directly, so it never uses `challenger_run_token`/`opponent_run_token`/
+/// `challenger_score`/`opponent_score` at all — those stay NULL for its rows.
+/// Resolution comes from `resolve_live_duel` once the arena server decides a
+/// winner, not from `submit_duel_score`.
+const VALID_MODES: [&str; 2] = ["wave_race", "face_off"];
+
+fn default_mode() -> String {
+    "wave_race".to_string()
+}
+
 /// Anti-cheat anchor, mirroring the Gauntlet's: a score cannot exceed what the
 /// server-measured elapsed time can physically support. A client never supplies
 /// its own duration — we measure from the token we issued.
@@ -113,6 +128,7 @@ struct DuelRow {
     status: String,
     winner_wallet: Option<String>,
     invited_wallet: Option<String>,
+    mode: String,
 }
 
 /// Signed authorisation for one stake. A duel stake is a deliberate, one-off,
@@ -243,6 +259,70 @@ async fn settle_cancel(state: &AppState, duel_id: Uuid, challenger: &str, stake:
     payout(state, challenger, stake as u64, &format!("duel:{duel_id}:cancel")).await
 }
 
+/// Resolve a `face_off` duel once a live match has ended. Called by the arena
+/// server (not by an HTTP handler here) — there is no client-facing route for
+/// this, because a live match's winner is decided by the referee, not reported
+/// by either player.
+///
+/// `winner_wallet: None` means a draw (mutual timeout at equal HP); reuses the
+/// exact same `settle_win`/`settle_draw` payout rails `wave_race` resolution
+/// does, so the stake/house-cut/idempotency behaviour is identical between
+/// modes — only how a winner gets decided differs.
+#[allow(dead_code)] // wired in once the arena server (Phase 2/3) can call it
+pub async fn resolve_live_duel(
+    state: &AppState,
+    duel_id: Uuid,
+    winner_wallet: Option<&str>,
+) -> Result<HttpResponse, HttpResponse> {
+    let duel: Option<DuelRow> = sqlx::query_as("SELECT * FROM duels WHERE id = $1")
+        .bind(duel_id).fetch_optional(&state.db).await.unwrap_or(None);
+    let duel = match duel {
+        Some(d) => d,
+        None => return Err(HttpResponse::NotFound().json(json!({"error": "Duel not found"}))),
+    };
+    if duel.mode != "face_off" {
+        return Err(HttpResponse::BadRequest().json(json!({"error": "Not a face-off duel"})));
+    }
+    let opponent = match duel.opponent_wallet.clone() {
+        Some(o) => o,
+        None => return Err(HttpResponse::Conflict().json(json!({"error": "Duel was never accepted"}))),
+    };
+
+    // Same race-safety as resolve_if_complete: only the caller that flips
+    // 'accepted' -> 'resolved' pays out, so a retried/duplicate match-end signal
+    // from the arena server can't double-settle.
+    let claimed = sqlx::query(
+        "UPDATE duels SET status = 'resolved', resolved_at = now(), winner_wallet = $1 WHERE id = $2 AND status = 'accepted'",
+    )
+    .bind(winner_wallet).bind(duel_id).execute(&state.db).await;
+    if claimed.map(|r| r.rows_affected()).unwrap_or(0) != 1 {
+        return Ok(HttpResponse::Ok().json(json!({
+            "id": duel_id, "resolved": true, "winner": duel.winner_wallet,
+        })));
+    }
+
+    match winner_wallet {
+        None => {
+            let txs = settle_draw(state, duel_id, &duel.challenger_wallet, &opponent, duel.stake_g).await;
+            tracing::info!("face-off duel {} drawn — both refunded", duel_id);
+            Ok(HttpResponse::Ok().json(json!({
+                "id": duel_id, "resolved": true, "draw": true, "refund_txs": txs,
+            })))
+        }
+        Some(winner) => {
+            let take = winner_payout(duel.stake_g);
+            let tx = settle_win(state, duel_id, winner, duel.stake_g).await;
+            let _ = sqlx::query("UPDATE duels SET payout_tx = $1 WHERE id = $2")
+                .bind(&tx).bind(duel_id).execute(&state.db).await;
+            tracing::info!("face-off duel {} won by {} — paid {} G$", duel_id, winner, take);
+            Ok(HttpResponse::Ok().json(json!({
+                "id": duel_id, "resolved": true, "draw": false,
+                "winner": winner, "winnings_g": take, "payout_tx": tx,
+            })))
+        }
+    }
+}
+
 // ── POST /duels ───────────────────────────────────────────────────────────────
 #[derive(Deserialize)]
 pub struct CreateRequest {
@@ -252,6 +332,9 @@ pub struct CreateRequest {
     /// anyone. When present, only this wallet can accept — see accept_duel.
     #[serde(default)]
     pub invited_wallet: Option<String>,
+    /// 'wave_race' (default, unchanged behaviour) or 'face_off'. See VALID_MODES.
+    #[serde(default = "default_mode")]
+    pub mode: String,
     #[serde(flatten)]
     pub permit: StakePermit,
 }
@@ -278,6 +361,11 @@ pub async fn create_duel(
         return HttpResponse::BadRequest().json(json!({
             "error": "Pick one of the standard stake amounts",
             "stake_tiers": tiers,
+        }));
+    }
+    if !VALID_MODES.contains(&body.mode.as_str()) {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "Unknown duel mode", "valid_modes": VALID_MODES,
         }));
     }
     let wallet = normalize_wallet(&body.wallet);
@@ -315,19 +403,28 @@ pub async fn create_duel(
         Err(resp) => return resp,
     };
 
-    let token = Uuid::new_v4().to_string();
-    // Positive seed only: the client feeds it to a uint-based PRNG.
+    // face_off never uses the run-token/elapsed-time anti-cheat anchor — a live
+    // match is refereed directly, so there's no independent "run" to prove was
+    // real. Leaving these NULL for face_off rows is what tells resolve_if_complete
+    // (wave_race-only) and resolve_live_duel (face_off-only) apart at a glance.
+    let (token, started_at) = if body.mode == "wave_race" {
+        (Some(Uuid::new_v4().to_string()), Some(Utc::now()))
+    } else {
+        (None, None)
+    };
+    // Positive seed only: the client feeds it to a uint-based PRNG. Still
+    // generated for face_off even though it's unused there — cheaper than making
+    // the column nullable for one mode that doesn't need it.
     let seed = (Uuid::new_v4().as_u128() as i64).abs();
-    let now = Utc::now();
 
     let inserted = sqlx::query(
         "INSERT INTO duels (id, challenger_wallet, stake_g, seed,
                             challenger_run_token, challenger_started_at, status,
-                            invited_wallet)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)",
+                            invited_wallet, mode)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)",
     )
     .bind(id).bind(&wallet).bind(body.stake_g).bind(seed)
-    .bind(&token).bind(now).bind(&invited_wallet)
+    .bind(&token).bind(started_at).bind(&invited_wallet).bind(&body.mode)
     .execute(&state.db).await;
 
     if let Err(e) = inserted {
@@ -350,9 +447,9 @@ pub async fn create_duel(
     }
 
     let takes = winner_payout(body.stake_g);
-    tracing::info!("duel {} opened by {} for {} G$", id, wallet, body.stake_g);
+    tracing::info!("duel {} ({}) opened by {} for {} G$", id, body.mode, wallet, body.stake_g);
     HttpResponse::Ok().json(json!({
-        "id": id, "seed": seed, "stake_g": body.stake_g,
+        "id": id, "mode": body.mode, "seed": seed, "stake_g": body.stake_g,
         "run_token": token, "stake_tx": stake_tx,
         "winner_takes_g": takes,
     }))
@@ -403,16 +500,18 @@ pub async fn accept_duel(
         Err(resp) => return resp,
     };
 
-    let token = Uuid::new_v4().to_string();
+    // Same reasoning as create_duel: face_off has no async run to token/time.
+    let token = if duel.mode == "wave_race" { Some(Uuid::new_v4().to_string()) } else { None };
     let now = Utc::now();
+    let opponent_started_at = if duel.mode == "wave_race" { Some(now) } else { None };
     // Conditional on status = 'open' so two simultaneous accepts can't both win the
     // duel; the loser of the race is refunded rather than left staked into nothing.
     let claimed = sqlx::query(
         "UPDATE duels SET opponent_wallet = $1, opponent_run_token = $2,
-                          opponent_started_at = $3, status = 'accepted', accepted_at = $3
-         WHERE id = $4 AND status = 'open'",
+                          opponent_started_at = $3, status = 'accepted', accepted_at = $4
+         WHERE id = $5 AND status = 'open'",
     )
-    .bind(&wallet).bind(&token).bind(now).bind(id)
+    .bind(&wallet).bind(&token).bind(opponent_started_at).bind(now).bind(id)
     .execute(&state.db).await;
 
     let won_race = claimed.map(|r| r.rows_affected() == 1).unwrap_or(false);
@@ -434,9 +533,9 @@ pub async fn accept_duel(
     );
 
     let takes = winner_payout(duel.stake_g);
-    tracing::info!("duel {} accepted by {}", id, wallet);
+    tracing::info!("duel {} ({}) accepted by {}", id, duel.mode, wallet);
     HttpResponse::Ok().json(json!({
-        "id": id, "seed": duel.seed, "stake_g": duel.stake_g,
+        "id": id, "mode": duel.mode, "seed": duel.seed, "stake_g": duel.stake_g,
         "run_token": token, "stake_tx": stake_tx,
         "winner_takes_g": takes,
     }))
@@ -645,10 +744,10 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     // are reserved for one wallet and surface separately below as `invited`, or
     // this would show a "private" challenge to everyone and let them discover it
     // even though accepting it would still be rejected.
-    let open: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
+    let open: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>, String)> = sqlx::query_as(
         "SELECT d.id, d.challenger_wallet,
                 COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
-                d.stake_g, d.created_at
+                d.stake_g, d.created_at, d.mode
          FROM duels d
          LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
          WHERE d.status = 'open' AND d.invited_wallet IS NULL
@@ -656,27 +755,27 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     )
     .fetch_all(&state.db).await.unwrap_or_default();
 
-    let open_json: Vec<_> = open.into_iter().map(|(id, w, name, stake, at)| json!({
+    let open_json: Vec<_> = open.into_iter().map(|(id, w, name, stake, at, mode)| json!({
         "id": id, "challenger": w, "challenger_name": name, "stake_g": stake,
-        "winner_takes_g": winner_payout(stake), "created_at": at,
+        "winner_takes_g": winner_payout(stake), "created_at": at, "mode": mode,
     })).collect();
 
     let invited_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
         Some(w) => {
             let wallet = normalize_wallet(w);
-            let rows: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>)> = sqlx::query_as(
+            let rows: Vec<(Uuid, String, Option<String>, i64, DateTime<Utc>, String)> = sqlx::query_as(
                 "SELECT d.id, d.challenger_wallet,
                         COALESCE(NULLIF(p.username, ''), p.character_name) AS challenger_name,
-                        d.stake_g, d.created_at
+                        d.stake_g, d.created_at, d.mode
                  FROM duels d
                  LEFT JOIN players p ON p.wallet_address = d.challenger_wallet
                  WHERE d.status = 'open' AND d.invited_wallet = $1
                  ORDER BY d.created_at DESC LIMIT 25",
             )
             .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
-            rows.into_iter().map(|(id, w, name, stake, at)| json!({
+            rows.into_iter().map(|(id, w, name, stake, at, mode)| json!({
                 "id": id, "challenger": w, "challenger_name": name, "stake_g": stake,
-                "winner_takes_g": winner_payout(stake), "created_at": at,
+                "winner_takes_g": winner_payout(stake), "created_at": at, "mode": mode,
             })).collect()
         }
         None => vec![],
@@ -685,14 +784,14 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
     let mine_json = match q.wallet.as_deref().filter(|w| is_valid_wallet(w)) {
         Some(w) => {
             let wallet = normalize_wallet(w);
-            let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>)> =
+            let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>, Option<i32>, Option<i32>, String)> =
                 sqlx::query_as(
                     "SELECT d.id, d.challenger_wallet,
                             COALESCE(NULLIF(pc.username, ''), pc.character_name) AS challenger_name,
                             d.opponent_wallet,
                             COALESCE(NULLIF(po.username, ''), po.character_name) AS opponent_name,
                             d.stake_g, d.status, d.winner_wallet,
-                            d.challenger_score, d.opponent_score
+                            d.challenger_score, d.opponent_score, d.mode
                      FROM duels d
                      LEFT JOIN players pc ON pc.wallet_address = d.challenger_wallet
                      LEFT JOIN players po ON po.wallet_address = d.opponent_wallet
@@ -700,12 +799,12 @@ pub async fn list_duels(state: web::Data<AppState>, q: web::Query<ListQuery>) ->
                      ORDER BY d.created_at DESC LIMIT 25",
                 )
                 .bind(&wallet).fetch_all(&state.db).await.unwrap_or_default();
-            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os)| {
+            rows.into_iter().map(|(id, c, cn, o, on, stake, status, winner, cs, os, mode)| {
                 json!({
                     "id": id, "challenger": c, "challenger_name": cn,
                     "opponent": o, "opponent_name": on, "stake_g": stake,
                     "status": status, "winner": winner,
-                    "challenger_score": cs, "opponent_score": os,
+                    "challenger_score": cs, "opponent_score": os, "mode": mode,
                 })
             }).collect()
         }
