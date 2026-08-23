@@ -323,11 +323,11 @@ pub async fn create_duel(
     let inserted = sqlx::query(
         "INSERT INTO duels (id, challenger_wallet, stake_g, seed,
                             challenger_run_token, challenger_started_at, status,
-                            challenger_stake_tx, invited_wallet)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)",
+                            invited_wallet)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)",
     )
     .bind(id).bind(&wallet).bind(body.stake_g).bind(seed)
-    .bind(&token).bind(now).bind(&stake_tx).bind(&invited_wallet)
+    .bind(&token).bind(now).bind(&invited_wallet)
     .execute(&state.db).await;
 
     if let Err(e) = inserted {
@@ -409,11 +409,10 @@ pub async fn accept_duel(
     // duel; the loser of the race is refunded rather than left staked into nothing.
     let claimed = sqlx::query(
         "UPDATE duels SET opponent_wallet = $1, opponent_run_token = $2,
-                          opponent_started_at = $3, status = 'accepted', accepted_at = $3,
-                          opponent_stake_tx = $5
+                          opponent_started_at = $3, status = 'accepted', accepted_at = $3
          WHERE id = $4 AND status = 'open'",
     )
-    .bind(&wallet).bind(&token).bind(now).bind(id).bind(&stake_tx)
+    .bind(&wallet).bind(&token).bind(now).bind(id)
     .execute(&state.db).await;
 
     let won_race = claimed.map(|r| r.rows_affected() == 1).unwrap_or(false);
