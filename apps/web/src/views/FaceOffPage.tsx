@@ -132,7 +132,7 @@ export default function FaceOffPage() {
   if (connected && activeDuel && arena.state.phase !== 'idle' && arena.state.phase !== 'result') {
     const opponent = arena.state.opponent
     return (
-      <div style={{ position: 'fixed', inset: 0 }}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 60 }}>
         {opponent && (
           <ArenaScene
             walletAddress={address}

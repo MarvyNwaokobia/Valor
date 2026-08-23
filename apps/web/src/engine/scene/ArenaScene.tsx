@@ -215,6 +215,16 @@ export interface ArenaSceneProps {
 export function ArenaScene(props: ArenaSceneProps) {
   const input = useInputRefs()
   const [isTouch] = useState(detectTouchDevice)
+  // Owned here, not inside ArenaWorld (which only mounts under the Canvas) —
+  // TouchControls needs the SAME instance to call `unlock()` from a touch
+  // gesture. WebAudio requires unlock from a real user gesture per platform,
+  // and on a touch device that gesture is a tap on the joystick/fire/look
+  // layer, never a desktop mousedown/keydown — an audio director that only
+  // desktop ever unlocks is an audio director that never makes a sound on
+  // the phone it was actually tested on.
+  const audio = useMemo(() => new FpsAudio(), [])
+  useEffect(() => () => audio.dispose(), [audio])
+  useEffect(() => { audio.setZone(ZONE_ID) }, [audio])
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: THEME.fog[0], cursor: isTouch ? 'default' : 'none' }}>
@@ -225,11 +235,11 @@ export function ArenaScene(props: ArenaSceneProps) {
         camera={{ position: [0, EYE_HEIGHT, ARENA_HALF_Z * 0.85], fov: 60, near: 0.01, far: 200 }}
       >
         <Suspense fallback={null}>
-          <ArenaWorld {...props} input={input} isTouch={isTouch} />
+          <ArenaWorld {...props} input={input} isTouch={isTouch} audio={audio} />
         </Suspense>
       </Canvas>
       <ArenaHud />
-      {isTouch && <TouchControls input={input} />}
+      {isTouch && <TouchControls input={input} audio={audio} />}
     </div>
   )
 }
@@ -258,7 +268,7 @@ function ArenaHud() {
 // (one fixed weapon, no AI to lock onto), so those two real-HUD buttons are
 // the only ones NOT reproduced here.
 
-function TouchControls({ input }: { input: InputRefs }) {
+function TouchControls({ input, audio }: { input: InputRefs; audio: FpsAudio }) {
   const joyRef = useRef<HTMLDivElement>(null)
   const joyKnobRef = useRef<HTMLDivElement>(null)
   const joyId = useRef<number | null>(null)
@@ -279,6 +289,7 @@ function TouchControls({ input }: { input: InputRefs }) {
   }
 
   const joyStart = (e: React.TouchEvent) => {
+    audio.unlock()
     const t = e.changedTouches[0]
     joyId.current = t.identifier
     const r = joyRef.current!.getBoundingClientRect()
@@ -303,6 +314,7 @@ function TouchControls({ input }: { input: InputRefs }) {
   const lookId = useRef<number | null>(null)
   const lookLast = useRef({ x: 0, y: 0 })
   const lookStart = (e: React.TouchEvent) => {
+    audio.unlock()
     const t = e.changedTouches[0]
     lookId.current = t.identifier
     lookLast.current = { x: t.clientX, y: t.clientY }
@@ -324,6 +336,7 @@ function TouchControls({ input }: { input: InputRefs }) {
   const fireId = useRef<number | null>(null)
   const fireLast = useRef({ x: 0, y: 0 })
   const fireStart = (e: React.TouchEvent) => {
+    audio.unlock()
     const t = e.changedTouches[0]
     fireId.current = t.identifier
     fireLast.current = { x: t.clientX, y: t.clientY }
@@ -435,10 +448,10 @@ function TouchControls({ input }: { input: InputRefs }) {
 
 // ── World ─────────────────────────────────────────────────────────────────
 
-function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean }) {
+function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolean; audio: FpsAudio }) {
   const {
     walletAddress, opponentWallet, fighting, sendInput, drainHits, latestPlayers,
-    onLocalHp, onAmmo, onOpponentHp, input, isTouch, equippedGun,
+    onLocalHp, onAmmo, onOpponentHp, input, isTouch, equippedGun, audio,
   } = props
   const { camera, gl, scene } = useThree()
   const { keys, mouseDX, mouseDY, touchMoveX, touchMoveY, firing, touchFiring, rightMouseDown, wantReload, touchCrouch, touchAds } = input
@@ -458,11 +471,10 @@ function ArenaWorld(props: ArenaSceneProps & { input: InputRefs; isTouch: boolea
   const crouchCur = useRef(0)
   const adsCur = useRef(0)
 
-  // ── Audio — the real tactical audio director, not silence. Self-contained
-  // WebAudio synthesis (see FpsAudio's own module doc), so no assets to load.
-  const audio = useMemo(() => new FpsAudio(), [])
-  useEffect(() => () => audio.dispose(), [audio])
-  useEffect(() => { audio.setZone(ZONE_ID) }, [audio])
+  // ── Audio — `audio` is owned by ArenaScene (the parent) and passed down,
+  // not created here: TouchControls needs the SAME instance to call
+  // `unlock()` from a touch gesture, since this component only mounts
+  // inside the Canvas and never sees a raw DOM touch event.
   const prevAmmo = useRef<number | null>(null)
   const prevReloading = useRef(false)
   const strideDist = useRef(0)
