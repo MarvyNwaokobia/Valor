@@ -44,3 +44,22 @@ export function useActiveWalletClient(): WalletClient | undefined {
     })
   }, [status, address, source, wagmiWalletClient])
 }
+
+/**
+ * Why `useActiveWalletClient()` returned `undefined` on the wagmi path, when it
+ * did. wagmi's own `useWalletClient()` swallows its query error into a plain
+ * `undefined` `data`, which is what let "wallet session not ready" go unexplained
+ * on mobile for as long as it did — every prior theory about *why* had nothing
+ * concrete to check against. This exists purely so the next repro produces an
+ * actual error message instead of another guess.
+ *
+ * Only meaningful for `source === 'wallet'` (wagmi's injected connector) — the
+ * bridge path (Magic, Web3Auth) never touches this query, so it has nothing to
+ * report there.
+ */
+export function useActiveWalletClientError(): Error | null {
+  const { source } = useResolvedAuth()
+  const { error } = useWagmiWalletClient()
+  if (source !== 'wallet' || !error) return null
+  return error instanceof Error ? error : new Error(String(error))
+}

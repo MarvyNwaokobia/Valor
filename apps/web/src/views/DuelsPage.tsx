@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Swords, Coins, Loader2, X, AlertTriangle } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useActiveWalletClientError } from '@/hooks/useActiveWalletClient'
 import {
   useDuels, duelScore,
   type DuelRun, type DuelResult,
@@ -66,6 +67,7 @@ export default function DuelsPage() {
   const playerSynced = usePlayerStore((s) => s.playerSynced)
   const inventory = usePlayerStore((s) => s.inventory)
   const { duels, loading, pending, signerReady, createDuel, acceptDuel, submitScore, cancelDuel } = useDuels(address)
+  const walletClientError = useActiveWalletClientError()
 
   // Arrived here via "Challenge" on a friend's row in /friends — reserves the
   // duel for that one wallet instead of opening it to anyone.
@@ -230,6 +232,15 @@ export default function DuelsPage() {
               You&apos;re signed in, but your wallet can&apos;t sign right now — so staking is
               paused. This usually clears on reload; if it doesn&apos;t, sign out and back in.
             </p>
+            {/* Surfaces the actual reason instead of leaving this unexplained —
+                wagmi's own useWalletClient() swallows its query error into a plain
+                `undefined`, which is why this exact banner went unexplained for so
+                long. Screenshot this line if it shows up. */}
+            {walletClientError && (
+              <p className="text-amber-500/60 text-[10px] font-mono wrap-break-word mt-1">
+                {walletClientError.message}
+              </p>
+            )}
           </div>
         )}
 
