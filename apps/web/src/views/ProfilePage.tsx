@@ -337,7 +337,8 @@ export default function ProfilePage() {
             </p>
             <p className="text-slate-500 text-xs mt-1 leading-relaxed">
               A public page with your rank, record and loadout. Sharing it posts a preview
-              of your warrior — and anyone who joins through it earns you 100 G$.
+              of your warrior — and anyone who joins through it counts as a referral toward
+              active campaign rewards.
             </p>
             {/* The count is the whole point of the loop: someone who can see
                 three recruits is far likelier to share a fourth time. */}
