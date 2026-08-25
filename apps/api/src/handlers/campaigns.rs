@@ -141,12 +141,15 @@ pub async fn create(
 }
 
 // ── GET /admin/campaigns/referrals ──────────────────────────────────────────
+// Includes prize_pool_g/payout_status so the admin payout UI can list every
+// campaign without a preview round-trip per row just to know what is funded.
 pub async fn list(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     if let Err(resp) = verify_admin_token(&req) {
         return resp;
     }
-    let rows = sqlx::query_as::<_, ReferralCampaignRow>(
-        "SELECT id, name, starts_at, ends_at FROM referral_campaigns ORDER BY starts_at DESC",
+    let rows = sqlx::query_as::<_, ReferralCampaignMeta>(
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, payout_bps
+         FROM referral_campaigns ORDER BY starts_at DESC",
     )
     .fetch_all(&state.db)
     .await;
@@ -158,6 +161,7 @@ pub async fn list(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse 
                     json!({
                         "id": c.id, "name": c.name,
                         "starts_at": c.starts_at.to_rfc3339(), "ends_at": c.ends_at.to_rfc3339(),
+                        "prize_pool_g": c.prize_pool_g, "payout_status": c.payout_status,
                     })
                 })
                 .collect::<Vec<_>>(),

@@ -76,6 +76,40 @@ interface PayoutPreview {
   can_pay: boolean
 }
 
+// Referral campaigns pay a leaderboard the same way seasons do — a funded pool
+// split top-heavy at close — so this whole shape mirrors PayoutWinner/PayoutPreview
+// above, just "referral_count" where seasons have "waves" and "campaign" for "season".
+interface ReferralCampaign {
+  id: string
+  name: string
+  starts_at: string
+  ends_at: string
+  prize_pool_g: number
+  payout_status: string
+}
+interface ReferralPayoutWinner {
+  rank: number
+  wallet_address: string
+  username: string | null
+  referral_count: number
+  amount_g: number
+  status: string
+  tx_hash: string | null
+}
+interface ReferralPayoutPreview {
+  campaign: { id: string; name: string; ends_at: string | null; prize_pool_g: number; payout_status: string; closed: boolean }
+  winners: ReferralPayoutWinner[]
+  winner_count: number
+  total_g: number
+  unpaid_g: number
+  tx_count: number
+  pool_address: string | null
+  pool_balance_g: number | null
+  funded: boolean
+  relay_celo: number | null
+  can_pay: boolean
+}
+
 // Every category the API writes needs a label here, or real money shows up in the
 // activity feed as a raw category string. The five below were invisible until the
 // g_ledger CHECK that rejected them was dropped (fix_ledger_categories.sql).
@@ -181,6 +215,14 @@ export default function AdminPage() {
   const [preview, setPreview] = useState<PayoutPreview | null>(null)
   const [paying, setPaying] = useState(false)
 
+  const [referralCampaigns, setReferralCampaigns] = useState<ReferralCampaign[]>([])
+  const [selectedReferralCampaign, setSelectedReferralCampaign] = useState<string | null>(null)
+  const [referralPreview, setReferralPreview] = useState<ReferralPayoutPreview | null>(null)
+  const [referralFundAmount, setReferralFundAmount] = useState(0)
+  const [referralFunding, setReferralFunding] = useState(false)
+  const [referralPaying, setReferralPaying] = useState(false)
+  const [showReferralCampaigns, setShowReferralCampaigns] = useState(false)
+
   const [showGrants, setShowGrants] = useState(false)
   const [grantWallets, setGrantWallets] = useState('')
   const [grantAmount, setGrantAmount] = useState(10000)
@@ -258,6 +300,23 @@ export default function AdminPage() {
     setPreview(res.ok ? await res.json() : null)
   }, [authedFetch, selectedSeason])
 
+  const refreshReferralCampaigns = useCallback(async () => {
+    const res = await authedFetch('/admin/campaigns/referrals')
+    if (res.ok) {
+      const data: ReferralCampaign[] = await res.json()
+      setReferralCampaigns(data)
+      // Default to whichever campaign is live, so opening the panel already
+      // shows the one someone is most likely here to pay out or fund.
+      setSelectedReferralCampaign((cur) => cur ?? data[0]?.id ?? null)
+    }
+  }, [authedFetch])
+
+  const refreshReferralPreview = useCallback(async () => {
+    if (!selectedReferralCampaign) { setReferralPreview(null); return }
+    const res = await authedFetch(`/admin/campaigns/referrals/${selectedReferralCampaign}/payout-preview`)
+    setReferralPreview(res.ok ? await res.json() : null)
+  }, [authedFetch, selectedReferralCampaign])
+
   useEffect(() => {
     if (!session) return
     refreshSeasons()
@@ -267,6 +326,23 @@ export default function AdminPage() {
     if (!session) return
     refreshPreview()
   }, [session, refreshPreview])
+
+  useEffect(() => {
+    if (!session) return
+    refreshReferralCampaigns()
+  }, [session, refreshReferralCampaigns])
+
+  useEffect(() => {
+    if (!session) return
+    refreshReferralPreview()
+  }, [session, refreshReferralPreview])
+
+  // Keep the fund input in sync with whichever campaign is selected, so switching
+  // campaigns shows what that one is ALREADY funded at, not a stale number.
+  useEffect(() => {
+    const c = referralCampaigns.find((x) => x.id === selectedReferralCampaign)
+    if (c) setReferralFundAmount(c.prize_pool_g)
+  }, [selectedReferralCampaign, referralCampaigns])
 
   useEffect(() => {
     if (!session) return
@@ -400,6 +476,62 @@ export default function AdminPage() {
       await Promise.all([refreshPreview(), refreshSeasons()])
     } finally {
       setPaying(false)
+    }
+  }
+
+  async function handleFundReferralCampaign() {
+    if (!selectedReferralCampaign || referralFundAmount < 0) return
+    setReferralFunding(true)
+    try {
+      const res = await authedFetch(`/admin/campaigns/referrals/${selectedReferralCampaign}/fund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prize_pool_g: referralFundAmount }),
+      })
+      if (res.ok) {
+        await Promise.all([refreshReferralCampaigns(), refreshReferralPreview()])
+      } else {
+        window.alert(`Could not fund the campaign: ${await res.text()}`)
+      }
+    } finally {
+      setReferralFunding(false)
+    }
+  }
+
+  // Pays a campaign's referral leaderboard on-chain. Same shape as handlePayout:
+  // chunked into 10,000 G$ transfers, safe to re-run, and locked until the
+  // campaign has actually closed (winners freeze on the first run).
+  async function handleReferralPayout() {
+    if (!referralPreview) return
+    const { winners, unpaid_g, tx_count, campaign } = referralPreview
+    const lines = winners
+      .filter((w) => w.status !== 'paid')
+      .map((w) => `  ${w.rank}. ${w.username || w.wallet_address.slice(0, 10)} — ${w.amount_g.toLocaleString()} G$`)
+      .join('\n')
+    const ok = window.confirm(
+      `Pay out "${campaign.name}"?\n\n${lines}\n\n` +
+      `Total: ${unpaid_g.toLocaleString()} G$ across ${tx_count} on-chain transactions.\n\n` +
+      `This sends REAL money and cannot be undone. It may take several minutes.`,
+    )
+    if (!ok) return
+
+    setReferralPaying(true)
+    try {
+      const res = await authedFetch(`/admin/campaigns/referrals/${campaign.id}/payout`, { method: 'POST' })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body) {
+        window.alert(
+          body.campaign_paid
+            ? `Campaign paid in full — ${body.paid} of ${body.attempted} winners settled.`
+            : `${body.paid} of ${body.attempted} settled, ${body.still_unpaid} still unpaid.\n\n` +
+              `Press Pay again to resume: anything already sent is skipped.`,
+        )
+      } else {
+        window.alert(`Payout did not run: ${body?.error ?? await res.text()}`)
+      }
+      await Promise.all([refreshReferralPreview(), refreshReferralCampaigns()])
+    } finally {
+      setReferralPaying(false)
     }
   }
 
@@ -772,6 +904,147 @@ export default function AdminPage() {
           </div>
           </>)}
         </div>
+      </div>
+
+      {/* Referral campaigns — fund a prize pool, pay it out to the referral
+          leaderboard once closed. Referrals stopped minting G$ on signup
+          (2026-08-25); this is now the only way a referral ever pays. */}
+      <div className="flex flex-col gap-3 rounded-xl border p-4" style={{ borderColor: 'rgba(42,42,58,0.8)', background: 'rgba(10,10,18,0.4)' }}>
+        <button
+          onClick={() => setShowReferralCampaigns((v) => !v)}
+          className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 hover:text-slate-300 text-left"
+        >
+          {showReferralCampaigns ? '▾ Referral campaigns' : '▸ Referral campaigns'}
+        </button>
+        {showReferralCampaigns && (<>
+          {referralCampaigns.length === 0 ? (
+            <p className="text-slate-600 text-xs">No referral campaigns yet.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {referralCampaigns.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedReferralCampaign(c.id)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                  style={{
+                    background: selectedReferralCampaign === c.id ? '#eab308' : 'rgba(255,255,255,0.05)',
+                    color: selectedReferralCampaign === c.id ? '#000' : '#94a3b8',
+                  }}
+                >
+                  {c.name}{c.payout_status === 'paid' ? ' · paid' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selectedReferralCampaign && (() => {
+            const c = referralCampaigns.find((x) => x.id === selectedReferralCampaign)
+            if (!c) return null
+            const now = Date.now()
+            const closesAt = new Date(c.ends_at).getTime()
+            const live = new Date(c.starts_at).getTime() <= now && closesAt >= now
+            return (
+              <div className="flex flex-col gap-2 p-3 rounded-xl border" style={{ borderColor: 'rgba(42,42,58,0.8)', background: 'rgba(0,0,0,0.25)' }}>
+                <p className="text-xs text-slate-400">
+                  <span className="text-white font-bold">{c.name}</span>
+                  {' · '}
+                  {live ? <span className="text-emerald-400">LIVE now</span> : <span className="text-slate-500">closed</span>}
+                  {' · closes '}{new Date(c.ends_at).toLocaleString()}
+                </p>
+                <div className="flex items-center gap-2">
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">Prize pool (G$)</span>
+                    <input type="number" min={0} step={1000} value={referralFundAmount}
+                      onChange={(e) => setReferralFundAmount(Math.max(0, Number(e.target.value) || 0))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <button
+                    onClick={handleFundReferralCampaign}
+                    disabled={referralFunding || referralFundAmount === c.prize_pool_g}
+                    className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50 self-end"
+                    style={{ background: '#eab308' }}
+                  >
+                    {referralFunding ? 'Setting…' : 'Set pool'}
+                  </button>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Same confirm-before-you-pay shape as the season payout: exact winners,
+              exact amounts, and whether the pool + gas can actually cover it. */}
+          {referralPreview && referralPreview.winner_count > 0 && (
+            <div className="p-3 rounded-xl border" style={{ borderColor: 'rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.04)' }}>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-400">Campaign payout</p>
+                {referralPreview.campaign.payout_status === 'paid' && (
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Paid</span>
+                )}
+              </div>
+
+              <div className="max-h-56 overflow-y-auto rounded-lg mb-2" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                {referralPreview.winners.map((w) => (
+                  <div key={w.wallet_address} className="flex items-center gap-2 px-2.5 py-1.5 text-xs border-b last:border-0" style={{ borderColor: 'rgba(42,42,58,0.5)' }}>
+                    <span className="w-5 text-slate-500 font-bold tabular-nums">{w.rank}</span>
+                    <span className="flex-1 truncate text-slate-200">
+                      {w.username || `${w.wallet_address.slice(0, 6)}…${w.wallet_address.slice(-4)}`}
+                    </span>
+                    <span className="text-slate-500 tabular-nums">{w.referral_count} referred</span>
+                    <span className="text-amber-300 font-bold tabular-nums">{w.amount_g.toLocaleString()} G$</span>
+                    {w.status === 'paid'
+                      ? <span className="text-emerald-400 text-[10px] font-bold w-12 text-right">PAID</span>
+                      : w.status === 'failed'
+                      ? <span className="text-red-400 text-[10px] font-bold w-12 text-right">FAILED</span>
+                      : <span className="text-slate-600 text-[10px] w-12 text-right">—</span>}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 mb-2">
+                <span>{referralPreview.winner_count} winners</span>
+                <span className="text-slate-200 font-bold">{referralPreview.unpaid_g.toLocaleString()} G$ to send</span>
+                <span>{referralPreview.tx_count} transactions</span>
+                {referralPreview.pool_balance_g !== null && (
+                  <span className={referralPreview.funded ? 'text-emerald-400' : 'text-red-400'}>
+                    pool {referralPreview.pool_balance_g.toLocaleString()} G$
+                  </span>
+                )}
+                {referralPreview.relay_celo !== null && (
+                  <span className={referralPreview.relay_celo > 0.1 ? '' : 'text-red-400'}>
+                    gas {referralPreview.relay_celo.toFixed(2)} CELO
+                  </span>
+                )}
+              </div>
+
+              {!referralPreview.campaign.closed && (
+                <p className="text-[11px] text-amber-300/90 mb-2">
+                  Campaign is still running. Payout unlocks when it closes
+                  {referralPreview.campaign.ends_at && ` — ${new Date(referralPreview.campaign.ends_at).toLocaleString()}`}.
+                </p>
+              )}
+              {referralPreview.campaign.closed && !referralPreview.funded && referralPreview.unpaid_g > 0 && (
+                <p className="text-[11px] text-red-400 mb-2">
+                  Reward pool holds less than the prizes. Top it up before paying, or the run stops part-way.
+                </p>
+              )}
+
+              <button
+                onClick={handleReferralPayout}
+                disabled={referralPaying || !referralPreview.can_pay}
+                className="w-full px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background: '#fbbf24' }}
+              >
+                {referralPaying ? 'Paying… this takes a few minutes'
+                  : referralPreview.unpaid_g === 0 ? 'All winners paid'
+                  : !referralPreview.campaign.closed ? 'Locked until the campaign closes'
+                  : `Pay ${referralPreview.winners.filter((w) => w.status !== 'paid').length} winners · ${referralPreview.unpaid_g.toLocaleString()} G$`}
+              </button>
+            </div>
+          )}
+          {referralPreview && referralPreview.winner_count === 0 && (
+            <p className="text-slate-600 text-xs">No referrals recorded in this campaign&apos;s window yet.</p>
+          )}
+        </>)}
       </div>
 
       {/* One-off grants — bounties, external challenge prizes */}
