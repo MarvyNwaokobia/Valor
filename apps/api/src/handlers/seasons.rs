@@ -12,7 +12,7 @@ use crate::handlers::admin::verify_admin_token;
 // Top-heavy long-tail prize split, in basis points of the pool, by 1-based rank.
 // Sums to 10000 (100%) across the top 20. Winners past the table get nothing;
 // unclaimed shares (fewer than 20 winners) simply stay in the pool for next season.
-const PAYOUT_BPS: &[u64] = &[
+pub(crate) const PAYOUT_BPS: &[u64] = &[
     3000, 1800, 1200, 800, 600, // 1-5  → 74%
     300, 300, 300, 300, 300,    // 6-10 → 15%
     110, 110, 110, 110, 110,    // 11-20 → 11%
@@ -22,9 +22,11 @@ const PAYOUT_BPS: &[u64] = &[
 /// Whole-G$ prize for each of `n` winners from a `pool_g` pool. Rank i (0-based)
 /// gets floor(pool * bps[i] / 10000); ranks beyond the table get 0.
 ///
-/// `custom` is the season's own split when it has one (e.g. Season 1's flat top 10,
-/// which the long-tail default can't express); otherwise the default table applies.
-fn payout_split(pool_g: u64, n: usize, custom: Option<&[i32]>) -> Vec<u64> {
+/// `custom` is a campaign/season's own split when it has one (e.g. Season 1's flat
+/// top 10, which the long-tail default can't express); otherwise the default table
+/// applies. Shared by seasons and referral campaigns — both pay a leaderboard the
+/// same top-heavy way, so the split logic lives once.
+pub(crate) fn payout_split(pool_g: u64, n: usize, custom: Option<&[i32]>) -> Vec<u64> {
     let table: Vec<u64> = match custom {
         Some(bps) if !bps.is_empty() => bps.iter().map(|b| (*b).max(0) as u64).collect(),
         _ => PAYOUT_BPS.to_vec(),

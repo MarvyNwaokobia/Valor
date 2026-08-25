@@ -1451,41 +1451,35 @@ async fn run_reconcile_sweep(state: web::Data<AppState>) -> serde_json::Value {
     let (endless_attempted, endless_reconciled) =
         crate::handlers::endless::sweep_endless_rewards(&state.db, &chain).await;
 
-    // And referrals, which had no automatic retry at all until now. Every other payout
-    // was swept here; a failed referral just sat at 'failed' for ever, reachable only
-    // through an admin endpoint that nothing in the UI called. Two were stranded that way
-    // when the main pool ran dry. Same idempotent rail, same pool, same cadence.
-    //
-    // 'pending' rows are swept for the same reason as the others: the row is written
-    // before the spawned settle task runs, so a process that dies mid-flight leaves money
-    // owed with nothing to retry it.
-    let referral_rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT referrer_wallet, referred_wallet, amount
-         FROM referrals
-         WHERE status = 'failed'
-            OR (status = 'pending' AND created_at < now() - interval '5 minutes')
-         ORDER BY created_at ASC
-         LIMIT 25",
+    // Referrals no longer auto-pay (2026-08-25, see credit_referral in players.rs) —
+    // a referral is recorded at `status = 'recorded'` and money only moves through
+    // an admin-run campaign payout (campaigns::payout) or, rarely, the manual
+    // `retry_referrals` exception tool. So this sweep no longer attempts to SETTLE
+    // anything for referrals; its only remaining job is fraud cleanup: a wallet that
+    // lands on the blocklist after its rows were already written (or from the
+    // 2026-08-16 farming-bot backlog, still not fully flipped as of 2026-08-25 —
+    // see security_referral_farming_exploit memory) should not sit mislabeled
+    // 'failed'/'pending' forever. One direct UPDATE, not a per-row settle_referral
+    // loop: no chain call is needed to know a wallet is on a static Rust slice, and
+    // the previous per-row path had gone multiple days without visibly clearing that
+    // backlog despite running every 15 minutes — this is deliberately simpler so
+    // there is one less place for that to go wrong again.
+    let referral_fraud_flipped = sqlx::query(
+        "UPDATE referrals SET status = 'fraud_blocked'
+         WHERE status IN ('failed', 'pending', 'recorded')
+           AND referrer_wallet = ANY($1)",
     )
-    .fetch_all(&state.db)
+    .bind(crate::services::fraud_blocklist::BLOCKED_WALLETS)
+    .execute(&state.db)
     .await
-    .unwrap_or_default();
-
-    let referral_attempted = referral_rows.len();
-    let mut referral_reconciled = 0u32;
-    for (referrer, referred, amount) in referral_rows {
-        if crate::handlers::players::settle_referral(
-            &state.db, &chain, &referrer, &referred, amount.max(0) as u64,
-        ).await == "paid" {
-            referral_reconciled += 1;
-        }
-    }
+    .map(|r| r.rows_affected())
+    .unwrap_or(0);
 
     tracing::info!(
         "reward reconcile: bounties {}/{}, rank-ups {}/{}, op-plays {}/{}, endless {}/{}, \
-         referrals {}/{} settled",
+         referral fraud rows flipped {}",
         reconciled, attempted, rank_reconciled, rank_attempted, play_reconciled, play_attempted,
-        endless_reconciled, endless_attempted, referral_reconciled, referral_attempted
+        endless_reconciled, endless_attempted, referral_fraud_flipped
     );
     json!({
         "attempted":         attempted,
@@ -1498,8 +1492,7 @@ async fn run_reconcile_sweep(state: web::Data<AppState>) -> serde_json::Value {
         "rank_still_failed": rank_attempted as u32 - rank_reconciled,
         "endless_attempted":  endless_attempted,
         "endless_reconciled": endless_reconciled,
-        "referral_attempted":  referral_attempted,
-        "referral_reconciled": referral_reconciled,
+        "referral_fraud_flipped": referral_fraud_flipped,
         "ran_at":            Utc::now().to_rfc3339(),
     })
 }

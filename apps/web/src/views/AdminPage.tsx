@@ -87,6 +87,7 @@ const KIND_LABEL: Record<string, string> = {
   ubi_claim:            'UBI claim',
   season_reward:        'Season prize',
   referral_reward:      'Referral',
+  referral_campaign_reward: 'Referral campaign prize',
   survival_rearm:       'Re-arm',
   duel_stake:           'Duel stake',
   duel_payout:          'Duel payout',

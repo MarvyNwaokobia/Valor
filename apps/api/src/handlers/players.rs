@@ -392,49 +392,41 @@ pub struct CreatePlayerRequest {
 }
 
 /// Whole G$ paid to a player whose referral completes onboarding.
-///
-/// Set against what the pool can actually fund, not what sounds generous: at
-/// 1,000 a head the free balance covered under 200 referrals, because the same
-/// pool also pays campaign wins, rank-ups, endless waves and season prizes — and
-/// every recruited player immediately starts drawing on it too. Cut 500 -> 200
-/// once the pool ran dry: a referral is the cheapest reward to earn (no play
-/// required), so it is the first one that should shrink when outflow is trimmed.
-/// Cut again 200 -> 100 on 2026-07-30, alongside the gameplay earning pause.
-///
-/// Referrals deliberately keep paying through that pause: it is a growth lever
-/// rather than a grind, and the amount already reflects that.
-const REFERRAL_REWARD_G: u64 = 100;
+/// 2026-08-25: referrals stopped paying G$ directly on signup (see credit_referral).
+/// A flat per-signup amount was the whole exploit surface for the 2026-08-16 farming
+/// bot — free money for every fake account a script could mint. Payout is now
+/// campaign-only: an admin funds a `referral_campaigns` prize pool and pays it out
+/// top-heavy across the campaign's leaderboard at close, the same rail seasons use
+/// (`seasons::payout_split`). A referral is still recorded immediately and for free
+/// (no play required, no automatic money), which is what makes it a growth lever —
+/// it just no longer mints G$ on its own.
 
 /// Max referrals one wallet may be credited in a rolling 24h window — see
-/// credit_referral for why this exists alongside the identity gate. 20
-/// comfortably covers an enthusiastic streamer bringing in real fans in a day;
-/// a bot farm does not look like that.
-const REFERRAL_DAILY_CAP: i64 = 20;
+/// credit_referral for why this exists alongside the identity gate. Raised
+/// 20 -> 50 on 2026-08-25 now that a referral no longer pays out on its own: the
+/// cap's job is purely anti-bot volume control (an enthusiastic streamer bringing
+/// in real fans in a day vs. a bot farm), not loss-limiting a per-referral payout
+/// that no longer exists.
+const REFERRAL_DAILY_CAP: i64 = 50;
 
-/// Credit a referrer, once, for bringing in a newly created player.
+/// Record a referral, once, for bringing in a newly created player. Never paused —
+/// see the note above REFERRAL_DAILY_CAP: recording costs the pool nothing, so
+/// there is nothing here an emergency stop needs to gate. What used to be gated
+/// (see git history) was the automatic G$ payout this function no longer performs.
 ///
 /// Called AFTER the player row exists. In the WEB edition that is the point at which
 /// the referred wallet has already passed the GoodDollar whitelist gate in
-/// onboarding, so the payout buys a verified human rather than a signup.
+/// onboarding, so a recorded referral means a verified human, not just a signup.
 ///
 /// That justification is edition-specific, and it is the reason for the first guard
 /// below. The MiniPay edition has no identity gate at all — deliberately, because
 /// nothing there pays out — so a MiniPay signup proves nothing about who is behind
-/// the wallet. Paying 100 G$ for one would make signups the cheapest possible way to
-/// mint real money out of the pool, with no proof-of-unique-human anywhere in the
-/// path. Referrals are already the cheapest reward in the game (no play required),
-/// which makes this the first place an unverified edition would be farmed.
+/// the wallet. A non-earning edition is excluded from ever claiming a referral slot
+/// for the same reason: nothing there should ever be worth farming.
 ///
 /// Every guard is here rather than on the client: the client supplies the
-/// referrer and cannot be trusted with who gets paid.
+/// referrer and cannot be trusted with who gets credited.
 async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
-    // Hard stop, checked before anything else is written. While paused, a referred
-    // signup earns no referral at all — no `referrals` row, nothing queued as
-    // `pending` to settle later. Turning REFERRALS_PAUSED back off does not retroactively
-    // pay referrals from the pause window; whoever wants back-pay is a manual look.
-    if REFERRALS_PAUSED {
-        return;
-    }
     let referrer = normalize_wallet(referrer_raw);
     if !is_valid_wallet(&referrer) || referrer == referred {
         return;
@@ -511,56 +503,36 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
         return;
     }
 
-    // Claim the one-per-referred-wallet slot. If this inserts nothing the
-    // referral was already recorded, so there is nothing to pay — this is what
-    // makes a retried or replayed create_player safe.
-    let claimed = sqlx::query(
-        "INSERT INTO referrals (referred_wallet, referrer_wallet, amount)
-         VALUES ($1, $2, $3) ON CONFLICT (referred_wallet) DO NOTHING",
+    // Claim the one-per-referred-wallet slot. `amount` stays 0 and `status` stays
+    // 'recorded': this row is now just the leaderboard fact "X referred Y, when" —
+    // any campaign live at `created_at` picks it up from here (see campaigns::current
+    // and campaigns::payout), and it never triggers a payout on its own. If this
+    // inserts nothing the referral was already recorded, which is what makes a
+    // retried or replayed create_player safe.
+    let _ = sqlx::query(
+        "INSERT INTO referrals (referred_wallet, referrer_wallet, amount, status)
+         VALUES ($1, $2, 0, 'recorded') ON CONFLICT (referred_wallet) DO NOTHING",
     )
     .bind(referred)
     .bind(&referrer)
-    .bind(REFERRAL_REWARD_G as i64)
     .execute(&state.db)
     .await;
-    if claimed.map(|r| r.rows_affected()).unwrap_or(0) != 1 {
-        return;
-    }
-
-    let Some(chain) = state.chain.as_ref().cloned() else { return };
-    let db = state.db.clone();
-    let referred_owned = referred.to_string();
-    let referrer_owned = referrer.clone();
-
-    // Off the request path: the new player should not wait on a chain write to
-    // finish creating their character.
-    tokio::spawn(async move {
-        settle_referral(&db, &chain, &referrer_owned, &referred_owned, REFERRAL_REWARD_G).await;
-    });
 }
 
 /// Pay ONE referral from the main reward pool and record the outcome. Idempotent.
 ///
-/// Shared by the live path above and the cron reconcile sweep, which is the whole point
-/// of it existing. Referrals were the one payout with no automatic retry: first-clear
-/// bounties and rank-up bonuses are swept every 15 minutes, but a failed referral sat at
-/// `status = 'failed'` for ever, reachable only through an admin endpoint that nothing in
-/// the UI called. Two of them were stranded that way when the main pool ran dry, with no
-/// route to ever being paid.
+/// 2026-08-25: no longer called automatically. Referrals stopped paying G$ on their
+/// own (see credit_referral) — this is now a MANUAL exception tool only, wired to
+/// `POST /admin/referrals/retry` for the rare case an admin decides a specific
+/// referral should be paid outside the normal campaign-payout path
+/// (`campaigns::payout`, which pays a leaderboard, not individual rows). The 15-min
+/// reconcile sweep in battles.rs no longer calls this either — it does its own
+/// fraud-only cleanup directly, see `run_reconcile_sweep`.
 ///
 /// Safe to call repeatedly on the same referral: the on-chain reference is derived from
 /// the referred wallet, so `reward_ref_used` catches a payout that already landed and
 /// marks the row paid rather than sending twice. Returns the status it settled on.
-///
-/// 2026-08-17: the identity-check fix for the referral-farming bot (2026-08-16) only
-/// guarded the CREDIT path (a new referral being recorded). It never touched this
-/// settle path, which both the live credit AND the reconcile cron call — so the
-/// reconcile sweep spent the following 13 hours quietly paying out the 12,663-row
-/// backlog of already-fraudulent rows the bot had left in `pending`/`failed`, 25 at a
-/// time every 15 minutes, with zero fraud check. `REFERRALS_PAUSED` is the emergency
-/// stop for that: flip back to `false` once the backlog is cleared out of the table
-/// and this function (or the reconcile query) has its own fraud check.
-const REFERRALS_PAUSED: bool = true;
+const REFERRAL_PAYOUT_PAUSED: bool = false;
 
 pub async fn settle_referral(
     db: &sqlx::PgPool,
@@ -579,7 +551,7 @@ pub async fn settle_referral(
             .bind(referrer).bind(referred).execute(db).await;
         return "fraud_blocked";
     }
-    if REFERRALS_PAUSED {
+    if REFERRAL_PAYOUT_PAUSED {
         tracing::warn!("referral payout paused: {} owed {} G$ to {}, not paying", referrer, amount_g, referred);
         return "paused";
     }
@@ -1165,18 +1137,20 @@ pub async fn search_players(
 }
 
 // ── POST /admin/referrals/retry ───────────────────────────────────────────────
-// Admin, MONEY-TOUCHING. Re-attempts every referral that never paid.
+// Admin, MONEY-TOUCHING. Manual exception tool — NOT a routine reconcile anymore.
 //
-// WHY THIS EXISTS. `credit_referral` fires exactly once, inside the request that
-// creates the referred player. If the chain call fails there — an empty pool, an
-// RPC blip — the row is marked 'failed' and NOTHING ever looks at it again. That
-// is how 18 referrals worth 9,000 G$ went unpaid for days: the pool was empty
-// when they landed, and there was no second chance. Every other reward rail has
-// a reconcile sweep; this one didn't.
+// 2026-08-25: referrals no longer pay G$ on signup, so there is no longer a normal
+// backlog of "failed" payouts this needs to sweep — `credit_referral` records
+// every referral at `status = 'recorded', amount = 0` and never attempts a
+// payout, so there is nothing here for it to retry. This tool now exists purely
+// for the rare admin judgment call: a specific `failed`/`pending` row from BEFORE
+// this change (the old flat-rate era, or a hand-adjusted amount) that is owed
+// money outside the normal campaign-payout path. Deliberately excludes
+// `recorded` rows — those were never promised anything and this must never start
+// paying them.
 //
-// Pays the amount RECORDED ON THE ROW, not the current constant. The rate has
-// been cut since these were earned (500 -> 200) and a player who was promised
-// 500 is owed 500. The stored amount is the promise.
+// Pays the amount RECORDED ON THE ROW, not any current constant — whatever a
+// player was promised at the time is what they are owed.
 //
 // Idempotent twice over: the on-chain `ref` is checked before spending gas, and
 // the row is only marked 'paid' after a confirmed tx. Safe to re-run.
@@ -1200,7 +1174,7 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
 
     let owed: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT referrer_wallet, referred_wallet, amount FROM referrals
-         WHERE status <> 'paid' ORDER BY created_at ASC",
+         WHERE status IN ('failed', 'pending') ORDER BY created_at ASC",
     )
     .fetch_all(&state.db)
     .await
@@ -1218,64 +1192,11 @@ pub async fn retry_referrals(req: HttpRequest, state: web::Data<AppState>) -> Ht
             tx_hash: None,
             error: None,
         };
-        if crate::services::fraud_blocklist::is_blocked_str(&referrer) {
-            let _ = sqlx::query("UPDATE referrals SET status = 'fraud_blocked' WHERE referrer_wallet = $1 AND referred_wallet = $2")
-                .bind(&referrer).bind(&referred).execute(&state.db).await;
-            row.status = "fraud_blocked".into();
-            results.push(row);
-            continue;
-        }
-        if REFERRALS_PAUSED {
-            row.status = "paused".into();
-            results.push(row);
-            continue;
-        }
-
-        let Ok(addr) = referrer.parse::<Address>() else {
-            row.error = Some("unparseable referrer address".into());
-            results.push(row);
-            continue;
-        };
-
-        // Same ref the original attempt used, so a payout that DID land on-chain
-        // but lost its receipt is reconciled rather than paid twice.
-        let reference = ethers::utils::keccak256(format!("referral:{}", referred).as_bytes());
-        if chain.reward_ref_used(reference).await.unwrap_or(false) {
-            let _ = sqlx::query(
-                "UPDATE referrals SET status = 'paid', paid_at = now() WHERE referred_wallet = $1",
-            )
-            .bind(&referred).execute(&state.db).await;
-            row.status = "already_paid_on_chain".into();
-            results.push(row);
-            continue;
-        }
-
-        match chain.distribute_reward(addr, amount.max(0) as u64, reference).await {
-            Ok(Some(tx)) => {
-                let _ = sqlx::query(
-                    "UPDATE referrals SET status = 'paid', tx_hash = $1, paid_at = now()
-                     WHERE referred_wallet = $2",
-                )
-                .bind(&tx).bind(&referred).execute(&state.db).await;
-                crate::handlers::ledger::insert_ledger_entry(
-                    &state.db, &referrer, "referral_reward",
-                    rust_decimal::Decimal::from(amount), Some(&tx), None,
-                    crate::services::chain_id::ChainId::Celo,
-                ).await;
-                tracing::info!("referral retry PAID: {} recruited {} (+{} G$) tx={}", referrer, referred, amount, tx);
-                paid_count += 1;
-                paid_g += amount;
-                row.status = "paid".into();
-                row.tx_hash = Some(tx);
-            }
-            Ok(None) => {
-                row.error = Some("reward pool not configured".into());
-                tracing::error!("referral retry: pool unconfigured, {} still owed {} G$", referrer, amount);
-            }
-            Err(e) => {
-                tracing::error!("referral retry FAILED for {} ({} G$): {}", referrer, amount, e);
-                row.error = Some(e);
-            }
+        let outcome = settle_referral(&state.db, chain, &referrer, &referred, amount.max(0) as u64).await;
+        row.status = outcome.into();
+        if outcome == "paid" {
+            paid_count += 1;
+            paid_g += amount;
         }
         results.push(row);
     }
@@ -1368,19 +1289,39 @@ pub async fn get_referrals(
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+
+    // "Recruited" is the boast — every real referral, whether or not it has ever
+    // paid a cent. Referrals stopped paying on signup (2026-08-25), so gating this
+    // on `status = 'paid'` would show 0 for every honest recruiter going forward;
+    // fraud_blocked rows are the only ones excluded, since those were never real.
     let row: Option<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT COUNT(*)::bigint, SUM(amount)::bigint FROM referrals
-         WHERE referrer_wallet = $1 AND status = 'paid'",
+        "SELECT COUNT(*) FILTER (WHERE status <> 'fraud_blocked')::bigint,
+                SUM(amount) FILTER (WHERE status = 'paid')::bigint
+         FROM referrals WHERE referrer_wallet = $1",
     )
     .bind(&wallet)
     .fetch_optional(&state.db)
     .await
     .unwrap_or(None);
+    let (count, direct_earned) = row.unwrap_or((0, None));
 
-    let (count, earned) = row.unwrap_or((0, None));
+    // Money earned via a campaign leaderboard payout lives in a separate table
+    // (referral_campaign_payouts), not on the `referrals` rows themselves — a
+    // campaign pays the leaderboard, not any one referral. Folded in here so
+    // "earned_g" stays a true lifetime total across both eras.
+    let campaign_earned: Option<i64> = sqlx::query_scalar(
+        "SELECT SUM(amount_g)::bigint FROM referral_campaign_payouts
+         WHERE wallet_address = $1 AND status = 'paid'",
+    )
+    .bind(&wallet)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None)
+    .flatten();
+
     HttpResponse::Ok().json(json!({
         "recruited": count,
-        "earned_g": earned.unwrap_or(0),
+        "earned_g": direct_earned.unwrap_or(0) + campaign_earned.unwrap_or(0),
     }))
 }
 

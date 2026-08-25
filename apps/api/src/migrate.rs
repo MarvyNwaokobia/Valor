@@ -60,6 +60,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("add_ranked_xp_lifetime.sql", include_str!("../migrations/add_ranked_xp_lifetime.sql")),
     ("add_referral_campaigns.sql", include_str!("../migrations/add_referral_campaigns.sql")),
     ("add_referrals.sql",         include_str!("../migrations/add_referrals.sql")),
+    // OUT OF ALPHABETICAL ORDER ON PURPOSE: this ALTERs `referral_campaigns`, which
+    // "add_referral_campaigns.sql" creates, but "campaign_payouts" sorts before
+    // "campaigns" — alphabetically it would abort a fresh boot with `relation
+    // "referral_campaigns" does not exist`. Same reasoning as add_survival_runs
+    // below.
+    ("add_referral_campaign_payouts.sql", include_str!("../migrations/add_referral_campaign_payouts.sql")),
     ("add_repeating_decay.sql",   include_str!("../migrations/add_repeating_decay.sql")),
     ("add_season_payouts.sql",    include_str!("../migrations/add_season_payouts.sql")),
     // OUT OF ALPHABETICAL ORDER ON PURPOSE: add_seasonal_campaign.sql ALTERs
