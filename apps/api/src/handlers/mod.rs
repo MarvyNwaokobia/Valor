@@ -81,7 +81,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/ws/chat", web::get().to(chat_ws::chat_ws))
         .service(
             web::scope("/identity")
-                .route("/verify/{wallet}", web::get().to(identity::verify_identity)),
+                .route("/verify/{wallet}", web::get().to(identity::verify_identity))
+                .route("/verified", web::post().to(identity::record_verification)),
         )
         .service(
             web::scope("/players")

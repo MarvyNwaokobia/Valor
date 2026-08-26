@@ -141,6 +141,12 @@ pub struct AdminStats {
     pub starts_at: DateTime<Utc>,
     pub ends_at: Option<DateTime<Utc>>,
     pub new_players: i64,
+    /// Distinct wallets that passed GoodDollar verification through Valor within
+    /// the window (identity_verifications.verified_at), whether or not they went
+    /// on to claim a character. Always >= new_players eventually, since
+    /// verification is a precondition of a players row for WEB edition — the gap
+    /// between them is exactly "verified, never finished onboarding."
+    pub verified_players: i64,
     /// Distinct wallets with at least one recorded game — a `battles` row in
     /// ANY mode (campaign/bot/pvp/endless) or a `survival_runs` row (Season/
     /// Gauntlet) — within the window. Unlike `active_players`, this does NOT
@@ -189,6 +195,12 @@ pub async fn get_stats(
 
     let new_players: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM players WHERE created_at >= $1 AND created_at < $2",
+    )
+    .bind(starts_at).bind(window_end)
+    .fetch_one(&state.db).await.unwrap_or((0,));
+
+    let verified_players: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM identity_verifications WHERE verified_at >= $1 AND verified_at < $2",
     )
     .bind(starts_at).bind(window_end)
     .fetch_one(&state.db).await.unwrap_or((0,));
@@ -264,6 +276,7 @@ pub async fn get_stats(
         starts_at,
         ends_at,
         new_players: new_players.0,
+        verified_players: verified_players.0,
         played_players: played_players.0,
         active_players: active_players.0,
         total_battles: total_battles.0,

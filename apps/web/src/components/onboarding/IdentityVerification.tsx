@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSignOut } from '@/hooks/useSignOut'
 import { useGoodDollarIdentity } from '@/hooks/useGoodDollarIdentity'
+import { recordVerificationThroughValor } from '@/lib/gooddollar'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 
 interface Props {
@@ -32,6 +33,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       if (verified) {
         console.log('[IdentityVerification] handleVerify: verified, proceeding')
         setVerified(true)
+        recordVerificationThroughValor(walletAddress)
         setTimeout(onVerified, 900)
       } else {
         console.log('[IdentityVerification] handleVerify: not whitelisted')
@@ -97,6 +99,7 @@ export default function IdentityVerification({ walletAddress, onVerified }: Prop
       if (verified) {
         console.log('[IdentityVerification] handleRecheckAfterFV: verified, proceeding')
         setVerified(true)
+        recordVerificationThroughValor(walletAddress)
         setTimeout(onVerified, 900)
       } else {
         console.log('[IdentityVerification] handleRecheckAfterFV: still not whitelisted')

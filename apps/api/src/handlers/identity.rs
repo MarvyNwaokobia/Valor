@@ -1,12 +1,14 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use ethers::{
     contract::abigen,
     providers::{Http, Middleware, Provider},
     types::Address,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
 
+use crate::utils::normalize_wallet;
 use crate::AppState;
 
 #[derive(Serialize)]
@@ -125,4 +127,81 @@ pub async fn verify_identity(
             })
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct RecordVerificationRequest {
+    pub wallet_address: String,
+}
+
+// ── POST /identity/verified ──────────────────────────────────────────────────
+// Records that a wallet passed GoodDollar verification through Valor's own
+// onboarding, independent of whether it ever goes on to claim a character.
+// Before this, verification left no trace anywhere unless the wallet later
+// created a player row — a real gap for retention/funnel analysis, since
+// "verified but never claimed" is exactly the population that gap hid.
+//
+// The frontend calls this every time IdentityVerification.tsx sees a positive
+// whitelist result — including on repeat visits from an already-verified
+// wallet, since that screen re-checks on every mount. Idempotency lives here,
+// not the client: ON CONFLICT DO NOTHING means only the FIRST call for a
+// wallet, ever, does anything, so repeat visits are a no-op single-row read.
+//
+// Re-verifies server-side rather than trusting the client's claim — same rule
+// as every other identity gate in this codebase (see check_gooddollar_whitelisted
+// callers): the client can assert anything, the whitelist is the only signal.
+pub async fn record_verification(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<RecordVerificationRequest>,
+) -> HttpResponse {
+    let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+    if !state.battle_limiter.check(&format!("record_verification:{}", ip)) {
+        return HttpResponse::TooManyRequests().json(json!({"error": "Too many requests. Slow down."}));
+    }
+
+    let wallet = normalize_wallet(&body.wallet_address);
+    let Ok(account) = wallet.parse::<Address>() else {
+        return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
+    };
+
+    if !check_gooddollar_whitelisted(&wallet).await.unwrap_or(false) {
+        return HttpResponse::Forbidden().json(json!({"error": "Wallet is not GoodDollar-verified"}));
+    }
+
+    let claimed = sqlx::query(
+        "INSERT INTO identity_verifications (wallet_address) VALUES ($1) ON CONFLICT (wallet_address) DO NOTHING",
+    )
+    .bind(&wallet)
+    .execute(&state.db)
+    .await
+    .map(|r| r.rows_affected())
+    .unwrap_or(0);
+
+    // Already recorded on a previous call (or a previous device/session) —
+    // nothing new happened, so nothing new gets written on-chain either.
+    if claimed == 0 {
+        return HttpResponse::Ok().json(json!({"recorded": true, "new": false}));
+    }
+
+    // On-chain write is best-effort and off the request path: the frontend does
+    // not wait on a chain tx to advance past this screen. The DB row (already
+    // committed above) is the source of truth for "did this wallet verify" —
+    // the chain tx is a secondary trace, so a relay/RPC failure here never
+    // costs the wallet its verified-count.
+    if let Some(chain) = state.chain.as_ref().cloned() {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            if let Some(hash) = chain.record_verification(account).await {
+                let tx_hash = format!("{:?}", hash);
+                let _ = sqlx::query("UPDATE identity_verifications SET chain_tx = $1 WHERE wallet_address = $2")
+                    .bind(&tx_hash)
+                    .bind(&wallet)
+                    .execute(&db)
+                    .await;
+            }
+        });
+    }
+
+    HttpResponse::Ok().json(json!({"recorded": true, "new": true}))
 }

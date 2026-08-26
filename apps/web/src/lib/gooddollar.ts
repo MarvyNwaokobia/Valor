@@ -272,6 +272,21 @@ export async function checkWhitelistStatusReadOnly(
   )
 }
 
+// Records that this wallet passed GoodDollar verification through Valor,
+// independent of whether it goes on to claim a character. Fire-and-forget:
+// this is an analytics/on-chain trace, not something the onboarding flow
+// should ever wait on or fail over. Safe to call on every positive whitelist
+// result, including repeat visits from an already-verified wallet — the
+// backend is the one that dedupes (see POST /identity/verified).
+export function recordVerificationThroughValor(address: Address): void {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? ''
+  fetch(`${api}/identity/verified`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ wallet_address: address }),
+  }).catch((err) => console.warn('[GoodDollar] recordVerificationThroughValor failed:', err))
+}
+
 export async function getIdentityExpiryReadOnly(address: Address): Promise<IdentityExpiry> {
   try {
     const sdk = createReadOnlyIdentitySDK(address)

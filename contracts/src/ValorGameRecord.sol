@@ -34,6 +34,14 @@ contract ValorGameRecord is OwnableUpgradeable, UUPSUpgradeable {
         uint256 timestamp
     );
 
+    /// @notice A wallet passed GoodDollar identity verification through Valor's
+    ///         own onboarding flow. Deliberately a distinct event from
+    ///         BattleRecorded/CharacterClaimed: a wallet can verify and never
+    ///         claim a character, and off-chain analytics that already treat
+    ///         BattleRecorded as "played" must not silently start counting
+    ///         verification-only wallets as players.
+    event VerificationRecorded(address indexed wallet, uint256 timestamp);
+
     error OnlyBackend();
     error ZeroAddress();
 
@@ -85,6 +93,14 @@ contract ValorGameRecord is OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Record that a player ranked up
     function recordRankUp(address player, string calldata newRank) external onlyBackend {
         emit RankUp(player, newRank, block.timestamp);
+    }
+
+    /// @notice Record that a wallet passed GoodDollar verification through Valor.
+    ///         Called once per wallet — the backend is responsible for only
+    ///         calling this the first time a wallet is confirmed verified, so
+    ///         a re-check on every app visit does not spam the chain.
+    function recordVerification(address wallet) external onlyBackend {
+        emit VerificationRecorded(wallet, block.timestamp);
     }
 
     function setBackendSigner(address _signer) external onlyOwner {

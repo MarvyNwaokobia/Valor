@@ -13,6 +13,7 @@ abigen!(
         function claimCharacter(address player, string characterClass, string characterName) external
         function recordBattle(bytes32 battleId, address winner, address loser, uint8 xpWinner, uint8 xpLoser, bool isBot) external
         function recordRankUp(address player, string newRank) external
+        function recordVerification(address wallet) external
     ]"#
 );
 
@@ -287,6 +288,24 @@ impl ChainWriter {
             }
             Err(e) => {
                 tracing::warn!("recordRankUp chain write failed: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Record that a wallet passed GoodDollar verification through Valor. Caller
+    /// is responsible for only calling this once per wallet ever — see
+    /// identity::record_verification, which gates it on a first-ever DB insert.
+    pub async fn record_verification(&self, wallet: Address) -> Option<H256> {
+        let _tx = self.tx_lock.lock().await;
+        match self.contract.record_verification(wallet).send().await {
+            Ok(pending) => {
+                let hash = pending.tx_hash();
+                tracing::info!("recordVerification on-chain: {:?}", hash);
+                Some(hash)
+            }
+            Err(e) => {
+                tracing::warn!("recordVerification chain write failed: {}", e);
                 None
             }
         }
