@@ -192,6 +192,25 @@ pub async fn submit_run(state: web::Data<AppState>, req: HttpRequest, body: web:
         return HttpResponse::Conflict().json(json!({"error": "Run already submitted"}));
     }
 
+    // Record the run on-chain, same ValorGameRecord path Endless already uses per
+    // wave. Gauntlet had none of this — a completed run was a pure Postgres write,
+    // invisible to every on-chain activity/retention query. One write per SUBMITTED
+    // run (not per wave, and not for abandoned/void runs): low volume, and it marks
+    // genuine completion rather than an attempt that may never have been played out.
+    crate::handlers::battles::persist_battle(
+        &state,
+        Uuid::new_v4(),
+        &wallet,
+        "bot",
+        Some(&wallet), // survived the run — recorded as a win, matches Endless
+        0, 0,
+        true, // is_bot
+        json!({ "mode": "gauntlet", "waves": body.waves, "kills": body.kills }),
+        true, // record on-chain — this is the fix
+        "gauntlet",
+        false, // does not count toward wins/losses, same as Endless wave-clears
+    ).await;
+
     // Their best this season, for the result screen.
     let best: i32 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(waves), 0) FROM survival_runs WHERE wallet_address = $1 AND status = 'submitted' AND week_key = $2",
