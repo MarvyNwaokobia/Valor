@@ -204,13 +204,20 @@ export default function AdminPage() {
   const [selectedSeason, setSelectedSeason] = useState<string | 'all'>('all')
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [onchain, setOnchain] = useState<OnchainRow[]>([])
-  const [newSeasonName, setNewSeasonName] = useState('The Release')
+  const [newSeasonName, setNewSeasonName] = useState('Break Out')
   // A season is a SCHEDULED window with a prize split, not just a name. These default
-  // to Season 1 as agreed: 27 Jul 2026 in local time, top 10 paid 50,000 G$ each.
-  const [seasonStart, setSeasonStart] = useState('2026-07-27T00:00')
-  const [seasonEnd, setSeasonEnd] = useState('2026-07-27T23:59')
-  const [seasonWinners, setSeasonWinners] = useState(10)
-  const [seasonPerWinner, setSeasonPerWinner] = useState(50000)
+  // to "Break Out": WAT midnight 29 Aug 2026 to WAT 23:59:59 31 Aug 2026, top 5 paid
+  // 70,000 G$ each and the next 5 paid 30,000 G$ each. datetime-local has no timezone
+  // of its own — it's interpreted in the BROWSER's local time on submit (see
+  // handleCreateSeason), so if you're not in WAT (UTC+1) adjust these two fields to
+  // the WAT-equivalent moment in your own timezone before scheduling.
+  const [seasonStart, setSeasonStart] = useState('2026-08-29T00:00')
+  const [seasonEnd, setSeasonEnd] = useState('2026-08-31T23:59')
+  const [seasonWinners, setSeasonWinners] = useState(5)
+  const [seasonPerWinner, setSeasonPerWinner] = useState(70000)
+  // Second tier is optional — 0 winners means "flat payout, no second tier".
+  const [seasonWinners2, setSeasonWinners2] = useState(5)
+  const [seasonPerWinner2, setSeasonPerWinner2] = useState(30000)
   const [busy, setBusy] = useState(false)
   const [showScheduler, setShowScheduler] = useState(false)
   const [preview, setPreview] = useState<PayoutPreview | null>(null)
@@ -351,11 +358,22 @@ export default function AdminPage() {
     refreshOnchain()
   }, [session, refreshStats, refreshOnchain])
 
-  // Every winner is paid the same, so the split is simply 10000 basis points shared
-  // equally. Ties are broken by who reached the wave first, so no two players can end
-  // up sharing a place and the table is always unambiguous.
-  const seasonPool = seasonWinners * seasonPerWinner
-  const seasonBps = Array.from({ length: seasonWinners }, () => Math.floor(10000 / seasonWinners))
+  // Up to two tiers: top `seasonWinners` at `seasonPerWinner` each, then the next
+  // `seasonWinners2` at `seasonPerWinner2` each (0 winners2 = no second tier, flat
+  // payout). Basis points are each winner's cut of the total pool, rounded, with any
+  // rounding drift folded into the last winner so the array always sums to exactly
+  // 10000. Ties are broken by who reached the wave first, so no two players ever
+  // share a place and the table is always unambiguous.
+  const seasonTiers = seasonWinners2 > 0 && seasonPerWinner2 > 0
+    ? [{ count: seasonWinners, each: seasonPerWinner }, { count: seasonWinners2, each: seasonPerWinner2 }]
+    : [{ count: seasonWinners, each: seasonPerWinner }]
+  const seasonPool = seasonTiers.reduce((sum, t) => sum + t.count * t.each, 0)
+  const seasonBps = (() => {
+    if (seasonPool <= 0) return []
+    const bps = seasonTiers.flatMap((t) => Array.from({ length: t.count }, () => Math.round((t.each / seasonPool) * 10000)))
+    if (bps.length > 0) bps[bps.length - 1] += 10000 - bps.reduce((a, b) => a + b, 0)
+    return bps
+  })()
 
   async function handleDeleteSeason(sn: Season) {
     if (!window.confirm(`Delete "${sn.name}" permanently?\n\nThis removes the season and any progress in it. A season that has already paid a winner cannot be deleted.`)) return
@@ -412,11 +430,14 @@ export default function AdminPage() {
       window.alert('The season must end after it starts.')
       return
     }
+    const tierSummary = seasonTiers.length > 1
+      ? `top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each, next ${seasonWinners2} take ${seasonPerWinner2.toLocaleString()} G$ each`
+      : `top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each`
     const summary =
       `Create "${newSeasonName.trim()}"?\n\n` +
       `Opens:  ${startsIso ?? 'now'}\n` +
       `Closes: ${endsIso ?? 'left open'}\n` +
-      `Prize:  ${seasonPool.toLocaleString()} G$ — top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each`
+      `Prize:  ${seasonPool.toLocaleString()} G$ — ${tierSummary}`
     if (!window.confirm(summary)) return
 
     setBusy(true)
@@ -865,7 +886,7 @@ export default function AdminPage() {
                 className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] uppercase tracking-widest text-slate-600">Winners paid</span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Winners paid (tier 1)</span>
               <input type="number" min={1} max={20} value={seasonWinners}
                 onChange={(e) => setSeasonWinners(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
                 className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
@@ -876,12 +897,25 @@ export default function AdminPage() {
                 onChange={(e) => setSeasonPerWinner(Math.max(0, Number(e.target.value) || 0))}
                 className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
             </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Next winners paid (tier 2, optional)</span>
+              <input type="number" min={0} max={20} value={seasonWinners2}
+                onChange={(e) => setSeasonWinners2(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+              <input type="number" min={0} step={1000} value={seasonPerWinner2}
+                onChange={(e) => setSeasonPerWinner2(Math.max(0, Number(e.target.value) || 0))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
           </div>
           <p className="text-xs text-slate-500">
             Prize pool <span className="text-amber-400 font-bold">{seasonPool.toLocaleString()} G$</span>
             {' · '}top {seasonWinners} take {seasonPerWinner.toLocaleString()} G$ each
-            {seasonPerWinner > 10000 && (
-              <span className="text-slate-600"> · paid in {Math.ceil(seasonPerWinner / 10000)} transactions each (10,000 G$ on-chain cap)</span>
+            {seasonTiers.length > 1 && <>{', next '}{seasonWinners2}{' take '}{seasonPerWinner2.toLocaleString()}{' G$ each'}</>}
+            {Math.max(seasonPerWinner, seasonPerWinner2) > 10000 && (
+              <span className="text-slate-600"> · winner prizes over 10,000 G$ are paid in multiple transactions (10,000 G$ on-chain cap per transfer)</span>
             )}
           </p>
           <div className="flex gap-2">
