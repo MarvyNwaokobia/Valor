@@ -39,4 +39,17 @@ contract ValorGameRecordTest is Test {
         vm.prank(backend);
         record.recordBattle(bytes32(uint256(1)), player, address(0), 10, 0, true);
     }
+
+    function test_RecordAttemptEmitsEvent() public {
+        vm.expectEmit(true, true, false, true, address(record));
+        emit ValorGameRecord.AttemptStarted(bytes32(uint256(1)), player, "gauntlet", block.timestamp);
+        vm.prank(backend);
+        record.recordAttempt(bytes32(uint256(1)), player, "gauntlet");
+    }
+
+    function test_OnlyBackendCanRecordAttempt() public {
+        vm.prank(player);
+        vm.expectRevert(ValorGameRecord.OnlyBackend.selector);
+        record.recordAttempt(bytes32(uint256(1)), player, "gauntlet");
+    }
 }

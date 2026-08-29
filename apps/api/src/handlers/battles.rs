@@ -11,7 +11,7 @@ use crate::models::player::Player;
 use crate::services::battle::{BotFightSession, LiveFightSession, RoundData, fight_xp, simulate_async_fight};
 use crate::utils::{is_valid_wallet, normalize_wallet};
 
-fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
+pub(crate) fn uuid_to_bytes32(id: Uuid) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     bytes[..16].copy_from_slice(id.as_bytes());
     bytes

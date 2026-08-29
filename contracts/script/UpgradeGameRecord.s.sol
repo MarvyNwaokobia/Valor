@@ -5,11 +5,13 @@ import "forge-std/Script.sol";
 import "../src/ValorGameRecord.sol";
 
 /// @notice Upgrades the ValorGameRecord UUPS proxy to the latest implementation.
-///         Run after adding recordVerification() (a distinct on-chain event for
-///         GoodDollar verification, separate from BattleRecorded so verifying
-///         does not get miscounted as "played"). Append-only storage + a new
-///         function, so NO reinitializer is needed — upgradeToAndCall with
-///         empty data.
+///         General-purpose: run this after adding any append-only function/event
+///         to ValorGameRecord.sol (no new storage, no reinitializer needed) —
+///         upgradeToAndCall with empty data. Used previously for recordVerification()
+///         (GoodDollar verification, kept distinct from BattleRecorded so verifying
+///         isn't miscounted as "played") and for recordAttempt() (AttemptStarted,
+///         so a started-but-never-submitted run is visible on-chain without faking
+///         a BattleRecorded result for it).
 ///
 /// Required env vars (contracts/.env or shell):
 ///   DEPLOYER_PRIVATE_KEY   — must be the proxy owner

@@ -1,12 +1,28 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Datelike, Utc};
+use ethers::types::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::handlers::battles::uuid_to_bytes32;
 use crate::utils::{is_valid_wallet, normalize_wallet};
+
+/// Records the tx hash of a Gauntlet run's on-chain AttemptStarted write.
+/// Mirrors `battles::record_battle_chain_tx` but keyed by the run's own id
+/// rather than a battle id — a run has no `battles` row until it's submitted.
+async fn record_attempt_chain_tx(db: &sqlx::PgPool, run_id: Uuid, tx_hash: &str) {
+    if let Err(e) = sqlx::query("UPDATE survival_runs SET start_chain_tx = $1 WHERE id = $2")
+        .bind(tx_hash)
+        .bind(run_id)
+        .execute(db)
+        .await
+    {
+        tracing::error!("Failed to record start_chain_tx for run {}: {}", run_id, e);
+    }
+}
 
 // The Gauntlet unlocks once the campaign is complete (cleared op 15 → pve_level 15).
 const GAUNTLET_UNLOCK_LEVEL: i32 = 15;
@@ -110,21 +126,38 @@ pub async fn start_run(state: web::Data<AppState>, req: HttpRequest, body: web::
 
     let token = Uuid::new_v4().to_string();
     let now = Utc::now();
-    let res = sqlx::query(
+    let res: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO survival_runs (wallet_address, run_token, started_at, status, season_id)
-         VALUES ($1, $2, $3, 'open', $4)",
+         VALUES ($1, $2, $3, 'open', $4)
+         RETURNING id",
     )
     .bind(&wallet).bind(&token).bind(now).bind(season_id)
-    .execute(&state.db).await;
+    .fetch_one(&state.db).await;
 
     match res {
-        Ok(_) => HttpResponse::Ok().json(json!({
-            "run_token": token,
-            "started_at": now.to_rfc3339(),
-            // The shared layout seed: everyone in a season walks the same compound.
-            "seed": season_seed,
-            "season_id": season_id,
-        })),
+        Ok(run_id) => {
+            // Record the attempt on-chain — same ValorGameRecord contract as submit,
+            // but a distinct AttemptStarted event (no winner/loser exists yet). Fire
+            // and forget, exactly like persist_battle's chain write: this must not
+            // add relay-round-trip latency to starting a run.
+            if let Some(chain) = state.chain.as_ref().cloned() {
+                if let Ok(addr) = wallet.parse::<Address>() {
+                    let db = state.db.clone();
+                    tokio::spawn(async move {
+                        if let Some(hash) = chain.record_attempt(uuid_to_bytes32(run_id), addr, "gauntlet").await {
+                            record_attempt_chain_tx(&db, run_id, &format!("{:?}", hash)).await;
+                        }
+                    });
+                }
+            }
+            HttpResponse::Ok().json(json!({
+                "run_token": token,
+                "started_at": now.to_rfc3339(),
+                // The shared layout seed: everyone in a season walks the same compound.
+                "seed": season_seed,
+                "season_id": season_id,
+            }))
+        }
         Err(e) => {
             tracing::error!("gauntlet start insert failed for {}: {}", wallet, e);
             HttpResponse::InternalServerError().json(json!({"error": "Could not start run"}))

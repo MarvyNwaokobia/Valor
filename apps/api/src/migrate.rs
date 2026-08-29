@@ -100,6 +100,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // Depends on the `duels` table too — tacked on at the end for the same reason.
     ("add_duel_modes.sql",        include_str!("../migrations/add_duel_modes.sql")),
     ("add_face_off_ratings.sql",  include_str!("../migrations/add_face_off_ratings.sql")),
+    // Depends on the `survival_runs` table from add_survival_runs.sql, already
+    // long applied by the time this runs — tacked on at the end for the same
+    // reason as add_duel_invites.sql above.
+    ("add_survival_run_start_chain.sql", include_str!("../migrations/add_survival_run_start_chain.sql")),
 ];
 
 /// Apply every migration not yet recorded, in order, each in its own transaction. Called

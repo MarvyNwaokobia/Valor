@@ -42,6 +42,20 @@ contract ValorGameRecord is OwnableUpgradeable, UUPSUpgradeable {
     ///         verification-only wallets as players.
     event VerificationRecorded(address indexed wallet, uint256 timestamp);
 
+    /// @notice A player began a scored attempt (e.g. a Gauntlet run) that may
+    ///         never be submitted. Distinct from BattleRecorded, which requires
+    ///         a winner/loser — an attempt has no result yet, so recording it
+    ///         here (rather than faking a BattleRecorded outcome) keeps
+    ///         "started" and "completed" from being conflated on-chain.
+    ///         `mode` is a free-form string so future attempt-shaped flows can
+    ///         reuse this event without another contract change.
+    event AttemptStarted(
+        bytes32 indexed attemptId,
+        address indexed player,
+        string mode,
+        uint256 timestamp
+    );
+
     error OnlyBackend();
     error ZeroAddress();
 
@@ -101,6 +115,14 @@ contract ValorGameRecord is OwnableUpgradeable, UUPSUpgradeable {
     ///         a re-check on every app visit does not spam the chain.
     function recordVerification(address wallet) external onlyBackend {
         emit VerificationRecorded(wallet, block.timestamp);
+    }
+
+    /// @notice Record that a player started a scored attempt (no result yet).
+    /// @param attemptId  Unique id for the attempt (e.g. a run UUID, zero-padded to 32)
+    /// @param player     The wallet that started the attempt
+    /// @param mode       Which flow this is ("gauntlet", etc.)
+    function recordAttempt(bytes32 attemptId, address player, string calldata mode) external onlyBackend {
+        emit AttemptStarted(attemptId, player, mode, block.timestamp);
     }
 
     function setBackendSigner(address _signer) external onlyOwner {
