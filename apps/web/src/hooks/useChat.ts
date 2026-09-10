@@ -2,6 +2,9 @@
 
 import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { WalletClient } from 'viem'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -31,6 +34,26 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return json as T
 }
 
+// Gated variants — the thread (leaks DM content otherwise) and sending a
+// message (otherwise pure impersonation) both require a signed player
+// session matching `wallet` (see verify_player_token in apps/api/src/auth.rs).
+async function authedGet<T>(path: string, wallet: string, walletClient: WalletClient | undefined): Promise<T> {
+  const res = await authedFetch(path, {}, wallet, walletClient)
+  if (!res.ok) throw new Error('Request failed')
+  return res.json()
+}
+
+async function authedPost<T>(path: string, wallet: string, walletClient: WalletClient | undefined, body?: unknown): Promise<T> {
+  const res = await authedFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }, wallet, walletClient)
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((json as { error?: string }).error ?? 'Request failed')
+  return json as T
+}
+
 /**
  * A thread's history is fetched once and kept fresh by the chat socket
  * (see useChatSocket) invalidating this same query key on a `new_message`
@@ -38,12 +61,14 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
  * on an explicit invalidate.
  */
 export function useMessages(walletAddress: string | undefined, otherWallet: string | undefined) {
+  const walletClient = useActiveWalletClient()
   const key = [walletAddress?.toLowerCase() ?? 'anon', otherWallet?.toLowerCase() ?? 'anon']
 
   const messages = useQuery({
     queryKey: ['chat-messages', ...key],
-    queryFn: () => get<{ messages: ChatMessage[] }>(
+    queryFn: () => authedGet<{ messages: ChatMessage[] }>(
       `/players/${walletAddress}/friends/${otherWallet}/messages`,
+      walletAddress!, walletClient,
     ),
     enabled: !!walletAddress && !!otherWallet,
     staleTime: Infinity,
@@ -59,17 +84,19 @@ export function useMessages(walletAddress: string | undefined, otherWallet: stri
 
 export function useSendMessage(walletAddress: string | undefined) {
   const queryClient = useQueryClient()
+  const walletClient = useActiveWalletClient()
   const key = walletAddress?.toLowerCase() ?? 'anon'
 
   return useCallback(async (otherWallet: string, body: string) => {
     if (!walletAddress) throw new Error('Not signed in')
-    const message = await post<ChatMessage>(
+    const message = await authedPost<ChatMessage>(
       `/players/${walletAddress}/friends/${otherWallet}/messages`,
+      walletAddress, walletClient,
       { body },
     )
     void queryClient.invalidateQueries({ queryKey: ['chat-messages', key, otherWallet.toLowerCase()] })
     return message
-  }, [walletAddress, key, queryClient])
+  }, [walletAddress, walletClient, key, queryClient])
 }
 
 export function useMarkRead(walletAddress: string | undefined) {

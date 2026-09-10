@@ -5,6 +5,9 @@
 // Chrome/Edge/Brave/Firefox support this without installing the PWA first —
 // only iOS Safari requires "Add to Home Screen" before push works at all.
 
+import type { WalletClient } from 'viem'
+import { authedFetch } from '@/lib/playerAuth'
+
 function apiBase(): string | undefined {
   return process.env.NEXT_PUBLIC_API_URL
 }
@@ -31,7 +34,7 @@ export function isPushSupported(): boolean {
 
 /** Registers with the API's VAPID key and starts the browser subscription. Call
  * only after the user has opted in — this triggers the native permission prompt. */
-export async function subscribeToPush(wallet: string): Promise<boolean> {
+export async function subscribeToPush(wallet: string, walletClient: WalletClient | undefined): Promise<boolean> {
   if (!isPushSupported()) return false
 
   const permission = await Notification.requestPermission()
@@ -55,14 +58,14 @@ export async function subscribeToPush(wallet: string): Promise<boolean> {
   const json = subscription.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
   if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false
 
-  const saved = await fetch(`${api}/players/${wallet}/push-subscription`, {
+  const saved = await authedFetch(`/players/${wallet}/push-subscription`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       endpoint: json.endpoint,
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
     }),
-  }).catch(() => null)
+  }, wallet, walletClient).catch(() => null)
 
   return !!saved?.ok
 }
@@ -77,7 +80,7 @@ export async function getPushSubscriptionState(): Promise<'unsupported' | 'denie
   return subscription ? 'subscribed' : 'unsubscribed'
 }
 
-export async function unsubscribeFromPush(wallet: string): Promise<void> {
+export async function unsubscribeFromPush(wallet: string, walletClient: WalletClient | undefined): Promise<void> {
   const registration = await navigator.serviceWorker.getRegistration()
   const subscription = await registration?.pushManager.getSubscription()
   if (!subscription) return
@@ -85,11 +88,9 @@ export async function unsubscribeFromPush(wallet: string): Promise<void> {
   const endpoint = subscription.endpoint
   await subscription.unsubscribe().catch(() => {})
 
-  const api = apiBase()
-  if (!api) return
-  await fetch(`${api}/players/${wallet}/push-subscription`, {
+  await authedFetch(`/players/${wallet}/push-subscription`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint }),
-  }).catch(() => {})
+  }, wallet, walletClient).catch(() => {})
 }

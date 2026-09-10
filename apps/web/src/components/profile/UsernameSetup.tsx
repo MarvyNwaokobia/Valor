@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 interface Props {
   walletAddress: string
@@ -15,6 +17,7 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/
 
 export default function UsernameSetup({ walletAddress, onClose }: Props) {
   const updatePlayer = usePlayerStore(s => s.updatePlayer)
+  const walletClient = useActiveWalletClient()
   const [value,    setValue]    = useState('')
   const [check,    setCheck]    = useState<CheckState>('idle')
   const [pending,  setPending]  = useState(false)
@@ -47,13 +50,14 @@ export default function UsernameSetup({ walletAddress, onClose }: Props) {
     if (check !== 'available' || pending) return
     setPending(true)
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/players/${walletAddress}`,
+      const res = await authedFetch(
+        `/players/${walletAddress}`,
         {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ username: value }),
         },
+        walletAddress, walletClient,
       )
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({}))

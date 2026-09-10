@@ -36,13 +36,19 @@ pub struct SubscribeRequest {
 // ── POST /players/{wallet}/push-subscription ────────────────────────────────
 // Idempotent by design (ON CONFLICT on the unique endpoint) — the frontend calls
 // this on every app open to keep last_notified_at fresh-adjacent metadata correct,
-// not just on the first opt-in.
+// not just on the first opt-in. The ON CONFLICT UPDATE only fires when the
+// endpoint's existing row already belongs to this wallet (or there's no row
+// yet) — a bare auth check on `wallet` alone doesn't stop a caller who somehow
+// knows another player's endpoint value from stealing that endpoint's push
+// channel, so the DB predicate is the actual guard, not just the handler check.
 pub async fn subscribe(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<SubscribeRequest>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let result = sqlx::query(
         "INSERT INTO push_subscriptions (wallet_address, endpoint, p256dh, auth)
@@ -50,7 +56,8 @@ pub async fn subscribe(
          ON CONFLICT (endpoint) DO UPDATE
            SET wallet_address = EXCLUDED.wallet_address,
                p256dh         = EXCLUDED.p256dh,
-               auth           = EXCLUDED.auth",
+               auth           = EXCLUDED.auth
+         WHERE push_subscriptions.wallet_address = EXCLUDED.wallet_address",
     )
     .bind(&wallet)
     .bind(&body.endpoint)
@@ -60,7 +67,9 @@ pub async fn subscribe(
     .await;
 
     match result {
-        Ok(_) => HttpResponse::Ok().json(json!({"ok": true})),
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(json!({"ok": true})),
+        Ok(_) => HttpResponse::Conflict()
+            .json(json!({"error": "This device is already subscribed under a different wallet"})),
         Err(e) => {
             tracing::warn!("push subscribe failed for {}: {}", wallet, e);
             HttpResponse::InternalServerError().json(json!({"error": "subscribe failed"}))
@@ -75,11 +84,13 @@ pub struct UnsubscribeRequest {
 
 // ── DELETE /players/{wallet}/push-subscription ──────────────────────────────
 pub async fn unsubscribe(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<UnsubscribeRequest>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let _ = sqlx::query("DELETE FROM push_subscriptions WHERE wallet_address = $1 AND endpoint = $2")
         .bind(&wallet)
         .bind(&body.endpoint)
@@ -113,8 +124,15 @@ pub async fn run_daily_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
         return HttpResponse::Unauthorized().finish();
     }
 
+    HttpResponse::Ok().json(run_daily_sweep_inner(&state).await)
+}
+
+/// The actual sweep, HTTP-free so it can also run off the in-process scheduler
+/// (see services::scheduler) — GitHub Actions' free-tier cron is not a reliable
+/// enough trigger on its own, see main.rs's scheduler spawn comment.
+pub async fn run_daily_sweep_inner(state: &AppState) -> serde_json::Value {
     let Some(push) = &state.push else {
-        return HttpResponse::Ok().json(json!({"sent": 0, "note": "push not configured"}));
+        return json!({"sent": 0, "note": "push not configured"});
     };
 
     let now = chrono::Utc::now();
@@ -136,7 +154,7 @@ pub async fn run_daily_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("daily notify sweep: query failed: {}", e);
-            return HttpResponse::InternalServerError().json(json!({"error": "query failed"}));
+            return json!({"error": "query failed"});
         }
     };
 
@@ -182,9 +200,9 @@ pub async fn run_daily_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
         failed
     );
 
-    HttpResponse::Ok().json(json!({
+    json!({
         "sent": sent,
         "expired": expired,
         "failed": failed,
-    }))
+    })
 }

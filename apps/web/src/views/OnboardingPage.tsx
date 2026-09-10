@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { edition } from '@/editions'
 import type { IdentityMode } from '@/editions/types'
@@ -31,6 +33,7 @@ function deterministicName(wallet: string) {
 
 export default function OnboardingPage() {
   const { status, address, magicEmail, magicIssuer } = useResolvedAuth()
+  const walletClient    = useActiveWalletClient()
   const router          = useRouter()
   const setPlayer    = usePlayerStore(s => s.setPlayer)
   const player       = usePlayerStore(s => s.player)
@@ -191,7 +194,7 @@ export default function OnboardingPage() {
 
       // ── Reconstructed player confirming: PATCH class/name/username + mark done ──
       if (confirming) {
-        const res = await fetch(`${API}/players/${address.toLowerCase()}`, {
+        const res = await authedFetch(`/players/${address.toLowerCase()}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -200,7 +203,7 @@ export default function OnboardingPage() {
             username:            uname,
             character_confirmed: true,
           }),
-        })
+        }, address, walletClient)
         if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
         if (!res.ok) { setError('Could not save. Please try again.'); setPending(false); return }
         setPlayer(await res.json())

@@ -1,5 +1,7 @@
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 interface NewAchievement {
   achievement_id: string
@@ -15,13 +17,16 @@ interface NewAchievement {
  */
 export function useAchievements() {
   const queryClient = useQueryClient()
+  const walletClient = useActiveWalletClient()
 
   const checkAchievements = useCallback(
     async (walletAddress: string): Promise<NewAchievement[]> => {
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/players/${walletAddress}/achievements/check`,
+        const res = await authedFetch(
+          `/players/${walletAddress}/achievements/check`,
           { method: 'POST' },
+          walletAddress,
+          walletClient,
         )
         if (!res.ok) return []
         const newUnlocks = (await res.json()) as NewAchievement[]
@@ -33,7 +38,7 @@ export function useAchievements() {
         return []
       }
     },
-    [queryClient],
+    [queryClient, walletClient],
   )
 
   // Kept for API compat — achievement check now handles all conditions server-side

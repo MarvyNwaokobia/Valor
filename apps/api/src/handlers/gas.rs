@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use ethers::types::{Address, U256};
 use serde_json::json;
 
@@ -18,8 +18,9 @@ const DRIP_WEI: u128 = 20_000_000_000_000_000; // 0.02 CELO
 // they can pay their own gas. Guards against farming: the wallet must be a known
 // player, must actually be under the claim threshold, and is rate-limited to one
 // drip per 20h. The relay pays the (tiny) CELO.
-pub async fn gas_topup(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
+pub async fn gas_topup(req: HttpRequest, state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let addr: Address = match wallet.parse() {
         Ok(a) => a,
         Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"})),

@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod battle;
 pub mod earn_cap;
 pub mod edition;
@@ -12,3 +13,4 @@ pub mod arena_server;
 pub mod coop_server;
 pub mod push;
 pub mod chat_hub;
+pub mod scheduler;

@@ -4,8 +4,9 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Mail, Check, Loader2 } from 'lucide-react'
 import { getMagic } from '@/lib/magic'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 interface Props {
@@ -29,10 +30,11 @@ interface Props {
  */
 export default function ContactEmailCard({ walletAddress }: Props) {
   const queryClient = useQueryClient()
+  const walletClient = useActiveWalletClient()
   const { data, isLoading } = useQuery({
     queryKey: ['contact-email', walletAddress],
     queryFn: async () => {
-      const res = await fetch(`${API}/players/${walletAddress}/contact-email`)
+      const res = await authedFetch(`/players/${walletAddress}/contact-email`, {}, walletAddress, walletClient)
       if (!res.ok) throw new Error('failed')
       return res.json() as Promise<{ has_contact_email: boolean }>
     },
@@ -58,11 +60,11 @@ export default function ContactEmailCard({ walletAddress }: Props) {
       await magic.user.logout()
       if (!info.email) throw new Error('Could not confirm that email — try again.')
 
-      const res = await fetch(`${API}/players/${walletAddress}/contact-email`, {
+      const res = await authedFetch(`/players/${walletAddress}/contact-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: info.email }),
-      })
+      }, walletAddress, walletClient)
       if (!res.ok) throw new Error('Could not save that email — try again.')
 
       setExpanded(false)

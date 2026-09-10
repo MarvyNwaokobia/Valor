@@ -57,6 +57,13 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
         return HttpResponse::Unauthorized().finish();
     }
 
+    HttpResponse::Ok().json(run_consistency_check_inner(&state).await)
+}
+
+/// The actual audit, HTTP-free so it can also run off the in-process scheduler
+/// (see services::scheduler) — GitHub Actions' free-tier cron is not a reliable
+/// enough trigger on its own, see main.rs's scheduler spawn comment.
+pub async fn run_consistency_check_inner(state: &AppState) -> serde_json::Value {
     // 1. FROZEN PLAYER ROWS. Battles are recorded by a different statement than the one
     //    that persists xp/wins/rank, so when that save fails the two drift apart. Both
     //    sides of every battle are counted, since PvP awards the opponent too.
@@ -173,7 +180,7 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
         && relay_can_pay;
 
     if !healthy {
-        tracing::error!(
+        let summary = format!(
             "CONSISTENCY CHECK FAILED: {} frozen player row(s), {} stuck payout(s){}{}{}",
             frozen.len(),
             stuck.len(),
@@ -184,9 +191,11 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
                         relay_gas_celo.unwrap_or(0.0))
             },
         );
+        tracing::error!("{}", summary);
+        crate::services::alerts::slack_alert(&summary).await;
     }
 
-    HttpResponse::Ok().json(json!({
+    json!({
         "healthy": healthy,
         "checked_at": chrono::Utc::now(),
         "frozen_players": frozen,
@@ -196,5 +205,5 @@ pub async fn run_consistency_check(state: web::Data<AppState>, req: HttpRequest)
         "stuck_after_minutes": STUCK_PAYOUT_MINUTES,
         "relay_gas_celo": relay_gas_celo,
         "relay_can_pay": relay_can_pay,
-    }))
+    })
 }

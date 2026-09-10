@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const TIMEOUT_MS = 10_000
@@ -10,6 +12,7 @@ function fetchWithTimeout(url: string, signal: AbortSignal) {
 
 export function usePlayerSync(address: string | undefined) {
   const { setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setSyncFailed } = usePlayerStore()
+  const walletClient = useActiveWalletClient()
 
   useEffect(() => {
     if (!address) {
@@ -40,7 +43,7 @@ export function usePlayerSync(address: string | undefined) {
       try {
         const [playerRes, inventoryRes] = await Promise.all([
           fetchWithTimeout(`${API}/players/${wallet}`, controller.signal),
-          fetchWithTimeout(`${API}/players/${wallet}/inventory`, controller.signal),
+          authedFetch(`/players/${wallet}/inventory`, { signal: controller.signal }, wallet, walletClient),
         ])
 
         if (playerRes.ok) {
@@ -80,5 +83,5 @@ export function usePlayerSync(address: string | undefined) {
       controller.abort()
       clearTimeout(timeoutId)
     }
-  }, [address, setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setSyncFailed])
+  }, [address, walletClient, setPlayer, setInventory, clearPlayer, setPlayerSynced, setVerified, setSyncFailed])
 }

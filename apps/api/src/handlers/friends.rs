@@ -11,7 +11,7 @@
 //! already friends" checks below exist to turn that constraint into a clear error
 //! (or, for the mutual-request case, an auto-accept) instead of a raw DB failure.
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -117,6 +117,7 @@ pub struct RequestBody {
 }
 
 pub async fn send_request(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<String>,
     body:  web::Json<RequestBody>,
@@ -126,6 +127,7 @@ pub async fn send_request(
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
     }
     let wallet = normalize_wallet(&raw_wallet);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let target = match resolve_person(&state, body.identifier.trim()).await {
         Some(Resolved::Found(p)) => p,
@@ -195,6 +197,7 @@ pub async fn send_request(
 
 // ── POST /players/:wallet/friends/:other/accept ───────────────────────────────
 pub async fn accept_request(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<(String, String)>,
 ) -> HttpResponse {
@@ -204,6 +207,7 @@ pub async fn accept_request(
     }
     let wallet = normalize_wallet(&raw_wallet);
     let other  = normalize_wallet(&raw_other);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     // Direction matters here (unlike remove_friend below): only the RECIPIENT of
     // a pending request can accept it — the sender accepting their own request
@@ -237,6 +241,7 @@ pub async fn accept_request(
 // an accepted one. All three are "this relationship should no longer exist" —
 // there is no state a delete here can leave stranded, so one handler is enough.
 pub async fn remove_friend(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<(String, String)>,
 ) -> HttpResponse {
@@ -246,6 +251,7 @@ pub async fn remove_friend(
     }
     let wallet = normalize_wallet(&raw_wallet);
     let other  = normalize_wallet(&raw_other);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let deleted = sqlx::query(
         "DELETE FROM friendships

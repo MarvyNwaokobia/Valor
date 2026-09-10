@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? ''
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 export interface LedgerSummary {
   ubi_earned: number
@@ -12,10 +12,11 @@ export interface LedgerSummary {
 }
 
 export function useLedgerSummary(walletAddress: string | undefined) {
+  const walletClient = useActiveWalletClient()
   return useQuery({
     queryKey: ['ledger-summary', walletAddress],
     queryFn: async (): Promise<LedgerSummary> => {
-      const res = await fetch(`${API}/players/${walletAddress}/ledger-summary`)
+      const res = await authedFetch(`/players/${walletAddress}/ledger-summary`, {}, walletAddress!, walletClient)
       if (!res.ok) throw new Error('Failed to fetch ledger summary')
       return res.json()
     },

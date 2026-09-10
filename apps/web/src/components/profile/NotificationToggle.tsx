@@ -17,6 +17,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from '@/lib/push'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 
 interface Props {
   walletAddress: string
@@ -41,6 +42,7 @@ const boxStyle: React.CSSProperties = {
  * the landing page's InstallPrompt via lib/pwaInstall + stores/usePwaStore. */
 export default function NotificationToggle({ walletAddress }: Props) {
   const deferred = usePwaStore((s) => s.deferred)
+  const walletClient = useActiveWalletClient()
   const [installed, setInstalled] = useState<boolean | null>(null)
   const [ctx, setCtx] = useState<BrowserCtx | null>(null)
   const [pushState, setPushState] = useState<PushState>('loading')
@@ -126,10 +128,10 @@ export default function NotificationToggle({ walletAddress }: Props) {
   async function handleToggle() {
     setBusy(true)
     if (pushState === 'subscribed') {
-      await unsubscribeFromPush(walletAddress)
+      await unsubscribeFromPush(walletAddress, walletClient)
       setPushState('unsubscribed')
     } else {
-      const ok = await subscribeToPush(walletAddress)
+      const ok = await subscribeToPush(walletAddress, walletClient)
       setPushState(ok ? 'subscribed' : Notification.permission === 'denied' ? 'denied' : 'unsubscribed')
     }
     setBusy(false)

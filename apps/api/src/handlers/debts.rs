@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use ethers::types::{Address, U256};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,9 @@ pub struct DebtResponse {
 
 // ── GET /players/{wallet}/debt ────────────────────────────────────────────────
 // The player's outstanding marketplace balance (sum of 'owed' rows). 0 = nothing due.
-pub async fn get_debt(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
+pub async fn get_debt(req: HttpRequest, state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let owed: Decimal = sqlx::query_scalar(
         "SELECT COALESCE(SUM(amount), 0)::numeric FROM marketplace_debts

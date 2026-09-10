@@ -2,6 +2,9 @@
 
 import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { WalletClient } from 'viem'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
@@ -22,19 +25,21 @@ async function get<T>(path: string): Promise<T> {
   return res.json()
 }
 
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+// Gated player-mutation routes — signed player session required (see
+// verify_player_token in apps/api/src/auth.rs).
+async function post<T>(path: string, wallet: string, walletClient: WalletClient | undefined, body?: unknown): Promise<T> {
+  const res = await authedFetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
-  })
+  }, wallet, walletClient)
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((json as { error?: string }).error ?? 'Request failed')
   return json as T
 }
 
-async function del(path: string): Promise<void> {
-  const res = await fetch(`${API}${path}`, { method: 'DELETE' })
+async function del(path: string, wallet: string, walletClient: WalletClient | undefined): Promise<void> {
+  const res = await authedFetch(path, { method: 'DELETE' }, wallet, walletClient)
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
     throw new Error((json as { error?: string }).error ?? 'Request failed')
@@ -48,6 +53,7 @@ async function del(path: string): Promise<void> {
  */
 export function useFriends(walletAddress: string | undefined) {
   const queryClient = useQueryClient()
+  const walletClient = useActiveWalletClient()
   const key = walletAddress?.toLowerCase() ?? 'anon'
 
   const friends = useQuery({
@@ -79,25 +85,26 @@ export function useFriends(walletAddress: string | undefined) {
     if (!walletAddress) throw new Error('Not signed in')
     const result = await post<{ status: string; auto_accepted?: boolean }>(
       `/players/${walletAddress}/friends/request`,
+      walletAddress, walletClient,
       { identifier },
     )
     refresh()
     return result
-  }, [walletAddress, refresh])
+  }, [walletAddress, walletClient, refresh])
 
   const acceptRequest = useCallback(async (fromWallet: string) => {
     if (!walletAddress) throw new Error('Not signed in')
-    await post(`/players/${walletAddress}/friends/${fromWallet}/accept`)
+    await post(`/players/${walletAddress}/friends/${fromWallet}/accept`, walletAddress, walletClient)
     refresh()
-  }, [walletAddress, refresh])
+  }, [walletAddress, walletClient, refresh])
 
   /** Declining an incoming request, cancelling an outgoing one, and unfriending
    *  an accepted one are all the same call — see remove_friend on the API. */
   const removeFriend = useCallback(async (otherWallet: string) => {
     if (!walletAddress) throw new Error('Not signed in')
-    await del(`/players/${walletAddress}/friends/${otherWallet}`)
+    await del(`/players/${walletAddress}/friends/${otherWallet}`, walletAddress, walletClient)
     refresh()
-  }, [walletAddress, refresh])
+  }, [walletAddress, walletClient, refresh])
 
   return {
     friends: friends.data?.friends ?? [],

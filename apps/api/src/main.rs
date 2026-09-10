@@ -6,6 +6,7 @@ use std::str::FromStr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+mod auth;
 mod handlers;
 mod migrate;
 mod models;
@@ -34,12 +35,33 @@ pub struct AppState {
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    // Sentry — optional, same "absent = disabled" convention as the rest of this
+    // codebase's integrations (ChainWriter, PushService, ...). The guard must be
+    // held for the whole process lifetime (dropping it flushes + disables the
+    // client), so it's bound here and never touched again. sentry_tracing::layer()
+    // below is added to the registry unconditionally — it's inert with no active
+    // client, so ordering relative to this doesn't matter.
+    let _sentry_guard = std::env::var("SENTRY_DSN").ok().map(|dsn| {
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                ..Default::default()
+            },
+        ))
+    });
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
+        .with(sentry_tracing::layer())
         .init();
+
+    if _sentry_guard.is_none() {
+        tracing::info!("Sentry disabled (SENTRY_DSN not set)");
+    }
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let connect_opts = PgConnectOptions::from_str(&database_url)
@@ -161,6 +183,11 @@ async fn main() -> anyhow::Result<()> {
     };
     let _ = arena_state_cell.set(app_state.clone());
 
+    // Runs decay/reconcile/consistency/daily-notify on in-process timers so they
+    // no longer depend on GitHub Actions' scheduler firing at all — see
+    // services::scheduler's module doc for why.
+    services::scheduler::spawn(app_state.clone());
+
     HttpServer::new(move || {
         let origins = allowed_origins.clone();
         let cors = Cors::default()
@@ -178,6 +205,7 @@ async fn main() -> anyhow::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             .wrap(Logger::default())
             .wrap(cors)
+            .wrap(sentry_actix::Sentry::new())
             .configure(handlers::configure_routes)
     })
     .bind(&bind_addr)?

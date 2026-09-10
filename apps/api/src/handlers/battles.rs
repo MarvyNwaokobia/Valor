@@ -1342,13 +1342,22 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
         return HttpResponse::Unauthorized().finish();
     }
 
+    HttpResponse::Ok().json(run_reconcile_inner(&state).await)
+}
+
+/// The guard + timeout + sweep, HTTP-free so it can also run off the in-process
+/// scheduler (see services::scheduler) — GitHub Actions' free-tier cron is not a
+/// reliable enough trigger on its own, see main.rs's scheduler spawn comment.
+/// `reconcile_running` lives on `AppState` itself, so this guard applies no
+/// matter which caller (HTTP or scheduler) reaches it first.
+pub async fn run_reconcile_inner(state: &AppState) -> serde_json::Value {
     if state
         .reconcile_running
         .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
         .is_err()
     {
         tracing::warn!("reconcile sweep skipped: a previous run is still in flight");
-        return HttpResponse::Ok().json(json!({"skipped": "previous reconcile still running"}));
+        return json!({"skipped": "previous reconcile still running"});
     }
     struct ClearOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
     impl Drop for ClearOnDrop {
@@ -1360,15 +1369,15 @@ pub async fn reconcile_first_clear_bounties(state: web::Data<AppState>, req: Htt
 
     const SWEEP_BUDGET_SECS: u64 = 75;
     match tokio::time::timeout(std::time::Duration::from_secs(SWEEP_BUDGET_SECS), run_reconcile_sweep(state)).await {
-        Ok(body) => HttpResponse::Ok().json(body),
+        Ok(body) => body,
         Err(_) => {
             tracing::error!("reconcile sweep exceeded {}s — aborted, will retry next tick", SWEEP_BUDGET_SECS);
-            HttpResponse::Ok().json(json!({"error": format!("reconcile exceeded {}s budget, aborted", SWEEP_BUDGET_SECS)}))
+            json!({"error": format!("reconcile exceeded {}s budget, aborted", SWEEP_BUDGET_SECS)})
         }
     }
 }
 
-async fn run_reconcile_sweep(state: web::Data<AppState>) -> serde_json::Value {
+async fn run_reconcile_sweep(state: &AppState) -> serde_json::Value {
     let Some(chain) = state.chain.as_ref().cloned() else {
         return json!({
             "reconciled": 0, "still_failed": 0, "skipped": "chain not configured",

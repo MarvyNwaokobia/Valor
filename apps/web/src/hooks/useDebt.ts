@@ -7,6 +7,7 @@ import { G_TOKEN_ADDRESS } from '@/lib/constants'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useRelayAddress } from '@/hooks/useTransferOut'
 import { requirePermitDomain } from '@/editions/chain'
+import { authedFetch } from '@/lib/playerAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 const G_DECIMALS = 18
@@ -26,11 +27,12 @@ export interface Debt {
 
 /** The player's outstanding marketplace balance (0 = nothing due). */
 export function useDebt(walletAddress: string | undefined) {
+  const walletClient = useActiveWalletClient()
   return useQuery({
     queryKey: ['debt', walletAddress],
     enabled: !!walletAddress,
     queryFn: async (): Promise<Debt> => {
-      const res = await fetch(`${API}/players/${walletAddress}/debt`)
+      const res = await authedFetch(`/players/${walletAddress}/debt`, {}, walletAddress!, walletClient)
       if (!res.ok) return { owed: 0, reason: null }
       return res.json()
     },

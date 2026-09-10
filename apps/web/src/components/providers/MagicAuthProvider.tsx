@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { EIP1193Provider } from 'viem'
 import { getMagic, AUTH_CALLBACK_PATH } from '@/lib/magic'
 import { setBridgedProvider, clearBridgedProvider } from '@/lib/walletBridge'
+import { getPlayerSession } from '@/lib/playerAuth'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? ''
 
@@ -139,10 +140,16 @@ export function MagicAuthProvider({ children }: { children: ReactNode }) {
       setState({ status: address ? 'ready' : 'unauthenticated', address, email, issuer })
       // Best-effort backfill so returning users' login identity is captured too. The
       // endpoint only UPDATEs an existing row, so it's a no-op until onboarding creates one.
-      if (address && (email || issuer)) {
+      // Requires a player session now the route is gated — opportunistic only (uses
+      // one if it's already there from an earlier sign-in in this browser session)
+      // rather than forcing a signature prompt from inside the auth provider itself;
+      // AppInit's ensurePlayerSession establishes one shortly after this resolves,
+      // and this call runs again next refresh.
+      const session = address ? getPlayerSession() : null
+      if (address && (email || issuer) && session && session.wallet === address.toLowerCase()) {
         void fetch(`${API}/players/${address.toLowerCase()}/identity`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
           body: JSON.stringify({ email, issuer }),
         }).catch(() => {})
       }

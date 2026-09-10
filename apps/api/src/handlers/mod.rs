@@ -88,6 +88,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::scope("/players")
                 .route("", web::get().to(players::list_players))
                 .route("", web::post().to(players::create_player))
+                .route("/login", web::post().to(crate::auth::login))
                 .route("/search", web::get().to(players::search_players))
                 .route("/by-username/{username}", web::get().to(players::get_player_by_username))
                 .route("/by-username/{username}/login-email", web::get().to(players::resolve_login_email))

@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use ethers::types::{Address, U256};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -158,10 +158,12 @@ pub struct LedgerSummary {
 }
 
 pub async fn get_ledger_summary(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let row: Option<(Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(
         "SELECT

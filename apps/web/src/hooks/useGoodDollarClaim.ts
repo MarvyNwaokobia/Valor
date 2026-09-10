@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { claimUBI, createReadOnlyClaimSDK, checkWhitelistStatusReadOnly, withTimeout } from '@/lib/gooddollar'
+import { authedFetch } from '@/lib/playerAuth'
 
 export type GDClaimStatus =
   | 'loading'
@@ -20,8 +21,6 @@ export interface UseGoodDollarClaimReturn {
   claim: () => Promise<void>
   refresh: () => Promise<void>
 }
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 function isUserRejection(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
@@ -135,11 +134,11 @@ export function useGoodDollarClaim(
 
       // Tell backend to record timestamp + reset decay, and log the claim in
       // the G$ ledger (Bank page's UBI-earned figure) — fire-and-forget
-      fetch(`${API}/players/${walletAddress}/daily-claim`, {
+      authedFetch(`/players/${walletAddress}/daily-claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: entitlement, tx_hash: hash }),
-      }).catch(() => {})
+      }, walletAddress, walletClient).catch(() => {})
 
       onClaimSuccess?.()
     } catch (err) {

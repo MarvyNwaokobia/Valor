@@ -1,11 +1,14 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useValorAuth } from '@/hooks/useValorAuth'
 import { usePlayerSync } from '@/hooks/usePlayerSync'
 import { useRealtimePlayer } from '@/hooks/useRealtimePlayer'
 import { useDecayMonitor } from '@/hooks/useDecayMonitor'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
 import { useEnsureActiveChain } from '@/hooks/useEnsureActiveChain'
+import { ensurePlayerSession } from '@/lib/playerAuth'
 
 // NOTE: the heavy first-person scene chunk is NOT warmed here. Doing it for every
 // visitor cost mobile data + a parse hitch for people who never fight. It's now
@@ -30,9 +33,20 @@ import { useEnsureActiveChain } from '@/hooks/useEnsureActiveChain'
 export default function AppInit() {
   useValorAuth()
   const { address } = useResolvedAuth()
+  const walletClient = useActiveWalletClient()
   usePlayerSync(address)
   useRealtimePlayer(address)
   useDecayMonitor()
   useEnsureActiveChain()
+
+  // Sign the player session once the wallet is ready, so the first gated
+  // call (daily claim, inventory, etc.) doesn't stall on a signature prompt —
+  // it's already there by the time anything needs it. ensurePlayerSession
+  // itself is a no-op if a valid session for this wallet already exists.
+  useEffect(() => {
+    if (!address || !walletClient) return
+    ensurePlayerSession(address, walletClient)
+  }, [address, walletClient])
+
   return null
 }

@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import type { CharacterCustomization } from '@/types/database'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 interface Props {
   walletAddress: string
@@ -31,6 +33,7 @@ const HAIR_STYLES = [
 
 export default function CustomizationModal({ walletAddress, current, onClose }: Props) {
   const updatePlayer = usePlayerStore(s => s.updatePlayer)
+  const walletClient = useActiveWalletClient()
   const [skin,      setSkin]      = useState(current.skin      ?? SKIN_TONES[0])
   const [hairColor, setHairColor] = useState(current.hair      ?? HAIR_COLORS[0])
   const [hairStyle, setHairStyle] = useState(current.outfit    ?? 'crop')
@@ -46,13 +49,14 @@ export default function CustomizationModal({ walletAddress, current, onClose }: 
       outfit:  hairStyle,
     }
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/players/${walletAddress}`,
+      const res = await authedFetch(
+        `/players/${walletAddress}`,
         {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ character_customization: customization }),
         },
+        walletAddress, walletClient,
       )
       if (!res.ok) return
       updatePlayer({ character_customization: customization })

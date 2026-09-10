@@ -3,7 +3,7 @@
 //! write, the friendship check, the push notification, and the socket fan-out
 //! all live in one place regardless of which transport the reader is on.
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -34,6 +34,7 @@ pub struct SendBody {
 }
 
 pub async fn send_message(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<(String, String)>,
     body:  web::Json<SendBody>,
@@ -44,6 +45,7 @@ pub async fn send_message(
     }
     let wallet = normalize_wallet(&raw_wallet);
     let other  = normalize_wallet(&raw_other);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let text = body.body.trim();
     if text.is_empty() {
@@ -110,6 +112,7 @@ pub struct ListQuery {
 }
 
 pub async fn list_messages(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<(String, String)>,
     query: web::Query<ListQuery>,
@@ -120,6 +123,7 @@ pub async fn list_messages(
     }
     let wallet = normalize_wallet(&raw_wallet);
     let other  = normalize_wallet(&raw_other);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let limit  = query.limit.unwrap_or(50).clamp(1, 100);
 
     let rows: Vec<MessageRow> = sqlx::query_as(

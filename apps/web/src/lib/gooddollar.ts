@@ -3,6 +3,7 @@ import { REWARDS_CONTRACT } from '@goodsdks/engagement-sdk'
 import { createPublicClient, createWalletClient, http, encodeFunctionData, parseAbi, type PublicClient, type WalletClient, type Address } from 'viem'
 import { celo } from 'viem/chains'
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
+import { authedFetch } from '@/lib/playerAuth'
 
 export const GD_ENV: contractEnv =
   (process.env.NEXT_PUBLIC_GOODDOLLAR_ENV as contractEnv) ?? 'production'
@@ -157,11 +158,10 @@ async function requestGoodDollarFaucet(account: Address): Promise<void> {
 
 // Our own relay-funded fallback: when GoodDollar's faucet doesn't come through,
 // the Valor backend drips a little CELO to the player's wallet so they can still
-// afford the claim. Backend-gated (real player, under threshold, rate-limited).
-async function requestRelayGasTopup(account: Address): Promise<void> {
-  const api = process.env.NEXT_PUBLIC_API_URL
-  if (!api) return
-  await fetch(`${api}/players/${account}/gas-topup`, { method: 'POST' }).catch(() => {})
+// afford the claim. Backend-gated (real player, under threshold, rate-limited,
+// and now also a proof of wallet ownership via the player session).
+async function requestRelayGasTopup(account: Address, walletClient: WalletClient): Promise<void> {
+  await authedFetch(`/players/${account}/gas-topup`, { method: 'POST' }, account, walletClient).catch(() => {})
 }
 
 async function waitForCelo(
@@ -246,7 +246,7 @@ export async function claimUBI(
   await requestGoodDollarFaucet(account)
   let funded = await waitForCelo(publicClient, account, MIN_CELO_FOR_CLAIM, 18000)
   if (!funded) {
-    await requestRelayGasTopup(account)
+    await requestRelayGasTopup(account, walletClient)
     funded = await waitForCelo(publicClient, account, MIN_CELO_FOR_CLAIM, 25000)
   }
   if (!funded) {

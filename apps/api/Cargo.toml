@@ -28,6 +28,9 @@ actix-ws = "0.3"
 futures-util = "0.3"
 web-push = "0.11"
 base64 = "0.22"
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry-actix = "0.34"
+sentry-tracing = "0.34"
 
 [dev-dependencies]
 actix-web = { version = "4", features = ["macros"] }

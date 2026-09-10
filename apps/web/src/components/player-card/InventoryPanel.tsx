@@ -8,6 +8,8 @@ import { ITEM_RARITY_COLORS } from '@/lib/constants'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResale } from '@/hooks/useResale'
 import { WeaponCrate, crateLabel } from '@/components/marketplace/WeaponCrate'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 
 interface Props {
   inventory: InventoryItem[]
@@ -25,6 +27,7 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
   const [toggling, setToggling] = useState<string | null>(null)
   const [flash, setFlash]       = useState<{ id: string; msg: string } | null>(null)
   const { listForResale, pending: resalePending } = useResale(walletAddress)
+  const walletClient = useActiveWalletClient()
   const [sellingId, setSellingId] = useState<string | null>(null)
   const [sellPrice, setSellPrice] = useState('')
 
@@ -51,11 +54,11 @@ export default function InventoryPanel({ inventory, walletAddress }: Props) {
     toggleEquip(inv.item_id)   // optimistic
 
     try {
-      const res = await fetch(`${API}/players/${walletAddress}/inventory/${inv.item_id}`, {
+      const res = await authedFetch(`/players/${walletAddress}/inventory/${inv.item_id}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ equipped: next }),
-      })
+      }, walletAddress, walletClient)
       if (!res.ok) {
         toggleEquip(inv.item_id)  // rollback
       } else {

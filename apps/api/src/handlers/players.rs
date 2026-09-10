@@ -13,11 +13,12 @@ use crate::AppState;
 // ── PATCH /players/:wallet ────────────────────────────────────────────────────
 /// COSMETIC / IDENTITY FIELDS ONLY.
 ///
-/// This endpoint is unauthenticated — anyone can PATCH any wallet — so it must never
-/// accept a field that decides progression or money. It previously took `rank`,
-/// `last_active`, `decay_status` and `decay_frozen_until`, which meant an
-/// unauthenticated caller could hand themselves Diamond (4 rank-ups' worth of G$),
-/// demote another player, or dodge decay forever:
+/// Requires a player session (see `crate::auth::verify_player_token`) matching the
+/// path wallet, but must still never accept a field that decides progression or
+/// money — defense in depth against a leaked/stolen session, not just anyone. It
+/// previously took `rank`, `last_active`, `decay_status` and `decay_frozen_until`,
+/// which meant an unauthenticated caller could hand themselves Diamond (4
+/// rank-ups' worth of G$), demote another player, or dodge decay forever:
 ///
 ///     PATCH /players/0x<anyone> {"rank":"Diamond","last_active":"<now>"}
 ///
@@ -26,7 +27,7 @@ use crate::AppState;
 /// so they were pure attack surface. Rank is owned by award_player, last_active by the
 /// fight paths, and decay by the decay sweep + POST /freeze-decay, which checks that
 /// the player actually owns a shield. Keep it that way: do not re-add a progression
-/// field here without putting real auth on the route first.
+/// field here even now that the route is authenticated.
 #[derive(Deserialize)]
 pub struct UpdatePlayerRequest {
     pub username:                Option<String>,
@@ -51,6 +52,7 @@ pub async fn update_player(
     }
 
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     // Validate username uniqueness if provided
     if let Some(ref uname) = body.username {
@@ -149,11 +151,13 @@ pub async fn get_player(
 }
 
 pub async fn daily_claim(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: Option<web::Json<DailyClaimLedgerBody>>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let now = Utc::now();
     let cutoff = now - chrono::Duration::hours(24);
 
@@ -210,10 +214,12 @@ pub async fn daily_claim(
 }
 
 pub async fn decay_check(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let now = Utc::now();
 
     let player_result = sqlx::query_as::<_, crate::models::player::Player>(
@@ -274,8 +280,7 @@ pub async fn decay_check(
 // ── POST /players/:wallet/identity ────────────────────────────────────────────
 // Backfills the Magic login identity for an EXISTING player on sign-in, so returning
 // users (who never re-run onboarding) also get captured. UPDATE-only — never creates a
-// row. Best-effort; unauthenticated like the rest, which is fine: worst case a bad actor
-// mislabels a wallet's email, which only muddies our multi-account detection, not money.
+// row. Requires a player session matching the path wallet.
 #[derive(Deserialize)]
 pub struct MagicIdentityBody {
     pub email:  Option<String>,
@@ -283,11 +288,13 @@ pub struct MagicIdentityBody {
 }
 
 pub async fn set_magic_identity(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<MagicIdentityBody>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let _ = sqlx::query(
         "UPDATE players SET magic_email = COALESCE($1, magic_email),
                             magic_issuer = COALESCE($2, magic_issuer)
@@ -305,14 +312,16 @@ pub async fn set_magic_identity(
 /// Magic-minted (see resolve_login_email). `contact_email` is a deliberately
 /// separate, support/lookup-only field for exactly those accounts.
 ///
-/// Returns only whether one is on file, never the address itself — this
-/// endpoint is unauthenticated like the rest of `/players/*`, so there is no
-/// reason for it to leak an email by wallet alone.
+/// Returns only whether one is on file, never the address itself. Requires a
+/// player session matching the path wallet regardless, since a bool alone is
+/// still zero reason to open it up.
 pub async fn get_contact_email_status(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let has: Option<(bool,)> = sqlx::query_as(
         "SELECT (contact_email IS NOT NULL) FROM players WHERE wallet_address = $1",
     )
@@ -331,11 +340,13 @@ pub struct ContactEmailBody {
 }
 
 pub async fn set_contact_email(
+    req:   HttpRequest,
     state: web::Data<AppState>,
     path:  web::Path<String>,
     body:  web::Json<ContactEmailBody>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
     let email = body.email.trim();
     if email.is_empty() || email.len() > 254 || !email.contains('@') {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid email address"}));
@@ -815,10 +826,12 @@ pub async fn list_players(state: web::Data<AppState>) -> HttpResponse {
 
 // ── GET /players/:wallet/inventory ────────────────────────────────────────────
 pub async fn get_inventory(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     struct InventoryRow {
@@ -852,11 +865,13 @@ pub struct AddInventoryRequest {
 }
 
 pub async fn add_inventory_item(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<AddInventoryRequest>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let result = sqlx::query(
         "INSERT INTO inventory (wallet_address, item_id, equipped, acquired_at)
@@ -890,11 +905,13 @@ pub struct EquipToggleRequest {
 }
 
 pub async fn toggle_equip(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<EquipTogglePath>,
     body: web::Json<EquipToggleRequest>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.wallet);
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     let result = sqlx::query(
         "UPDATE inventory SET equipped = $1
@@ -1384,10 +1401,12 @@ pub async fn get_achievements(
 
 // ── POST /players/:wallet/achievements/check ──────────────────────────────────
 pub async fn check_achievements(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     struct NewAchievement {
@@ -1416,10 +1435,12 @@ pub async fn check_achievements(
 // Requires the player to own at least one shield category item.
 // Consumes one shield, then freezes decay for 7 days.
 pub async fn freeze_decay(
+    req: HttpRequest,
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let wallet = normalize_wallet(&path.into_inner());
+    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
 
     // Find the first owned shield item
     let shield: Option<(Uuid,)> = sqlx::query_as(

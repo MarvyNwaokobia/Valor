@@ -45,6 +45,13 @@ pub async fn run_decay_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
         return HttpResponse::Unauthorized().finish();
     }
 
+    HttpResponse::Ok().json(run_decay_sweep_inner(&state).await)
+}
+
+/// The actual sweep, HTTP-free so it can also run off the in-process scheduler
+/// (see services::scheduler) — GitHub Actions' free-tier cron is not a reliable
+/// enough trigger on its own, see main.rs's scheduler spawn comment.
+pub async fn run_decay_sweep_inner(state: &AppState) -> serde_json::Value {
     let now = Utc::now();
     let warn_threshold = now - chrono::Duration::hours(WARN_AFTER_HOURS);
     let decay_threshold = now - chrono::Duration::hours(DECAY_AFTER_HOURS);
@@ -118,12 +125,12 @@ pub async fn run_decay_sweep(state: web::Data<AppState>, req: HttpRequest) -> Ht
 
     tracing::info!("Decay sweep: {} warned, {} rank-downgraded", warned, decayed);
 
-    HttpResponse::Ok().json(json!({
+    json!({
         "warned": warned,
         "decayed": decayed,
         "ran_at": now.to_rfc3339(),
         "step_hours": DECAY_STEP_HOURS,
-    }))
+    })
 }
 
 #[cfg(test)]

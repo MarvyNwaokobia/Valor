@@ -7,6 +7,8 @@ import { X, Check, AlertTriangle } from 'lucide-react'
 import type { Item } from '@/types'
 import { CAMPAIGN } from '@/engine/fps/campaign'
 import { usePlayerStore } from '@/stores/usePlayerStore'
+import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
+import { authedFetch } from '@/lib/playerAuth'
 import { gunIdFromItemId } from '@/components/marketplace/GunIcons'
 import {
   GUN_ITEM_ID, AMMO_ITEM_ID, ATTACHMENT_ITEM_ID,
@@ -84,6 +86,7 @@ function Row({ selected, onClick, title, sub, accent }: {
 export default function LoadoutModal({ opIndex, opName, label, cta, walletAddress, onClose, onDeploy, weaponOnly }: Props) {
   const inventory = usePlayerStore((s) => s.inventory)
   const toggleEquip = usePlayerStore((s) => s.toggleEquip)
+  const walletClient = useActiveWalletClient()
 
   const { data: items = [] } = useQuery({
     queryKey: ['items-all'],
@@ -113,10 +116,10 @@ export default function LoadoutModal({ opIndex, opName, label, cta, walletAddres
 
   function patch(itemId: string, equipped: boolean) {
     if (!walletAddress) return Promise.resolve()
-    return fetch(`${API}/players/${walletAddress}/inventory/${itemId}`, {
+    return authedFetch(`/players/${walletAddress}/inventory/${itemId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ equipped }),
-    }).catch(() => {})
+    }, walletAddress, walletClient).catch(() => {})
   }
 
   /** Make the inventory's equipped flags match `wantEquipped` across `candidates`. */
