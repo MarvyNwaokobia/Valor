@@ -858,40 +858,6 @@ pub async fn get_inventory(
     }
 }
 
-// ── POST /players/:wallet/inventory ───────────────────────────────────────────
-#[derive(Deserialize)]
-pub struct AddInventoryRequest {
-    pub item_id: Uuid,
-}
-
-pub async fn add_inventory_item(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-    body: web::Json<AddInventoryRequest>,
-) -> HttpResponse {
-    let wallet = normalize_wallet(&path.into_inner());
-    if let Err(resp) = crate::auth::verify_player_token(&req, &wallet) { return resp; }
-
-    let result = sqlx::query(
-        "INSERT INTO inventory (wallet_address, item_id, equipped, acquired_at)
-         VALUES ($1, $2, false, now())
-         ON CONFLICT (wallet_address, item_id) DO NOTHING",
-    )
-    .bind(&wallet)
-    .bind(body.item_id)
-    .execute(&state.db)
-    .await;
-
-    match result {
-        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
-        Err(e) => {
-            tracing::error!("Failed to add inventory item: {}", e);
-            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
-        }
-    }
-}
-
 // ── PATCH /players/:wallet/inventory/:item_id ─────────────────────────────────
 #[derive(Deserialize)]
 pub struct EquipTogglePath {
