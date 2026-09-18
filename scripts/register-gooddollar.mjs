@@ -11,14 +11,21 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { celo } from 'viem/chains'
 import { EngagementRewardsSDK } from '@goodsdks/engagement-sdk'
 
-// SECURITY: this was a hardcoded private key, committed 2026-06-06 in 84784ce and
-// public on GitHub until 2026-08-03. That key (0x43a5...2D82) owned the reward
-// pools, was the backend signer, and was a Safe signer. It has been rotated and
-// must never be used again. Read from the environment; never inline a key here.
+// SECURITY: this app was originally registered under a hardcoded private key,
+// committed 2026-06-06 in 84784ce and public on GitHub until 2026-08-03. That key
+// (0x43a5...2D82) owned the reward pools, was the backend signer, and was a Safe
+// signer. It was rotated everywhere else in August but this GoodDollar app
+// registration was missed — as of 2026-08-31 it sits applied-but-unapproved with
+// that leaked address still as owner. Re-applying here under a clean address so
+// GoodDollar approves the new entry instead. Read from the environment; never
+// inline a key here.
 //
 //   DEPLOYER_PRIVATE_KEY=0x... node scripts/register-gooddollar.mjs
+//
+// DEPLOYER_PRIVATE_KEY must be the private key for APP_ADDRESS below — the
+// calling account becomes both `app` and `owner` on GoodDollar's contract.
 const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY
-const APP_ADDRESS    = '0x43a5BA0da132b21bdACfBc4392b72EeBaF6f2D82'
+const APP_ADDRESS    = '0xc6A4b73030D8A9Eb8166C2fAB2400b421026FD19'
 const REWARDS_CONTRACT = '0x25db74CF4E7BA120526fd87e159CF656d94bAE43'
 
 if (!PRIVATE_KEY) {
@@ -58,13 +65,16 @@ if (alreadyApplied) {
   process.exit(0)
 }
 
+// Matches the settings live on the old (compromised-owner) application as of
+// 2026-08-31, so this re-registration doesn't silently change reward economics.
+// Adjust via updateAppSettings() after approval if you want different splits.
 console.log('Submitting applyApp transaction...')
 const receipt = await sdk.applyApp(APP_ADDRESS, {
-  rewardReceiver: APP_ADDRESS,
-  userAndInviterPercentage: 80,  // 80% goes to user + inviter
-  userPercentage: 75,            // 75% of that goes to user (25% to inviter)
-  description: 'Valor — Web3 fighting game on GoodDollar. Earn G$ by playing.',
-  url: 'https://valor-production.up.railway.app',
+  rewardReceiver: '0x12a3f711A55f4dB0e9AF26C7429cc5018401F1f4', // MAIN reward pool
+  userAndInviterPercentage: 100, // 100% goes to user + inviter, 0% to the app
+  userPercentage: 70,            // 70% of that goes to user (30% to inviter)
+  description: 'Valor is a Web3 character battle game on Celo. Players earn G$ by winning fights, ranking up, and completing daily missions. They spend the earned G$ in the marketplace.',
+  url: 'https://playvalor.vercel.app/',
   email: 'marvynwaokobia@gmail.com',
 })
 
