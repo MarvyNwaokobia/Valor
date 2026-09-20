@@ -28,11 +28,17 @@ export interface WaveResult {
  * The server owns the wave count — the client only ever says "I cleared the next
  * one" — so none of this is trusted from here.
  */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 export function useEndlessProgress(walletAddress: string | undefined, seasonId?: string) {
   const sessionRef = useRef<string | null>(null)
   const [wave, setWave] = useState(1)
   const [banked, setBanked] = useState(0) // G$ earned this session
   const [ready, setReady] = useState(false)
+  // Serializes clearWave() calls so a wave that's mid-retry is never overtaken by
+  // the next one — each queued call waits its turn instead of racing the server's
+  // own per-session wave counter.
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve())
 
   const body = useCallback(
     (extra: Record<string, unknown>) => JSON.stringify({ wallet: walletAddress, season_id: seasonId, ...extra }),
@@ -89,8 +95,18 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
     }
   }, [walletAddress, body])
 
-  /** Report a cleared wave. The server credits it, pays the G$ and records the win. */
-  const clearWave = useCallback(async (): Promise<WaveResult | null> => {
+  /**
+   * Report a cleared wave. The server credits it, pays the G$ and records the win.
+   *
+   * The room the player just cleared is real regardless of the network — the game
+   * has already moved on to the next one by the time this is called. So a single
+   * failed attempt — a dropped connection, a timeout, a rate-limit that doesn't
+   * clear on the first retry — now keeps retrying with backoff instead of quietly
+   * under-reporting how far the player actually got. Retrying is safe: the server
+   * only advances its per-session wave counter once per call that actually lands,
+   * so a retry can never double-credit a wave.
+   */
+  const clearWave = useCallback((): Promise<WaveResult | null> => {
     const post = async (session_id: string) =>
       fetch(`${API}/endless/wave`, {
         method: 'POST',
@@ -98,36 +114,43 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
         body: JSON.stringify({ session_id, season_id: seasonId }),
       })
 
-    try {
-      let session_id = sessionRef.current
-      // No session at all (a previous call lost it) — get one before giving up.
-      if (!session_id) session_id = await reopenSession()
+    const attempt = async (): Promise<WaveResult | null> => {
+      const session_id = sessionRef.current ?? (await reopenSession())
       if (!session_id) return null
 
-      let res = await post(session_id)
+      let res: Response
+      try {
+        res = await post(session_id)
+      } catch {
+        return null // network error — outer loop retries
+      }
 
       // 404 = the server has no record of this run. That is NOT the player's
-      // fault and it is not the end of their run: the server restarts on every
-      // deploy and its session list is in memory only. The old code set the
-      // session to null here and let the player keep playing for nothing, so a
-      // deploy mid-run silently stopped counting every wave after it — which is
-      // how players finished on wave 5 and were recorded on wave 2.
-      //
-      // Re-introduce ourselves and try the wave again. Stored progress only ever
-      // moves UP and the server resumes from it, so this cannot rewind anyone.
+      // fault: the server restarts on every deploy and its session list is in
+      // memory only. Re-introduce ourselves and try again — stored progress
+      // only ever moves UP and the server resumes from it, so this cannot
+      // rewind anyone.
       if (res.status === 404) {
         const fresh = await reopenSession()
         if (!fresh) return null
-        res = await post(fresh)
+        try {
+          res = await post(fresh)
+        } catch {
+          return null
+        }
 
         // A brand-new session has just been created, so the anti-script floor
         // ("you cannot clear a wave in under N seconds") sees ~0 seconds elapsed
         // and rejects the retry. The player really did spend that time — it was
         // spent against the session the server threw away — so wait out the
-        // floor once and try a final time rather than lose the wave.
+        // floor once and try again rather than lose the wave.
         if (res.status === 429) {
-          await new Promise((r) => setTimeout(r, 7000))
-          res = await post(fresh)
+          await sleep(7000)
+          try {
+            res = await post(fresh)
+          } catch {
+            return null
+          }
         }
       }
 
@@ -168,9 +191,34 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
         prestiged: !!d.prestiged,
         prestigeLevel: Number(d.prestige_level) || 0,
       }
-    } catch {
-      return null
     }
+
+    // Never throws — attempt() itself is careful, but this is also the queue's own
+    // handler, and a rejection here would poison every wave still waiting behind it.
+    const withRetries = async (): Promise<WaveResult | null> => {
+      const maxAttempts = 6
+      let delay = 1500
+      for (let i = 0; i < maxAttempts; i++) {
+        let result: WaveResult | null = null
+        try {
+          result = await attempt()
+        } catch {
+          /* treat like any other failed attempt — fall through to retry */
+        }
+        if (result) return result
+        if (i < maxAttempts - 1) {
+          await sleep(delay)
+          delay = Math.min(delay * 2, 10_000)
+        }
+      }
+      return null // sustained failure well past a normal blip — genuinely give up
+    }
+
+    // Queue behind whatever wave is still being retried, so two clears for the same
+    // run are never in flight at once and always land in order.
+    const run = queueRef.current.then(withRetries, withRetries)
+    queueRef.current = run
+    return run
   }, [seasonId, reopenSession])
 
   /** Report a death. Records the loss on-chain; the stored wave does NOT move. */
