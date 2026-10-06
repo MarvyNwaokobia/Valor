@@ -57,7 +57,7 @@ abigen!(
 );
 
 // Mainnet G$ SuperToken on Celo — matches apps/web/src/lib/constants.ts's G_TOKEN_ADDRESS.
-const DEFAULT_G_TOKEN: &str = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
+pub const DEFAULT_G_TOKEN: &str = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
 
 /// Gas limit for any transferFrom that runs against an allowance granted by a
 /// permit in the SAME batch — the withdrawal legs in `transfer_g_with_fee`, the

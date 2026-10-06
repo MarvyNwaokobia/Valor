@@ -258,6 +258,16 @@ pub async fn transfer_out(
     };
     let to: Address = body.to.parse().expect("validated by is_valid_wallet above");
 
+    // The G$ SuperToken refuses transfers to its own address, so a payout to it
+    // always reverts. Reject it before any permit is relayed.
+    let token_addr = std::env::var("G_TOKEN_CONTRACT")
+        .unwrap_or_else(|_| crate::services::chain::DEFAULT_G_TOKEN.to_string());
+    if token_addr.parse::<Address>().map_or(false, |t| t == to) {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "That is the G$ token contract address, not a wallet. Enter the wallet address you want to send to."
+        }));
+    }
+
     let amount: U256 = match U256::from_dec_str(&body.amount_wei) {
         Ok(a) if !a.is_zero() => a,
         _ => return HttpResponse::BadRequest().json(json!({"error": "Invalid amount"})),

@@ -70,6 +70,9 @@ export function useTransferOut(walletAddress: string | undefined) {
     if (!walletClient?.account) throw new Error('Wallet not connected')
     if (!relayAddress) throw new Error('Transfer relay unavailable')
     if (!isAddress(to)) throw new Error('Enter a valid wallet address')
+    if (to.toLowerCase() === G_TOKEN_ADDRESS.toLowerCase()) {
+      throw new Error('That is the G$ token contract address, not a wallet')
+    }
     if (!(amountG > 0)) throw new Error('Enter an amount greater than 0')
 
     setPending(true)
