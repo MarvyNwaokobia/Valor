@@ -791,7 +791,7 @@ impl ChainWriter {
         transfer_call.tx.set_gas(TRANSFER_FROM_GAS);
         fee_call.tx.set_gas(TRANSFER_FROM_GAS);
 
-        let (permit_pending, transfer_pending, fee_pending) = {
+        let (permit_pending, transfer_pending) = {
             let _tx = self.tx_lock.lock().await;
 
             let nonce = self
@@ -801,7 +801,6 @@ impl ChainWriter {
                 .map_err(|e| format!("nonce read failed: {}", e))?;
             permit_call.tx.set_nonce(nonce);
             transfer_call.tx.set_nonce(nonce + 1);
-            fee_call.tx.set_nonce(nonce + 2);
 
             let permit_pending = permit_call
                 .send()
@@ -811,18 +810,8 @@ impl ChainWriter {
                 .send()
                 .await
                 .map_err(|e| tag_gas(format!("transferFrom submission failed: {}", e)))?;
-            let fee_pending = if fee.is_zero() {
-                None
-            } else {
-                Some(
-                    fee_call
-                        .send()
-                        .await
-                        .map_err(|e| tag_gas(format!("fee transferFrom submission failed: {}", e)))?,
-                )
-            };
 
-            (permit_pending, transfer_pending, fee_pending)
+            (permit_pending, transfer_pending)
         };
 
         let hash = transfer_pending.tx_hash();
@@ -845,21 +834,46 @@ impl ChainWriter {
             return Err("transfer reverted on-chain — nothing was moved".to_string());
         }
 
-        // The fee leg is deliberately NOT fatal. The player has already been paid
-        // by this point; failing their withdrawal because our own fee collection
-        // hiccuped would take money they successfully received and report it as an
-        // error. A missed fee is our loss to reconcile, not their problem.
-        if let Some(pending) = fee_pending {
-            match tokio::time::timeout(Duration::from_secs(90), pending.confirmations(1)).await {
-                Ok(Ok(Some(r))) if r.status != Some(0.into()) => {
-                    tracing::info!("withdraw fee collected: {} -> {} amount={}", from, fee_to, fee);
+        // The fee leg is sent ONLY NOW, after the player's payout is confirmed. It
+        // used to be broadcast alongside the payout; when the payout reverted the
+        // fee still executed against the permit's allowance, so the player lost the
+        // fee, got nothing, and lost it again on every retry.
+        //
+        // It is still deliberately NOT fatal: the player has already been paid, so
+        // failing their withdrawal because our own fee collection hiccuped would
+        // report an error for money they received. A missed fee is our loss to
+        // reconcile, not their problem.
+        if !fee.is_zero() {
+            let sent = {
+                let _tx = self.tx_lock.lock().await;
+                match self
+                    .client
+                    .get_transaction_count(spender, Some(ethers::types::BlockNumber::Pending.into()))
+                    .await
+                {
+                    Ok(nonce) => {
+                        fee_call.tx.set_nonce(nonce);
+                        fee_call.send().await.map(|p| p.tx_hash()).map_err(|e| e.to_string())
+                    }
+                    Err(e) => Err(format!("nonce read failed: {}", e)),
                 }
-                other => {
-                    tracing::error!(
-                        "WITHDRAW FEE LEG FAILED for {} (fee {} to {}) — player was paid, fee was not collected: {:?}",
-                        from, fee, fee_to, other.map(|r| r.map(|o| o.map(|x| x.transaction_hash))),
-                    );
+            };
+            match sent {
+                Ok(fee_hash) => {
+                    match tokio::time::timeout(
+                        Duration::from_secs(90),
+                        self.client.get_transaction_receipt(fee_hash),
+                    )
+                    .await
+                    {
+                        Ok(_) => tracing::info!("withdraw fee sent: {} -> {} amount={} tx={:?}", from, fee_to, fee, fee_hash),
+                        Err(_) => tracing::error!("WITHDRAW FEE LEG UNCONFIRMED for {} (fee {} to {}) tx={:?}", from, fee, fee_to, fee_hash),
+                    }
                 }
+                Err(e) => tracing::error!(
+                    "WITHDRAW FEE LEG FAILED for {} (fee {} to {}) — player was paid, fee was not collected: {}",
+                    from, fee, fee_to, e,
+                ),
             }
         }
 
