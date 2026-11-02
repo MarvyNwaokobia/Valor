@@ -68,7 +68,7 @@ reads as grey plastic. See `docs/` notes on the visual audit. **Env map first, t
 | "Your class is **permanent**" · "One human. One fighter. **Forever**" (×3 placements) | **Stale** | The roster lock was lifted 2026-07-07. |
 | "identity in the **arena**" | **Stale** | Arenas were superseded by the compound/ops structure and are hidden from the UI. |
 | "The **first** web3 **fighting game** built exclusively for verified humans" | **Unverifiable** | Unprovable superlative, plus the wrong genre. |
-| "Powered by GoodDollar · Verified Humans Only" | **Holds up** | Verified in code, not from notes: `editions/web/config.ts` sets `identity: 'gooddollar'` and the `verify` step is the default. Accurate for the web edition. It is `'none'` on MiniPay, where nothing pays out. |
+| "Powered by GoodDollar · Verified Humans Only" | **Holds up** | Verified in code, not from notes: `editions/web/config.ts` sets `identity: 'gooddollar'` and the `verify` step is the default. Accurate. |
 
 ### Rule on G$ figures
 

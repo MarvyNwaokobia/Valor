@@ -1,101 +1,46 @@
-//! Which edition of Valor a player belongs to, and whether it pays real money.
+//! Whether a wallet may be paid real money.
 //!
-//! Valor ships through two doors from one codebase (`apps/web/src/editions`): the
-//! open web and MiniPay's in-app browser. They do not share an economy:
+//! Valor has one edition, `web`: it pays real G$, gated on the GoodDollar whitelist
+//! in onboarding. Every new player is stored as `web`, and the signup handler no
+//! longer reads an edition from the request at all.
 //!
-//!   • web       — pays real G$, gated on the GoodDollar whitelist in onboarding
-//!   • minipay   — pays NOTHING. No identity gate, precisely because nothing pays
-//!                 out. Players spend real stablecoins in the shop; they never earn.
+//! The `players.edition` column is kept for the rows that predate that. A player
+//! whose stored value is anything other than `web` was created in a non-earning
+//! mode and stays non-earning: they keep their progress, but no payout path will
+//! bank them G$. Those values are not created any more and cannot be set from the
+//! API; the database CHECK constraint is what bounds them.
 //!
-//! WHY THIS IS A DATABASE COLUMN AND NOT A REQUEST HEADER
-//! ------------------------------------------------------
-//! The server cannot tell which edition a request came from. Every edition is served
-//! from the same domain and origin on purpose, so existing players are never told to
-//! go play the same game somewhere else. There is no header, key or origin that
-//! distinguishes them that a browser could not also send.
-//!
-//! So the assertion is made once, at signup, and STORED. Every payout afterwards
-//! reads the stored value. That converts a per-request lie into a one-time, sticky,
-//! auditable choice, and it removes the dangerous direction entirely: a player who
-//! signed up in MiniPay cannot later claim to be a web player to unlock earning.
-//!
-//! WHAT THIS DOES NOT DEFEND AGAINST
-//! ---------------------------------
-//! A client that lies AT SIGNUP, claiming `web` while running inside MiniPay. This
-//! layer does not stop that, and it is important not to pretend otherwise. What
-//! stops it is the GoodDollar whitelist that the web edition gates earning on: a
-//! liar lands in the earning edition and then has to pass the same identity check as
-//! everyone else. The edition column decides which rules apply; identity is what
-//! makes the earning rules worth anything.
-//!
-//! The reverse lie — claiming `minipay` from a browser — costs the liar their own
-//! earnings and gains them nothing, so it needs no defence.
+//! Every payout path asks the one question below, so a new earn surface cannot
+//! forget to.
 
 use sqlx::PgPool;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Edition {
-    Web,
-    MiniPay,
-}
+/// The only edition that earns, and the value every new player is stored with.
+pub const WEB: &str = "web";
 
-impl Edition {
-    /// Parse a client-asserted or stored value. Unknown input is `Web`, matching the
-    /// column default: an unrecognised string must not silently stop paying a real
-    /// player, which is the worse of the two failures.
-    pub fn parse(value: &str) -> Self {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "minipay" => Edition::MiniPay,
-            _ => Edition::Web,
-        }
-    }
-
-    /// The canonical string, and the only values the CHECK constraint accepts.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Edition::Web => "web",
-            Edition::MiniPay => "minipay",
-        }
-    }
-
-    /// Does play in this edition pay real, withdrawable money?
-    ///
-    /// This is the whole policy, in one place, so a new earn surface cannot forget
-    /// to ask. It is deliberately about MONEY only: XP, ranks, unlocks, scores and
-    /// leaderboards are untouched in every edition, exactly as under the earning
-    /// pause. A MiniPay player progresses normally, they just bank nothing.
-    pub fn earns_real_money(self) -> bool {
-        match self {
-            Edition::Web => true,
-            // Nothing pays out here, so there is no identity gate and no sybil
-            // surface. Both halves have to stay true together: if MiniPay ever
-            // starts paying, it needs a proof-of-unique-human first.
-            Edition::MiniPay => false,
-        }
-    }
-}
-
-/// The edition a wallet signed up in.
+/// Does a player stored under `edition` earn real, withdrawable money?
 ///
-/// An unknown wallet reads as `Web`. That matters for the reward paths, which can be
-/// reached by a wallet whose player row is still being written, and for the roughly
-/// 120 players who predate this column. Refusing to pay on a missed lookup would turn
-/// a transient read into a silent pay cut, which is the failure mode `cap_reward`'s
-/// pool-balance read is also written to avoid.
-pub async fn player_edition(db: &PgPool, wallet: &str) -> Edition {
+/// This is deliberately about MONEY only: XP, ranks, unlocks, scores and
+/// leaderboards are untouched, exactly as under the earning pause.
+pub fn earns_real_money(edition: &str) -> bool {
+    edition.trim().eq_ignore_ascii_case(WEB)
+}
+
+/// Whether this wallet may be paid real money at all.
+///
+/// An unknown wallet earns. That matters for the reward paths, which can be reached
+/// by a wallet whose player row is still being written, and for the players who
+/// predate the column. Refusing to pay on a missed lookup would turn a transient
+/// read into a silent pay cut, which is the failure mode `cap_reward`'s pool-balance
+/// read is also written to avoid.
+pub async fn wallet_earns(db: &PgPool, wallet: &str) -> bool {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT edition FROM players WHERE wallet_address = $1")
             .bind(wallet)
             .fetch_optional(db)
             .await
             .unwrap_or(None);
-    row.map(|(e,)| Edition::parse(&e)).unwrap_or(Edition::Web)
-}
-
-/// Whether this wallet may be paid real money at all. The single question every
-/// payout path asks.
-pub async fn wallet_earns(db: &PgPool, wallet: &str) -> bool {
-    player_edition(db, wallet).await.earns_real_money()
+    row.map(|(e,)| earns_real_money(&e)).unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -103,34 +48,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_web_edition_pays() {
-        assert!(Edition::Web.earns_real_money());
-        assert!(!Edition::MiniPay.earns_real_money());
-    }
-
-    #[test]
-    fn unknown_values_read_as_web() {
-        // The safe direction: a typo, a future edition this build predates, or a
-        // truncated column must not stop paying an existing player.
-        for v in ["", "web", "WEB", " Web ", "banana", "minipayy"] {
-            assert_eq!(Edition::parse(v), Edition::Web, "{v:?}");
+    fn the_web_edition_earns() {
+        for v in ["web", "WEB", " Web "] {
+            assert!(earns_real_money(v), "{v:?}");
         }
+        assert_eq!(WEB, "web");
     }
 
     #[test]
-    fn the_non_earning_edition_parses_exactly() {
-        for v in ["minipay", "MiniPay", " MINIPAY "] {
-            assert_eq!(Edition::parse(v), Edition::MiniPay, "{v:?}");
-        }
-    }
-
-    #[test]
-    fn as_str_round_trips_through_parse() {
-        // as_str() is what reaches the CHECK constraint, so a value that does not
-        // survive the round trip would be stored and then read back as something
-        // else — a player silently changing edition.
-        for e in [Edition::Web, Edition::MiniPay] {
-            assert_eq!(Edition::parse(e.as_str()), e);
+    fn any_other_stored_value_does_not_earn() {
+        // Rows created before this was simplified carry a non-web value. They must
+        // stay non-earning, so nothing but `web` may pay.
+        for v in ["", "banana", "webx", "legacy"] {
+            assert!(!earns_real_money(v), "{v:?}");
         }
     }
 }

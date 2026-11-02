@@ -7,7 +7,6 @@ import { useConnect } from 'wagmi'
 import { useMagicAuthContext } from '@/components/providers/MagicAuthProvider'
 import { useWeb3AuthWallet } from '@/components/providers/Web3AuthSessionProvider'
 import { isWeb3AuthConfigured } from '@/lib/web3authConfig'
-import { edition } from '@/editions'
 import { MOBILE_WALLETS, isMobileBrowser } from '@/lib/mobileWallets'
 import { activeChainId } from '@/editions/chain'
 
@@ -42,11 +41,6 @@ export default function SignInModal({ onClose }: Props) {
   }, [])
   const hasNamedInjected = connectors.some((c) => c.type === 'injected' && c.id !== 'injected')
 
-  // Resolved in an effect, not at render: `edition()` reads `window`, and
-  // branching the markup on it during render would desync SSR from hydration.
-  const [inMiniPay, setInMiniPay] = useState(false)
-  useEffect(() => { setInMiniPay(edition().id === 'minipay') }, [])
-
   // A mobile browser with no wallet already injected has no direct connector to
   // reach MetaMask/Coinbase/Trust with (see visibleConnectors below), so the only
   // remaining route was Web3Auth's chooser — which reaches them over WalletConnect,
@@ -55,28 +49,10 @@ export default function SignInModal({ onClose }: Props) {
   // wallet's own in-app browser needs no relay at all: the wallet re-opens this same
   // URL itself and injects window.ethereum, so wagmi's plain `injected()` connector
   // takes it from there with no network hop in the loop.
-  const showMobileWalletLinks = isMobile && !hasLegacyProvider && !hasNamedInjected && !inMiniPay
+  const showMobileWalletLinks = isMobile && !hasLegacyProvider && !hasNamedInjected
 
-  // Inside MiniPay's WebView, every wallet row EXCEPT MiniPay's own is false.
-  // No other wallet app can inject a provider there. MetaMask nonetheless still
-  // appears, because @metamask/connect-evm announces itself over EIP-6963
-  // whether or not MetaMask exists, and it is bundled twice over — by
-  // @wagmi/connectors and again by @web3auth/modal. Tapping that phantom row
-  // yields a session that cannot sign, which is the failure this filter exists
-  // to prevent. Normal browsers are untouched: there, a detected MetaMask may
-  // well be real.
-  const visibleConnectors = (() => {
-    const base = connectors
-      .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
-    if (!inMiniPay) return base
-
-    const mini = base.filter((c) => /minipay/i.test(c.name) || /minipay/i.test(c.id))
-    // Fall back to the generic injected row if MiniPay ever announces under a
-    // name this doesn't match — showing no way in at all would be worse than
-    // showing one unlabelled row, and `window.ethereum` inside MiniPay IS
-    // MiniPay.
-    return mini.length ? mini : connectors.filter((c) => c.id === 'injected')
-  })()
+  const visibleConnectors = connectors
+    .filter((c) => c.id !== 'injected' || (hasLegacyProvider && !hasNamedInjected))
   const [credential, setCredential] = useState<'email' | 'username'>('email')
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
@@ -355,11 +331,7 @@ export default function SignInModal({ onClose }: Props) {
                 </a>
               ))}
 
-              {/* Hidden inside MiniPay: the chooser's options (WalletConnect,
-                  Coinbase, Trust) all require leaving the WebView for another
-                  app that cannot connect back into it. It is also the second
-                  source of the phantom MetaMask row above. */}
-              {isWeb3AuthConfigured && !inMiniPay && (
+              {isWeb3AuthConfigured && (
                 <button
                   onClick={handleWeb3AuthWallet}
                   disabled={!!pending || !web3authReady}

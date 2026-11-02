@@ -4,7 +4,7 @@
  *
  * Every call site that used to import `celo` from `viem/chains` or write
  * `chainId: 42220` inline now asks here instead. Nothing about behaviour changes
- * today: the web and MiniPay editions are both Celo, so these resolve to exactly
+ * today: the one edition is Celo, so these resolve to exactly
  * what was hardcoded. What changes is that adding a chain becomes a config edit
  * rather than a hunt through fifteen files.
  *
@@ -72,8 +72,7 @@ export function explorerTxUrl(chainId: number, txHash: string): string | null {
 /**
  * The EIP-712 domain for the active edition's currency `permit`.
  *
- * Returns `null` when the edition has no permit-capable currency — MiniPay,
- * which cannot sign typed data at all. Callers must treat `null` as "this
+ * Returns `null` when the edition has no permit-capable currency. Callers must treat `null` as "this
  * edition does not do permits" and take their non-signature path rather than
  * substituting a default. Guessing a domain produces a signature that verifies
  * locally and reverts on-chain.

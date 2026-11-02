@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { WEB_EDITION } from './web/config'
-import { MINIPAY_EDITION } from './minipay/config'
 import type { EditionConfig } from './types'
 
 /**
@@ -18,7 +17,7 @@ import type { EditionConfig } from './types'
  * two editions accidentally sharing one.
  */
 
-const ALL: EditionConfig[] = [WEB_EDITION, MINIPAY_EDITION]
+const ALL: EditionConfig[] = [WEB_EDITION]
 
 describe('per-edition contract addresses', () => {
   it('never lets two chains share a currency address', () => {
@@ -51,14 +50,7 @@ describe('per-edition contract addresses', () => {
       // proof-of-unique-human. This fails loudly if someone flips `earning` on an
       // edition that has neither.
       expect(e.currency.redeemable, `${e.id} earns but its currency is not redeemable`).toBe(true)
-      expect(e.identity, `${e.id} earns with no identity gate`).not.toBe('none')
-    }
-  })
-
-  it('hides the bank wherever nothing is redeemable', () => {
-    for (const e of ALL) {
-      if (e.currency.redeemable) continue
-      expect(e.features.bank, `${e.id} shows a bank for a currency with no cash-out`).toBe(false)
+      expect(e.identity, `${e.id} earns with no identity gate`).toBe('gooddollar')
     }
   })
 })

@@ -14,7 +14,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 // Both the marketplace and the spend currency come from the ACTIVE EDITION
 // rather than from a global. Valor deploys its own marketplace to every chain it
 // runs on, at a different address each time, and the currency differs too (G$ on
-// Celo, USDm in MiniPay).
+// Celo).
 //
 // Resolved per call, not at module load: `edition()` reads the host at first use,
 // and a module-level constant would freeze whatever the first import saw.

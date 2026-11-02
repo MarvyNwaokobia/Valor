@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { edition } from '@/editions'
 import {
   detectBrowserCtx,
   INSTALL_COPY,
@@ -39,16 +38,6 @@ export function InstallPrompt() {
   useEffect(() => {
     setStandalone(isStandalone())
     if (isStandalone()) return
-    // Inside a wallet's Mini App there is nothing to install. MiniPay runs the
-    // page in its own WebView with its own chrome — no Share icon, no "Add to
-    // Home Screen", no route to a standalone app. Showing the hint there gives
-    // an instruction that cannot be followed, on the smallest screen we target.
-    //
-    // Detected from the edition rather than the user-agent because MiniPay's
-    // WebView is not reliably identifiable from the UA string on iOS, whereas
-    // its injected provider always announces itself. The in-app-browser regex
-    // in pwaInstall.ts still covers the UA-identifiable ones (Instagram, WhatsApp, Telegram, …).
-    if (edition().id === 'minipay') return
     try {
       if (localStorage.getItem(DISMISS_KEY)) return
     } catch {

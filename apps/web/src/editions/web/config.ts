@@ -2,9 +2,8 @@
  * @module editions/web/config
  * @description playvalor.app in a normal browser. The edition that exists today.
  *
- * This config describes CURRENT behaviour exactly. Nothing here is new — it is
- * the baseline the other two editions are diffs against, so if this file and
- * the running app ever disagree, this file is wrong.
+ * This config describes CURRENT behaviour exactly: if this file and the running
+ * app ever disagree, this file is wrong.
  */
 
 import { G_TOKEN_ADDRESS } from '@/lib/constants'
@@ -43,21 +42,5 @@ export const WEB_EDITION: EditionConfig = {
     // hardcoded because the Celo deployment has been upgraded before and may be
     // again.
     marketplace: (process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT ?? null) as `0x${string}` | null,
-  },
-
-  canSignTypedData: true,
-
-  assetBase: '/',
-
-  features: {
-    campaign: true,
-    endless: true,
-    endlessRequiresCampaignClear: true,
-    marketplace: true,
-    bank: true,
-    dailyClaim: true,
-    duels: true,
-    postProcessing: true,
-    cinematics: true,
   },
 }

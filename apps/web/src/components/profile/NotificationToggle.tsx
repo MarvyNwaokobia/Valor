@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { Bell, BellOff } from 'lucide-react'
-import { edition } from '@/editions'
 import {
   detectBrowserCtx,
   INSTALL_COPY,
@@ -66,9 +65,8 @@ export default function NotificationToggle({ walletAddress }: Props) {
     getPushSubscriptionState().then(setPushState)
   }, [installed])
 
-  // Waiting on the client-only checks above, or nothing to say (MiniPay's WebView
-  // has no home screen route at all — the request would be unactionable there).
-  if (installed === null || !ctx || edition().id === 'minipay') return null
+  // Waiting on the client-only checks above.
+  if (installed === null || !ctx) return null
 
   // ── Not installed yet: show how, per browser, instead of a toggle ───────────
   if (!installed) {

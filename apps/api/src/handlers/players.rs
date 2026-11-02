@@ -391,15 +391,6 @@ pub struct CreatePlayerRequest {
     /// effort on the client (cookie, storage, or the onboarding field), so this
     /// is untrusted input and every guard lives server-side.
     pub referred_by:             Option<String>,
-    /// Which edition of Valor this player signed up in: `web` or `minipay`.
-    /// Absent or unrecognised means `web`, matching the column default.
-    ///
-    /// Client-asserted, because no server-visible property of the request
-    /// distinguishes the editions — they share one domain on purpose. It is
-    /// nonetheless recorded ONCE and never updated afterwards (see the INSERT
-    /// below), so it cannot be flipped per-request to unlock earning. See
-    /// services::edition for what this does and does not defend against.
-    pub edition:                 Option<String>,
 }
 
 /// Whole G$ paid to a player whose referral completes onboarding.
@@ -429,11 +420,9 @@ const REFERRAL_DAILY_CAP: i64 = 50;
 /// the referred wallet has already passed the GoodDollar whitelist gate in
 /// onboarding, so a recorded referral means a verified human, not just a signup.
 ///
-/// That justification is edition-specific, and it is the reason for the first guard
-/// below. The MiniPay edition has no identity gate at all — deliberately, because
-/// nothing there pays out — so a MiniPay signup proves nothing about who is behind
-/// the wallet. A non-earning edition is excluded from ever claiming a referral slot
-/// for the same reason: nothing there should ever be worth farming.
+/// The first guard below is what actually proves that. A wallet stored as a
+/// non-earning edition (rows from before signup stopped reading one) is excluded from
+/// ever claiming a referral slot: nothing there should ever be worth farming.
 ///
 /// Every guard is here rather than on the client: the client supplies the
 /// referrer and cannot be trusted with who gets credited.
@@ -444,9 +433,8 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
     }
 
     // Ground-truth GoodDollar check, not the `edition` column. `wallet_earns`
-    // below only proves the row claims to be `web` edition — that flag is
-    // client-asserted at signup and `POST /players` has no auth, so a script
-    // can create as many "web" rows as it wants with no identity ever proven.
+    // below only reads a flag stored on the row, and `POST /players` has no auth,
+    // so a script can create as many rows as it wants with no identity ever proven.
     // Exploited 2026-08-16: 13k+ bot-created wallets with `referred_by` set to
     // 3 attacker wallets drained 93.5k G$ in referral_reward before this
     // landed. The whole point of paying a referral is buying a verified
@@ -459,24 +447,24 @@ async fn credit_referral(state: &AppState, referred: &str, referrer_raw: &str) {
         return;
     }
 
-    // Neither side may be a non-earning edition.
+    // Neither side may be a non-earning row.
     //
-    // The REFERRED player is the identity argument above: no gate passed, nothing
-    // proven, nothing paid. The REFERRER is simpler — their edition does not pay
-    // real money, so there is nothing to credit them with.
+    // The REFERRED player: no gate passed, nothing proven, nothing paid. The
+    // REFERRER is simpler — their row does not pay real money, so there is nothing
+    // to credit them with.
     //
     // Checked before the `referrals` row is claimed on purpose. Claiming first and
     // paying nothing would burn the one-per-referred-wallet slot, leaving a player
     // who later joins properly permanently unable to credit anyone.
     if !crate::services::edition::wallet_earns(&state.db, referred).await {
         tracing::info!(
-            "referral skipped: {} signed up in a non-earning edition, no identity gate passed",
+            "referral skipped: {} is a non-earning player, no identity gate passed",
             referred,
         );
         return;
     }
     if !crate::services::edition::wallet_earns(&state.db, &referrer).await {
-        tracing::info!("referral skipped: referrer {} is in a non-earning edition", referrer);
+        tracing::info!("referral skipped: referrer {} is a non-earning player", referrer);
         return;
     }
 
@@ -629,15 +617,15 @@ pub async fn create_player(
     // and burn real relay gas on ~1,000 on-chain claim txs, neither of which
     // required a referral.
     //
-    // Scoped to brand-new WEB-edition wallets only:
-    //   - MiniPay has no identity gate by design (services::edition) — nothing
-    //     it does pays real money, so there is nothing to protect here.
+    // Scoped to brand-new wallets only:
     //   - An existing wallet re-running onboarding (the "confirm your class"
     //     flow for reconstructed players) already passed this the first time
     //     its row was created; re-checking would strand real players if
     //     GoodDollar's API has a transient blip during a routine re-confirm.
-    let edition = crate::services::edition::Edition::parse(body.edition.as_deref().unwrap_or("web"));
-    if edition == crate::services::edition::Edition::Web {
+    //
+    // Nothing in the request can switch this off: signup used to read an
+    // `edition` from the body, and a non-web value skipped the whitelist check.
+    {
         let already_exists: Option<(String,)> =
             sqlx::query_as("SELECT wallet_address FROM players WHERE wallet_address = $1")
                 .bind(&wallet)
@@ -663,14 +651,8 @@ pub async fn create_player(
             character_customization, play_style, avatar, character_name,
             rank, xp, attack_stat, defense_stat, speed_stat,
             g_earned_lifetime, last_active, decay_status, wins, losses, character_confirmed,
-            magic_email, magic_issuer, edition
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true, $12, $13, $14)
-         -- `edition` is deliberately ABSENT from this UPDATE list. It is written once,
-         -- at signup, and is immutable thereafter. Letting it change here would undo
-         -- the whole point of storing it: a player who signed up in MiniPay could
-         -- re-run onboarding claiming `web` and unlock real payouts, having passed no
-         -- identity check. Onboarding is re-runnable by design (the confirm-your-class
-         -- flow), so this is a reachable path, not a theoretical one.
+            magic_email, magic_issuer
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Iron', 0, $9, $10, $11, 0, now(), 'none', 0, 0, true, $12, $13)
          ON CONFLICT (wallet_address) DO UPDATE
            SET character_class         = COALESCE(EXCLUDED.character_class, players.character_class),
                character_customization = CASE
@@ -697,12 +679,6 @@ pub async fn create_player(
     .bind(body.speed_stat.unwrap_or(10))
     .bind(&body.magic_email)
     .bind(&body.magic_issuer)
-    // Normalised through Edition::parse so an unknown string lands on 'web' rather
-    // than tripping the CHECK constraint and failing the whole signup.
-    .bind(
-        crate::services::edition::Edition::parse(body.edition.as_deref().unwrap_or("web"))
-            .as_str(),
-    )
     .fetch_one(&state.db)
     .await;
 

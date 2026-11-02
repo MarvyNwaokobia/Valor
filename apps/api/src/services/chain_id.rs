@@ -22,7 +22,7 @@ pub const CELO: i32 = 42220;
 /// Chains Valor can record a transaction on.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ChainId {
-    /// G$ payouts, GoodDollar identity, MiniPay. The money rail.
+    /// G$ payouts and GoodDollar identity. The money rail.
     Celo,
 }
 
