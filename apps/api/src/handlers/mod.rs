@@ -26,6 +26,7 @@ pub mod consistency;
 pub mod client_errors;
 pub mod push;
 pub mod campaigns;
+pub mod groups;
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -102,6 +103,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/{wallet}/earn-cap", web::get().to(players::get_earn_cap))
                 .route("/{wallet}/username-available/{username}", web::get().to(players::check_username))
                 .route("/{wallet}/referrals", web::get().to(players::get_referrals))
+                .route("/{wallet}/group", web::get().to(groups::get_my_group))
+                .route("/{wallet}/group", web::post().to(groups::join))
+                .route("/{wallet}/group", web::delete().to(groups::leave))
                 .route("/{wallet}/face-off-rating", web::get().to(players::get_face_off_rating))
                 .route("/{wallet}/achievements", web::get().to(players::get_achievements))
                 .route("/{wallet}/achievements/check", web::post().to(players::check_achievements))
@@ -209,7 +213,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/campaigns/referrals", web::post().to(campaigns::create))
                 .route("/campaigns/referrals/{id}/fund", web::post().to(campaigns::fund))
                 .route("/campaigns/referrals/{id}/payout-preview", web::get().to(campaigns::payout_preview))
-                .route("/campaigns/referrals/{id}/payout", web::post().to(campaigns::payout)),
+                .route("/campaigns/referrals/{id}/payout", web::post().to(campaigns::payout))
+                .route("/groups", web::get().to(groups::admin_list))
+                .route("/groups", web::post().to(groups::admin_create)),
         )
         .service(
             web::scope("/seasons")
@@ -218,5 +224,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/campaigns")
                 .route("/referrals/current", web::get().to(campaigns::current)),
+        )
+        .service(
+            web::scope("/groups")
+                .route("/{slug}", web::get().to(groups::get_group))
+                .route("/{slug}/board", web::get().to(groups::board)),
         );
 }

@@ -10,6 +10,7 @@ export interface WaveBoardEntry {
   username: string | null;
   waves: number;
   est_payout_g?: number;
+  group?: string | null;
 }
 
 /**
@@ -21,11 +22,14 @@ export interface WaveBoardEntry {
  */
 export default function WaveBoard({
   seasonId,
+  groupSlug,
   highlightWallet,
   limit = 25,
   title = 'Wave Leaderboard',
 }: {
   seasonId?: string;
+  /** Show only this group's members (the group's own board). */
+  groupSlug?: string;
   highlightWallet?: string;
   limit?: number;
   title?: string;
@@ -37,14 +41,18 @@ export default function WaveBoard({
     try {
       const qs = new URLSearchParams({ limit: String(limit) });
       if (seasonId) qs.set('season_id', seasonId);
-      const res = await fetch(`${API}/endless/board?${qs}`);
+      if (groupSlug && seasonId) qs.set('season_id', seasonId);
+      const url = groupSlug
+        ? `${API}/groups/${encodeURIComponent(groupSlug)}/board?${qs}`
+        : `${API}/endless/board?${qs}`;
+      const res = await fetch(url);
       if (res.ok) setEntries((await res.json()).entries ?? []);
     } catch {
       /* offline — show the empty state rather than breaking the page */
     } finally {
       setLoading(false);
     }
-  }, [seasonId, limit]);
+  }, [seasonId, groupSlug, limit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -77,6 +85,7 @@ export default function WaveBoard({
                 <span className="font-display font-black text-slate-500 w-6 tabular-nums">{e.rank}</span>
                 <span className="flex-1 min-w-0 truncate text-white text-sm">
                   {e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`}
+                  {e.group && <span className="text-slate-500 text-[10px] uppercase tracking-widest ml-2">{e.group}</span>}
                   {mine && <span className="text-amber-500/70 text-[10px] uppercase tracking-widest ml-2">you</span>}
                 </span>
                 <span className="text-white font-bold tabular-nums text-sm">{e.waves}</span>

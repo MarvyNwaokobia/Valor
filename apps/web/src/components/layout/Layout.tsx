@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
+import PendingGroupBanner from '@/components/groups/PendingGroupBanner'
 import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from './Navbar'
 import MobileNav from './MobileNav'
@@ -104,6 +105,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className="app-shell relative z-10 flex flex-col min-h-screen">
         <Navbar />
         <main className="flex-1 container mx-auto px-4 py-6 max-w-6xl">
+          <PendingGroupBanner />
           {children}
         </main>
         <MobileNav />

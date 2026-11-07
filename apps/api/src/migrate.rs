@@ -67,6 +67,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // "referral_campaigns" does not exist`. Same reasoning as add_survival_runs
     // below.
     ("add_referral_campaign_payouts.sql", include_str!("../migrations/add_referral_campaign_payouts.sql")),
+    ("add_player_groups.sql",    include_str!("../migrations/add_player_groups.sql")),
     ("add_repeating_decay.sql",   include_str!("../migrations/add_repeating_decay.sql")),
     ("add_season_payouts.sql",    include_str!("../migrations/add_season_payouts.sql")),
     // OUT OF ALPHABETICAL ORDER ON PURPOSE: add_seasonal_campaign.sql ALTERs

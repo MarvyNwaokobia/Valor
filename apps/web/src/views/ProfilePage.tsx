@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
+import { useMyGroup } from '@/hooks/useGroups'
 import { shareCard } from '@/lib/shareCard'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
@@ -32,6 +33,7 @@ export default function ProfilePage() {
   const playerSynced = usePlayerStore(s => s.playerSynced)
   const inventory    = usePlayerStore(s => s.inventory)
   const { incoming: incomingFriendRequests } = useFriends(address)
+  const myGroup = useMyGroup(address)
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'unauthenticated' || !address) { router.replace('/'); return null }
@@ -135,6 +137,17 @@ export default function ProfilePage() {
                   >
                     + Set username
                   </button>
+                )}
+                {myGroup.group && (
+                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-amber-400 mt-1">
+                    {myGroup.group.name}
+                    <button
+                      onClick={() => { if (window.confirm(`Leave ${myGroup.group!.name}?`)) void myGroup.leave().catch(() => {}) }}
+                      className="ml-2 text-slate-600 hover:text-slate-300 normal-case tracking-normal font-medium"
+                    >
+                      leave
+                    </button>
+                  </p>
                 )}
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-sm inline-block"

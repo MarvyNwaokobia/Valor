@@ -9,6 +9,7 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth';
 import { useSeasonalRun } from '@/hooks/useSeasonalRun';
 import { useEndlessProgress } from '@/hooks/useEndlessProgress';
 import WaveBoard from '@/components/battle/WaveBoard';
+import { useMyGroup } from '@/hooks/useGroups';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
 import { AnimatePresence } from 'framer-motion';
@@ -54,6 +55,7 @@ export default function SeasonalPage() {
   const router = useRouter();
   const { season, board, loading, refresh } = useSeasonalRun(address);
   const progress = useEndlessProgress(address, season?.id);
+  const myGroup = useMyGroup(address);
 
   // 'lobby' → the season card + board. 'run' → the fight. There is no result screen:
   // dying no longer ends anything, it puts you back at the start of your wave.
@@ -236,6 +238,12 @@ export default function SeasonalPage() {
         <div className="mt-10">
           <WaveBoard seasonId={season?.id} highlightWallet={address} title="Season · Waves Completed" />
         </div>
+
+        {myGroup.group && (
+          <div className="mt-10">
+            <WaveBoard seasonId={season?.id} groupSlug={myGroup.group.slug} highlightWallet={address} title={`${myGroup.group.name} · Waves Completed`} />
+          </div>
+        )}
 
       </div>
     </div>
