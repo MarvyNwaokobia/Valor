@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
+const MEDALS: Record<number, string> = { 1: '#eab308', 2: '#cbd5e1', 3: '#d97757' };
+
 export interface WaveBoardEntry {
   rank: number;
   wallet_address: string;
@@ -26,6 +28,7 @@ export default function WaveBoard({
   highlightWallet,
   limit = 25,
   title = 'Wave Leaderboard',
+  podium = false,
 }: {
   seasonId?: string;
   /** Show only this group's members (the group's own board). */
@@ -33,6 +36,8 @@ export default function WaveBoard({
   highlightWallet?: string;
   limit?: number;
   title?: string;
+  /** Colour the top three ranks gold, silver and bronze. */
+  podium?: boolean;
 }) {
   const [entries, setEntries] = useState<WaveBoardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,17 +77,18 @@ export default function WaveBoard({
       ) : (
         <div className="flex flex-col gap-1.5">
           {entries.map((e) => {
+            const medal = podium ? MEDALS[e.rank] : undefined;
             const mine = e.wallet_address.toLowerCase() === (highlightWallet ?? '').toLowerCase();
             return (
               <div
                 key={e.wallet_address}
                 className="flex items-center gap-3 px-4 py-2.5 rounded-xl border"
                 style={{
-                  background: mine ? 'rgba(234,179,8,0.08)' : 'rgba(8,8,14,0.9)',
-                  borderColor: mine ? 'rgba(234,179,8,0.4)' : 'rgba(42,42,58,0.8)',
+                  background: mine ? 'rgba(234,179,8,0.08)' : medal ? `${medal}14` : 'rgba(8,8,14,0.9)',
+                  borderColor: mine ? 'rgba(234,179,8,0.4)' : medal ? `${medal}55` : 'rgba(42,42,58,0.8)',
                 }}
               >
-                <span className="font-display font-black text-slate-500 w-6 tabular-nums">{e.rank}</span>
+                <span className="font-display font-black w-6 tabular-nums" style={{ color: medal ?? '#64748b' }}>{e.rank}</span>
                 <span className="flex-1 min-w-0 truncate text-white text-sm">
                   {e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`}
                   {e.group && <span className="text-slate-500 text-[10px] uppercase tracking-widest ml-2">{e.group}</span>}
