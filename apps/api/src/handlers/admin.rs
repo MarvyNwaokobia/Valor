@@ -427,7 +427,7 @@ pub async fn create_season(
     let row = sqlx::query_as::<_, SeasonRow>(
         "INSERT INTO seasons (name, starts_at, ends_at, seed, prize_pool_g, payout_bps)
          VALUES ($1, COALESCE($2, now()), $3, $4, COALESCE($5, 0), $6)
-         RETURNING id, name, starts_at, ends_at",
+         RETURNING id, name, starts_at, ends_at, prize_pool_g, payout_status",
     )
     .bind(body.name.trim())
     .bind(body.starts_at)
@@ -569,7 +569,7 @@ pub async fn end_season(
     }
     let row = sqlx::query_as::<_, SeasonRow>(
         "UPDATE seasons SET ends_at = now() WHERE id = $1 AND ends_at IS NULL
-         RETURNING id, name, starts_at, ends_at",
+         RETURNING id, name, starts_at, ends_at, prize_pool_g, payout_status",
     )
     .bind(path.into_inner())
     .fetch_optional(&state.db)
@@ -671,7 +671,7 @@ pub async fn update_season(
             SET starts_at = COALESCE($2, starts_at),
                 ends_at   = COALESCE($3, ends_at)
           WHERE id = $1
-      RETURNING id, name, starts_at, ends_at",
+      RETURNING id, name, starts_at, ends_at, prize_pool_g, payout_status",
     )
     .bind(path.into_inner()).bind(body.starts_at).bind(body.ends_at)
     .fetch_optional(&state.db).await;
