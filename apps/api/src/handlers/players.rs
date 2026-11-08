@@ -601,7 +601,7 @@ pub async fn create_player(
     // in credit_referral for the real gate. This just stops one IP from scripting
     // unlimited account creation (exploited 2026-08-16, see credit_referral).
     let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
-    if !state.battle_limiter.check(&format!("create_player:{}", ip)) {
+    if !state.signup_ip_limiter.check(&format!("create_player:{}", ip)) {
         return HttpResponse::TooManyRequests()
             .json(json!({"error": "Too many signups from this address. Slow down."}));
     }

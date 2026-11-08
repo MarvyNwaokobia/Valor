@@ -68,7 +68,7 @@ pub struct PlayerLoginRequest {
 
 pub async fn login(req: HttpRequest, state: web::Data<AppState>, body: web::Json<PlayerLoginRequest>) -> HttpResponse {
     let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
-    if !state.battle_limiter.check(&format!("player_login_ip:{}", ip)) {
+    if !state.run_ip_limiter.check(&format!("player_login_ip:{}", ip)) {
         return HttpResponse::TooManyRequests().json(json!({"error": "Too many requests. Slow down."}));
     }
 

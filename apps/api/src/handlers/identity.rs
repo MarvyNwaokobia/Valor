@@ -185,7 +185,7 @@ pub async fn record_verification(
     body: web::Json<RecordVerificationRequest>,
 ) -> HttpResponse {
     let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
-    if !state.battle_limiter.check(&format!("record_verification:{}", ip)) {
+    if !state.signup_ip_limiter.check(&format!("record_verification:{}", ip)) {
         return HttpResponse::TooManyRequests().json(json!({"error": "Too many requests. Slow down."}));
     }
 

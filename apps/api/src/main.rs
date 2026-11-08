@@ -21,6 +21,8 @@ pub struct AppState {
     pub push:              Option<services::push::PushService>,
     pub battle_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
     /// Run starts, per IP. Much looser than battle_limiter because a whole venue can sit behind one IP; the per-wallet cap is what actually bounds a single player.
+    /// Character creation and verification recording, per IP. Raised for event week (SIGNUP_IP_LIMIT, default 60/min) so a hall on one Wi-Fi IP can onboard together.
+    pub signup_ip_limiter: std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub run_ip_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub chat_limiter:      std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub chat_hub:          services::chat_hub::ChatHub,
@@ -108,6 +110,8 @@ async fn main() -> anyhow::Result<()> {
     let battle_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
     let run_ip_limit: u32 = std::env::var("RUN_START_IP_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
     let run_ip_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(run_ip_limit, 60));
+    let signup_ip_limit: u32 = std::env::var("SIGNUP_IP_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    let signup_ip_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(signup_ip_limit, 60));
     // chat_limiter: 20 messages / 60s per sender wallet — generous for real conversation,
     // enough to stop one wallet flooding the push/socket fan-out.
     let chat_limiter   = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(20, 60));
@@ -176,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         push:           push.clone(),
         battle_limiter: battle_limiter.clone(),
         run_ip_limiter: run_ip_limiter.clone(),
+        signup_ip_limiter: signup_ip_limiter.clone(),
         chat_limiter:   chat_limiter.clone(),
         chat_hub:       chat_hub.clone(),
         game_server:    game_server.clone(),
