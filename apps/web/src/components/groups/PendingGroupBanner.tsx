@@ -37,7 +37,7 @@ export default function PendingGroupBanner() {
   }
 
   return (
-    <div className="mx-auto max-w-md mt-3 px-4 py-3 rounded-xl flex items-center gap-3"
+    <div className="mb-5 px-4 py-3 rounded-xl flex items-center gap-3"
          style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.4)' }}>
       <span className="flex-1 text-sm text-white">Join <b>{group.data.name}</b> and play for them?</span>
       <button onClick={join} disabled={busy} className="px-3 py-1.5 rounded-lg text-xs font-black text-black disabled:opacity-40" style={{ background: '#eab308' }}>

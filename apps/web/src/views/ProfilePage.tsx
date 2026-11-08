@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useMyGroup } from '@/hooks/useGroups'
+import PendingGroupBanner from '@/components/groups/PendingGroupBanner'
 import { shareCard } from '@/lib/shareCard'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
@@ -81,6 +82,8 @@ export default function ProfilePage() {
   const hasXpBooster = equipped.some(i => i.category === 'booster')
 
   return (
+    <>
+    <PendingGroupBanner />
     <div className="flex flex-col lg:flex-row gap-6 items-start">
 
       {/* ── LEFT — Character art hero card ──────────────────────────── */}
@@ -397,5 +400,6 @@ export default function ProfilePage() {
         />
       )}
     </div>
+    </>
   )
 }
