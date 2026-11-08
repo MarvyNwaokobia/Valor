@@ -348,6 +348,8 @@ pub struct SeasonRow {
     pub name: String,
     pub starts_at: DateTime<Utc>,
     pub ends_at: Option<DateTime<Utc>>,
+    pub prize_pool_g: i64,
+    pub payout_status: String,
 }
 
 pub async fn list_seasons(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
@@ -355,7 +357,7 @@ pub async fn list_seasons(req: HttpRequest, state: web::Data<AppState>) -> HttpR
         return resp;
     }
     let rows = sqlx::query_as::<_, SeasonRow>(
-        "SELECT id, name, starts_at, ends_at FROM seasons ORDER BY starts_at DESC",
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status FROM seasons ORDER BY starts_at DESC",
     )
     .fetch_all(&state.db)
     .await;

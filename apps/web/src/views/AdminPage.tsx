@@ -9,6 +9,23 @@ import { formatGDollarNumber } from '@/utils/format'
 const API = process.env.NEXT_PUBLIC_API_URL ?? ''
 const SESSION_KEY = 'valor-admin-session'
 
+/**
+ * Up to two prize tiers (top N winners at X G$ each, then the next M at Y each —
+ * 0 for the second tier's count means a flat top-N payout) collapsed into the
+ * {pool, bps} shape a season or referral campaign actually stores: a total G$
+ * pool and each rank's cut of it in basis points, rounded, with any rounding
+ * drift folded into the last winner so the array always sums to exactly 10000.
+ * Shared by the season-creation form and the re-fund/re-split control for an
+ * existing season — both are "pick a prize shape" in the same sense.
+ */
+function tierSplit(tiers: { count: number; each: number }[]) {
+  const pool = tiers.reduce((sum, t) => sum + t.count * t.each, 0)
+  if (pool <= 0) return { pool: 0, bps: [] as number[] }
+  const bps = tiers.flatMap((t) => Array.from({ length: t.count }, () => Math.round((t.each / pool) * 10000)))
+  if (bps.length > 0) bps[bps.length - 1] += 10000 - bps.reduce((a, b) => a + b, 0)
+  return { pool, bps }
+}
+
 interface AdminSession {
   token: string
   wallet: string
@@ -20,6 +37,8 @@ interface Season {
   name: string
   starts_at: string
   ends_at: string | null
+  prize_pool_g: number
+  payout_status: string
 }
 
 interface AdminStats {
@@ -218,10 +237,22 @@ export default function AdminPage() {
   // Second tier is optional — 0 winners means "flat payout, no second tier".
   const [seasonWinners2, setSeasonWinners2] = useState(5)
   const [seasonPerWinner2, setSeasonPerWinner2] = useState(30000)
+  // Third tier is optional too — 0 winners means no third tier.
+  const [seasonWinners3, setSeasonWinners3] = useState(0)
+  const [seasonPerWinner3, setSeasonPerWinner3] = useState(0)
   const [busy, setBusy] = useState(false)
   const [showScheduler, setShowScheduler] = useState(false)
   const [preview, setPreview] = useState<PayoutPreview | null>(null)
   const [paying, setPaying] = useState(false)
+  // Re-splitting an EXISTING season's prize pool — separate from the tier fields
+  // above (those draft a season still being created). Same default shape (top 5
+  // at 70,000 G$, next 5 at 30,000 G$) since that's the one Marvy keeps reaching
+  // for; tier 2 at 0 winners collapses to a flat top-N payout.
+  const [fundTier1Count, setFundTier1Count] = useState(5)
+  const [fundTier1Each, setFundTier1Each] = useState(70000)
+  const [fundTier2Count, setFundTier2Count] = useState(5)
+  const [fundTier2Each, setFundTier2Each] = useState(30000)
+  const [seasonFunding, setSeasonFunding] = useState(false)
 
   const [referralCampaigns, setReferralCampaigns] = useState<ReferralCampaign[]>([])
   const [selectedReferralCampaign, setSelectedReferralCampaign] = useState<string | null>(null)
@@ -352,6 +383,7 @@ export default function AdminPage() {
     if (c) setReferralFundAmount(c.prize_pool_g)
   }, [selectedReferralCampaign, referralCampaigns])
 
+
   useEffect(() => {
     if (!session) return
     refreshStats()
@@ -360,20 +392,20 @@ export default function AdminPage() {
 
   // Up to two tiers: top `seasonWinners` at `seasonPerWinner` each, then the next
   // `seasonWinners2` at `seasonPerWinner2` each (0 winners2 = no second tier, flat
-  // payout). Basis points are each winner's cut of the total pool, rounded, with any
-  // rounding drift folded into the last winner so the array always sums to exactly
-  // 10000. Ties are broken by who reached the wave first, so no two players ever
+  // payout). Ties are broken by who reached the wave first, so no two players ever
   // share a place and the table is always unambiguous.
-  const seasonTiers = seasonWinners2 > 0 && seasonPerWinner2 > 0
-    ? [{ count: seasonWinners, each: seasonPerWinner }, { count: seasonWinners2, each: seasonPerWinner2 }]
-    : [{ count: seasonWinners, each: seasonPerWinner }]
-  const seasonPool = seasonTiers.reduce((sum, t) => sum + t.count * t.each, 0)
-  const seasonBps = (() => {
-    if (seasonPool <= 0) return []
-    const bps = seasonTiers.flatMap((t) => Array.from({ length: t.count }, () => Math.round((t.each / seasonPool) * 10000)))
-    if (bps.length > 0) bps[bps.length - 1] += 10000 - bps.reduce((a, b) => a + b, 0)
-    return bps
-  })()
+  const seasonTiers = [
+    { count: seasonWinners, each: seasonPerWinner },
+    ...(seasonWinners2 > 0 && seasonPerWinner2 > 0 ? [{ count: seasonWinners2, each: seasonPerWinner2 }] : []),
+    ...(seasonWinners3 > 0 && seasonPerWinner3 > 0 ? [{ count: seasonWinners3, each: seasonPerWinner3 }] : []),
+  ]
+  const { pool: seasonPool, bps: seasonBps } = tierSplit(seasonTiers)
+
+  // Same shape, for re-funding/re-splitting a season that already exists.
+  const fundTiers = fundTier2Count > 0 && fundTier2Each > 0
+    ? [{ count: fundTier1Count, each: fundTier1Each }, { count: fundTier2Count, each: fundTier2Each }]
+    : [{ count: fundTier1Count, each: fundTier1Each }]
+  const { pool: fundPool, bps: fundBps } = tierSplit(fundTiers)
 
   async function handleDeleteSeason(sn: Season) {
     if (!window.confirm(`Delete "${sn.name}" permanently?\n\nThis removes the season and any progress in it. A season that has already paid a winner cannot be deleted.`)) return
@@ -431,7 +463,7 @@ export default function AdminPage() {
       return
     }
     const tierSummary = seasonTiers.length > 1
-      ? `top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each, next ${seasonWinners2} take ${seasonPerWinner2.toLocaleString()} G$ each`
+      ? `top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each` + seasonTiers.slice(1).map((t) => `, next ${t.count} take ${t.each.toLocaleString()} G$ each`).join('')
       : `top ${seasonWinners} take ${seasonPerWinner.toLocaleString()} G$ each`
     const summary =
       `Create "${newSeasonName.trim()}"?\n\n` +
@@ -498,6 +530,29 @@ export default function AdminPage() {
       await Promise.all([refreshPreview(), refreshSeasons()])
     } finally {
       setPaying(false)
+    }
+  }
+
+  // Sets (or raises) a season's recorded prize pool. This is the DB number the
+  // payout splits percentages of — it does NOT move any G$ by itself. The actual
+  // money has to already be sitting in the on-chain ValorRewardPool; this just
+  // tells the season how much of that pool it's allowed to pay out.
+  async function handleFundSeason() {
+    if (!selectedSeason || selectedSeason === 'all' || fundPool < 0) return
+    setSeasonFunding(true)
+    try {
+      const res = await authedFetch(`/admin/seasons/${selectedSeason}/fund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prize_pool_g: fundPool, payout_bps: fundBps }),
+      })
+      if (res.ok) {
+        await Promise.all([refreshSeasons(), refreshPreview()])
+      } else {
+        window.alert(`Could not fund the season: ${await res.text()}`)
+      }
+    } finally {
+      setSeasonFunding(false)
     }
   }
 
@@ -782,6 +837,56 @@ export default function AdminPage() {
                   Delete season
                 </button>
               </div>
+
+              {/* Sets the prize pool AND split this season pays out of. The G$ itself
+                  has to already be sitting in the on-chain ValorRewardPool
+                  (0x12a3f711…F1f4) — this only tells the season how much of it to
+                  pay and to whom. Re-running this overwrites the split, so it's
+                  safe to use again if the shape needs to change before payout. */}
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">Winners paid (tier 1)</span>
+                    <input type="number" min={1} max={20} value={fundTier1Count}
+                      onChange={(e) => setFundTier1Count(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+                    <input type="number" min={0} step={1000} value={fundTier1Each}
+                      onChange={(e) => setFundTier1Each(Math.max(0, Number(e.target.value) || 0))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">Next winners (tier 2, optional)</span>
+                    <input type="number" min={0} max={20} value={fundTier2Count}
+                      onChange={(e) => setFundTier2Count(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+                    <input type="number" min={0} step={1000} value={fundTier2Each}
+                      onChange={(e) => setFundTier2Each(Math.max(0, Number(e.target.value) || 0))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-slate-400">
+                    Pool <span className="text-amber-400 font-bold">{fundPool.toLocaleString()} G$</span>
+                    {sn.prize_pool_g > 0 && sn.prize_pool_g !== fundPool && (
+                      <span className="text-slate-600"> (currently {sn.prize_pool_g.toLocaleString()} G$)</span>
+                    )}
+                  </p>
+                  <button
+                    onClick={handleFundSeason}
+                    disabled={seasonFunding || fundPool <= 0}
+                    className="px-3 py-2 rounded-lg text-xs font-bold text-black disabled:opacity-50"
+                    style={{ background: '#eab308' }}
+                  >
+                    {seasonFunding ? 'Setting…' : 'Set pool & split'}
+                  </button>
+                </div>
+              </div>
             </div>
           )
         })()}
@@ -909,12 +1014,24 @@ export default function AdminPage() {
                 onChange={(e) => setSeasonPerWinner2(Math.max(0, Number(e.target.value) || 0))}
                 className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
             </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">Next winners paid (tier 3, optional)</span>
+              <input type="number" min={0} max={20} value={seasonWinners3}
+                onChange={(e) => setSeasonWinners3(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+              <input type="number" min={0} step={1000} value={seasonPerWinner3}
+                onChange={(e) => setSeasonPerWinner3(Math.max(0, Number(e.target.value) || 0))}
+                className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+            </label>
           </div>
           <p className="text-xs text-slate-500">
             Prize pool <span className="text-amber-400 font-bold">{seasonPool.toLocaleString()} G$</span>
             {' · '}top {seasonWinners} take {seasonPerWinner.toLocaleString()} G$ each
-            {seasonTiers.length > 1 && <>{', next '}{seasonWinners2}{' take '}{seasonPerWinner2.toLocaleString()}{' G$ each'}</>}
-            {Math.max(seasonPerWinner, seasonPerWinner2) > 10000 && (
+            {seasonTiers.slice(1).map((t, i) => <span key={i}>{', next '}{t.count}{' take '}{t.each.toLocaleString()}{' G$ each'}</span>)}
+            {Math.max(...seasonTiers.map((t) => t.each)) > 10000 && (
               <span className="text-slate-600"> · winner prizes over 10,000 G$ are paid in multiple transactions (10,000 G$ on-chain cap per transfer)</span>
             )}
           </p>
