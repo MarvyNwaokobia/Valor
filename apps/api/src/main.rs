@@ -20,6 +20,8 @@ pub struct AppState {
     pub chain:             Option<services::chain::ChainWriter>,
     pub push:              Option<services::push::PushService>,
     pub battle_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
+    /// Run starts, per IP. Much looser than battle_limiter because a whole venue can sit behind one IP; the per-wallet cap is what actually bounds a single player.
+    pub run_ip_limiter:    std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub chat_limiter:      std::sync::Arc<services::rate_limiter::RateLimiter>,
     pub chat_hub:          services::chat_hub::ChatHub,
     pub game_server:       services::game_server::GameServerHandle,
@@ -104,6 +106,8 @@ async fn main() -> anyhow::Result<()> {
     // independent bucket, silently multiplying the real limit by worker count.
     // battle_limiter: 10 requests / 60s per IP
     let battle_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(10, 60));
+    let run_ip_limit: u32 = std::env::var("RUN_START_IP_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
+    let run_ip_limiter = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(run_ip_limit, 60));
     // chat_limiter: 20 messages / 60s per sender wallet — generous for real conversation,
     // enough to stop one wallet flooding the push/socket fan-out.
     let chat_limiter   = std::sync::Arc::new(services::rate_limiter::RateLimiter::new(20, 60));
@@ -171,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
         chain:          chain.clone(),
         push:           push.clone(),
         battle_limiter: battle_limiter.clone(),
+        run_ip_limiter: run_ip_limiter.clone(),
         chat_limiter:   chat_limiter.clone(),
         chat_hub:       chat_hub.clone(),
         game_server:    game_server.clone(),

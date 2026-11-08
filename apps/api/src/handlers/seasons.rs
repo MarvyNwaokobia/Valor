@@ -48,6 +48,8 @@ struct SeasonMeta {
     seed: i64,
     /// This season's own prize split in basis points by rank; None = the default table.
     payout_bps: Option<Vec<i32>>,
+    /// When set, only members of this group are eligible for the prize.
+    payout_group_id: Option<Uuid>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -78,6 +80,26 @@ async fn season_board(db: &sqlx::PgPool, s: &SeasonMeta, limit: i64) -> Vec<Boar
     .fetch_all(db).await.unwrap_or_default()
 }
 
+/// The ranking the PRIZE is paid from. Same score and tie-break as `season_board`, but
+/// when the season has a payout group, only that group's members are ranked, so rank 1
+/// is the best member and the split runs down the members, not the overall field.
+async fn payout_board(db: &sqlx::PgPool, s: &SeasonMeta, limit: i64) -> Vec<BoardEntry> {
+    let Some(group_id) = s.payout_group_id else {
+        return season_board(db, s, limit).await;
+    };
+    sqlx::query_as::<_, BoardEntry>(
+        "SELECT g.wallet_address, p.username, (g.wave - 1) AS best
+         FROM endless_progress g
+         JOIN group_members m ON m.wallet_address = g.wallet_address AND m.group_id = $3
+         LEFT JOIN players p ON p.wallet_address = g.wallet_address
+         WHERE g.season_id = $1 AND g.wave > 1
+         ORDER BY g.wave DESC, g.reached_at ASC
+         LIMIT $2",
+    )
+    .bind(s.id).bind(limit).bind(group_id)
+    .fetch_all(db).await.unwrap_or_default()
+}
+
 // ── GET /seasons/current ───────────────────────────────────────────────────────
 // Public: the live season — its prize pool, the leaderboard within its window, and
 // the estimated payout each rank would earn if the season closed now. This is what
@@ -87,7 +109,7 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
     // "live" is a time comparison, not just an open-ended ends_at). Otherwise show the
     // most recent one, so a finished season keeps displaying its final board.
     let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
-        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps, payout_group_id
          FROM seasons
          ORDER BY (starts_at <= now() AND (ends_at IS NULL OR ends_at >= now())) DESC,
                   starts_at DESC
@@ -104,14 +126,30 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
     // themselves on the board has no way to tell a ranking from a recording fault.
     // Payout is capped separately by the split table, so this only affects display.
     let board = season_board(&state.db, &season, 500).await;
-    let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
+    // Everyone is ranked and shown, but the prize estimate follows who is actually
+    // PAID. With a payout group that is the members' own ranking, so a non-member
+    // (or a member's overall rank) never advertises a prize it will not receive.
+    let est_by_wallet: std::collections::HashMap<String, u64> = if season.payout_group_id.is_some() {
+        let paid = payout_board(&state.db, &season, 500).await;
+        let split = payout_split(season.prize_pool_g.max(0) as u64, paid.len(), season.payout_bps.as_deref());
+        paid.iter().enumerate().map(|(i, e)| (e.wallet_address.clone(), split.get(i).copied().unwrap_or(0))).collect()
+    } else {
+        let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
+        board.iter().enumerate().map(|(i, e)| (e.wallet_address.clone(), split.get(i).copied().unwrap_or(0))).collect()
+    };
     let entries: Vec<_> = board.iter().enumerate().map(|(i, e)| json!({
         "rank": i + 1,
         "wallet_address": e.wallet_address,
         "username": e.username,
         "best": e.best,
-        "est_payout_g": split.get(i).copied().unwrap_or(0),
+        "est_payout_g": est_by_wallet.get(&e.wallet_address).copied().unwrap_or(0),
     })).collect();
+
+    let payout_group: Option<(String, String)> = match season.payout_group_id {
+        Some(id) => sqlx::query_as("SELECT slug, name FROM player_groups WHERE id = $1")
+            .bind(id).fetch_optional(&state.db).await.ok().flatten(),
+        None => None,
+    };
 
     let now = Utc::now();
     let started = season.starts_at <= now;
@@ -131,25 +169,39 @@ pub async fn current(state: web::Data<AppState>) -> HttpResponse {
             "seed": season.seed,
             "prize_pool_g": season.prize_pool_g,
             "payout_status": season.payout_status,
+            // Set when the prize is paid to one group's members only.
+            "payout_group": payout_group.map(|(slug, name)| json!({"slug": slug, "name": name})),
         },
         "leaderboard": entries,
     }))
 }
 
 // ── POST /admin/seasons/:id/fund ───────────────────────────────────────────────
-// Admin: set a season's G$ prize pool. (Funding the on-chain RewardPool balance is
-// separate — this just records how much of it this season pays out.)
+// Admin: set a season's G$ prize pool and, optionally, its split. (Funding the
+// on-chain RewardPool balance is separate — this just records how much of it
+// this season pays out, and how.)
 #[derive(serde::Deserialize)]
-pub struct FundRequest { pub prize_pool_g: i64 }
+pub struct FundRequest {
+    pub prize_pool_g: i64,
+    /// Per-rank split in basis points, same shape as season creation. Omit to
+    /// leave whatever split the season already has (its own custom table, or
+    /// the default top-20 one) untouched — this only exists so a season that
+    /// was created without the right split (or needs a different one) can get
+    /// one later without recreating it.
+    #[serde(default)]
+    pub payout_bps: Option<Vec<i32>>,
+}
 
 pub async fn fund(req: HttpRequest, state: web::Data<AppState>, path: web::Path<Uuid>, body: web::Json<FundRequest>) -> HttpResponse {
     if let Err(resp) = verify_admin_token(&req) { return resp; }
     if body.prize_pool_g < 0 {
         return HttpResponse::BadRequest().json(json!({"error": "Prize pool must be ≥ 0"}));
     }
-    let row = sqlx::query("UPDATE seasons SET prize_pool_g = $1 WHERE id = $2")
-        .bind(body.prize_pool_g).bind(path.into_inner())
-        .execute(&state.db).await;
+    let row = sqlx::query(
+        "UPDATE seasons SET prize_pool_g = $1, payout_bps = COALESCE($2, payout_bps) WHERE id = $3",
+    )
+    .bind(body.prize_pool_g).bind(body.payout_bps.as_deref()).bind(path.into_inner())
+    .execute(&state.db).await;
     match row {
         Ok(r) if r.rows_affected() == 1 => HttpResponse::Ok().json(json!({"ok": true, "prize_pool_g": body.prize_pool_g})),
         Ok(_) => HttpResponse::NotFound().json(json!({"error": "Season not found"})),
@@ -172,7 +224,7 @@ pub async fn payout_preview(req: HttpRequest, state: web::Data<AppState>, path: 
     let season_id = path.into_inner();
 
     let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
-        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps FROM seasons WHERE id = $1",
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps, payout_group_id FROM seasons WHERE id = $1",
     )
     .bind(season_id).fetch_optional(&state.db).await.ok().flatten();
     let Some(season) = season else {
@@ -189,7 +241,7 @@ pub async fn payout_preview(req: HttpRequest, state: web::Data<AppState>, path: 
     .bind(season_id).fetch_all(&state.db).await.unwrap_or_default();
 
     let winners: Vec<serde_json::Value> = if committed.is_empty() {
-        let board = season_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
+        let board = payout_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
         let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
         board.iter().enumerate()
             .filter_map(|(i, e)| {
@@ -275,7 +327,7 @@ pub async fn payout(req: HttpRequest, state: web::Data<AppState>, path: web::Pat
     let season_id = path.into_inner();
 
     let season: Option<SeasonMeta> = sqlx::query_as::<_, SeasonMeta>(
-        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps FROM seasons WHERE id = $1",
+        "SELECT id, name, starts_at, ends_at, prize_pool_g, payout_status, seed, payout_bps, payout_group_id FROM seasons WHERE id = $1",
     )
     .bind(season_id).fetch_optional(&state.db).await.ok().flatten();
     let Some(season) = season else {
@@ -304,7 +356,7 @@ pub async fn payout(req: HttpRequest, state: web::Data<AppState>, path: web::Pat
     let already: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM season_payouts WHERE season_id = $1")
         .bind(season_id).fetch_one(&state.db).await.unwrap_or(0);
     if already == 0 {
-        let board = season_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
+        let board = payout_board(&state.db, &season, PAYOUT_BPS.len() as i64).await;
         let split = payout_split(season.prize_pool_g.max(0) as u64, board.len(), season.payout_bps.as_deref());
         for (i, e) in board.iter().enumerate() {
             let amount = split.get(i).copied().unwrap_or(0);

@@ -278,3 +278,69 @@ pub async fn admin_create(req: HttpRequest, state: web::Data<AppState>, body: we
         }
     }
 }
+
+// ── GET /admin/groups/seasons ──────────────────────────────────────────────────
+// Seasons with the group (if any) their prize is restricted to, for the admin screen.
+pub async fn admin_seasons(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) { return resp; }
+    let rows: Vec<(Uuid, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64, String, Option<String>)> =
+        sqlx::query_as(
+            "SELECT s.id, s.name, s.starts_at, s.ends_at, s.prize_pool_g, s.payout_status, g.name
+             FROM seasons s LEFT JOIN player_groups g ON g.id = s.payout_group_id
+             ORDER BY s.starts_at DESC",
+        )
+        .fetch_all(&state.db).await.unwrap_or_default();
+    let seasons: Vec<_> = rows.iter().map(|(id, name, st, en, pool, status, grp)| json!({
+        "id": id, "name": name,
+        "starts_at": st.to_rfc3339(), "ends_at": en.map(|e| e.to_rfc3339()),
+        "prize_pool_g": pool, "payout_status": status, "payout_group": grp,
+    })).collect();
+    HttpResponse::Ok().json(json!({"seasons": seasons}))
+}
+
+#[derive(Deserialize)]
+pub struct PayoutGroupRequest {
+    /// Group slug to restrict the prize to, or null/omitted to pay the overall board.
+    pub slug: Option<String>,
+}
+
+// ── POST /admin/seasons/:id/payout-group ───────────────────────────────────────
+// Restrict a season's prize to one group's members (or clear it). Refused once the
+// winners are committed, because changing who is eligible after payout rows exist
+// would silently disagree with what was already paid.
+pub async fn set_payout_group(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    body: web::Json<PayoutGroupRequest>,
+) -> HttpResponse {
+    if let Err(resp) = verify_admin_token(&req) { return resp; }
+    let season_id = path.into_inner();
+
+    let committed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM season_payouts WHERE season_id = $1")
+        .bind(season_id).fetch_one(&state.db).await.unwrap_or(0);
+    if committed > 0 {
+        return HttpResponse::Conflict()
+            .json(json!({"error": "Winners are already committed for this season; it can no longer be changed."}));
+    }
+
+    let group_id: Option<Uuid> = match body.slug.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(slug) => match find_group(&state.db, slug).await {
+            Some(g) => Some(g.id),
+            None => return HttpResponse::NotFound().json(json!({"error": "Group not found"})),
+        },
+        None => None,
+    };
+
+    match sqlx::query("UPDATE seasons SET payout_group_id = $1 WHERE id = $2")
+        .bind(group_id).bind(season_id)
+        .execute(&state.db).await
+    {
+        Ok(r) if r.rows_affected() == 1 => HttpResponse::Ok().json(json!({"ok": true})),
+        Ok(_) => HttpResponse::NotFound().json(json!({"error": "Season not found"})),
+        Err(e) => {
+            tracing::error!("set payout group failed: {}", e);
+            HttpResponse::InternalServerError().json(json!({"error": "Database error"}))
+        }
+    }
+}

@@ -21,6 +21,8 @@ export interface Season {
   seed: number
   prize_pool_g: number
   payout_status: string
+  /** Set when the prize is paid to one group's members only. */
+  payout_group?: { slug: string; name: string } | null
 }
 
 /**

@@ -12,6 +12,7 @@ import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
 import { AnimatePresence } from 'framer-motion';
 import LoadoutModal from '@/components/battle/LoadoutModal';
+import IdentityVerification from '@/components/onboarding/IdentityVerification';
 import WaveBoard from '@/components/battle/WaveBoard';
 import LoadingScreen from '@/components/ui/LoadingScreen';
 
@@ -59,6 +60,8 @@ export default function EndlessPage() {
   const [playing, setPlaying] = useState(false);
   const [startWave, setStartWave] = useState(1);
   const [pickingLoadout, setPickingLoadout] = useState(false);
+  // The server refused a run because this wallet is not GoodDollar verified.
+  const [needsVerify, setNeedsVerify] = useState(false);
   const [fieldKit, setFieldKit] = useState<('light' | 'laser' | 'nvg')[]>([]);
 
   const equippedGun = useMemo(() => equippedGunId(inventory), [inventory]);
@@ -81,6 +84,7 @@ export default function EndlessPage() {
     setPickingLoadout(false);
     setFieldKit(kit);
     const resume = await progress.start();
+    if (progress.wasRefusedForVerification()) { setNeedsVerify(true); return; }
     setStartWave(resume);
     setPlaying(true);
   }, [progress]);
@@ -107,6 +111,9 @@ export default function EndlessPage() {
   if (status === 'unauthenticated') return null;
   if (!player && !playerSynced) return <LoadingScreen />;
   if (!player) return null;
+  if (needsVerify && address) {
+    return <IdentityVerification walletAddress={address as `0x${string}`} onVerified={() => setNeedsVerify(false)} />;
+  }
 
   const cleared = player.pve_level ?? 0;
   const locked = cleared < UNLOCK_LEVEL;

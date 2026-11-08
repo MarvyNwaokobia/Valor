@@ -215,7 +215,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route("/campaigns/referrals/{id}/payout-preview", web::get().to(campaigns::payout_preview))
                 .route("/campaigns/referrals/{id}/payout", web::post().to(campaigns::payout))
                 .route("/groups", web::get().to(groups::admin_list))
-                .route("/groups", web::post().to(groups::admin_create)),
+                .route("/groups", web::post().to(groups::admin_create))
+                .route("/groups/seasons", web::get().to(groups::admin_seasons))
+                .route("/seasons/{id}/payout-group", web::post().to(groups::set_payout_group)),
         )
         .service(
             web::scope("/seasons")

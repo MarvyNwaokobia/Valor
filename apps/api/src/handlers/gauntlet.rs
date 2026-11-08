@@ -77,13 +77,14 @@ pub struct StartRequest {
 
 pub async fn start_run(state: web::Data<AppState>, req: HttpRequest, body: web::Json<StartRequest>) -> HttpResponse {
     let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
-    if !state.battle_limiter.check(&ip) {
+    if !state.run_ip_limiter.check(&ip) || !state.battle_limiter.check(&format!("run_start:{}", body.wallet.to_lowercase())) {
         return HttpResponse::TooManyRequests().json(json!({"error": "Too many runs. Slow down."}));
     }
     if !is_valid_wallet(&body.wallet) {
         return HttpResponse::BadRequest().json(json!({"error": "Invalid wallet address"}));
     }
     let wallet = normalize_wallet(&body.wallet);
+    if let Some(resp) = crate::handlers::identity::refuse_if_unverified(&wallet).await { return resp; }
 
     // Seasonal is open to everyone, so it skips the campaign gate — but it only runs
     // while a season is actually live, and the run is stamped with that season's id so

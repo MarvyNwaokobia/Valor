@@ -108,6 +108,8 @@ export default function JoinGroupPage() {
         </button>
       )}
 
+      <Link href={`/groups/${slug}`} className="block text-xs text-slate-500 hover:text-slate-300 mt-6">See the {g.name} leaderboard</Link>
+
       {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
       {signIn && <SignInModal onClose={() => setSignIn(false)} />}
     </div>

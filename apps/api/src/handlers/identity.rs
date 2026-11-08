@@ -71,6 +71,35 @@ pub async fn check_gooddollar_whitelisted(wallet: &str) -> Option<bool> {
     }
 }
 
+/// Gate for starting any run: `Some(response)` means refuse with it, `None` means go on.
+///
+/// Verified humans only, checked when someone PLAYS and not just when a character is
+/// created. GoodDollar un-whitelists some wallets within days of verifying, so a check
+/// that only ran at onboarding would let a lapsed or duplicate wallet keep climbing a
+/// board that pays real money. A definite "not whitelisted" blocks. An RPC failure lets
+/// the run through (logged), because a Celo RPC hiccup must not lock every player out
+/// in the middle of an event. Called once per run start, never per wave.
+pub async fn refuse_if_unverified(wallet: &str) -> Option<HttpResponse> {
+    // A wallet seen whitelisted in the last 10 minutes skips the RPC round trip. Only
+    // positives are cached, so someone who just verified is never stuck behind a stale no.
+    static OK: std::sync::OnceLock<dashmap::DashMap<String, std::time::Instant>> = std::sync::OnceLock::new();
+    let ok = OK.get_or_init(dashmap::DashMap::new);
+    if let Some(t) = ok.get(wallet) {
+        if t.elapsed().as_secs() < 600 { return None; }
+    }
+    match check_gooddollar_whitelisted(wallet).await {
+        Some(false) => Some(HttpResponse::Forbidden().json(json!({
+            "error": "Verify with GoodDollar to play.",
+            "needs_verification": true,
+        }))),
+        Some(true) => { ok.insert(wallet.to_string(), std::time::Instant::now()); None }
+        None => {
+            tracing::warn!("run start: whitelist check unavailable for {}, allowing", wallet);
+            None
+        }
+    }
+}
+
 pub async fn verify_identity(
     state: web::Data<AppState>,
     path: web::Path<String>,

@@ -32,6 +32,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function useEndlessProgress(walletAddress: string | undefined, seasonId?: string) {
   const sessionRef = useRef<string | null>(null)
+  // Set when the server refuses to open a run because the wallet is not GoodDollar
+  // verified. A ref, not state: the caller reads it on the line after `await start()`,
+  // where a state value would still be the stale one from the previous render.
+  const unverifiedRef = useRef(false)
   const [wave, setWave] = useState(1)
   const [banked, setBanked] = useState(0) // G$ earned this session
   const [ready, setReady] = useState(false)
@@ -48,6 +52,7 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
   /** Open a session and return the wave to resume on. */
   const start = useCallback(async (): Promise<number> => {
     sessionRef.current = null
+    unverifiedRef.current = false
     setBanked(0)
     setReady(false)
     if (!walletAddress) { setReady(true); return 1 }
@@ -64,6 +69,10 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
         setWave(resume)
         setReady(true)
         return resume
+      }
+      if (res.status === 403) {
+        const d = await res.json().catch(() => ({}))
+        if ((d as { needs_verification?: boolean }).needs_verification) unverifiedRef.current = true
       }
     } catch {
       /* offline — the run still plays, it just earns and saves nothing */
@@ -235,5 +244,8 @@ export function useEndlessProgress(walletAddress: string | undefined, seasonId?:
     }
   }, [walletAddress, body])
 
-  return { wave, banked, ready, start, clearWave, reportDeath }
+  /** True when the last start() was refused for lack of GoodDollar verification. */
+  const wasRefusedForVerification = useCallback(() => unverifiedRef.current, [])
+
+  return { wave, banked, ready, start, clearWave, reportDeath, wasRefusedForVerification }
 }

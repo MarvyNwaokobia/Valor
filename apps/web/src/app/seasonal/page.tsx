@@ -10,6 +10,7 @@ import { useSeasonalRun } from '@/hooks/useSeasonalRun';
 import { useEndlessProgress } from '@/hooks/useEndlessProgress';
 import WaveBoard from '@/components/battle/WaveBoard';
 import { useMyGroup } from '@/hooks/useGroups';
+import IdentityVerification from '@/components/onboarding/IdentityVerification';
 import { equippedGunId, equippedAmmoId, equippedAttachments } from '@/lib/guns';
 import { retryImport } from '@/lib/retryImport';
 import { AnimatePresence } from 'framer-motion';
@@ -56,6 +57,8 @@ export default function SeasonalPage() {
   const { season, board, loading, refresh } = useSeasonalRun(address);
   const progress = useEndlessProgress(address, season?.id);
   const myGroup = useMyGroup(address);
+  // The server refused a run because this wallet is not GoodDollar verified.
+  const [needsVerify, setNeedsVerify] = useState(false);
 
   // 'lobby' → the season card + board. 'run' → the fight. There is no result screen:
   // dying no longer ends anything, it puts you back at the start of your wave.
@@ -93,6 +96,7 @@ export default function SeasonalPage() {
     setPickingLoadout(false);
     setFieldKit(kit);
     const resume = await progress.start();
+    if (progress.wasRefusedForVerification()) { setNeedsVerify(true); return; }
     setSeed(season.seed);
     setStartWave(resume);
     setPhase('run');
@@ -138,6 +142,12 @@ export default function SeasonalPage() {
         />
       </div>
     );
+  }
+
+  // Refused at the door: show the same GoodDollar screen onboarding uses, then let
+  // them straight back in once the whitelist check passes.
+  if (needsVerify && address) {
+    return <IdentityVerification walletAddress={address as `0x${string}`} onVerified={() => setNeedsVerify(false)} />;
   }
 
   const live = !!season?.active;
@@ -204,6 +214,9 @@ export default function SeasonalPage() {
               <div className="px-4 py-2 rounded-xl border" style={{ borderColor: 'rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.06)' }}>
                 <p className="text-[10px] uppercase tracking-widest text-amber-500/70 font-bold">Prize pool</p>
                 <p className="font-display font-black text-amber-400 text-lg">{season.prize_pool_g.toLocaleString()} G$</p>
+                {season.payout_group && (
+                  <p className="text-[10px] text-amber-500/70 mt-0.5">Paid to {season.payout_group.name} members only</p>
+                )}
               </div>
               <div className="px-4 py-2 rounded-xl border" style={{ borderColor: 'rgba(42,42,58,0.8)' }}>
                 <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Your best</p>
