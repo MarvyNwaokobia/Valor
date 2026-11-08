@@ -7,6 +7,14 @@ import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useGroup, useMyGroup, rememberPendingGroup, clearPendingGroup } from '@/hooks/useGroups'
 import SignInModal from '@/components/ui/SignInModal'
+import { useSeasonalRun } from '@/hooks/useSeasonalRun'
+
+const GOLD = '#eab308'
+
+function dayRange(startIso: string, endIso: string | null): string {
+  const f = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Africa/Lagos' })
+  return endIso ? `${f(startIso)} to ${f(endIso)}` : `from ${f(startIso)}`
+}
 
 export default function JoinGroupPage() {
   const { slug: rawSlug } = useParams<{ slug: string }>()
@@ -15,6 +23,7 @@ export default function JoinGroupPage() {
   const player = usePlayerStore((s) => s.player)
   const group = useGroup(slug)
   const mine = useMyGroup(address)
+  const { season } = useSeasonalRun(undefined)
   const [signIn, setSignIn] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -50,24 +59,53 @@ export default function JoinGroupPage() {
     )
   }
 
-  return (
-    <div className="max-w-md mx-auto px-4 py-12 text-center">
-      <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 mb-3">You are invited to represent</p>
-      <h1 className="font-display font-black text-4xl text-white mb-2">{g.name}</h1>
-      {g.description && <p className="text-slate-400 text-sm mb-2">{g.description}</p>}
-      <p className="text-slate-500 text-xs mb-8">{g.members} {g.members === 1 ? 'player' : 'players'} in this group</p>
+  const prizeForGroup = season && (!season.payout_group || season.payout_group.slug === slug)
+  const steps = [
+    { n: '1', t: 'Sign in', d: 'Email, Google or your wallet.' },
+    { n: '2', t: 'Verify with GoodDollar', d: 'A quick face check, a few minutes. Do it before the event.' },
+    { n: '3', t: `Join ${g.name} and play`, d: 'Climb the board. Top 3 split the prize.' },
+  ]
 
-      {!player && (
-        <div className="text-left rounded-xl px-4 py-3 mb-6"
-             style={{ background: 'rgba(8,8,14,0.9)', border: '1px solid rgba(42,42,58,0.8)' }}>
-          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-400 mb-1.5">Before you can play</p>
-          <p className="text-slate-300 text-sm leading-relaxed">
-            Valor needs every player to be <b>GoodDollar verified</b>, a quick face check that proves you are one real person.
-            It takes a few minutes, so do it <b>before the event</b>, not when the games start.
-            You will be asked to verify right after you sign in.
-          </p>
+  return (
+    <div className="relative min-h-screen overflow-hidden">
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]"
+           style={{ background: 'radial-gradient(ellipse 70% 60% at 50% 0%, rgba(234,179,8,0.16), transparent 70%)' }} />
+      <div className="relative max-w-md mx-auto px-5 pt-10 pb-12 text-center">
+        <div className="flex items-center justify-center gap-2 mb-8">
+          <img src="/valor-mark.png" alt="" width={28} height={28} className="opacity-90" />
+          <span className="font-display font-black tracking-[0.3em] text-sm text-amber-400">VALOR</span>
         </div>
-      )}
+
+        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500 mb-3">You are invited to represent</p>
+        <h1 className="font-display font-black text-white leading-none mb-3" style={{ fontSize: 'clamp(3rem, 16vw, 4.5rem)' }}>{g.name}</h1>
+        {g.description && <p className="text-slate-400 text-sm mb-1">{g.description}</p>}
+        {g.members >= 5 && <p className="text-slate-500 text-xs">{g.members} players have joined</p>}
+
+        {season && prizeForGroup && !season.ended && (
+          <div className="mt-7 rounded-2xl px-5 py-4"
+               style={{ background: 'rgba(234,179,8,0.07)', border: '1px solid rgba(234,179,8,0.3)' }}>
+            <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500/80 mb-1">Prize pool</p>
+            <p className="font-display font-black text-amber-400 text-3xl">{season.prize_pool_g.toLocaleString()} G$</p>
+            <p className="text-slate-400 text-xs mt-1">
+              {season.name} · {dayRange(season.starts_at, season.ends_at)}
+              {season.payout_group ? ` · paid to ${season.payout_group.name} players only` : ''}
+            </p>
+          </div>
+        )}
+
+        {!player && (
+          <ol className="text-left mt-7 mb-7 space-y-3">
+            {steps.map((st) => (
+              <li key={st.n} className="flex gap-3 items-start">
+                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black text-black" style={{ background: GOLD }}>{st.n}</span>
+                <div>
+                  <p className="text-white text-sm font-bold leading-tight">{st.t}</p>
+                  <p className="text-slate-500 text-xs leading-snug mt-0.5">{st.d}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
 
       {!signedIn ? (
         <button
@@ -108,10 +146,11 @@ export default function JoinGroupPage() {
         </button>
       )}
 
-      <Link href={`/groups/${slug}`} className="block text-xs text-slate-500 hover:text-slate-300 mt-6">See the {g.name} leaderboard</Link>
+        <Link href={`/groups/${slug}`} className="block text-xs text-slate-500 hover:text-slate-300 mt-6 py-2">See the {g.name} leaderboard</Link>
 
-      {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
-      {signIn && <SignInModal onClose={() => setSignIn(false)} />}
+        {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
+        {signIn && <SignInModal onClose={() => setSignIn(false)} />}
+      </div>
     </div>
   )
 }
