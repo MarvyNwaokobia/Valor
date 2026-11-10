@@ -256,6 +256,7 @@ export default function SeasonalPage() {
                 seasonId={season.id}
                 groupSlug={season.payout_group.slug}
                 highlightWallet={address}
+                podium
                 title={`${season.payout_group.name} · Waves Completed`}
               />
               {myGroup.group?.slug !== season.payout_group.slug && (
@@ -269,7 +270,7 @@ export default function SeasonalPage() {
             </>
           ) : (
             <>
-              <WaveBoard seasonId={season?.id} highlightWallet={address} title="Season · Waves Completed" />
+              <WaveBoard seasonId={season?.id} highlightWallet={address} podium title="Season · Waves Completed" />
               {myGroup.group && (
                 <div className="mt-10">
                   <WaveBoard seasonId={season?.id} groupSlug={myGroup.group.slug} highlightWallet={address} title={`${myGroup.group.name} · Waves Completed`} />

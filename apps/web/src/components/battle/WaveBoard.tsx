@@ -61,41 +61,90 @@ export default function WaveBoard({
 
   useEffect(() => { load(); }, [load]);
 
+  const top = Math.max(1, ...entries.map((e) => e.waves));
+
   return (
     <div className="w-full">
-      <div className="flex items-baseline justify-between mb-3">
-        <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500">{title}</p>
-        <button onClick={load} className="text-[10px] uppercase tracking-widest text-slate-600 hover:text-slate-300">
-          refresh
+      <div className="flex items-end justify-between mb-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500">{title}</p>
+          {!loading && entries.length > 0 && (
+            <p className="text-[11px] text-slate-600 mt-0.5">{entries.length} {entries.length === 1 ? 'player' : 'players'} ranked</p>
+          )}
+        </div>
+        <button
+          onClick={load}
+          className="text-[10px] uppercase tracking-widest text-slate-500 hover:text-white px-2.5 py-1 rounded-md border border-slate-800 hover:border-slate-600 transition-colors"
+        >
+          Refresh
         </button>
       </div>
 
       {loading ? (
-        <p className="text-slate-600 text-sm">loading…</p>
+        <div className="flex flex-col gap-2" aria-busy>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-14 rounded-xl animate-pulse" style={{ background: 'rgba(255,255,255,0.04)' }} />
+          ))}
+        </div>
       ) : entries.length === 0 ? (
-        <p className="text-slate-600 text-sm">No one has cleared a wave yet. Be first.</p>
+        <div className="rounded-xl border border-dashed border-slate-800 px-4 py-8 text-center">
+          <p className="text-slate-400 text-sm font-bold">No one has cleared a wave yet</p>
+          <p className="text-slate-600 text-xs mt-1">Be the first on the board.</p>
+        </div>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {entries.map((e) => {
             const medal = podium ? MEDALS[e.rank] : undefined;
             const mine = e.wallet_address.toLowerCase() === (highlightWallet ?? '').toLowerCase();
+            const name = e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`;
+            const accent = mine ? '#eab308' : medal ?? '#475569';
             return (
               <div
                 key={e.wallet_address}
-                className="flex items-center gap-3 px-4 py-2.5 rounded-xl border"
+                className="relative overflow-hidden rounded-xl"
                 style={{
-                  background: mine ? 'rgba(234,179,8,0.08)' : medal ? `${medal}14` : 'rgba(8,8,14,0.9)',
-                  borderColor: mine ? 'rgba(234,179,8,0.4)' : medal ? `${medal}55` : 'rgba(42,42,58,0.8)',
+                  background: mine ? 'rgba(234,179,8,0.09)' : medal ? `${medal}10` : 'rgba(255,255,255,0.025)',
+                  boxShadow: `inset 0 0 0 1px ${mine ? 'rgba(234,179,8,0.45)' : medal ? `${medal}40` : 'rgba(255,255,255,0.06)'}`,
                 }}
               >
-                <span className="font-display font-black w-6 tabular-nums" style={{ color: medal ?? '#64748b' }}>{e.rank}</span>
-                <span className="flex-1 min-w-0 truncate text-white text-sm">
-                  {e.username || `${e.wallet_address.slice(0, 6)}…${e.wallet_address.slice(-4)}`}
-                  {e.group && <span className="text-slate-500 text-[10px] uppercase tracking-widest ml-2">{e.group}</span>}
-                  {mine && <span className="text-amber-500/70 text-[10px] uppercase tracking-widest ml-2">you</span>}
-                </span>
-                <span className="text-white font-bold tabular-nums text-sm">{e.waves}</span>
-                <span className="text-[10px] uppercase tracking-widest text-slate-600">waves</span>
+                {/* Progress toward the leader's wave count, drawn behind the row. */}
+                <div
+                  aria-hidden
+                  className="absolute inset-y-0 left-0"
+                  style={{ width: `${Math.max(4, (e.waves / top) * 100)}%`, background: `linear-gradient(90deg, ${accent}22, transparent)` }}
+                />
+                <div className="relative flex items-center gap-3 px-3 py-2.5">
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display font-black text-sm tabular-nums"
+                    style={medal
+                      ? { background: medal, color: '#0a0a0f' }
+                      : { background: 'rgba(255,255,255,0.06)', color: '#94a3b8' }}
+                  >
+                    {e.rank}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-white text-sm font-bold leading-tight">
+                      {name}
+                      {mine && (
+                        <span className="ml-2 align-middle text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"
+                              style={{ background: '#eab308', color: '#0a0a0f' }}>you</span>
+                      )}
+                    </p>
+                    {e.group && (
+                      <p className="text-[10px] uppercase tracking-widest text-slate-500 mt-0.5">{e.group}</p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-white font-display font-black text-lg leading-none tabular-nums">{e.waves}</p>
+                    <p className="text-[9px] uppercase tracking-widest text-slate-600 mt-0.5">waves</p>
+                  </div>
+                  {!!e.est_payout_g && e.est_payout_g > 0 && (
+                    <div className="text-right shrink-0 pl-1 border-l border-white/10 ml-1">
+                      <p className="text-amber-400 font-bold text-xs tabular-nums">{e.est_payout_g.toLocaleString()}</p>
+                      <p className="text-[9px] uppercase tracking-widest text-amber-500/60">G$</p>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
