@@ -17,6 +17,12 @@ import { CLASS_DEFINITIONS, CHARACTER_GLB, statVarianceFromWallet } from '@/lib/
 import type { CharacterClass } from '@/lib/classes'
 import CharacterViewer from '@/components/warrior/CharacterViewer'
 import { ConnectButton } from '@/components/ui/ConnectButton'
+import { getPendingGroup } from '@/hooks/useGroups'
+
+/** A player who arrived through a group join link lands on Profile, where the join prompt is; everyone else goes home. */
+function afterSignupPath(): string {
+  return getPendingGroup() ? '/profile' : '/'
+}
 
 type Step = 'verify' | 'covenant' | 'select' | 'confirm' | 'tutorial'
 
@@ -105,7 +111,7 @@ export default function OnboardingPage() {
 
   // Returning CONFIRMED user → home. An unconfirmed (reconstructed) player STAYS
   // here to run the confirm-your-class flow above.
-  if (player && !confirming) { router.replace('/'); return null }
+  if (player && !confirming) { router.replace(afterSignupPath()); return null }
 
   if (status === 'unauthenticated' || !address) {
     return (
@@ -181,7 +187,7 @@ export default function OnboardingPage() {
         if (res.status === 409) { setError('That username is already taken.'); setPending(false); return }
         if (!res.ok) { setError('Could not save. Please try again.'); setPending(false); return }
         setPlayer(await res.json())
-        router.replace('/')          // returning user → straight to their dashboard
+        router.replace(afterSignupPath())          // returning user → straight to their dashboard
         return
       }
 
@@ -434,7 +440,7 @@ export default function OnboardingPage() {
     return (
       <TutorialArena
         player={createdPlayer}
-        onComplete={() => router.replace('/')}
+        onComplete={() => router.replace(afterSignupPath())}
       />
     )
   }

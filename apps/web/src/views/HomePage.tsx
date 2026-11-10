@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react'
 import { usePlayerStore } from '@/stores/usePlayerStore'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useUnreadCounts } from '@/hooks/useChat'
+import JoinGroupRow from '@/components/groups/JoinGroupRow'
 import LandingPage from '@/components/landing/LandingPage'
 import LoadingScreen from '@/components/ui/LoadingScreen'
 import { CLASS_DEFINITIONS } from '@/lib/classes'
@@ -202,6 +203,8 @@ export default function HomePage() {
             </span>
           </p>
         </motion.div>
+
+        <JoinGroupRow />
 
         {/* Action cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">

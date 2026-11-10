@@ -245,18 +245,39 @@ export default function SeasonalPage() {
           </>
         )}
 
-        {/* The ladder. Same component and same ranking as Campaign Endless — waves
-            completed, ties to whoever got there first — with this season's payouts
-            layered on by the season card above. */}
+        {/* The ladder. When the season pays one group only, that group's board IS the
+            board: everyone else could not win anyway, so a second general ladder
+            would only show players who are not in the race. Otherwise the open
+            ladder, same component and ranking as Campaign Endless. */}
         <div className="mt-10">
-          <WaveBoard seasonId={season?.id} highlightWallet={address} title="Season · Waves Completed" />
+          {season?.payout_group ? (
+            <>
+              <WaveBoard
+                seasonId={season.id}
+                groupSlug={season.payout_group.slug}
+                highlightWallet={address}
+                title={`${season.payout_group.name} · Waves Completed`}
+              />
+              {myGroup.group?.slug !== season.payout_group.slug && (
+                <button
+                  onClick={() => router.push(`/join/${season.payout_group!.slug}`)}
+                  className="mt-4 w-full px-4 py-3 rounded-xl text-sm font-bold text-amber-400 border border-amber-500/30"
+                >
+                  Join {season.payout_group.name} to get on this board
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <WaveBoard seasonId={season?.id} highlightWallet={address} title="Season · Waves Completed" />
+              {myGroup.group && (
+                <div className="mt-10">
+                  <WaveBoard seasonId={season?.id} groupSlug={myGroup.group.slug} highlightWallet={address} title={`${myGroup.group.name} · Waves Completed`} />
+                </div>
+              )}
+            </>
+          )}
         </div>
-
-        {myGroup.group && (
-          <div className="mt-10">
-            <WaveBoard seasonId={season?.id} groupSlug={myGroup.group.slug} highlightWallet={address} title={`${myGroup.group.name} · Waves Completed`} />
-          </div>
-        )}
 
       </div>
     </div>
