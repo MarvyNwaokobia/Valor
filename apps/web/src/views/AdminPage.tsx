@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { useResolvedAuth } from '@/hooks/useResolvedAuth'
 import { useActiveWalletClient } from '@/hooks/useActiveWalletClient'
@@ -745,6 +746,9 @@ export default function AdminPage() {
       <div>
         <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Admin</p>
         <h1 className="font-display font-black text-white text-2xl tracking-wide">Season Stats</h1>
+        <Link href="/admin/analytics" className="inline-block mt-2 px-3 py-1.5 rounded-lg text-xs font-bold text-black" style={{ background: '#eab308' }}>
+          On-chain analytics
+        </Link>
       </div>
 
       {/* Season picker */}
