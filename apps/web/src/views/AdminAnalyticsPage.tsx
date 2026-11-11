@@ -5,6 +5,10 @@ import Link from 'next/link'
 
 // Chain-only analytics, produced by the separate Analytics repo (github.com/MarvyNwaokobia/Analytics)
 // and published as JSON. Everything here is derived from Valor's contract events on Celo.
+// GitHub's API returns the latest committed file with no CDN lag; the raw URL is cached for ~5 minutes.
+const FEED_API =
+  process.env.NEXT_PUBLIC_ANALYTICS_API_URL ??
+  'https://api.github.com/repos/MarvyNwaokobia/Analytics/contents/public/valor.json?ref=main'
 const FEED =
   process.env.NEXT_PUBLIC_ANALYTICS_URL ??
   'https://raw.githubusercontent.com/MarvyNwaokobia/Analytics/main/public/valor.json'
@@ -89,7 +93,8 @@ export default function AdminAnalyticsPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${FEED}?t=${Date.now()}`, { cache: 'no-store' })
+      let res = await fetch(FEED_API, { headers: { Accept: 'application/vnd.github.raw' }, cache: 'no-store' }).catch(() => null)
+      if (!res || !res.ok) res = await fetch(`${FEED}?t=${Date.now()}`, { cache: 'no-store' }) // API rate-limited: fall back
       if (!res.ok) throw new Error(`feed returned ${res.status}`)
       setData(await res.json())
       setFetchedAt(new Date())
@@ -128,7 +133,7 @@ export default function AdminAnalyticsPage() {
           <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Admin</p>
           <h1 className="font-display font-black text-white text-2xl tracking-wide">On-chain Analytics</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}. Data as of ${new Date(data.asOf).toLocaleString()}; it updates every 6 hours` : ''}.
+            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}. Data as of ${new Date(data.asOf).toLocaleString()}; it updates every hour` : ''}.
           </p>
         </div>
         <div className="flex gap-2">
