@@ -128,7 +128,7 @@ export default function AdminAnalyticsPage() {
           <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Admin</p>
           <h1 className="font-display font-black text-white text-2xl tracking-wide">On-chain Analytics</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}. Data as of ${new Date(data.asOf).toLocaleString()}; it updates every 6 hours.` : ''}.
+            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}. Data as of ${new Date(data.asOf).toLocaleString()}; it updates every 6 hours` : ''}.
           </p>
         </div>
         <div className="flex gap-2">
