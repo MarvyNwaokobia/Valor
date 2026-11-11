@@ -56,12 +56,12 @@ function Bars({ title, data, color = '#eab308', unit = '' }: { title: string; da
         <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{title}</p>
         <p className="text-[10px] text-slate-500">total {n(total)}{unit}</p>
       </div>
-      <div className="flex items-end gap-[2px] h-24" role="img" aria-label={title}>
+      <div className="flex items-end gap-px h-24 overflow-hidden" role="img" aria-label={title}>
         {data.map((d) => (
           <div
             key={d.label}
             title={`${d.label}: ${n(d.v)}${unit}`}
-            className="flex-1 rounded-t-sm min-w-[2px]"
+            className="flex-1 basis-0 min-w-0 rounded-t-sm"
             style={{ height: `${Math.max(d.v > 0 ? 3 : 0, (d.v / max) * 100)}%`, background: color, opacity: d.v > 0 ? 1 : 0.15 }}
           />
         ))}
