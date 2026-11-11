@@ -80,6 +80,7 @@ export default function AdminAnalyticsPage() {
   const [data, setData] = useState<Report | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
   const [range, setRange] = useState<'all' | '30' | '7'>('all')
 
   useEffect(() => { setAuthed(hasAdminSession()); setReady(true) }, [])
@@ -91,6 +92,7 @@ export default function AdminAnalyticsPage() {
       const res = await fetch(`${FEED}?t=${Date.now()}`, { cache: 'no-store' })
       if (!res.ok) throw new Error(`feed returned ${res.status}`)
       setData(await res.json())
+      setFetchedAt(new Date())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not load the analytics feed')
     } finally {
@@ -126,13 +128,13 @@ export default function AdminAnalyticsPage() {
           <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-amber-500">Admin</p>
           <h1 className="font-display font-black text-white text-2xl tracking-wide">On-chain Analytics</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}, as of ${new Date(data.asOf).toLocaleString()}` : ''}.
+            Read straight from Valor&apos;s contracts on Celo{data ? `, since ${data.startDate}. Data as of ${new Date(data.asOf).toLocaleString()}; it updates every 6 hours.` : ''}.
           </p>
         </div>
         <div className="flex gap-2">
           <Link href="/admin" className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white/5 text-slate-400">Season stats</Link>
           <button onClick={() => void load()} disabled={loading} className="px-3 py-1.5 rounded-lg text-xs font-bold text-black disabled:opacity-50" style={{ background: '#eab308' }}>
-            {loading ? 'Loading' : 'Refresh'}
+            {loading ? 'Loading' : fetchedAt ? `Refresh (checked ${fetchedAt.toLocaleTimeString()})` : 'Refresh'}
           </button>
         </div>
       </div>
@@ -148,8 +150,8 @@ export default function AdminAnalyticsPage() {
           <section className="flex flex-col gap-3">
             <h2 className="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Players</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Tile label="Players" value={n(tot('players'))} sub="character + GoodDollar verified" />
-              <Tile label="Characters claimed" value={n(tot('charactersClaimed'))} sub="verified or not" />
+              <Tile label="Players" value={n(tot('players'))} sub="characters claimed, same as Dune" />
+              <Tile label="Verified right now" value={n(tot('verifiedNow'))} sub="lower bound, GoodDollar whitelists lapse" />
               <Tile label="Active this month" value={n(tot('mau'))} sub="players, last 30 days" />
               <Tile label="Active this week" value={n(tot('wau'))} sub="players, last 7 days" />
               <Tile label="Weekly retention" value={data.latestRetentionPct === null ? 'n/a' : `${data.latestRetentionPct}%`} sub="last full week, players" />
