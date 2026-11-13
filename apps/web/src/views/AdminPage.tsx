@@ -828,6 +828,22 @@ export default function AdminPage() {
                     Close back to scheduled start
                   </button>
                 )}
+                {closesAt && closesAt > now && (
+                  <button
+                    onClick={() => {
+                      const to = window.prompt('Set the new closing time (your local time, e.g. 2026-11-14T16:00)', '2026-11-14T16:00')
+                      if (!to) return
+                      const t = new Date(to)
+                      if (Number.isNaN(t.getTime())) { window.alert('That is not a valid date and time.'); return }
+                      if (window.confirm(`Close "${sn.name}" at ${t.toLocaleString()}?`)) void handleReschedule(sn, sn.starts_at, t.toISOString())
+                    }}
+                    disabled={busy}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 border disabled:opacity-50"
+                    style={{ borderColor: '#2a2a3a' }}
+                  >
+                    Change closing time
+                  </button>
+                )}
                 <button
                   onClick={() => handleResetProgress(sn)}
                   disabled={busy}
