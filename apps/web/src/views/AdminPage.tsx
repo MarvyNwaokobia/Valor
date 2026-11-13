@@ -249,10 +249,12 @@ export default function AdminPage() {
   // above (those draft a season still being created). Same default shape (top 5
   // at 70,000 G$, next 5 at 30,000 G$) since that's the one Marvy keeps reaching
   // for; tier 2 at 0 winners collapses to a flat top-N payout.
-  const [fundTier1Count, setFundTier1Count] = useState(5)
-  const [fundTier1Each, setFundTier1Each] = useState(70000)
-  const [fundTier2Count, setFundTier2Count] = useState(5)
-  const [fundTier2Each, setFundTier2Each] = useState(30000)
+  const [fundTier1Count, setFundTier1Count] = useState(1)
+  const [fundTier1Each, setFundTier1Each] = useState(452500)
+  const [fundTier2Count, setFundTier2Count] = useState(1)
+  const [fundTier2Each, setFundTier2Each] = useState(264000)
+  const [fundTier3Count, setFundTier3Count] = useState(1)
+  const [fundTier3Each, setFundTier3Each] = useState(188500)
   const [seasonFunding, setSeasonFunding] = useState(false)
 
   const [referralCampaigns, setReferralCampaigns] = useState<ReferralCampaign[]>([])
@@ -403,9 +405,11 @@ export default function AdminPage() {
   const { pool: seasonPool, bps: seasonBps } = tierSplit(seasonTiers)
 
   // Same shape, for re-funding/re-splitting a season that already exists.
-  const fundTiers = fundTier2Count > 0 && fundTier2Each > 0
-    ? [{ count: fundTier1Count, each: fundTier1Each }, { count: fundTier2Count, each: fundTier2Each }]
-    : [{ count: fundTier1Count, each: fundTier1Each }]
+  const fundTiers = [
+    { count: fundTier1Count, each: fundTier1Each },
+    ...(fundTier2Count > 0 && fundTier2Each > 0 ? [{ count: fundTier2Count, each: fundTier2Each }] : []),
+    ...(fundTier3Count > 0 && fundTier3Each > 0 ? [{ count: fundTier3Count, each: fundTier3Each }] : []),
+  ]
   const { pool: fundPool, bps: fundBps } = tierSplit(fundTiers)
 
   async function handleDeleteSeason(sn: Season) {
@@ -871,6 +875,18 @@ export default function AdminPage() {
                     <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
                     <input type="number" min={0} step={1000} value={fundTier2Each}
                       onChange={(e) => setFundTier2Each(Math.max(0, Number(e.target.value) || 0))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">Next winners (tier 3, optional)</span>
+                    <input type="number" min={0} max={20} value={fundTier3Count}
+                      onChange={(e) => setFundTier3Count(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
+                      className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-600">G$ each</span>
+                    <input type="number" min={0} step={500} value={fundTier3Each}
+                      onChange={(e) => setFundTier3Each(Math.max(0, Number(e.target.value) || 0))}
                       className="px-3 py-2 rounded-lg bg-black/30 border border-valor-border text-sm text-white focus:outline-none" />
                   </label>
                 </div>
