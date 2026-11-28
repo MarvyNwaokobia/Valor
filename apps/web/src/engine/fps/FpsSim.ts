@@ -66,6 +66,10 @@ export interface FpsEnemy {
   // ── Incendiary DoT (B) ──
   burnUntil: number; // sim-time the thermite burn stops (0 = not burning)
   burnDps: number;   // HP/s the active burn ticks for
+  /** Seconds it has been pushing toward its goal without getting anywhere (a wall,
+   *  a crate, a knot of its own squad). Past STUCK_SECS it gives up on that goal
+   *  and picks another, instead of grinding against the obstacle. */
+  blocked: number;
   // ── Co-op targeting (Endless party mode only) ──
   /** Who this enemy is currently engaging — `LOCAL_TARGET` (the local
    *  player) for every mode but co-op. Sticky: only re-picked when the
@@ -287,6 +291,26 @@ export const FPS_TUNING = {
     BODY_R: 0.55,         // shoulders + rifle: keep them clear of walls, not touching
     WORLD_CLAMP: 18,      // outer safety; walls do the real containment (layouts vary in depth)
     PREFERRED_DIST: 12,   // enemies maneuver to about this range and flank
+    // ── Squad spacing ──
+    // Bodies are BODY_R wide; two enemies closer than SPACING (centre to centre)
+    // are standing inside each other. Nothing used to know other enemies existed,
+    // so a squad closing on the same spot walked into one merged lump. Now they
+    // steer round each other on the way (AVOID_R) and are pushed apart if they
+    // still end up overlapping.
+    SPACING: 1.3,
+    AVOID_R: 2.2,
+    // Never stand inside a player or teammate either.
+    PLAYER_SPACING: 1.4,
+    // A spot another enemy is standing on or heading to counts as taken within
+    // this radius, so goals spread across the room instead of piling up.
+    CLAIM_R: 3,
+    // Candidate spots weighed per decision (spacing, reachability, cover).
+    GOAL_TRIES: 8,
+    // Chance an eyes-on reposition is a proper flank (well off its current side)
+    // rather than a small strafe. This is what keeps a fight moving around you.
+    FLANK_CHANCE: 0.35,
+    // Pressing into an obstacle for this long without progress → new goal.
+    STUCK_SECS: 0.6,
     // The round leaves the rifle they're actually holding, not their sternum.
     MUZZLE_Y: 1.42,
     MUZZLE_FWD: 0.42,
@@ -476,6 +500,7 @@ export class FpsSim {
       goalX: sx,
       goalZ: sz,
       nextGoalAt: 0,
+      blocked: 0,
       room: spec.room ?? 0,
       active: true,
       seenX: sx,
@@ -1056,33 +1081,39 @@ export class FpsSim {
         continue;
       }
 
+      // Pinned against something (a wall, a crate, its own squad) for too long:
+      // drop that goal now and pick one it can actually reach.
+      if (e.blocked > E.STUCK_SECS) { e.blocked = 0; e.nextGoalAt = this.time; }
+
       // No token: MANEUVER. Three different jobs depending on what it knows.
       if (this.time >= e.nextGoalAt) {
-        // Resample until the goal is somewhere a body can actually stand.
         if (los) {
-          // EYES ON — the fight. Hold a preferred combat distance with a strafe
-          // offset, so they close in and flank instead of standing still and bobbing.
+          // EYES ON — the fight. Hold a preferred combat distance, mostly shifting
+          // along its current side but often swinging well round to a flank, so the
+          // fight moves around you instead of a line of enemies bobbing in place.
+          // Spots near cover, clear of the squad and reachable in a straight line
+          // win (see chooseGoal).
           const preferred = e.boss ? B.PREFERRED_DIST[ph] : E.PREFERRED_DIST;
-          for (let tries = 0; tries < 6; tries++) {
-            const bearing = Math.atan2(e.x - tx, e.z - tz) + (this.rng() - 0.5) * 1.4; // current side ± strafe
+          const side = Math.atan2(e.x - tx, e.z - tz);
+          this.chooseGoal(e, () => {
+            const off = this.rng() < E.FLANK_CHANCE
+              ? (this.rng() < 0.5 ? -1 : 1) * (0.8 + this.rng() * 0.9) // flank
+              : (this.rng() - 0.5) * 1.4;                               // strafe
             const d = preferred + (this.rng() - 0.5) * 5;
-            e.goalX = tx + Math.sin(bearing) * d;
-            e.goalZ = tz + Math.cos(bearing) * d;
-            if (!this.inCover(e.goalX, e.goalZ)) break;
-          }
+            return [tx + Math.sin(side + off) * d, tz + Math.cos(side + off) * d];
+          }, true);
           e.nextGoalAt = this.time + 1.4 + this.rng() * 2;
         } else if (hunting) {
           // LOST HIM — go and look. Straight at the last known position rather than
           // holding off at combat range: standing back from a spot you cannot see
-          // into is not searching it. The scatter keeps a squad from stacking on one
-          // coordinate, and re-picking often makes them sweep rather than park.
-          for (let tries = 0; tries < 6; tries++) {
+          // into is not searching it. Spots the rest of the squad has already
+          // claimed score badly, so a squad fans out over the area instead of
+          // converging on one coordinate, and re-picking often makes them sweep.
+          this.chooseGoal(e, () => {
             const a = this.rng() * Math.PI * 2;
-            const r = this.rng() * E.SEARCH_SPREAD;
-            e.goalX = e.seenX + Math.sin(a) * r;
-            e.goalZ = e.seenZ + Math.cos(a) * r;
-            if (!this.inCover(e.goalX, e.goalZ)) break;
-          }
+            const r = this.rng() * E.SEARCH_SPREAD * 1.6;
+            return [e.seenX + Math.sin(a) * r, e.seenZ + Math.cos(a) * r];
+          }, false);
           e.nextGoalAt = this.time + 0.8 + this.rng() * 1.2;
         } else {
           // GAVE UP — back to the post, and stay there. Without this they would
@@ -1095,10 +1126,14 @@ export class FpsSim {
         }
       }
       if (Math.hypot(e.goalX - e.x, e.goalZ - e.z) > 0.6) {
-        this.moveToward(e, e.goalX, e.goalZ, dt, e.boss ? B.MOVE_MULT[ph] : 1);
+        this.moveToward(e, e.goalX, e.goalZ, dt, e.boss ? B.MOVE_MULT[ph] : 1, targets);
+        // Re-aim from where it now stands, so facing never lags a step behind
+        // (close to the spot it's watching, one step swings the bearing a lot).
+        e.facing = Math.atan2(e.seenX - e.x, e.seenZ - e.z);
         e.ai = 'seek';
       } else {
         e.ai = 'hidden';
+        e.blocked = 0;
       }
 
       // Earn a token to peek + shoot: mooks share the MAX_ATTACKERS budget, a
@@ -1115,6 +1150,125 @@ export class FpsSim {
         this.push(out, { kind: 'enemyAim', enemyId: e.id, from: [e.x, E.EYE_Y, e.z] });
       }
     }
+
+    this.separateBodies(targets);
+  }
+
+  /**
+   * Pick where to go next from GOAL_TRIES candidate spots, rather than taking the
+   * first one that isn't inside a wall. Each spot is scored:
+   *  - taken: another live enemy is standing on it or already heading there
+   *    (within CLAIM_R) — heavily penalised, so a squad spreads out;
+   *  - unreachable: a wall or crate sits on the straight line from here — it
+   *    would just slide along that obstacle, so it's penalised;
+   *  - cover (fighting only): right beside a box it could duck behind — favoured.
+   * Spots inside geometry or outside the bounds are never chosen. If every
+   * candidate is, it keeps its current goal.
+   */
+  private chooseGoal(e: FpsEnemy, sample: () => [number, number], wantCover: boolean): void {
+    const E = FPS_TUNING.ENEMY;
+    const b = this.bounds;
+    let best = -Infinity, bx = e.goalX, bz = e.goalZ;
+    for (let i = 0; i < E.GOAL_TRIES; i++) {
+      const [x, z] = sample();
+      if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
+      if (this.inCover(x, z)) continue;
+      let score = this.rng() * 0.5; // small tie-break, so equal spots still vary
+      for (const o of this.enemies) {
+        if (o === e || !o.alive) continue;
+        const d = Math.min(Math.hypot(o.x - x, o.z - z), Math.hypot(o.goalX - x, o.goalZ - z));
+        if (d < E.CLAIM_R) score -= (E.CLAIM_R - d) * 3;
+      }
+      if (this.pathBlocked(e.x, e.z, x, z)) score -= 4;
+      if (wantCover && this.nearCover(x, z)) score += 1.5;
+      if (score > best) { best = score; bx = x; bz = z; }
+    }
+    e.goalX = bx;
+    e.goalZ = bz;
+  }
+
+  /** True if a body walking straight from (x0,z0) to (x1,z1) would hit geometry. */
+  private pathBlocked(x0: number, z0: number, x1: number, z1: number): boolean {
+    const R = FPS_TUNING.ENEMY.BODY_R * 0.9;
+    const dx = x1 - x0, dz = z1 - z0;
+    for (const c of this.cover) if (sweepBox(x0, z0, dx, dz, c, R)) return true;
+    return false;
+  }
+
+  /** True if (x,z) is right up against a box tall enough to duck behind. */
+  private nearCover(x: number, z: number): boolean {
+    const R = FPS_TUNING.ENEMY.BODY_R + 0.9;
+    for (const c of this.cover) {
+      if (c.h < 0.9) continue;
+      if (Math.abs(x - c.x) < c.w / 2 + R && Math.abs(z - c.z) < c.d / 2 + R) return true;
+    }
+    return false;
+  }
+
+  /**
+   * No two bodies in one spot. Steering (moveToward) keeps most of this from ever
+   * happening; this catches what it doesn't — two enemies arriving at once, a
+   * reinforcement spawned on top of a defender, someone shoved off a corner. Any
+   * pair of live enemies closer than SPACING is pushed apart, and any enemy
+   * standing inside a player or teammate is pushed off them. Every push goes
+   * through slideMove, so it can never shove a body into or through a wall.
+   * A boss is heavier: in a pair it gives way a quarter as much as a mook.
+   *
+   * Dormant (`!active`) enemies are excluded, same as the maneuver loop above
+   * skips them: Endless preloads rooms ahead of the player, so without this a
+   * dormant squad's authored spawn points — or the player just walking past
+   * them before their room wakes — would get silently shoved apart/aside
+   * every frame, well before anyone can see it happen.
+   */
+  private separateBodies(targets: ReadonlyArray<{ x: number; z: number; alive: boolean }>): void {
+    const E = FPS_TUNING.ENEMY;
+    const S = E.SPACING;
+    const live = this.enemies.filter((e) => e.alive && e.active);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < live.length; i++) {
+        const a = live[i];
+        for (let j = i + 1; j < live.length; j++) {
+          const o = live[j];
+          let dx = o.x - a.x, dz = o.z - a.z;
+          if (Math.abs(dx) >= S || Math.abs(dz) >= S) continue;
+          let d = Math.hypot(dx, dz);
+          if (d >= S) continue;
+          if (d < 1e-4) {
+            // Exactly on top of each other: split them on a fixed, id-derived axis
+            // (deterministic, unlike an rng draw that would shift every later roll).
+            const ang = (a.id * 7 + o.id * 13) * 2.399963;
+            dx = Math.sin(ang); dz = Math.cos(ang); d = 1;
+            const overlap = S;
+            this.shove(a, -dx * overlap * 0.5, -dz * overlap * 0.5);
+            this.shove(o, dx * overlap * 0.5, dz * overlap * 0.5);
+            continue;
+          }
+          const nx = dx / d, nz = dz / d, overlap = S - d;
+          const wa = a.boss === o.boss ? 0.5 : a.boss ? 0.2 : 0.8;
+          this.shove(a, -nx * overlap * wa, -nz * overlap * wa);
+          this.shove(o, nx * overlap * (1 - wa), nz * overlap * (1 - wa));
+        }
+      }
+    }
+    for (const t of targets) {
+      if (!t.alive) continue;
+      for (const e of live) {
+        const dx = e.x - t.x, dz = e.z - t.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= E.PLAYER_SPACING) continue;
+        if (d < 1e-4) { this.shove(e, 0, -E.PLAYER_SPACING); continue; }
+        const push = E.PLAYER_SPACING - d;
+        this.shove(e, (dx / d) * push, (dz / d) * push);
+      }
+    }
+  }
+
+  /** Move a body by (dx,dz) without ever entering geometry or leaving the bounds. */
+  private shove(e: FpsEnemy, dx: number, dz: number): void {
+    const [nx, nz] = slideMove(e.x, e.z, e.x + dx, e.z + dz, FPS_TUNING.ENEMY.BODY_R, this.cover);
+    const b = this.bounds;
+    e.x = Math.max(b.minX, Math.min(b.maxX, nx));
+    e.z = Math.max(b.minZ, Math.min(b.maxZ, nz));
   }
 
   /** Resolves a `targetId` to a firing-position (co-op only ever passes a
@@ -1261,17 +1415,53 @@ export class FpsSim {
     return false;
   }
 
-  private moveToward(e: FpsEnemy, px: number, pz: number, dt: number, speedMult = 1): void {
-    const R = FPS_TUNING.ENEMY.BODY_R;
+  private moveToward(
+    e: FpsEnemy, px: number, pz: number, dt: number, speedMult = 1,
+    avoid: ReadonlyArray<{ x: number; z: number; alive: boolean }> = [],
+  ): void {
+    const E = FPS_TUNING.ENEMY;
+    const R = E.BODY_R;
     const dx = px - e.x, dz = pz - e.z;
     const len = Math.hypot(dx, dz) || 1;
-    const step = FPS_TUNING.ENEMY.MOVE_SPEED * speedMult * dt;
+    let ux = dx / len, uz = dz / len;
+    // Steer round anyone in the way: every live enemy (and player/teammate) within
+    // AVOID_R pushes the heading away from it, harder the closer it is. Only bodies
+    // AHEAD count, so it doesn't swerve away from a squadmate walking behind it.
+    let rx = 0, rz = 0;
+    const repel = (ox: number, oz: number) => {
+      const ax = e.x - ox, az = e.z - oz;
+      if (Math.abs(ax) >= E.AVOID_R || Math.abs(az) >= E.AVOID_R) return;
+      const d = Math.hypot(ax, az);
+      if (d >= E.AVOID_R || d < 1e-4) return;
+      if (ax * ux + az * uz > 0.3 * d) return; // behind or well off to the side
+      const w = (E.AVOID_R - d) / E.AVOID_R;
+      rx += (ax / d) * w; rz += (az / d) * w;
+    };
+    for (const o of this.enemies) if (o !== e && o.alive) repel(o.x, o.z);
+    for (const t of avoid) if (t.alive) repel(t.x, t.z);
+    if (rx !== 0 || rz !== 0) {
+      // Add the push, plus a sidestep along it so two bodies meeting head-on pass
+      // each other instead of stopping nose to nose.
+      const side = rx * -uz + rz * ux >= 0 ? 1 : -1;
+      const sx = ux + rx * 1.4 + -uz * side * Math.hypot(rx, rz) * 0.6;
+      const sz = uz + rz * 1.4 + ux * side * Math.hypot(rx, rz) * 0.6;
+      const sl = Math.hypot(sx, sz);
+      if (sl > 1e-4) { ux = sx / sl; uz = sz / sl; }
+    }
+    const step = Math.min(E.MOVE_SPEED * speedMult * dt, len);
     // Slide toward the target instead of "step then eject": walls become solid, and an
     // enemy pressing into one now hugs it rather than popping through to the far side.
-    const [nx, nz] = slideMove(e.x, e.z, e.x + (dx / len) * step, e.z + (dz / len) * step, R, this.cover);
+    const [nx, nz] = slideMove(e.x, e.z, e.x + ux * step, e.z + uz * step, R, this.cover);
     const b = this.bounds;
-    e.x = Math.max(b.minX, Math.min(b.maxX, nx));
-    e.z = Math.max(b.minZ, Math.min(b.maxZ, nz));
+    const fx = Math.max(b.minX, Math.min(b.maxX, nx));
+    const fz = Math.max(b.minZ, Math.min(b.maxZ, nz));
+    // Progress TOWARD the goal, not just movement: sliding sideways along a wall
+    // that stands between it and the goal is still being stuck.
+    const gained = (Math.hypot(px - e.x, pz - e.z) - Math.hypot(px - fx, pz - fz));
+    if (gained < step * 0.25) e.blocked += dt;
+    else e.blocked = Math.max(0, e.blocked - dt);
+    e.x = fx;
+    e.z = fz;
   }
 
   /**
